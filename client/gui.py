@@ -16,10 +16,6 @@ from typing import Optional
 import sys
 import os
 
-# 如果作为脚本直接运行，添加父目录到路径
-if __name__ == "__main__" and not __package__:
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QSystemTrayIcon, QMenu, 
     QLabel, QVBoxLayout, QWidget, QFrame
@@ -32,14 +28,9 @@ from pynput.keyboard import Controller, Key
 import pyautogui
 import pyperclip
 
-# 尝试导入框架模块，如果失败则使用本地模块
-try:
-    from voice_input_framework.client.audio_capture import AudioCapturer, AudioConfig
-    from voice_input_framework.client.stt_client import StreamingSTTClient
-except ImportError:
-    # 本地导入
-    from audio_capture import AudioCapturer, AudioConfig
-    from stt_client import StreamingSTTClient
+# 简单导入，路径由 run_gui.py 设置
+from audio_capture import AudioCapturer, AudioConfig
+from stt_client import StreamingSTTClient
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)

@@ -19,18 +19,30 @@ Voice Input Framework - GUI 客户端
 使用 uv 运行:
     uv run run_gui.py
 
-或者:
-    uv run --with PySide6 --with pynput --with pyautogui --with pyperclip run_gui.py
+Windows:
+    uv run .\run_gui.py
 """
 
 import sys
 import os
 
-# 添加项目路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 添加项目路径到 sys.path
+project_dir = os.path.dirname(os.path.abspath(__file__))
+if project_dir not in sys.path:
+    sys.path.insert(0, project_dir)
 
-# 导入 GUI 模块
-from client.gui import main
+# 添加 client 目录
+client_dir = os.path.join(project_dir, "client")
+if client_dir not in sys.path:
+    sys.path.insert(0, client_dir)
+
+# 添加 shared 目录
+shared_dir = os.path.join(project_dir, "shared")
+if shared_dir not in sys.path:
+    sys.path.insert(0, shared_dir)
+
+# 导入并运行 GUI
+from gui import main
 
 if __name__ == "__main__":
     main()
