@@ -132,6 +132,8 @@ async def transcribe(
 @app.websocket("/ws/stream")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 流式识别接口"""
+    import base64
+    
     await websocket.accept()
     logger.info("WebSocket connection accepted")
     
@@ -143,47 +145,85 @@ async def websocket_endpoint(websocket: WebSocket):
         "model": engine.model_name if engine else "unknown"
     }))
     
-    async def audio_generator():
-        """从 WebSocket 接收音频数据的生成器"""
-        try:
-            while True:
-                message = await websocket.receive_text()
-                request = StreamRequest.from_json(message)
-                
-                if request.type == MessageType.AUDIO_CHUNK:
-                    if request.data:
-                        yield request.data
-                elif request.type == MessageType.CONTROL:
-                    if request.control == "stop" or request.control == "end":
-                        break
-                        
-        except WebSocketDisconnect:
-            logger.info("WebSocket disconnected")
-        except Exception as e:
-            logger.error(f"Error in audio generator: {e}")
-    
     try:
-        async for result in engine.transcribe_stream(audio_generator()):
-            response = StreamResponse(
-                type=MessageType.TRANSCRIPTION,
-                text=result.text,
-                confidence=result.confidence,
-                language=result.language,
-                is_final=result.is_final
-            )
-            await websocket.send_text(response.to_json())
+        # 首先接收配置消息
+        try:
+            config_msg = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+            config_data = json.loads(config_msg)
+            logger.info(f"Received config: {config_data}")
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for config message")
+            await websocket.close()
+            return
         
-        # 发送完成消息
-        await websocket.send_text(json.dumps({"type": "done"}))
-            
+        # 音频缓冲区
+        audio_buffer = bytearray()
+        
+        # 主循环：接收音频块
+        while True:
+            try:
+                message = await websocket.receive_text()
+                data = json.loads(message)
+                msg_type = data.get("type")
+                
+                if msg_type == "audio":
+                    audio_b64 = data.get("data", "")
+                    if audio_b64:
+                        audio_chunk = base64.b64decode(audio_b64)
+                        audio_buffer.extend(audio_chunk)
+                        
+                        # 当累积足够音频时进行识别 (约1秒)
+                        if len(audio_buffer) >= 16000 * 2:
+                            result = await engine.transcribe(bytes(audio_buffer))
+                            audio_buffer.clear()
+                            
+                            response = StreamResponse(
+                                type=MessageType.TRANSCRIPTION,
+                                text=result.text,
+                                confidence=result.confidence,
+                                language=result.language,
+                                is_final=False
+                            )
+                            await websocket.send_text(response.to_json())
+                            
+                elif msg_type in ("end", "stop"):
+                    if audio_buffer:
+                        result = await engine.transcribe(bytes(audio_buffer))
+                        response = StreamResponse(
+                            type=MessageType.TRANSCRIPTION,
+                            text=result.text,
+                            confidence=result.confidence,
+                            language=result.language,
+                            is_final=True
+                        )
+                        await websocket.send_text(response.to_json())
+                    
+                    await websocket.send_text(json.dumps({"type": "done"}))
+                    break
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON received: {e}")
+            except Exception as e:
+                logger.error(f"Error in websocket loop: {e}")
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "error_code": "E5001",
+                    "error_message": str(e)
+                }))
+                break
+                
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
-        error_response = StreamResponse(
-            type=MessageType.ERROR,
-            error_code=ErrorCode.INTERNAL_ERROR.value,
-            error_message=str(e)
-        )
-        await websocket.send_text(error_response.to_json())
+        try:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "error_code": "E5001",
+                "error_message": str(e)
+            }))
+        except:
+            pass
     finally:
         try:
             await websocket.close()
