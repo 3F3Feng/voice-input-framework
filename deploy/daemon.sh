@@ -23,7 +23,7 @@ HOST="${VIF_HOST:-0.0.0.0}"
 # 模型配置
 declare -A MODEL_SIZES
 MODEL_SIZES["whisper-small"]="~242MB"
-MODEL_SIZES["qwen_asr"]="~1.3GB"
+MODEL_SIZES["qwen_asr"]="~3.5GB"
 MODEL_SIZES["whisper-large-v3"]="~3.1GB"
 
 # 确保日志目录存在
@@ -80,11 +80,11 @@ download_model() {
             cd "$model_path"
             # Qwen3-ASR 从 ModelScope 下载（国内快）
             if command -v modelscope &> /dev/null; then
-                modelscope download Qwen/Qwen3-ASR-0.6B --local . 2>&1 | tee -a "$LOG_FILE"
+                modelscope download Qwen/Qwen3-ASR-1.7B --local . 2>&1 | tee -a "$LOG_FILE"
             else
                 # 备选 HuggingFace
                 git lfs install --force 2>/dev/null || true
-                git clone https://huggingface.co/Qwen/Qwen3-ASR-0.6B . 2>&1 | tee -a "$LOG_FILE"
+                git clone https://huggingface.co/Qwen/Qwen3-ASR-1.7B . 2>&1 | tee -a "$LOG_FILE"
             fi
             ;;
         "whisper-large-v3")

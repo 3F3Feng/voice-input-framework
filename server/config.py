@@ -94,10 +94,10 @@ def get_default_config() -> ServerConfig:
         max_audio_length=120,
     ))
 
-    # Qwen3-ASR
+    # Qwen3-ASR 1.7B
     config.add_model(ModelConfig(
         name="qwen_asr",
-        model_path="qwen/Qwen2-Audio-7B-Instruct",
+        model_path="Qwen/Qwen3-ASR-1.7B",
         device="auto",
         language="zh",
         compute_type="float16",

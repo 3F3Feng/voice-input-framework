@@ -38,27 +38,28 @@ download_whisper_small() {
     echo "[完成] Whisper Small"
 }
 
-# Qwen3-ASR 0.6B (约 1.3GB)
-download_qwen_asr_06b() {
-    local model_path="$MODELS_DIR/qwen3-asr-0.6b"
+# Qwen3-ASR 1.7B (约 3.5GB)
+download_qwen_asr_17b() {
+    local model_path="$MODELS_DIR/qwen3-asr-1.7b"
     if [ -d "$model_path" ]; then
-        echo "[跳过] Qwen3-ASR 0.6B 已存在"
+        echo "[跳过] Qwen3-ASR 1.7B 已存在"
         return
     fi
     
-    echo "[下载] Qwen3-ASR 0.6B (约 1.3GB)..."
+    echo "[下载] Qwen3-ASR 1.7B (约 3.5GB)..."
     mkdir -p "$model_path"
     cd "$model_path"
     
     # 从 ModelScope 下载（国内更快）
     if command -v modelscope &> /dev/null; then
-        modelscope download Qwen/Qwen3-ASR-0.6B --local .
+        modelscope download Qwen/Qwen3-ASR-1.7B --local .
     else
         # 备选：从 HuggingFace
-        git clone https://huggingface.co/Qwen/Qwen3-ASR-0.6B .
+        git lfs install --force 2>/dev/null || true
+        git clone https://huggingface.co/Qwen/Qwen3-ASR-1.7B .
     fi
     
-    echo "[完成] Qwen3-ASR 0.6B"
+    echo "[完成] Qwen3-ASR 1.7B"
 }
 
 # Whisper Large v3 (约 3.1GB)
@@ -86,7 +87,7 @@ download_whisper_large() {
 show_menu() {
     echo "可用模型:"
     echo "  1) Whisper Small (~242MB) - 轻量快速，英语为主"
-    echo "  2) Qwen3-ASR 0.6B (~1.3GB) - 中英混输优化"
+    echo "  2) Qwen3-ASR 1.7B (~3.5GB) - 中英混输优化首选"
     echo "  3) Whisper Large v3 (~3.1GB) - 最高准确率"
     echo "  4) 下载所有"
     echo "  0) 退出"
@@ -114,11 +115,11 @@ main() {
     read -p "选择模型 [0-4]: " choice
     case "$choice" in
         1) download_whisper_small ;;
-        2) download_qwen_asr_06b ;;
+        2) download_qwen_asr_17b ;;
         3) download_whisper_large ;;
         4) 
             download_whisper_small
-            download_qwen_asr_06b
+            download_qwen_asr_17b
             download_whisper_large
             ;;
         0) exit 0 ;;

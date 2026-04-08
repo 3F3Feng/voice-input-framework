@@ -36,7 +36,7 @@ huggingface-cli download openai/whisper-large-v3 --local $VOICE_INPUT_FRAMEWORK_
 | 模型 | 大小 | 语言 | 内存需求 | 推荐场景 |
 |------|------|------|----------|----------|
 | whisper-small | ~242MB | 多语言 | ~1GB | 轻量快速，英语为主 |
-| qwen3-asr-0.6b | ~1.3GB | 中英 | ~3GB | **中文首选** |
+| qwen3-asr-1.7b | ~3.5GB | 中英 | ~5GB | **中文首选，高准确率** |
 | whisper-large-v3 | ~3.1GB | 99+ | ~6GB | 最高准确率 |
 
 ## 配置
