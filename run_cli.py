@@ -301,14 +301,15 @@ class VoiceInputCLI:
         
         # 音频缓冲区
         audio_buffer = []
-        is_recording_audio = True
         
         def audio_callback(indata, frames, time, status):
             if status:
                 logger.warning(f"Audio status: {status}")
-            if is_recording_audio:
+            # 使用 self.is_recording 控制，避免闭包变量问题
+            if self.is_recording:
                 audio_buffer.append(indata.tobytes())
         
+        stream = None
         try:
             # 启动音频采集
             stream = sd.InputStream(
@@ -319,23 +320,33 @@ class VoiceInputCLI:
                 blocksize=1024,
                 callback=audio_callback
             )
-            with stream:
-                # 等待用户按 Enter (不阻塞事件循环)
-                await asyncio.get_event_loop().run_in_executor(None, input, "")
+            stream.start()
             
-            is_recording_audio = False
+            # 等待用户按 Enter (不阻塞事件循环)
+            await asyncio.get_event_loop().run_in_executor(None, input, "")
             
         except Exception as e:
             self.console.print(f"[red]录音失败: {e}[/red]")
             self.is_recording = False
+            if stream:
+                stream.stop()
+                stream.close()
             return
+        finally:
+            # 确保停止录音状态
+            self.is_recording = False
+            if stream:
+                try:
+                    stream.stop()
+                    stream.close()
+                except:
+                    pass
         
         self.console.print("[dim]正在识别...[/dim]")
         
         # 检查是否有音频
         if not audio_buffer:
             self.console.print("[yellow]未检测到音频[/yellow]")
-            self.is_recording = False
             return
         
         full_audio = b"".join(audio_buffer)
@@ -357,7 +368,6 @@ class VoiceInputCLI:
                 
                 if data.get("type") != "ready":
                     self.console.print(f"[red]服务器未就绪: {data}[/red]")
-                    self.is_recording = False
                     return
                 
                 self.console.print("[green]✓ 服务器就绪，发送音频...[/green]")
@@ -407,9 +417,6 @@ class VoiceInputCLI:
                 self.console.print("[dim]已复制到剪贴板[/dim]")
         else:
             self.console.print("[yellow]未检测到语音内容[/yellow]")
-        
-        self.is_recording = False
-    
 
     def settings_menu(self):
         while True:
