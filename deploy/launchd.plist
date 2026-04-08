@@ -25,6 +25,8 @@
         <string>INFO</string>
         <key>VIF_DEFAULT_MODEL</key>
         <string>qwen_asr</string>
+        <key>VIF_AUTO_DOWNLOAD</key>
+        <string>true</string>
     </dict>
     
     <key>RunAtLoad</key>
