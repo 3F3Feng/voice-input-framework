@@ -357,9 +357,8 @@ class VoiceInputCLI:
                 # 并发发送和接收
                 send_task = asyncio.create_task(send_audio())
                 
-                # 等待用户按 Enter 停止
-                await asyncio.sleep(0.5)
-                input("")  # 阻塞等待
+                # 等待用户按 Enter 停止 (在线程中运行，避免阻塞事件循环)
+                await asyncio.to_thread(input, "")
                 
                 self.is_recording = False
                 await send_task
