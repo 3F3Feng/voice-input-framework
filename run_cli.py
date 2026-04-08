@@ -280,8 +280,9 @@ class VoiceInputCLI:
             return False
     
     async def record_and_transcribe(self):
-        """录音并识别"""
+        """录音并识别 - 简化版"""
         import websockets
+        import sounddevice as sd
         
         if self.is_recording:
             self.console.print("[yellow]已经在录音中...[/yellow]")
@@ -295,129 +296,121 @@ class VoiceInputCLI:
             border_style="red"
         ))
         
-        full_text = ""
         mic_name = self._get_mic_name()
         self.console.print(f"[dim]使用麦克风: {mic_name}[/dim]")
         
+        # 音频缓冲区
+        audio_buffer = []
+        is_recording_audio = True
+        
+        def audio_callback(indata, frames, time, status):
+            if status:
+                logger.warning(f"Audio status: {status}")
+            if is_recording_audio:
+                audio_buffer.append(indata.tobytes())
+        
+        try:
+            # 启动音频采集
+            stream = sd.InputStream(
+                device=self.config.get('microphone'),
+                samplerate=self.config.get('sample_rate', 16000),
+                channels=1,
+                dtype='int16',
+                blocksize=1024,
+                callback=audio_callback
+            )
+            with stream:
+                # 等待用户按 Enter (不阻塞事件循环)
+                await asyncio.get_event_loop().run_in_executor(None, input, "")
+            
+            is_recording_audio = False
+            
+        except Exception as e:
+            self.console.print(f"[red]录音失败: {e}[/red]")
+            self.is_recording = False
+            return
+        
+        self.console.print("[dim]正在识别...[/dim]")
+        
+        # 检查是否有音频
+        if not audio_buffer:
+            self.console.print("[yellow]未检测到音频[/yellow]")
+            self.is_recording = False
+            return
+        
+        full_audio = b"".join(audio_buffer)
+        self.console.print(f"[dim]已采集 {len(full_audio)} 字节音频[/dim]")
+        
+        # 发送到服务器
+        full_text = ""
         try:
             async with websockets.connect(self.config.server_url) as ws:
                 # 发送配置
                 await ws.send(json.dumps({
                     "type": "config",
-                    "language": self.config.get('language'),
+                    "language": self.config.get('language', 'auto'),
                 }))
                 
                 # 等待就绪
-                resp = await ws.recv()
+                resp = await asyncio.wait_for(ws.recv(), timeout=5.0)
                 data = json.loads(resp)
                 
                 if data.get("type") != "ready":
                     self.console.print(f"[red]服务器未就绪: {data}[/red]")
+                    self.is_recording = False
                     return
                 
-                self.console.print("[green]✓ 服务器就绪，开始录音[/green]")
+                self.console.print("[green]✓ 服务器就绪，发送音频...[/green]")
                 
-                # 获取麦克风ID
-                mic_id = self.config.get('microphone')
-                if mic_id == "default":
-                    mic_id = None
+                # 发送音频
+                await ws.send(json.dumps({
+                    "type": "audio",
+                    "data": base64.b64encode(full_audio).decode('utf-8'),
+                }))
                 
-                # 创建音频采集器
-                capture = AudioCapture(
-                    device_id=mic_id,
-                    sample_rate=self.config.get('sample_rate', 16000),
-                    channels=1
-                )
-                
-                # 开始采集并发送
-                async def send_audio():
-                    nonlocal full_text
-                    try:
-                        async for audio_chunk in capture.stream():
-                            if not self.is_recording:
-                                break
-                            # 发送音频
-                            await ws.send(json.dumps({
-                                "type": "audio",
-                                "data": base64.b64encode(audio_chunk).decode('utf-8'),
-                            }))
-                            # 尝试接收中间结果
-                            try:
-                                resp = await asyncio.wait_for(ws.recv(), timeout=0.01)
-                                result = json.loads(resp)
-                                if result.get("type") == "result":
-                                    partial = result.get("text", "")
-                                    if partial:
-                                        self.console.print(f"\r[yellow]识别中: {partial}[/yellow]", end="")
-                            except asyncio.TimeoutError:
-                                pass
-                    except Exception as e:
-                        logger.error(f"Send audio error: {e}")
-                
-                # 并发发送和接收
-                send_task = asyncio.create_task(send_audio())
-                
-                # 等待用户按 Enter 停止
-                # 使用线程方式避免阻塞事件循环
-                stop_event = asyncio.Event()
-                
-                def wait_for_enter():
-                    input("")
-                    self._loop.call_soon_threadsafe(stop_event.set)
-                
-                import threading
-                input_thread = threading.Thread(target=wait_for_enter, daemon=True)
-                input_thread.start()
-                
-                # 等待停止事件或超时
-                await stop_event.wait()
-                input_thread.join(timeout=0.1)
-                
-                self.is_recording = False
-                await send_task
-                
-                # 发送结束信号
+                # 发送结束
                 await ws.send(json.dumps({"type": "end"}))
                 
-                # 接收最终结果
-                self.console.print("\n[dim]正在识别...[/dim]")
-                
+                # 接收结果
                 while True:
                     try:
-                        resp = await asyncio.wait_for(ws.recv(), timeout=10.0)
+                        resp = await asyncio.wait_for(ws.recv(), timeout=30.0)
                         data = json.loads(resp)
                         
                         if data.get("type") == "result":
                             full_text = data.get("text", "")
-                            self.console.print(f"\r[green]{full_text}[/green]", end="")
                         elif data.get("type") == "done":
+                            break
+                        elif data.get("type") == "error":
+                            self.console.print(f"[red]识别错误: {data.get('error_message')}[/red]")
                             break
                             
                     except asyncio.TimeoutError:
+                        self.console.print("[yellow]识别超时[/yellow]")
                         break
-            
-            self.console.print()
-            
-            if full_text:
-                self.console.print(Panel(
-                    f"[bold green]{full_text}[/bold green]",
-                    title="识别结果",
-                    border_style="green"
-                ))
-                
-                if self.config.get('auto_paste'):
-                    pyperclip.copy(full_text)
-                    self.console.print("[dim]已复制到剪贴板[/dim]")
-            else:
-                self.console.print("[yellow]未检测到语音内容[/yellow]")
                 
         except Exception as e:
-            self.console.print(f"[red]录音失败: {e}[/red]")
-            logger.error(f"Recording error: {e}")
+            self.console.print(f"[red]识别失败: {e}[/red]")
+            logger.error(f"Recognition error: {e}")
         
-        finally:
-            self.is_recording = False
+        self.console.print()
+        
+        if full_text:
+            self.console.print(Panel(
+                f"[bold green]{full_text}[/bold green]",
+                title="识别结果",
+                border_style="green"
+            ))
+            
+            if self.config.get('auto_paste'):
+                pyperclip.copy(full_text)
+                self.console.print("[dim]已复制到剪贴板[/dim]")
+        else:
+            self.console.print("[yellow]未检测到语音内容[/yellow]")
+        
+        self.is_recording = False
     
+
     def settings_menu(self):
         while True:
             self.clear_screen()
