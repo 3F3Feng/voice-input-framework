@@ -162,54 +162,51 @@ async def websocket_endpoint(websocket: WebSocket):
         # 主循环：接收音频块
         while True:
             try:
-                message = await websocket.receive_text()
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
                 data = json.loads(message)
                 msg_type = data.get("type")
+                
+                logger.info(f"Received message type: {msg_type}")
                 
                 if msg_type == "audio":
                     audio_b64 = data.get("data", "")
                     if audio_b64:
                         audio_chunk = base64.b64decode(audio_b64)
                         audio_buffer.extend(audio_chunk)
+                        logger.info(f"Received audio chunk: {len(audio_chunk)} bytes, total buffer: {len(audio_buffer)} bytes")
                         
-                        # 当累积足够音频时进行识别 (约1秒)
-                        if len(audio_buffer) >= 16000 * 2:
-                            result = await engine.transcribe(bytes(audio_buffer))
-                            audio_buffer.clear()
-                            
-                            response = StreamResponse(
-                                type=MessageType.TRANSCRIPTION,
-                                text=result.text,
-                                confidence=result.confidence,
-                                language=result.language,
-                                is_final=False
-                            )
-                            await websocket.send_text(response.to_json())
-                            
                 elif msg_type in ("end", "stop"):
+                    logger.info(f"Received end signal, processing {len(audio_buffer)} bytes of audio")
                     if audio_buffer:
                         result = await engine.transcribe(bytes(audio_buffer))
-                        response = StreamResponse(
-                            type=MessageType.TRANSCRIPTION,
-                            text=result.text,
-                            confidence=result.confidence,
-                            language=result.language,
-                            is_final=True
-                        )
-                        await websocket.send_text(response.to_json())
+                        logger.info(f"Transcription result: {result.text}")
+                        await websocket.send_text(json.dumps({
+                            "type": "result",
+                            "text": result.text,
+                            "confidence": result.confidence,
+                            "language": result.language,
+                            "is_final": True,
+                        }))
                     
                     await websocket.send_text(json.dumps({"type": "done"}))
+                    logger.info("Sent done, closing connection")
                     break
                     
+            except asyncio.TimeoutError:
+                logger.error("Timeout waiting for message")
+                break
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON received: {e}")
             except Exception as e:
                 logger.error(f"Error in websocket loop: {e}")
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "error_code": "E5001",
-                    "error_message": str(e)
-                }))
+                try:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "error_code": "E5001",
+                        "error_message": str(e)
+                    }))
+                except:
+                    pass
                 break
                 
     except WebSocketDisconnect:
