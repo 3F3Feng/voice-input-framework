@@ -7,20 +7,10 @@ on:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., v1.0.0)'
-        required: false
-        type: string
 
 jobs:
   build-windows:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        include:
-          - arch: x64
-            name: windows-x64
     
     steps:
       - name: Checkout
@@ -30,7 +20,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          architecture: ${{ matrix.arch }}
           
       - name: Install dependencies
         run: |
@@ -38,37 +27,29 @@ jobs:
           pip install pyinstaller websockets sounddevice pyperclip PySimpleGUI
           
       - name: Build with PyInstaller
+        shell: pwsh
         run: |
-          pyinstaller --name VoiceInputFramework `
-            --windowed `
-            --onefile `
-            --add-binary "C:/hostedtoolcache/Python/3.11.9/${{ matrix.arch }}/python.exe;." `
-            --hidden-import=websockets `
-            --hidden-import=sounddevice `
-            --hidden-import=pyperclip `
-            --hidden-import=PySimpleGUI `
-            --collect-all=PySimpleGUI `
-            client/gui.py
+          pyinstaller --name VoiceInputFramework --windowed --onefile --hidden-import=websockets --hidden-import=sounddevice --hidden-import=pyperclip --hidden-import=PySimpleGUI client/gui.py
           
-      - name: Move output
+      - name: List output
+        shell: pwsh
         run: |
-          mkdir -p dist
-          if (Test-Path "dist/VoiceInputFramework.exe") {
-            Move-Item "dist/VoiceInputFramework.exe" "dist/VoiceInputFramework-${{ matrix.name }}.exe"
-          }
           Get-ChildItem -Path "dist" -Filter "*.exe" | ForEach-Object { Write-Host $_.FullName }
+          if (Test-Path "dist/VoiceInputFramework.exe") {
+            Copy-Item "dist/VoiceInputFramework.exe" "dist/VoiceInputFramework-windows-x64.exe"
+          }
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceInputFramework-${{ matrix.name }}
-          path: dist/VoiceInputFramework-${{ matrix.name }}.exe
+          name: VoiceInputFramework-windows-x64
+          path: dist/VoiceInputFramework-windows-x64.exe
           retention-days: 30
           
   release:
     needs: build-windows
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v')
     
     steps:
       - name: Checkout
@@ -84,16 +65,5 @@ jobs:
         with:
           files: artifacts/**/*.exe
           generate_release_notes: true
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Upload to GitHub Release
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: artifacts/VoiceInputFramework-windows-x64/VoiceInputFramework-windows-x64.exe
-          asset_name: VoiceInputFramework-windows-x64.exe
-          asset_content_type: application/octet-stream
-        if: startsWith(github.ref, 'refs/tags/v')
