@@ -552,3 +552,138 @@ websockets.exceptions.ConnectionClosedError: sent 1011 (internal error) keepaliv
 INFO:     connection closed
 INFO:     connection closed
 INFO:     connection closed
+2026-04-08 15:59:05,541 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 15:59:05,541 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 15:59:05,557 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 15:59:05,557 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+INFO:     100.88.250.104:6340 - "WebSocket /ws/stream" [accepted]
+2026-04-08 15:59:19,994 [INFO] server.api: WebSocket connection accepted
+2026-04-08 15:59:19,994 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 15:59:20,107 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 15:59:20,107 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     connection closed
+2026-04-08 16:00:41,935 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:00:41,935 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:00:41,937 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:00:41,937 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:02:23,692 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:02:23,692 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:02:23,697 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:02:23,697 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:02:25,987 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:02:25,987 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:02:25,987 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:02:25,987 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:02:45,096 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:02:45,096 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:02:45,097 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:02:45,097 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+INFO:     127.0.0.1:49307 - "GET /health HTTP/1.1" 200 OK
+INFO:     100.88.250.104:7582 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:32:51,399 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:32:51,399 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:32:51,411 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:32:51,411 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:3393 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:33:01,021 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:33:01,021 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:33:01,026 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:33:01,026 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     connection closed
+INFO:     connection closed
+2026-04-08 16:34:28,911 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:34:28,911 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:34:28,912 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:34:28,912 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:34:31,428 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:34:31,428 [ERROR] server.api: Error in websocket loop: 
+2026-04-08 16:34:31,428 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+2026-04-08 16:34:31,428 [ERROR] server.api: WebSocket error: Cannot call "send" once a close message has been sent.
+INFO:     127.0.0.1:50576 - "GET /health HTTP/1.1" 200 OK
+INFO:     100.88.250.104:10722 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:42:04,940 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:42:04,940 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:42:04,947 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:42:04,947 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:11313 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:42:23,258 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:42:23,258 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:42:23,262 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:42:23,262 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:11316 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:42:24,851 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:42:24,851 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:42:24,875 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:42:24,875 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:11317 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:42:25,511 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:42:25,511 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:42:25,516 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:42:25,516 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:11318 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:42:25,590 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:42:25,590 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:42:25,595 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:42:25,595 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:11319 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:42:26,101 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:42:26,101 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:42:26,106 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:42:26,106 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:11320 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:42:26,570 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:42:26,570 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:42:26,574 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:42:26,574 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:11321 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:42:26,847 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:42:26,847 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:42:26,854 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:42:26,854 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     100.88.250.104:10747 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:44:26,533 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:44:26,533 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:44:26,539 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:44:26,539 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:4972 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:44:42,869 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:44:42,869 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:44:42,877 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:44:42,877 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:4982 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:44:49,201 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:44:49,201 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:44:49,205 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:44:49,205 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:4984 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:44:50,093 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:44:50,093 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:44:50,098 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:44:50,098 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
