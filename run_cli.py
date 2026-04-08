@@ -301,12 +301,12 @@ class VoiceInputCLI:
         
         # 音频缓冲区
         audio_buffer = []
+        recording_active = True
         
         def audio_callback(indata, frames, time, status):
             if status:
                 logger.warning(f"Audio status: {status}")
-            # 使用 self.is_recording 控制，避免闭包变量问题
-            if self.is_recording:
+            if recording_active:
                 audio_buffer.append(indata.tobytes())
         
         stream = None
@@ -327,13 +327,7 @@ class VoiceInputCLI:
             
         except Exception as e:
             self.console.print(f"[red]录音失败: {e}[/red]")
-            self.is_recording = False
-            if stream:
-                stream.stop()
-                stream.close()
-            return
-        finally:
-            # 确保停止录音状态
+            recording_active = False
             self.is_recording = False
             if stream:
                 try:
@@ -341,7 +335,18 @@ class VoiceInputCLI:
                     stream.close()
                 except:
                     pass
+            return
+        finally:
+            # 停止音频采集
+            recording_active = False
+            if stream:
+                try:
+                    stream.stop()
+                    stream.close()
+                except:
+                    pass
         
+        self.is_recording = False
         self.console.print("[dim]正在识别...[/dim]")
         
         # 检查是否有音频
@@ -403,9 +408,6 @@ class VoiceInputCLI:
             self.console.print(f"[red]识别失败: {e}[/red]")
             logger.error(f"Recognition error: {e}")
         
-        # 确保重置录音状态
-        self.is_recording = False
-        
         self.console.print()
         
         if full_text:
@@ -420,9 +422,6 @@ class VoiceInputCLI:
                 self.console.print("[dim]已复制到剪贴板[/dim]")
         else:
             self.console.print("[yellow]未检测到语音内容[/yellow]")
-        
-        # 确保状态重置
-        self.is_recording = False
 
     def settings_menu(self):
         while True:
@@ -597,9 +596,8 @@ class VoiceInputCLI:
                 
                 if choice == "1":
                     asyncio.run_coroutine_threadsafe(self.record_and_transcribe(), self._loop)
-                    # 等待录音完成（record_and_transcribe 内部会处理 Enter 按键）
-                    while self.is_recording:
-                        time.sleep(0.1)
+                    # 等待协程完成（协程内部会处理所有逻辑）
+                    time.sleep(0.5)
                 elif choice == "2":
                     self.settings_menu()
                     self.clear_screen()
