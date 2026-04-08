@@ -8,3 +8,11 @@ Filtering content:  50% (1/2)Filtering content: 100% (2/2)Filtering content: 1
 [2026-04-08 12:55:08] [启动] 服务端口: 6543, 模型: qwen_asr
 /Users/shifengzhang/.openclaw/workspace/.venv/bin/python3: Error while finding module specification for 'voice_input_framework.server.api' (ModuleNotFoundError: No module named 'voice_input_framework')
 [2026-04-08 12:55:11] [错误] 服务启动失败，查看日志: tail -f /Users/shifengzhang/voice-input-framework/logs/voice_input_framework.log
+[2026-04-08 13:53:06] [停止] Voice Input Framework...
+[2026-04-08 13:53:06] [停止] 服务未运行
+[2026-04-08 13:53:08] [启动] Voice Input Framework...
+[2026-04-08 13:53:08] [启动] 检查模型...
+[2026-04-08 13:53:08] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 13:53:08] [启动] 服务端口: 6543, 模型: qwen_asr
+/Users/shifengzhang/.openclaw/workspace/.venv/bin/python3: Error while finding module specification for 'voice_input_framework.server.api' (ModuleNotFoundError: No module named 'voice_input_framework')
+[2026-04-08 13:53:11] [错误] 服务启动失败，查看日志: tail -f /Users/shifengzhang/voice-input-framework/logs/voice_input_framework.log

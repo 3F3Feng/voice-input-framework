@@ -174,7 +174,7 @@ start() {
     
     log "[启动] 服务端口: $PORT, 模型: $DEFAULT_MODEL"
     
-    nohup "$PYTHON_CMD" -m voice_input_framework.server.api \
+    nohup "$PYTHON_CMD" -c "import sys; sys.path.insert(0, '$PROJECT_DIR'); from server.api import main; main()" \
         >> "$LOG_FILE" 2>&1 &
     
     local PID=$!
