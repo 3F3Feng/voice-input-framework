@@ -1,0 +1,10 @@
+# Voice Input Framework - 模型文件占位符
+# 
+# 由于模型文件较大（数百MB至数GB），不直接存储在 git 仓库中。
+# 
+# 使用以下方式获取模型：
+# 1. 运行 ./scripts/download-models.sh 自动下载
+# 2. 使用 huggingface-cli 或 modelscope 手动下载
+# 3. 从其他机器复制 models 目录
+#
+# .gitattributes 配置了 LFS 跟踪 *.bin, *.pt, *.pth 等模型文件。
