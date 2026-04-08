@@ -1,176 +1,144 @@
 # Voice Input Framework
 
-基于大模型的语音输入法开发框架，支持实时流式语音识别。
+基于大模型的语音识别框架，支持实时流式语音识别。
 
-## 特性
+## 🎯 下载 Windows 客户端 (免安装)
 
-- 🎤 **实时音频采集**：支持麦克风实时录音，带 VAD（语音活动检测）
-- 🔊 **音频处理**：降噪、分块、格式转换、端点检测
-- 🚀 **流式识别**：一边录音一边识别，低延迟响应
-- 🤖 **多模型支持**：Qwen3-ASR、Whisper 等，可扩展
-- 🔌 **灵活架构**：客户端/服务端分离，支持远程部署
-- 📦 **开箱即用**：完善的 CLI 和示例代码
+直接从 GitHub Releases 下载 exe 文件：
+https://github.com/3F3Feng/voice-input-framework/releases
+
+## ✨ 特性
+
+- 🎤 **实时音频采集**：支持麦克风实时录音
+- 🚀 **流式识别**：低延迟响应
+- 🤖 **多模型支持**：Whisper、Qwen2-Audio 等
+- 🔌 **客户端/服务端分离**：支持远程部署
+- 🖥️ **Windows GUI 客户端**：一键安装
 
 ## 项目结构
 
 ```
 voice-input-framework/
-├── client/                 # 用户端
-│   ├── audio_capture.py   # 音频采集
-│   ├── audio_processor.py # 音频处理
-│   ├── stt_client.py      # STT 客户端
-│   └── cli.py             # 命令行界面
+├── client/                 # Python 客户端
+│   └── gui.py             # GUI 客户端 (PySimpleGUI)
 ├── server/                 # 服务端
 │   ├── api.py             # FastAPI 服务
-│   ├── stt_engine.py      # STT 引擎抽象
-│   ├── models/            # 模型实现
-│   │   ├── base.py       # 基类
-│   │   ├── whisper.py    # Whisper
-│   │   └── qwen_asr.py   # Qwen3-ASR
-│   └── config.py          # 服务端配置
-├── shared/                 # 共享模块
-│   ├── protocol.py        # 通信协议
-│   └── types.py           # 共享类型
-├── deploy/                 # 部署配置
-│   ├── daemon.sh          # 进程管理脚本
-│   ├── launchd.plist     # macOS 开机自启动
-│   └── voice-input-framework.service  # systemd (Linux)
-└── examples/              # 示例代码
-    ├── streaming_demo.py  # 流式识别演示
-    └── file_transcribe.py # 文件转写演示
+│   ├── stt_engine.py      # STT 引擎管理
+│   └── models/            # 模型实现
+├── examples/               # 示例代码
+│   ├── simple_client.py   # 简单命令行客户端
+│   ├── gui_client.py      # GUI 客户端
+│   └── file_transcribe.py # 文件转写
+├── deploy/                 # 部署脚本
+│   └── daemon.sh          # 进程管理
+└── .github/workflows/     # CI/CD
 ```
 
-## 安装
+## 🚀 快速开始
+
+### 1. 启动服务端
 
 ```bash
 # 克隆项目
-cd ~
 git clone https://github.com/3F3Feng/voice-input-framework.git
 cd voice-input-framework
 
-# 使用 OpenClaw 虚拟环境（已有 torch 等依赖）
-# 或创建独立环境
-python -m venv ~/.openclaw/workspace/.venv
-source ~/.openclaw/workspace/.venv/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
-```
-
-## 快速开始
-
-### 手动启动
-
-```bash
-# 使用 OpenClaw 虚拟环境
-source ~/.openclaw/workspace/.venv/bin/activate
-
 # 启动服务
-python -m voice_input_framework.server.api
-
-# 或指定配置
-VIF_PORT=6543 VIF_DEFAULT_MODEL=qwen_asr python -m voice_input_framework.server.api
-```
-
-### macOS 开机自启动
-
-```bash
-# 复制 plist 到 LaunchAgents
-mkdir -p ~/Library/LaunchAgents
-cp deploy/launchd.plist ~/Library/LaunchAgents/
-
-# 加载服务
-launchctl load ~/Library/LaunchAgents/com.openclaw.voice-input-framework.plist
-
-# 查看状态
-launchctl list | grep voice-input-framework
-
-# 查看日志
-tail -f ~/voice-input-framework/logs/stdout.log
-```
-
-### 进程管理脚本
-
-```bash
-# 启动
 ./deploy/daemon.sh start
-
-# 查看状态
-./deploy/daemon.sh status
-
-# 查看日志
-./deploy/daemon.sh log
-
-# 停止
-./deploy/daemon.sh stop
-
-# 重启
-./deploy/daemon.sh restart
 ```
 
-## 配置
+### 2. 使用客户端
 
-### 环境变量
+**方式一：下载 exe（推荐）**
+- 下载 `VoiceInputFramework-windows-x64.exe` 从 Releases
+- 双击运行
+
+**方式二：Python 运行**
+
+```bash
+# 安装依赖
+pip install PySimpleGUI sounddevice websockets pyperclip
+
+# 运行 GUI 客户端
+python -m client.gui
+
+# 或运行简单命令行客户端
+python examples/simple_client.py
+```
+
+## 📡 服务端 API
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | 健康检查 |
+| `/models` | GET | 获取可用模型列表 |
+| `/models/select` | POST | 切换模型 |
+| `/ws/stream` | WebSocket | 流式识别 |
+| `/transcribe` | POST | 文件转写 |
+
+### WebSocket 协议
+
+**客户端 → 服务端：**
+```json
+{"type": "config", "language": "auto"}
+{"type": "audio", "data": "<base64>"}
+{"type": "end"}
+```
+
+**服务端 → 客户端：**
+```json
+{"type": "ready", "model": "whisper"}
+{"type": "result", "text": "识别文字", "confidence": 0.95}
+{"type": "done"}
+```
+
+## 🔧 配置
+
+### 服务端环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `VIF_PORT` | 6543 | 服务端口 |
 | `VIF_HOST` | 0.0.0.0 | 监听地址 |
 | `VIF_DEFAULT_MODEL` | whisper | 默认模型 |
-| `VIF_LOG_LEVEL` | INFO | 日志级别 |
-| `VIF_LOG_FILE` | - | 日志文件路径 |
 
-### 模型配置
+### 客户端
 
-编辑 `server/config.py` 或使用环境变量配置。
+客户端启动时指定服务器地址：
+```bash
+python -m client.gui localhost 6543
+```
 
-## 客户端使用
+## 🏗️ 从源码构建 exe
 
 ```bash
-# 流式识别（实时语音输入）
-python -m voice_input_framework.client.cli stream
+# 安装构建依赖
+pip install pyinstaller PySimpleGUI sounddevice websockets pyperclip
+
+# 构建
+pyinstaller --name VoiceInputFramework --windowed --onefile client/gui.py
+
+# exe 文件位于 dist/VoiceInputFramework.exe
+```
+
+## 📝 开发
+
+### 运行服务端
+
+```bash
+./deploy/daemon.sh start
+```
+
+### 运行示例
+
+```bash
+# 简单客户端
+python examples/simple_client.py
 
 # 文件转写
-python -m voice_input_framework.client.cli transcribe audio.wav
-
-# 列出可用模型
-python -m voice_input_framework.client.cli list-models
+python examples/file_transcribe.py audio.wav --server http://localhost:6543
 ```
 
-## API 文档
-
-### REST API
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/health` | GET | 健康检查 |
-| `/models` | GET | 获取可用模型列表 |
-| `/models/select` | POST | 选择当前使用的模型 |
-| `/transcribe` | POST | 文件上传转写 |
-
-### WebSocket API
-
-| 端点 | 说明 |
-|------|------|
-| `/ws/stream` | 流式语音识别 |
-
-## 扩展模型
-
-继承 `BaseSTTEngine` 实现自定义模型：
-
-```python
-from voice_input_framework.server.models.base import BaseSTTEngine
-
-class MyCustomEngine(BaseSTTEngine):
-    async def load_model(self) -> None:
-        # 加载模型
-        pass
-    
-    async def transcribe(self, audio: bytes) -> TranscriptionResult:
-        # 同步转写
-        pass
-```
-
-## 许可证
+## 📄 许可证
 
 MIT License
