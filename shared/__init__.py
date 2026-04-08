@@ -1,33 +1,29 @@
 """
 Voice Input Framework - 共享模块
 
-包含客户端和服务端共享的类型定义和通信协议。
+包含协议定义和数据类型。
 """
 
-from voice_input_framework.shared.types import (
-    AudioChunk,
-    TranscriptionResult,
-    ErrorResponse,
-    ModelInfo,
-    HealthStatus,
-)
-from voice_input_framework.shared.protocol import (
-    MessageType,
+from .protocol import (
     ErrorCode,
+    MessageType,
     StreamRequest,
     StreamResponse,
 )
+from .data_types import (
+    AudioChunk,
+    TranscriptionResult,
+    ModelInfo,
+    HealthStatus,
+)
 
 __all__ = [
-    # Types
-    "AudioChunk",
-    "TranscriptionResult",
-    "ErrorResponse",
-    "ModelInfo",
-    "HealthStatus",
-    # Protocol
-    "MessageType",
     "ErrorCode",
+    "MessageType",
     "StreamRequest",
     "StreamResponse",
+    "AudioChunk",
+    "TranscriptionResult",
+    "ModelInfo",
+    "HealthStatus",
 ]

@@ -21,7 +21,7 @@ from protocol import (
     StreamRequest,
     StreamResponse,
 )
-from types import TranscriptionResult
+from data_types import TranscriptionResult
 
 logger = logging.getLogger(__name__)
 
