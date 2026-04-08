@@ -584,8 +584,9 @@ class VoiceInputCLI:
                 
                 if choice == "1":
                     asyncio.run_coroutine_threadsafe(self.record_and_transcribe(), self._loop)
-                    input("\n按 Enter 停止录音...")
-                    self.is_recording = False
+                    # 等待录音完成（record_and_transcribe 内部会处理 Enter 按键）
+                    while self.is_recording:
+                        time.sleep(0.1)
                 elif choice == "2":
                     self.settings_menu()
                     self.clear_screen()
