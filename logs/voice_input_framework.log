@@ -334,3 +334,221 @@ INFO:     connection open
 2026-04-08 15:06:32,987 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
 2026-04-08 15:06:32,987 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
 INFO:     connection closed
+INFO:     100.88.250.104:2019 - "WebSocket /ws/stream" [accepted]
+2026-04-08 15:16:16,864 [INFO] server.api: WebSocket connection accepted
+2026-04-08 15:16:16,864 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 15:16:16,871 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 15:16:16,871 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:1845 - "WebSocket /ws/stream" [accepted]
+2026-04-08 15:16:29,825 [INFO] server.api: WebSocket connection accepted
+2026-04-08 15:16:29,825 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 15:16:29,830 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 15:16:29,830 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 15:16:38,728 [ERROR] server.api: Error in websocket loop: (<CloseCode.ABNORMAL_CLOSURE: 1006>, '')
+2026-04-08 15:16:38,728 [ERROR] server.api: Error in websocket loop: (<CloseCode.ABNORMAL_CLOSURE: 1006>, '')
+2026-04-08 15:16:38,728 [ERROR] server.api: WebSocket error: Unexpected ASGI message 'websocket.send', after sending 'websocket.close' or response already completed.
+2026-04-08 15:16:38,728 [ERROR] server.api: WebSocket error: Unexpected ASGI message 'websocket.send', after sending 'websocket.close' or response already completed.
+INFO:     connection closed
+2026-04-08 15:16:38,730 [ERROR] server.api: Error in websocket loop: (<CloseCode.ABNORMAL_CLOSURE: 1006>, '')
+2026-04-08 15:16:38,730 [ERROR] server.api: Error in websocket loop: (<CloseCode.ABNORMAL_CLOSURE: 1006>, '')
+2026-04-08 15:16:38,730 [ERROR] server.api: WebSocket error: Unexpected ASGI message 'websocket.send', after sending 'websocket.close' or response already completed.
+2026-04-08 15:16:38,730 [ERROR] server.api: WebSocket error: Unexpected ASGI message 'websocket.send', after sending 'websocket.close' or response already completed.
+INFO:     connection closed
+INFO:     127.0.0.1:64854 - "GET /health HTTP/1.1" 200 OK
+[2026-04-08 15:18:55] [停止] Voice Input Framework...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-04-08 15:18:55,583 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 15:18:55,583 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 15:18:56,130 [INFO] server.stt_engine: Model unloaded: qwen_asr
+2026-04-08 15:18:56,130 [INFO] server.stt_engine: Model unloaded: qwen_asr
+2026-04-08 15:18:56,131 [INFO] server.api: Service shutdown and models unloaded
+2026-04-08 15:18:56,131 [INFO] server.api: Service shutdown and models unloaded
+INFO:     Application shutdown complete.
+INFO:     Finished server process [10616]
+/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/mp-vigy950t'}
+  warnings.warn(
+[2026-04-08 15:18:57] [停止] 服务已停止
+[2026-04-08 15:18:59] [启动] Voice Input Framework...
+[2026-04-08 15:18:59] [启动] 检查模型...
+[2026-04-08 15:18:59] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 15:18:59] [启动] 服务端口: 6543, 模型: qwen_asr
+2026-04-08 15:19:01,986 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 15:19:01,986 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 15:19:01,986 [INFO] server.api: Default model: whisper
+2026-04-08 15:19:01,986 [INFO] server.api: Default model: whisper
+2026-04-08 15:19:01,986 [INFO] server.api: Log level: INFO
+2026-04-08 15:19:01,986 [INFO] server.api: Log level: INFO
+INFO:     Started server process [12264]
+INFO:     Waiting for application startup.
+2026-04-08 15:19:02,001 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 15:19:02,001 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 15:19:02,083 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 15:19:02,083 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 15:19:02,090 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+2026-04-08 15:19:02,090 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/1259 [00:00<?, ?it/s]Loading weights:   0%|          | 2/1259 [00:00<01:54, 10.95it/s]Loading weights:  16%|█▋        | 207/1259 [00:00<00:01, 881.92it/s][2026-04-08 15:19:02] [启动] 服务已启动 (PID: 12264)
+[2026-04-08 15:19:02] [启动] WebSocket: ws://0.0.0.0:6543/ws/stream
+[2026-04-08 15:19:02] [启动] HTTP: http://0.0.0.0:6543
+Loading weights:  25%|██▌       | 321/1259 [00:00<00:00, 967.36it/s]Loading weights:  34%|███▍      | 434/1259 [00:00<00:00, 916.75it/s]Loading weights:  43%|████▎     | 539/1259 [00:00<00:00, 947.61it/s]Loading weights:  51%|█████     | 641/1259 [00:00<00:00, 908.54it/s]Loading weights:  59%|█████▊    | 737/1259 [00:00<00:00, 913.50it/s]Loading weights:  66%|██████▌   | 832/1259 [00:00<00:00, 869.48it/s]Loading weights:  73%|███████▎  | 922/1259 [00:01<00:00, 843.56it/s]Loading weights:  80%|████████  | 1008/1259 [00:01<00:00, 800.34it/s]Loading weights:  87%|████████▋ | 1096/1259 [00:01<00:00, 784.61it/s]Loading weights:  93%|█████████▎| 1176/1259 [00:01<00:00, 781.43it/s]Loading weights: 100%|█████████▉| 1255/1259 [00:01<00:00, 782.81it/s]Loading weights: 100%|██████████| 1259/1259 [00:01<00:00, 820.46it/s]
+2026-04-08 15:19:03,861 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 15:19:03,861 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 15:19:03,862 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 15:19:03,862 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 15:19:03,870 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 15:19:03,870 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 15:19:03,921 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 15:19:03,921 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 15:19:03,963 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 15:19:03,963 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 15:19:04,097 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 15:19:04,097 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 15:19:04,140 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 15:19:04,140 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 15:19:04,147 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 15:19:04,147 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 15:19:04,229 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 15:19:04,229 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 15:19:04,267 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 15:19:04,267 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 15:19:04,275 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 15:19:04,275 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 15:19:04,316 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 15:19:04,316 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 15:19:04,353 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 15:19:04,353 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 15:19:04,361 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 15:19:04,361 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 15:19:05,236 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 15:19:05,236 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 15:19:05,236 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 15:19:05,236 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 15:19:05,236 [INFO] server.api: Service started and default model initialized
+2026-04-08 15:19:05,236 [INFO] server.api: Service started and default model initialized
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:6543 (Press CTRL+C to quit)
+INFO:     100.88.250.104:3476 - "WebSocket /ws/stream" [accepted]
+2026-04-08 15:30:46,038 [INFO] server.api: WebSocket connection accepted
+2026-04-08 15:30:46,038 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 15:30:46,043 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 15:30:46,043 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+Using custom `forced_decoder_ids` from the (generation) config. This is deprecated in favor of the `task` and `language` flags/config options.
+Transcription using a multilingual Whisper will default to language detection followed by transcription instead of translation to English. This might be a breaking change for your use case. If you want to instead always translate your audio to English, make sure to pass `language='en'`. See https://github.com/huggingface/transformers/pull/28687 for more details.
+A custom logits processor of type <class 'transformers.generation.logits_process.SuppressTokensLogitsProcessor'> has been passed to `.generate()`, but it was also created in `.generate()`, given its parameterization. The custom <class 'transformers.generation.logits_process.SuppressTokensLogitsProcessor'> will take precedence. Please check the docstring of <class 'transformers.generation.logits_process.SuppressTokensLogitsProcessor'> to see related `.generate()` flags.
+A custom logits processor of type <class 'transformers.generation.logits_process.SuppressTokensAtBeginLogitsProcessor'> has been passed to `.generate()`, but it was also created in `.generate()`, given its parameterization. The custom <class 'transformers.generation.logits_process.SuppressTokensAtBeginLogitsProcessor'> will take precedence. Please check the docstring of <class 'transformers.generation.logits_process.SuppressTokensAtBeginLogitsProcessor'> to see related `.generate()` flags.
+2026-04-08 15:31:26,083 [ERROR] asyncio: ConnectionClosedError exception in shielded future
+future: <Future finished exception=ConnectionClosedError(None, Close(code=<CloseCode.INTERNAL_ERROR: 1011>, reason='keepalive ping timeout'), None)>
+Traceback (most recent call last):
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1276, in close_connection
+    await self.transfer_data_task
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 951, in transfer_data
+    await asyncio.shield(self._put_message_waiter)
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+websockets.exceptions.ConnectionClosedError: sent 1011 (internal error) keepalive ping timeout; no close frame received
+2026-04-08 15:31:26,083 [ERROR] asyncio: ConnectionClosedError exception in shielded future
+future: <Future finished exception=ConnectionClosedError(None, Close(code=<CloseCode.INTERNAL_ERROR: 1011>, reason='keepalive ping timeout'), None)>
+Traceback (most recent call last):
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1276, in close_connection
+    await self.transfer_data_task
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 951, in transfer_data
+    await asyncio.shield(self._put_message_waiter)
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+websockets.exceptions.ConnectionClosedError: sent 1011 (internal error) keepalive ping timeout; no close frame received
+INFO:     connection closed
+INFO:     100.88.250.104:10529 - "WebSocket /ws/stream" [accepted]
+2026-04-08 15:34:23,694 [INFO] server.api: WebSocket connection accepted
+2026-04-08 15:34:23,694 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 15:34:23,706 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 15:34:23,706 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     127.0.0.1:65376 - "GET /health HTTP/1.1" 200 OK
+INFO:     100.88.250.104:1912 - "WebSocket /ws/stream" [accepted]
+2026-04-08 15:34:33,631 [INFO] server.api: WebSocket connection accepted
+2026-04-08 15:34:33,631 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 15:34:33,637 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 15:34:33,637 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     100.88.250.104:1918 - "WebSocket /ws/stream" [accepted]
+2026-04-08 15:34:37,051 [INFO] server.api: WebSocket connection accepted
+2026-04-08 15:34:37,051 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 15:34:37,058 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 15:34:37,058 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 15:35:16,288 [ERROR] asyncio: ConnectionClosedError exception in shielded future
+future: <Future finished exception=ConnectionClosedError(None, Close(code=<CloseCode.INTERNAL_ERROR: 1011>, reason='keepalive ping timeout'), None)>
+Traceback (most recent call last):
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1276, in close_connection
+    await self.transfer_data_task
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 940, in transfer_data
+    message = await self.read_message()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1010, in read_message
+    frame = await self.read_data_frame(max_size=self.max_size)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1087, in read_data_frame
+    frame = await self.read_frame(max_size)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1144, in read_frame
+    frame = await Frame.read(
+            ^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/framing.py", line 70, in read
+    data = await reader(2)
+           ^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/streams.py", line 769, in readexactly
+    await self._wait_for_data('readexactly')
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/streams.py", line 539, in _wait_for_data
+    await self._waiter
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+websockets.exceptions.ConnectionClosedError: sent 1011 (internal error) keepalive ping timeout; no close frame received
+2026-04-08 15:35:16,288 [ERROR] asyncio: ConnectionClosedError exception in shielded future
+future: <Future finished exception=ConnectionClosedError(None, Close(code=<CloseCode.INTERNAL_ERROR: 1011>, reason='keepalive ping timeout'), None)>
+Traceback (most recent call last):
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1276, in close_connection
+    await self.transfer_data_task
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 940, in transfer_data
+    message = await self.read_message()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1010, in read_message
+    frame = await self.read_data_frame(max_size=self.max_size)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1087, in read_data_frame
+    frame = await self.read_frame(max_size)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/protocol.py", line 1144, in read_frame
+    frame = await Frame.read(
+            ^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/websockets/legacy/framing.py", line 70, in read
+    data = await reader(2)
+           ^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/streams.py", line 769, in readexactly
+    await self._wait_for_data('readexactly')
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/streams.py", line 539, in _wait_for_data
+    await self._waiter
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+websockets.exceptions.ConnectionClosedError: sent 1011 (internal error) keepalive ping timeout; no close frame received
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
