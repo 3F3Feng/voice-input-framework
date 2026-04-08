@@ -31,50 +31,110 @@ voice-input-framework/
 ├── shared/                 # 共享模块
 │   ├── protocol.py        # 通信协议
 │   └── types.py           # 共享类型
+├── deploy/                 # 部署配置
+│   ├── daemon.sh          # 进程管理脚本
+│   ├── launchd.plist     # macOS 开机自启动
+│   └── voice-input-framework.service  # systemd (Linux)
 └── examples/              # 示例代码
     ├── streaming_demo.py  # 流式识别演示
     └── file_transcribe.py # 文件转写演示
 ```
 
-## 快速开始
-
-### 安装
+## 安装
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-org/voice-input-framework.git
+cd ~
+git clone https://github.com/3F3Feng/voice-input-framework.git
 cd voice-input-framework
 
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-# venv\Scripts\activate   # Windows
+# 使用 OpenClaw 虚拟环境（已有 torch 等依赖）
+# 或创建独立环境
+python -m venv ~/.openclaw/workspace/.venv
+source ~/.openclaw/workspace/.venv/bin/activate
 
 # 安装依赖
 pip install -r requirements.txt
 ```
 
-### 启动服务端
+## 快速开始
+
+### 手动启动
 
 ```bash
-# 默认启动（Whisper 模型）
+# 使用 OpenClaw 虚拟环境
+source ~/.openclaw/workspace/.venv/bin/activate
+
+# 启动服务
 python -m voice_input_framework.server.api
 
-# 指定模型和端口
-python -m voice_input_framework.server.api --model whisper --port 8765
-
-# 使用 Qwen3-ASR 模型
-python -m voice_input_framework.server.api --model qwen_asr --port 8765
+# 或指定配置
+VIF_PORT=8765 VIF_DEFAULT_MODEL=qwen_asr python -m voice_input_framework.server.api
 ```
 
-### 客户端使用
+### macOS 开机自启动
 
 ```bash
-# 流式识别（实时）
-python -m voice_input_framework.client.cli voice stream --server ws://localhost:8765/ws/stream
+# 复制 plist 到 LaunchAgents
+mkdir -p ~/Library/LaunchAgents
+cp deploy/launchd.plist ~/Library/LaunchAgents/
+
+# 加载服务
+launchctl load ~/Library/LaunchAgents/com.openclaw.voice-input-framework.plist
+
+# 查看状态
+launchctl list | grep voice-input-framework
+
+# 查看日志
+tail -f ~/voice-input-framework/logs/stdout.log
+```
+
+### 进程管理脚本
+
+```bash
+# 启动
+./deploy/daemon.sh start
+
+# 查看状态
+./deploy/daemon.sh status
+
+# 查看日志
+./deploy/daemon.sh log
+
+# 停止
+./deploy/daemon.sh stop
+
+# 重启
+./deploy/daemon.sh restart
+```
+
+## 配置
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `VIF_PORT` | 8765 | 服务端口 |
+| `VIF_HOST` | 0.0.0.0 | 监听地址 |
+| `VIF_DEFAULT_MODEL` | whisper | 默认模型 |
+| `VIF_LOG_LEVEL` | INFO | 日志级别 |
+| `VIF_LOG_FILE` | - | 日志文件路径 |
+
+### 模型配置
+
+编辑 `server/config.py` 或使用环境变量配置。
+
+## 客户端使用
+
+```bash
+# 流式识别（实时语音输入）
+python -m voice_input_framework.client.cli stream
 
 # 文件转写
-python -m voice_input_framework.examples.file_transcribe audio.wav --server http://localhost:8765
+python -m voice_input_framework.client.cli transcribe audio.wav
+
+# 列出可用模型
+python -m voice_input_framework.client.cli list-models
 ```
 
 ## API 文档

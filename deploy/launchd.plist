@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.voice-input-framework</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/shifengzhang/.openclaw/workspace/.venv/bin/python3</string>
+        <string>-m</string>
+        <string>voice_input_framework.server.api</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/shifengzhang/voice-input-framework</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>VIF_PORT</key>
+        <string>8765</string>
+        <key>VIF_HOST</key>
+        <string>0.0.0.0</string>
+        <key>VIF_LOG_LEVEL</key>
+        <string>INFO</string>
+        <key>VIF_DEFAULT_MODEL</key>
+        <string>qwen_asr</string>
+    </dict>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/shifengzhang/voice-input-framework/logs/stdout.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/shifengzhang/voice-input-framework/logs/stderr.log</string>
+    
+    <key>ProcessType</key>
+    <string>Background</string>
+    
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

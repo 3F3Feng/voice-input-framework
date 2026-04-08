@@ -1,0 +1,20 @@
+[Unit]
+Description=Voice Input Framework - STT Service
+After=network.target
+
+[Service]
+Type=simple
+User=shifengzhang
+WorkingDirectory=/Users/shifengzhang/voice-input-framework
+Environment="VIF_PORT=8765"
+Environment="VIF_HOST=0.0.0.0"
+Environment="VIF_LOG_LEVEL=INFO"
+Environment="VIF_DEFAULT_MODEL=qwen_asr"
+ExecStart=/Users/shifengzhang/.openclaw/workspace/.venv/bin/python3 -m voice_input_framework.server.api
+Restart=always
+RestartSec=5
+StandardOutput=append:/Users/shifengzhang/voice-input-framework/logs/stdout.log
+StandardError=append:/Users/shifengzhang/voice-input-framework/logs/stderr.log
+
+[Install]
+WantedBy=multi-user.target

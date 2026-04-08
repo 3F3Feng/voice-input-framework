@@ -2,11 +2,15 @@
 Voice Input Framework - FastAPI 服务
 
 提供 REST API 和 WebSocket 接口。
+支持常驻运行和开机自启动。
 """
 
 import asyncio
 import logging
+import os
+import sys
 import time
+from pathlib import Path
 from typing import List
 
 import uvicorn
@@ -24,7 +28,21 @@ from voice_input_framework.shared.protocol import (
 from voice_input_framework.shared.types import HealthStatus, ModelInfo
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
+_log_level = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
+_log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+# 支持日志输出到文件
+_log_file = os.getenv("VIF_LOG_FILE")
+if _log_file:
+    _log_dir = Path(_log_file).parent
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(level=_log_level, format=_log_format, handlers=[
+        logging.FileHandler(_log_file),
+        logging.StreamHandler(sys.stdout)
+    ])
+else:
+    logging.basicConfig(level=_log_level, format=_log_format)
+
 logger = logging.getLogger(__name__)
 
 # 初始化配置和管理器
@@ -158,8 +176,25 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 def main():
-    """主函数"""
-    uvicorn.run(app, host=config.host, port=config.port)
+    """主函数 - 支持常驻运行"""
+    # 从环境变量读取配置
+    host = os.getenv("VIF_HOST", config.host)
+    port = int(os.getenv("VIF_PORT", config.port))
+    workers = int(os.getenv("VIF_WORKERS", 1))  # 单进程模式更稳定
+    
+    logger.info(f"Starting Voice Input Framework server on {host}:{port}")
+    logger.info(f"Default model: {config.default_model}")
+    logger.info(f"Log level: {_log_level}")
+    
+    # uvicorn 配置
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        workers=workers,
+        log_level=_log_level.lower(),
+        access_log=True,
+    )
 
 
 if __name__ == "__main__":
