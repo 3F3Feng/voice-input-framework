@@ -216,7 +216,7 @@ class VoiceInputApp(QMainWindow):
         menu.addSeparator()
         
         quit_action = QAction("退出", self)
-        quit_action.triggered.connect QApplication.quit
+        quit_action.triggered.connect(QApplication.quit)
         menu.addAction(quit_action)
         
         self.tray.setContextMenu(menu)
