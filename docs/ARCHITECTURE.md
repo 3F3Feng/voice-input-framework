@@ -169,6 +169,8 @@ voice-input-framework/
 - 声道: 1 (单声道)
 - 格式: 16-bit PCM (int16)
 - 块大小: 1024 frames
+- 主要方法: `capture()` 返回 `AsyncIterator[bytes]`
+- 支持 WebRTC VAD (Voice Activity Detection)
 
 ## 服务端流程
 

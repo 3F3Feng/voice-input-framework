@@ -333,7 +333,7 @@ class VoiceInputCLI:
                 async def send_audio():
                     nonlocal full_text
                     try:
-                        async for audio_chunk in capture.stream():
+                        async for audio_chunk in capture.capture():
                             if not self.is_recording:
                                 break
                             # 发送音频
