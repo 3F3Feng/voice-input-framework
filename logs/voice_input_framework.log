@@ -1140,3 +1140,81 @@ INFO:     Uvicorn running on http://0.0.0.0:6543 (Press CTRL+C to quit)
 2026-04-08 14:45:47,188 [INFO] server.stt_engine: Switched to model: qwen_asr
 INFO:     127.0.0.1:64052 - "POST /models/select HTTP/1.1" 200 OK
 INFO:     127.0.0.1:64248 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64259 - "GET /health HTTP/1.1" 200 OK
+INFO:     100.88.250.104:3197 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:46:50,204 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:46:50,204 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:3254 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:47:26,351 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:47:26,351 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:1312 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:47:37,975 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:47:37,975 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:1325 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:47:44,031 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:47:44,031 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:1340 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:47:51,573 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:47:51,573 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:1360 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:48:03,334 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:48:03,334 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:1367 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:48:09,331 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:48:09,331 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:3469 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:48:15,373 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:48:15,373 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:3471 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:48:15,849 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:48:15,849 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:3474 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:48:16,645 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:48:16,645 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     100.88.250.104:3489 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:48:25,478 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:48:25,478 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 14:48:32,326 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,326 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,326 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,326 [INFO] server.api: WebSocket disconnected
+INFO:     connection closed
+INFO:     connection closed
+2026-04-08 14:48:32,328 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,328 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,328 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,328 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,329 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,329 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,329 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,329 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,329 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,329 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,329 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,329 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,330 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,330 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,330 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,330 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,330 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:48:32,330 [INFO] server.api: WebSocket disconnected
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed

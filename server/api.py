@@ -7,6 +7,7 @@ Voice Input Framework - FastAPI 服务
 """
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -136,6 +137,12 @@ async def websocket_endpoint(websocket: WebSocket):
     
     engine = await engine_manager.get_current_engine()
     
+    # 发送就绪消息
+    await websocket.send_text(json.dumps({
+        "type": "ready",
+        "model": engine.model_name if engine else "unknown"
+    }))
+    
     async def audio_generator():
         """从 WebSocket 接收音频数据的生成器"""
         try:
@@ -147,7 +154,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if request.data:
                         yield request.data
                 elif request.type == MessageType.CONTROL:
-                    if request.control == "stop":
+                    if request.control == "stop" or request.control == "end":
                         break
                         
         except WebSocketDisconnect:
@@ -165,6 +172,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 is_final=result.is_final
             )
             await websocket.send_text(response.to_json())
+        
+        # 发送完成消息
+        await websocket.send_text(json.dumps({"type": "done"}))
             
     except Exception as e:
         logger.error(f"WebSocket error: {e}")

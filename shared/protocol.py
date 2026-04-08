@@ -1,7 +1,5 @@
 """
 Voice Input Framework - 通信协议定义
-
-定义客户端和服务端之间的通信协议。
 """
 
 import base64
@@ -12,19 +10,20 @@ from typing import Optional
 
 
 class MessageType(Enum):
-    """WebSocket 消息类型"""
     AUDIO_CHUNK = "audio_chunk"
     CONTROL = "control"
     CONFIG = "config"
     TRANSCRIPTION = "transcription"
+    READY = "ready"
+    RESULT = "result"
     ERROR = "error"
     STATUS = "status"
     HEARTBEAT = "heartbeat"
     HEARTBEAT_ACK = "heartbeat_ack"
+    DONE = "done"
 
 
 class ErrorCode(Enum):
-    """错误码"""
     UNKNOWN_ERROR = "E1000"
     INVALID_REQUEST = "E1001"
     AUDIO_DECODE_ERROR = "E2001"
@@ -35,7 +34,6 @@ class ErrorCode(Enum):
 
 @dataclass
 class StreamRequest:
-    """流式请求消息"""
     type: MessageType
     data: Optional[bytes] = None
     config: Optional[dict] = None
@@ -57,7 +55,14 @@ class StreamRequest:
     @classmethod
     def from_json(cls, json_str: str) -> "StreamRequest":
         d = json.loads(json_str)
-        msg_type = MessageType(d["type"])
+        msg_type_str = d["type"]
+        if msg_type_str == "audio":
+            msg_type = MessageType.AUDIO_CHUNK
+        elif msg_type_str in ("end", "stop"):
+            msg_type = MessageType.CONTROL
+            d["control"] = "end"
+        else:
+            msg_type = MessageType(msg_type_str)
         data = None
         if "data" in d:
             data = base64.b64decode(d["data"])
@@ -72,7 +77,6 @@ class StreamRequest:
 
 @dataclass
 class StreamResponse:
-    """流式响应消息"""
     type: MessageType
     text: Optional[str] = None
     confidence: float = 1.0
@@ -83,8 +87,9 @@ class StreamResponse:
     metadata: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
+        type_str = "result" if self.type == MessageType.TRANSCRIPTION else self.type.value
         payload = {
-            "type": self.type.value,
+            "type": type_str,
             "confidence": self.confidence,
             "language": self.language,
             "is_final": self.is_final,
@@ -114,9 +119,8 @@ class StreamResponse:
         )
 
 
-# WebSocket 协议常量
 WS_PING_INTERVAL = 30
 WS_PING_TIMEOUT = 10
-WS_MAX_MESSAGE_SIZE = 10 * 1024 * 1024  # 10MB
+WS_MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 API_TIMEOUT = 300
-MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100MB
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024
