@@ -18,7 +18,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>VIF_PORT</key>
-        <string>8765</string>
+        <string>6543</string>
         <key>VIF_HOST</key>
         <string>0.0.0.0</string>
         <key>VIF_LOG_LEVEL</key>

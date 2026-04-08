@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=shifengzhang
 WorkingDirectory=/Users/shifengzhang/voice-input-framework
-Environment="VIF_PORT=8765"
+Environment="VIF_PORT=6543"
 Environment="VIF_HOST=0.0.0.0"
 Environment="VIF_LOG_LEVEL=INFO"
 Environment="VIF_DEFAULT_MODEL=qwen_asr"

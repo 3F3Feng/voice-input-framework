@@ -69,7 +69,7 @@ source ~/.openclaw/workspace/.venv/bin/activate
 python -m voice_input_framework.server.api
 
 # 或指定配置
-VIF_PORT=8765 VIF_DEFAULT_MODEL=qwen_asr python -m voice_input_framework.server.api
+VIF_PORT=6543 VIF_DEFAULT_MODEL=qwen_asr python -m voice_input_framework.server.api
 ```
 
 ### macOS 开机自启动
@@ -114,7 +114,7 @@ tail -f ~/voice-input-framework/logs/stdout.log
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `VIF_PORT` | 8765 | 服务端口 |
+| `VIF_PORT` | 6543 | 服务端口 |
 | `VIF_HOST` | 0.0.0.0 | 监听地址 |
 | `VIF_DEFAULT_MODEL` | whisper | 默认模型 |
 | `VIF_LOG_LEVEL` | INFO | 日志级别 |

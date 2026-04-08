@@ -24,7 +24,7 @@ class ModelConfig:
 class ServerConfig:
     """服务端配置"""
     host: str = "0.0.0.0"
-    port: int = 8765
+    port: int = 6543
     debug: bool = False
     default_model: str = "whisper"
     models: dict[str, ModelConfig] = field(default_factory=dict)
