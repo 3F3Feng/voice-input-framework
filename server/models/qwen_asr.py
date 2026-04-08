@@ -1,7 +1,7 @@
 """
-Voice Input Framework - Qwen3-ASR 引擎实现
+Voice Input Framework - Qwen2-Audio 引擎实现
 
-基于 Qwen3-ASR 的语音识别引擎。
+基于 Qwen2-Audio 的语音识别引擎。
 """
 
 import asyncio
@@ -18,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 class QwenASREngine(BaseSTTEngine):
-    """Qwen3-ASR STT 引擎"""
+    """Qwen2-Audio STT 引擎"""
 
     MODEL_CONFIGS = {
         "qwen_asr": {
-            "model_id": "Qwen/Qwen3-ASR-1.7B",
+            "model_id": "Qwen/Qwen2-Audio-7B-Instruct",
             "memory_gb": 5,
         },
     }
@@ -37,7 +37,7 @@ class QwenASREngine(BaseSTTEngine):
         if self._is_loaded:
             return
 
-        logger.info(f"Loading Qwen3-ASR model: {self.model_config['model_id']}")
+        logger.info(f"Loading Qwen2-Audio model: {self.model_config['model_id']}")
 
         try:
             loop = asyncio.get_event_loop()
@@ -47,30 +47,20 @@ class QwenASREngine(BaseSTTEngine):
             raise STTEngineError(f"Failed to load model: {e}")
 
     def _load_sync(self):
-        try:
-            from modelscope import snapshot_download, AutoProcessor, AutoModelForSpeech
-        except ImportError:
-            from transformers import AutoProcessor, AutoModelForSpeech
-            # 从 HuggingFace 下载
-            model_id = self.model_config["model_id"]
-            device = self.detect_device()
-            dtype = torch.float16 if device == "cuda" else torch.float32
-
-            self._processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-            self._model = AutoModelForSpeech.from_pretrained(
-                model_id, torch_dtype=dtype, device=device, trust_remote_code=True
-            )
-            return
-
-        # Modelscope 下载
-        model_dir = snapshot_download(self.model_config["model_id"])
+        from transformers import Qwen2AudioForConditionalGeneration, Qwen2AudioProcessor
+        
+        model_id = self.model_config["model_id"]
         device = self.detect_device()
         dtype = torch.float16 if device == "cuda" else torch.float32
 
-        self._processor = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True)
-        self._model = AutoModelForSpeech.from_pretrained(
-            model_dir, torch_dtype=dtype, device=device, trust_remote_code=True
+        logger.info(f"Loading model on {device} with {dtype}")
+        
+        self._processor = Qwen2AudioProcessor.from_pretrained(model_id)
+        self._model = Qwen2AudioForConditionalGeneration.from_pretrained(
+            model_id,
+            torch_dtype=dtype,
         )
+        self._model = self._model.to(device)
 
     async def unload(self) -> None:
         if not self._is_loaded:
@@ -98,14 +88,20 @@ class QwenASREngine(BaseSTTEngine):
         loop = asyncio.get_event_loop()
         audio_array = self._convert_audio(audio_data, sample_rate)
 
+        # Qwen2Audio 需要特定的输入格式
         inputs = self._processor(
-            audio_array, sampling_rate=sample_rate, return_tensors="pt"
+            audios=audio_array,
+            sampling_rate=sample_rate,
+            return_tensors="pt",
         )
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
 
         def _do():
             with torch.no_grad():
-                generated_ids = self._model.generate(**inputs, max_new_tokens=256)
+                generated_ids = self._model.generate(
+                    **inputs,
+                    max_new_tokens=256,
+                )
             return self._processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
         text = await loop.run_in_executor(None, _do)

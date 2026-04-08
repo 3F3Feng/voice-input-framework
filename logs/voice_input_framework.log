@@ -30,3 +30,1113 @@ Traceback (most recent call last):
     from voice_input_framework.server.config import ServerConfig, ModelConfig
 ModuleNotFoundError: No module named 'voice_input_framework'
 [2026-04-08 13:55:07] [错误] 服务启动失败，查看日志: tail -f /Users/shifengzhang/voice-input-framework/logs/voice_input_framework.log
+[2026-04-08 14:34:06] [状态] 未运行
+[2026-04-08 14:34:09] [启动] Voice Input Framework...
+[2026-04-08 14:34:09] [启动] 检查模型...
+[2026-04-08 14:34:09] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 14:34:09] [启动] 服务端口: 6543, 模型: qwen_asr
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import sys; sys.path.insert(0, '/Users/shifengzhang/voice-input-framework'); from server.api import main; main()
+                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/voice-input-framework/server/__init__.py", line 6, in <module>
+    from server.stt_engine import STTEngineManager
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 12, in <module>
+    from server.models import AVAILABLE_MODELS, BaseSTTEngine
+  File "/Users/shifengzhang/voice-input-framework/server/models/__init__.py", line 8, in <module>
+    from server.models.whisper import WhisperEngine
+  File "/Users/shifengzhang/voice-input-framework/server/models/whisper.py", line 12, in <module>
+    import numpy as np
+ModuleNotFoundError: No module named 'numpy'
+[2026-04-08 14:34:12] [错误] 服务启动失败，查看日志: tail -f /Users/shifengzhang/voice-input-framework/logs/voice_input_framework.log
+[2026-04-08 14:35:19] [启动] Voice Input Framework...
+[2026-04-08 14:35:19] [启动] 检查模型...
+[2026-04-08 14:35:19] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 14:35:19] [启动] 服务端口: 6543, 模型: qwen_asr
+[2026-04-08 14:35:22] [启动] 服务已启动 (PID: 8550)
+[2026-04-08 14:35:22] [启动] WebSocket: ws://0.0.0.0:6543/ws/stream
+[2026-04-08 14:35:22] [启动] HTTP: http://0.0.0.0:6543
+2026-04-08 14:35:25,195 [ERROR] fastapi: Form data requires "python-multipart" to be installed. 
+You can install "python-multipart" with: 
+
+pip install python-multipart
+
+2026-04-08 14:35:25,195 [ERROR] fastapi: Form data requires "python-multipart" to be installed. 
+You can install "python-multipart" with: 
+
+pip install python-multipart
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import sys; sys.path.insert(0, '/Users/shifengzhang/voice-input-framework'); from server.api import main; main()
+                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/voice-input-framework/server/api.py", line 105, in <module>
+    @app.post("/models/select")
+     ~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 1450, in decorator
+    self.add_api_route(
+    ~~~~~~~~~~~~~~~~~~^
+        path,
+        ^^^^^
+    ...<23 lines>...
+        generate_unique_id_function=generate_unique_id_function,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 1386, in add_api_route
+    route = route_class(
+        self.prefix + path,
+    ...<27 lines>...
+        ),
+    )
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 949, in __init__
+    self.dependant = get_dependant(
+                     ~~~~~~~~~~~~~^
+        path=self.path_format, call=self.endpoint, scope="function"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/dependencies/utils.py", line 311, in get_dependant
+    param_details = analyze_param(
+        param_name=param_name,
+    ...<2 lines>...
+        is_path_param=is_path_param,
+    )
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/dependencies/utils.py", line 535, in analyze_param
+    ensure_multipart_is_installed()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/dependencies/utils.py", line 120, in ensure_multipart_is_installed
+    raise RuntimeError(multipart_not_installed_error) from None
+RuntimeError: Form data requires "python-multipart" to be installed. 
+You can install "python-multipart" with: 
+
+pip install python-multipart
+
+[2026-04-08 14:35:42] [停止] Voice Input Framework...
+[2026-04-08 14:35:42] [停止] 服务未运行
+[2026-04-08 14:35:44] [启动] Voice Input Framework...
+[2026-04-08 14:35:44] [启动] 检查模型...
+[2026-04-08 14:35:44] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 14:35:44] [启动] 服务端口: 6543, 模型: qwen_asr
+2026-04-08 14:35:45,950 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:35:45,950 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:35:45,950 [INFO] server.api: Default model: whisper
+2026-04-08 14:35:45,950 [INFO] server.api: Default model: whisper
+2026-04-08 14:35:45,950 [INFO] server.api: Log level: INFO
+2026-04-08 14:35:45,950 [INFO] server.api: Log level: INFO
+INFO:     Started server process [8612]
+INFO:     Waiting for application startup.
+2026-04-08 14:35:46,087 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:35:46,087 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:35:46,229 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:35:46,229 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:35:46,242 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:35:46,242 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:35:46,256 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:35:46,256 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+`torch_dtype` is deprecated! Use `dtype` instead!
+2026-04-08 14:35:46,387 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/model.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:35:46,387 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/model.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:35:46,619 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/xet-read-token/06f233fe06e710322aca913c1bc4249a0d71fce1 "HTTP/1.1 200 OK"
+2026-04-08 14:35:46,619 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/xet-read-token/06f233fe06e710322aca913c1bc4249a0d71fce1 "HTTP/1.1 200 OK"
+[2026-04-08 14:35:47] [启动] 服务已启动 (PID: 8612)
+[2026-04-08 14:35:47] [启动] WebSocket: ws://0.0.0.0:6543/ws/stream
+[2026-04-08 14:35:47] [启动] HTTP: http://0.0.0.0:6543
+Loading weights:   0%|          | 0/1259 [00:00<?, ?it/s]Loading weights:  32%|███▏      | 399/1259 [00:00<00:00, 3867.15it/s]Loading weights:  62%|██████▏   | 786/1259 [00:00<00:00, 1337.32it/s]Loading weights:  88%|████████▊ | 1111/1259 [00:00<00:00, 1762.19it/s]Loading weights: 100%|██████████| 1259/1259 [00:00<00:00, 1864.54it/s]
+2026-04-08 14:36:06,760 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:06,760 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:06,766 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,766 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,774 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,774 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,816 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:06,816 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:06,824 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,824 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,833 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,833 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,881 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:06,881 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:06,931 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,931 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,970 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/vocab.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:06,970 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/vocab.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:36:06,971 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:36:06,971 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:36:06,979 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/vocab.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,979 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/vocab.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,991 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/vocab.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:06,991 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/vocab.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,044 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/tokenizer.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,044 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/tokenizer.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,055 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/tokenizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,055 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/tokenizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,070 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/tokenizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,070 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/tokenizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,162 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/merges.txt "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,162 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/merges.txt "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,173 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/merges.txt "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,173 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/merges.txt "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,187 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/merges.txt "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,187 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/merges.txt "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,238 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/normalizer.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,238 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/normalizer.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,247 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/normalizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,247 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/normalizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,262 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/normalizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,262 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/normalizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,312 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/added_tokens.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,312 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/added_tokens.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,323 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/added_tokens.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,323 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/added_tokens.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,340 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/added_tokens.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,340 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/added_tokens.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,396 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/special_tokens_map.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,396 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/special_tokens_map.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,407 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/special_tokens_map.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,407 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/special_tokens_map.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,419 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/special_tokens_map.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,419 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/special_tokens_map.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,473 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/chat_template.jinja "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:07,473 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/chat_template.jinja "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:07,626 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:07,626 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:07,664 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,664 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,673 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,673 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,682 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,682 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,733 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:07,733 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:07,775 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,775 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,783 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,783 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,830 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:07,830 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:36:07,871 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,871 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:36:07,881 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:07,881 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:36:09,271 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:36:09,271 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:36:09,271 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:36:09,271 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:36:09,271 [INFO] server.api: Service started and default model initialized
+2026-04-08 14:36:09,271 [INFO] server.api: Service started and default model initialized
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:6543 (Press CTRL+C to quit)
+INFO:     127.0.0.1:63583 - "GET /health HTTP/1.1" 200 OK
+[2026-04-08 14:36:26] [状态] 运行中 (PID: 8612)
+[2026-04-08 14:36:26] [状态] Python  8612 shifengzhang   19u  IPv4 0xae27f4aa0fd86f59      0t0  TCP *:6543 (LISTEN)
+INFO:     127.0.0.1:63586 - "GET /health HTTP/1.1" 200 OK
+[2026-04-08 14:36:26] [状态] 健康检查: {"status":"ok","version":"1.0.0","uptime_seconds":40.199692249298096,"current_model":"whisper","loaded_models":["whisper"],"active_connections":0,"memory_usage_mb":null}
+INFO:     100.88.250.104:5819 - "WebSocket /ws/stream" [accepted]
+2026-04-08 14:36:53,275 [INFO] server.api: WebSocket connection accepted
+2026-04-08 14:36:53,275 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+INFO:     127.0.0.1:63600 - "GET /health HTTP/1.1" 200 OK
+2026-04-08 14:37:08,848 [INFO] server.models.qwen_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+2026-04-08 14:37:08,848 [INFO] server.models.qwen_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+2026-04-08 14:37:08,848 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+2026-04-08 14:37:08,848 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+INFO:     127.0.0.1:63607 - "POST /models/select HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 51, in _load_sync
+    from modelscope import snapshot_download, AutoProcessor, AutoModelForSpeech
+ModuleNotFoundError: No module named 'modelscope'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 44, in load
+    await loop.run_in_executor(None, self._load_sync)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 53, in _load_sync
+    from transformers import AutoProcessor, AutoModelForSpeech
+ImportError: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/protocols/http/h11_impl.py", line 415, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 328, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/voice-input-framework/server/api.py", line 109, in select_model
+    await engine_manager.switch_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 59, in switch_model
+    await self.load_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 49, in load_model
+    await engine.load()
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 47, in load
+    raise STTEngineError(f"Failed to load model: {e}")
+server.models.base.STTEngineError: Failed to load model: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+2026-04-08 14:37:12,187 [INFO] server.models.qwen_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+2026-04-08 14:37:12,187 [INFO] server.models.qwen_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+2026-04-08 14:37:12,188 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+2026-04-08 14:37:12,188 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+INFO:     127.0.0.1:63609 - "POST /models/select HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 51, in _load_sync
+    from modelscope import snapshot_download, AutoProcessor, AutoModelForSpeech
+ModuleNotFoundError: No module named 'modelscope'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 44, in load
+    await loop.run_in_executor(None, self._load_sync)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 53, in _load_sync
+    from transformers import AutoProcessor, AutoModelForSpeech
+ImportError: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/protocols/http/h11_impl.py", line 415, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 328, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/voice-input-framework/server/api.py", line 109, in select_model
+    await engine_manager.switch_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 59, in switch_model
+    await self.load_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 49, in load_model
+    await engine.load()
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 47, in load
+    raise STTEngineError(f"Failed to load model: {e}")
+server.models.base.STTEngineError: Failed to load model: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+[2026-04-08 14:37:25] [停止] Voice Input Framework...
+INFO:     Shutting down
+2026-04-08 14:37:25,553 [INFO] server.api: WebSocket disconnected
+2026-04-08 14:37:25,553 [INFO] server.api: WebSocket disconnected
+INFO:     connection closed
+INFO:     Waiting for application shutdown.
+2026-04-08 14:37:25,655 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 14:37:25,655 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 14:37:25,655 [INFO] server.api: Service shutdown and models unloaded
+2026-04-08 14:37:25,655 [INFO] server.api: Service shutdown and models unloaded
+INFO:     Application shutdown complete.
+INFO:     Finished server process [8612]
+/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/mp-_ptahqw8'}
+  warnings.warn(
+[2026-04-08 14:37:27] [停止] 服务已停止
+[2026-04-08 14:37:29] [启动] Voice Input Framework...
+[2026-04-08 14:37:29] [启动] 检查模型...
+[2026-04-08 14:37:29] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 14:37:29] [启动] 服务端口: 6543, 模型: qwen_asr
+2026-04-08 14:37:31,162 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:37:31,162 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:37:31,162 [INFO] server.api: Default model: whisper
+2026-04-08 14:37:31,162 [INFO] server.api: Default model: whisper
+2026-04-08 14:37:31,162 [INFO] server.api: Log level: INFO
+2026-04-08 14:37:31,162 [INFO] server.api: Log level: INFO
+INFO:     Started server process [8855]
+INFO:     Waiting for application startup.
+2026-04-08 14:37:31,172 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:37:31,172 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:37:31,248 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:37:31,248 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:37:31,249 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:37:31,249 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:37:31,256 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:37:31,256 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/1259 [00:00<?, ?it/s]Loading weights:  39%|███▉      | 489/1259 [00:00<00:00, 4869.41it/s]Loading weights:  78%|███████▊  | 976/1259 [00:00<00:00, 4692.87it/s]Loading weights: 100%|██████████| 1259/1259 [00:00<00:00, 4732.75it/s]
+2026-04-08 14:37:31,784 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:37:31,784 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:37:31,791 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:37:31,791 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:37:31,833 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:37:31,833 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:37:31,877 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:37:31,877 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:37:31,984 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:37:31,984 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:37:32,027 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:37:32,027 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:37:32,034 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:37:32,034 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:37:32,087 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:37:32,087 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:37:32,126 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:37:32,126 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:37:32,132 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:37:32,132 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:37:32,178 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:37:32,178 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:37:32,227 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:37:32,227 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:37:32,235 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:37:32,235 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+[2026-04-08 14:37:32] [启动] 服务已启动 (PID: 8855)
+[2026-04-08 14:37:32] [启动] WebSocket: ws://0.0.0.0:6543/ws/stream
+[2026-04-08 14:37:32] [启动] HTTP: http://0.0.0.0:6543
+2026-04-08 14:37:33,136 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:37:33,136 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:37:33,136 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:37:33,136 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:37:33,136 [INFO] server.api: Service started and default model initialized
+2026-04-08 14:37:33,136 [INFO] server.api: Service started and default model initialized
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:6543 (Press CTRL+C to quit)
+2026-04-08 14:37:43,860 [INFO] server.models.qwen_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+2026-04-08 14:37:43,860 [INFO] server.models.qwen_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+2026-04-08 14:37:43,987 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+2026-04-08 14:37:43,987 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+INFO:     127.0.0.1:63640 - "POST /models/select HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 51, in _load_sync
+    from modelscope import snapshot_download, AutoProcessor, AutoModelForSpeech
+ImportError: cannot import name 'AutoModelForSpeech' from 'modelscope' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/modelscope/__init__.py)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 44, in load
+    await loop.run_in_executor(None, self._load_sync)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 53, in _load_sync
+    from transformers import AutoProcessor, AutoModelForSpeech
+ImportError: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/protocols/http/h11_impl.py", line 415, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 328, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/voice-input-framework/server/api.py", line 109, in select_model
+    await engine_manager.switch_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 59, in switch_model
+    await self.load_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 49, in load_model
+    await engine.load()
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 47, in load
+    raise STTEngineError(f"Failed to load model: {e}")
+server.models.base.STTEngineError: Failed to load model: cannot import name 'AutoModelForSpeech' from 'transformers' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/__init__.py)
+[2026-04-08 14:38:04] [停止] Voice Input Framework...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-04-08 14:38:04,892 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 14:38:04,892 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 14:38:04,892 [INFO] server.api: Service shutdown and models unloaded
+2026-04-08 14:38:04,892 [INFO] server.api: Service shutdown and models unloaded
+INFO:     Application shutdown complete.
+INFO:     Finished server process [8855]
+/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/mp-_2ope132'}
+  warnings.warn(
+[2026-04-08 14:38:06] [停止] 服务已停止
+[2026-04-08 14:38:09] [启动] Voice Input Framework...
+[2026-04-08 14:38:09] [启动] 检查模型...
+[2026-04-08 14:38:09] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 14:38:09] [启动] 服务端口: 6543, 模型: qwen_asr
+2026-04-08 14:38:10,405 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:38:10,405 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:38:10,405 [INFO] server.api: Default model: whisper
+2026-04-08 14:38:10,405 [INFO] server.api: Default model: whisper
+2026-04-08 14:38:10,405 [INFO] server.api: Log level: INFO
+2026-04-08 14:38:10,405 [INFO] server.api: Log level: INFO
+INFO:     Started server process [8924]
+INFO:     Waiting for application startup.
+2026-04-08 14:38:10,412 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:38:10,412 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:38:10,491 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:38:10,491 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:38:10,498 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:38:10,498 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/1259 [00:00<?, ?it/s]Loading weights:  39%|███▊      | 485/1259 [00:00<00:00, 4848.50it/s]Loading weights:  77%|███████▋  | 970/1259 [00:00<00:00, 4832.39it/s]Loading weights: 100%|██████████| 1259/1259 [00:00<00:00, 4716.11it/s]
+2026-04-08 14:38:11,033 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:38:11,033 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:38:11,034 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:38:11,034 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:38:11,042 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:38:11,042 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:38:11,088 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:38:11,088 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:38:11,127 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:38:11,127 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:38:11,264 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:38:11,264 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:38:11,301 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:38:11,301 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:38:11,308 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:38:11,308 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:38:11,357 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:38:11,357 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:38:11,402 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:38:11,402 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:38:11,414 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:38:11,414 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:38:11,467 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:38:11,467 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:38:11,518 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:38:11,518 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:38:11,528 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:38:11,528 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+[2026-04-08 14:38:12] [启动] 服务已启动 (PID: 8924)
+[2026-04-08 14:38:12] [启动] WebSocket: ws://0.0.0.0:6543/ws/stream
+[2026-04-08 14:38:12] [启动] HTTP: http://0.0.0.0:6543
+2026-04-08 14:38:12,416 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:38:12,416 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:38:12,416 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:38:12,416 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:38:12,416 [INFO] server.api: Service started and default model initialized
+2026-04-08 14:38:12,416 [INFO] server.api: Service started and default model initialized
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:6543 (Press CTRL+C to quit)
+2026-04-08 14:38:21,353 [INFO] server.models.qwen_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+2026-04-08 14:38:21,353 [INFO] server.models.qwen_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+2026-04-08 14:38:21,445 [ERROR] server.models.qwen_asr: Modelscope not available: cannot import name 'AutoModelForSpeech' from 'modelscope' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/modelscope/__init__.py)
+2026-04-08 14:38:21,445 [ERROR] server.models.qwen_asr: Modelscope not available: cannot import name 'AutoModelForSpeech' from 'modelscope' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/modelscope/__init__.py)
+2026-04-08 14:38:21,445 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: Modelscope not installed. Run: pip install modelscope
+2026-04-08 14:38:21,445 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: Modelscope not installed. Run: pip install modelscope
+INFO:     127.0.0.1:63671 - "POST /models/select HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 52, in _load_sync
+    from modelscope import snapshot_download, AutoProcessor, AutoModelForSpeech
+ImportError: cannot import name 'AutoModelForSpeech' from 'modelscope' (/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/modelscope/__init__.py)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 44, in load
+    await loop.run_in_executor(None, self._load_sync)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 73, in _load_sync
+    raise STTEngineError(f"Modelscope not installed. Run: pip install modelscope")
+server.models.base.STTEngineError: Modelscope not installed. Run: pip install modelscope
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/protocols/http/h11_impl.py", line 415, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 328, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/voice-input-framework/server/api.py", line 109, in select_model
+    await engine_manager.switch_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 59, in switch_model
+    await self.load_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 49, in load_model
+    await engine.load()
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 47, in load
+    raise STTEngineError(f"Failed to load model: {e}")
+server.models.base.STTEngineError: Failed to load model: Modelscope not installed. Run: pip install modelscope
+[2026-04-08 14:39:04] [停止] Voice Input Framework...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-04-08 14:39:04,746 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 14:39:04,746 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 14:39:04,746 [INFO] server.api: Service shutdown and models unloaded
+2026-04-08 14:39:04,746 [INFO] server.api: Service shutdown and models unloaded
+INFO:     Application shutdown complete.
+INFO:     Finished server process [8924]
+/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/mp-4zwq4zcb'}
+  warnings.warn(
+[2026-04-08 14:39:06] [停止] 服务已停止
+[2026-04-08 14:39:08] [启动] Voice Input Framework...
+[2026-04-08 14:39:08] [启动] 检查模型...
+[2026-04-08 14:39:08] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 14:39:08] [启动] 服务端口: 6543, 模型: qwen_asr
+2026-04-08 14:39:10,267 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:39:10,267 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:39:10,267 [INFO] server.api: Default model: whisper
+2026-04-08 14:39:10,267 [INFO] server.api: Default model: whisper
+2026-04-08 14:39:10,267 [INFO] server.api: Log level: INFO
+2026-04-08 14:39:10,267 [INFO] server.api: Log level: INFO
+INFO:     Started server process [9009]
+INFO:     Waiting for application startup.
+2026-04-08 14:39:10,274 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:39:10,274 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:39:10,366 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:10,366 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:10,373 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:10,373 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/1259 [00:00<?, ?it/s]Loading weights:  37%|███▋      | 471/1259 [00:00<00:00, 4686.67it/s]Loading weights:  75%|███████▌  | 946/1259 [00:00<00:00, 4661.38it/s]Loading weights: 100%|██████████| 1259/1259 [00:00<00:00, 4656.62it/s]
+2026-04-08 14:39:10,915 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:10,915 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:10,922 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:10,922 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:10,973 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:10,973 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:11,023 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:39:11,023 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:39:11,166 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:11,166 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:11,202 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:11,202 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:11,213 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:11,213 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:11,265 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:11,265 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:11,304 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:11,304 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:11,312 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:11,312 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:11,358 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:11,358 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:11,407 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:11,407 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:11,417 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:11,417 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+[2026-04-08 14:39:12] [启动] 服务已启动 (PID: 9009)
+[2026-04-08 14:39:12] [启动] WebSocket: ws://0.0.0.0:6543/ws/stream
+[2026-04-08 14:39:12] [启动] HTTP: http://0.0.0.0:6543
+2026-04-08 14:39:12,268 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:39:12,268 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:39:12,268 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:39:12,268 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:39:12,268 [INFO] server.api: Service started and default model initialized
+2026-04-08 14:39:12,268 [INFO] server.api: Service started and default model initialized
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:6543 (Press CTRL+C to quit)
+2026-04-08 14:39:20,382 [INFO] server.models.qwen_asr: Loading Qwen2-Audio model: Qwen/Qwen2-Audio-7B-Instruct
+2026-04-08 14:39:20,382 [INFO] server.models.qwen_asr: Loading Qwen2-Audio model: Qwen/Qwen2-Audio-7B-Instruct
+2026-04-08 14:39:20,403 [INFO] server.models.qwen_asr: Loading model on mps with torch.float32
+2026-04-08 14:39:20,403 [INFO] server.models.qwen_asr: Loading model on mps with torch.float32
+2026-04-08 14:39:20,460 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,460 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,538 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,538 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,609 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/chat_template.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,609 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/chat_template.json "HTTP/1.1 404 Not Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:39:20,609 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:39:20,609 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:39:20,660 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/chat_template.jinja "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,660 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/chat_template.jinja "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,709 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/audio_tokenizer_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,709 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/audio_tokenizer_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,754 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,754 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,799 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:20,799 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:20,808 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:20,808 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:20,819 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:20,819 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:20,868 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,868 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:20,910 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:20,910 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:20,920 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:20,920 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:20,992 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:20,992 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:21,003 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,003 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,015 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,015 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,091 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:21,091 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:21,103 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,103 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,117 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,117 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,185 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:21,185 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:21,229 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,229 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,276 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/vocab.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:21,276 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/vocab.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:21,289 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/vocab.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,289 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/vocab.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,307 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/vocab.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,307 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/vocab.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,407 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/merges.txt "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:21,407 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/merges.txt "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:21,419 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/merges.txt "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,419 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/merges.txt "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,431 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/merges.txt "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,431 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/merges.txt "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,490 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/tokenizer.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:21,490 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/tokenizer.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:21,506 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,506 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,522 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,522 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,620 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/added_tokens.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:21,620 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/added_tokens.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:21,673 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/special_tokens_map.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:21,673 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/special_tokens_map.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:21,956 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct "HTTP/1.1 200 OK"
+2026-04-08 14:39:21,956 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,006 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:22,006 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:22,014 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,014 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,058 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:22,058 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+2026-04-08 14:39:22,109 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/model.safetensors.index.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:22,109 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/model.safetensors.index.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:39:22,119 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/model.safetensors.index.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,119 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/model.safetensors.index.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,131 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/model.safetensors.index.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,131 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/model.safetensors.index.json "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,195 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/revision/main "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,195 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/revision/main "HTTP/1.1 200 OK"
+Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]2026-04-08 14:39:22,289 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00003-of-00005.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:39:22,289 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00003-of-00005.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:39:22,298 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00002-of-00005.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:39:22,298 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00002-of-00005.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:39:22,299 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00004-of-00005.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:39:22,299 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00004-of-00005.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:39:22,332 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00005-of-00005.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:39:22,332 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00005-of-00005.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:39:22,366 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/xet-read-token/0a095220c30b7b31434169c3086508ef3ea5bf0a "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,366 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/xet-read-token/0a095220c30b7b31434169c3086508ef3ea5bf0a "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,382 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/xet-read-token/0a095220c30b7b31434169c3086508ef3ea5bf0a "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,382 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/xet-read-token/0a095220c30b7b31434169c3086508ef3ea5bf0a "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,382 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/xet-read-token/0a095220c30b7b31434169c3086508ef3ea5bf0a "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,382 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/xet-read-token/0a095220c30b7b31434169c3086508ef3ea5bf0a "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,415 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/xet-read-token/0a095220c30b7b31434169c3086508ef3ea5bf0a "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,415 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/xet-read-token/0a095220c30b7b31434169c3086508ef3ea5bf0a "HTTP/1.1 200 OK"
+2026-04-08 14:39:22,528 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00001-of-00005.safetensors "HTTP/1.1 302 Found"
+2026-04-08 14:39:22,528 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/0a095220c30b7b31434169c3086508ef3ea5bf0a/model-00001-of-00005.safetensors "HTTP/1.1 302 Found"
+Fetching 5 files:  20%|██        | 1/5 [01:29<05:58, 89.71s/it]Fetching 5 files: 100%|██████████| 5/5 [01:29<00:00, 17.94s/it]
+2026-04-08 14:40:51,935 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: Qwen2AudioForConditionalGeneration.__init__() got an unexpected keyword argument 'device'
+2026-04-08 14:40:51,935 [ERROR] server.stt_engine: Failed to load model qwen_asr: Failed to load model: Qwen2AudioForConditionalGeneration.__init__() got an unexpected keyword argument 'device'
+INFO:     127.0.0.1:63704 - "POST /models/select HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 44, in load
+    await loop.run_in_executor(None, self._load_sync)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 59, in _load_sync
+    self._model = Qwen2AudioForConditionalGeneration.from_pretrained(
+                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        model_id,
+        ^^^^^^^^^
+        torch_dtype=dtype,
+        ^^^^^^^^^^^^^^^^^^
+        device=device,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/transformers/modeling_utils.py", line 4089, in from_pretrained
+    model = cls(config, *model_args, **model_kwargs)
+TypeError: Qwen2AudioForConditionalGeneration.__init__() got an unexpected keyword argument 'device'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/protocols/http/h11_impl.py", line 415, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/Users/shifengzhang/.openclaw/workspace/.venv/lib/python3.14/site-packages/fastapi/routing.py", line 328, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shifengzhang/voice-input-framework/server/api.py", line 109, in select_model
+    await engine_manager.switch_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 59, in switch_model
+    await self.load_model(model_name)
+  File "/Users/shifengzhang/voice-input-framework/server/stt_engine.py", line 49, in load_model
+    await engine.load()
+  File "/Users/shifengzhang/voice-input-framework/server/models/qwen_asr.py", line 47, in load
+    raise STTEngineError(f"Failed to load model: {e}")
+server.models.base.STTEngineError: Failed to load model: Qwen2AudioForConditionalGeneration.__init__() got an unexpected keyword argument 'device'
+[2026-04-08 14:41:07] [停止] Voice Input Framework...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-04-08 14:41:07,580 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 14:41:07,580 [INFO] server.stt_engine: Model unloaded: whisper
+2026-04-08 14:41:07,580 [INFO] server.api: Service shutdown and models unloaded
+2026-04-08 14:41:07,580 [INFO] server.api: Service shutdown and models unloaded
+INFO:     Application shutdown complete.
+INFO:     Finished server process [9009]
+/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/mp-4s5k17_6'}
+  warnings.warn(
+[2026-04-08 14:41:09] [停止] 服务已停止
+[2026-04-08 14:41:11] [启动] Voice Input Framework...
+[2026-04-08 14:41:11] [启动] 检查模型...
+[2026-04-08 14:41:11] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 14:41:11] [启动] 服务端口: 6543, 模型: qwen_asr
+2026-04-08 14:41:13,852 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:41:13,852 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 14:41:13,852 [INFO] server.api: Default model: whisper
+2026-04-08 14:41:13,852 [INFO] server.api: Default model: whisper
+2026-04-08 14:41:13,852 [INFO] server.api: Log level: INFO
+2026-04-08 14:41:13,852 [INFO] server.api: Log level: INFO
+INFO:     Started server process [9140]
+INFO:     Waiting for application startup.
+2026-04-08 14:41:13,866 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:41:13,866 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 14:41:13,945 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:13,945 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:13,954 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:13,954 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/1259 [00:00<?, ?it/s]Loading weights:   9%|▉         | 111/1259 [00:00<00:01, 1072.68it/s]Loading weights:  18%|█▊        | 231/1259 [00:00<00:00, 1114.90it/s]Loading weights:  28%|██▊       | 351/1259 [00:00<00:00, 1108.76it/s]Loading weights:  38%|███▊      | 477/1259 [00:00<00:00, 1166.10it/s]Loading weights:  47%|████▋     | 594/1259 [00:00<00:00, 1151.74it/s]Loading weights:  63%|██████▎   | 796/1259 [00:00<00:00, 1349.10it/s][2026-04-08 14:41:14] [启动] 服务已启动 (PID: 9140)
+[2026-04-08 14:41:14] [启动] WebSocket: ws://0.0.0.0:6543/ws/stream
+[2026-04-08 14:41:14] [启动] HTTP: http://0.0.0.0:6543
+Loading weights:  76%|███████▋  | 961/1259 [00:00<00:00, 1385.77it/s]Loading weights:  87%|████████▋ | 1099/1259 [00:00<00:00, 1241.26it/s]Loading weights: 100%|██████████| 1259/1259 [00:00<00:00, 1357.82it/s]
+2026-04-08 14:41:15,148 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:15,148 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:15,155 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:15,155 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:15,197 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:15,197 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:15,238 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:41:15,238 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:41:15,343 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:15,343 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:15,384 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:15,384 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:41:15,385 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:41:15,385 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 14:41:15,393 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:15,393 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:15,445 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:15,445 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:15,489 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:15,489 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:15,497 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:15,497 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:15,544 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:15,544 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:15,590 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:15,590 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:15,598 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:15,598 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:16,706 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:41:16,706 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 14:41:16,706 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:41:16,706 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 14:41:16,706 [INFO] server.api: Service started and default model initialized
+2026-04-08 14:41:16,706 [INFO] server.api: Service started and default model initialized
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:6543 (Press CTRL+C to quit)
+2026-04-08 14:41:25,412 [INFO] server.models.qwen_asr: Loading Qwen2-Audio model: Qwen/Qwen2-Audio-7B-Instruct
+2026-04-08 14:41:25,412 [INFO] server.models.qwen_asr: Loading Qwen2-Audio model: Qwen/Qwen2-Audio-7B-Instruct
+2026-04-08 14:41:25,428 [INFO] server.models.qwen_asr: Loading model on mps with torch.float32
+2026-04-08 14:41:25,428 [INFO] server.models.qwen_asr: Loading model on mps with torch.float32
+2026-04-08 14:41:25,488 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,488 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,531 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,531 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,581 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/chat_template.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,581 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/chat_template.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,639 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/chat_template.jinja "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,639 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/chat_template.jinja "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,684 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/audio_tokenizer_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,684 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/audio_tokenizer_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,733 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,733 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,778 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:25,778 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:25,788 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:25,788 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:25,833 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,833 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:25,881 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:25,881 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:25,888 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:25,888 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:25,929 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:25,929 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:25,937 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:25,937 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,015 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:26,015 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:26,025 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,025 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,099 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:26,099 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:26,153 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,153 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,436 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,436 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,489 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:26,489 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:26,496 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,496 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,546 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:26,546 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+2026-04-08 14:41:26,590 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/model.safetensors.index.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:26,590 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/model.safetensors.index.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:26,599 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/model.safetensors.index.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,599 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/model.safetensors.index.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,645 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/revision/main "HTTP/1.1 200 OK"
+2026-04-08 14:41:26,645 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2-Audio-7B-Instruct/revision/main "HTTP/1.1 200 OK"
+Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]Fetching 5 files: 100%|██████████| 5/5 [00:00<00:00, 3733.58it/s]
+Loading weights:   0%|          | 0/876 [00:00<?, ?it/s]Loading weights:   6%|▌         | 54/876 [00:00<00:01, 434.18it/s]Loading weights:  13%|█▎        | 114/876 [00:00<00:01, 486.95it/s]Loading weights:  22%|██▏       | 189/876 [00:00<00:01, 585.57it/s]Loading weights:  30%|███       | 264/876 [00:00<00:01, 601.58it/s]Loading weights:  37%|███▋      | 325/876 [00:00<00:00, 584.08it/s]Loading weights:  44%|████▍     | 384/876 [00:00<00:00, 566.22it/s]Loading weights:  51%|█████     | 444/876 [00:00<00:00, 536.37it/s]Loading weights:  57%|█████▋    | 498/876 [00:05<00:10, 36.80it/s] Loading weights:  64%|██████▍   | 563/876 [00:05<00:06, 50.57it/s]Loading weights:  68%|██████▊   | 596/876 [00:07<00:07, 37.47it/s]Loading weights:  71%|███████   | 619/876 [00:09<00:08, 28.97it/s]Loading weights:  73%|███████▎  | 636/876 [00:11<00:10, 23.01it/s]Loading weights:  74%|███████▍  | 648/876 [00:12<00:10, 21.38it/s]Loading weights:  75%|███████▌  | 657/876 [00:12<00:09, 22.20it/s]Loading weights:  76%|███████▌  | 664/876 [00:12<00:10, 19.37it/s]Loading weights:  76%|███████▋  | 670/876 [00:13<00:09, 20.88it/s]Loading weights:  77%|███████▋  | 675/876 [00:13<00:12, 16.73it/s]Loading weights:  78%|███████▊  | 681/876 [00:13<00:10, 19.05it/s]Loading weights:  78%|███████▊  | 686/876 [00:14<00:12, 15.33it/s]Loading weights:  79%|███████▉  | 691/876 [00:14<00:10, 17.61it/s]Loading weights:  79%|███████▉  | 695/876 [00:15<00:12, 14.14it/s]Loading weights:  80%|███████▉  | 698/876 [00:15<00:11, 14.88it/s]Loading weights:  80%|████████  | 703/876 [00:15<00:09, 18.45it/s]Loading weights:  81%|████████  | 707/876 [00:15<00:12, 13.70it/s]Loading weights:  81%|████████  | 710/876 [00:16<00:11, 14.43it/s]Loading weights:  82%|████████▏ | 717/876 [00:16<00:08, 19.22it/s]Loading weights:  82%|████████▏ | 720/876 [00:16<00:12, 12.61it/s]Loading weights:  83%|████████▎ | 727/876 [00:17<00:08, 17.46it/s]Loading weights:  83%|████████▎ | 730/876 [00:17<00:07, 18.81it/s]Loading weights:  84%|████████▎ | 733/876 [00:17<00:12, 11.08it/s]Loading weights:  85%|████████▍ | 741/876 [00:18<00:08, 16.67it/s]Loading weights:  85%|████████▍ | 744/876 [00:18<00:11, 11.91it/s]Loading weights:  85%|████████▌ | 747/876 [00:18<00:09, 13.19it/s]Loading weights:  86%|████████▌ | 753/876 [00:18<00:06, 17.64it/s]Loading weights:  86%|████████▋ | 756/876 [00:19<00:09, 12.88it/s]Loading weights:  87%|████████▋ | 763/876 [00:19<00:05, 19.09it/s]Loading weights:  88%|████████▊ | 767/876 [00:19<00:07, 14.09it/s]Loading weights:  88%|████████▊ | 770/876 [00:20<00:07, 14.85it/s]Loading weights:  88%|████████▊ | 775/876 [00:20<00:05, 19.24it/s]Loading weights:  89%|████████▉ | 779/876 [00:20<00:07, 13.80it/s]Loading weights:  89%|████████▉ | 782/876 [00:20<00:06, 14.37it/s]Loading weights:  90%|█████████ | 789/876 [00:21<00:04, 19.78it/s]Loading weights:  90%|█████████ | 792/876 [00:21<00:06, 13.23it/s]Loading weights:  91%|█████████ | 799/876 [00:21<00:04, 18.46it/s]Loading weights:  92%|█████████▏| 803/876 [00:22<00:05, 13.31it/s]Loading weights:  92%|█████████▏| 806/876 [00:22<00:04, 14.31it/s]Loading weights:  93%|█████████▎| 813/876 [00:22<00:03, 20.56it/s]Loading weights:  93%|█████████▎| 817/876 [00:23<00:04, 12.01it/s]Loading weights:  94%|█████████▍| 825/876 [00:23<00:02, 17.65it/s]Loading weights:  95%|█████████▍| 829/876 [00:24<00:03, 11.97it/s]Loading weights:  95%|█████████▌| 835/876 [00:24<00:02, 15.75it/s]Loading weights:  96%|█████████▌| 839/876 [00:24<00:03, 11.85it/s]Loading weights:  96%|█████████▌| 842/876 [00:25<00:02, 11.99it/s]Loading weights:  97%|█████████▋| 847/876 [00:25<00:01, 15.83it/s]Loading weights:  97%|█████████▋| 851/876 [00:25<00:02, 11.93it/s]Loading weights:  97%|█████████▋| 854/876 [00:26<00:01, 12.68it/s]Loading weights:  98%|█████████▊| 861/876 [00:26<00:00, 18.45it/s]Loading weights:  99%|█████████▊| 864/876 [00:26<00:00, 12.29it/s]Loading weights:  99%|█████████▉| 871/876 [00:26<00:00, 18.13it/s]Loading weights: 100%|██████████| 876/876 [00:26<00:00, 32.58it/s]
+2026-04-08 14:41:54,143 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:54,143 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 14:41:54,161 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:54,161 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:54,187 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:41:54,187 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2-Audio-7B-Instruct/0a095220c30b7b31434169c3086508ef3ea5bf0a/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 14:45:47,184 [INFO] server.stt_engine: Model loaded: qwen_asr
+2026-04-08 14:45:47,184 [INFO] server.stt_engine: Model loaded: qwen_asr
+2026-04-08 14:45:47,188 [INFO] server.stt_engine: Switched to model: qwen_asr
+2026-04-08 14:45:47,188 [INFO] server.stt_engine: Switched to model: qwen_asr
+INFO:     127.0.0.1:64052 - "POST /models/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64248 - "GET /health HTTP/1.1" 200 OK
