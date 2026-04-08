@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "pynput>=1.7.6",
+#     "pyautogui>=0.9.54",
+#     "pyperclip>=1.8.2",
+#     "websockets>=12.0",
+# ]
+# ///
 """
 Voice Input Framework - 轻量级 GUI 客户端 (Tkinter 版本)
 
