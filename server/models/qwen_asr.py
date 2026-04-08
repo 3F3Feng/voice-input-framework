@@ -1,136 +1,144 @@
 """
-Voice Input Framework - Qwen ASR 模型实现
+Voice Input Framework - Qwen3-ASR 引擎实现
 
-使用 ModelScope 加载和运行 Qwen-Audio/Qwen3-ASR 模型。
+基于 Qwen3-ASR 的语音识别引擎。
 """
 
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from typing import Optional
 
+import numpy as np
 import torch
-from modelscope import snapshot_download
-from modelscope.pipelines import pipeline
-from modelscope.utils.constant import Tasks
 
-from voice_input_framework.server.models.base import (
-    BaseSTTEngine,
-    InferenceError,
-    ModelNotLoadedError,
-)
-from voice_input_framework.shared.types import TranscriptionResult
+from server.models.base import BaseSTTEngine, STTEngineError
+from shared.data_types import TranscriptionResult
 
 logger = logging.getLogger(__name__)
 
 
 class QwenASREngine(BaseSTTEngine):
-    """
-    Qwen ASR STT 引擎
+    """Qwen3-ASR STT 引擎"""
 
-    基于阿里 Qwen-Audio/Qwen2-Audio 的语音识别实现。
+    MODEL_CONFIGS = {
+        "qwen_asr": {
+            "model_id": "Qwen/Qwen3-ASR-1.7B",
+            "memory_gb": 5,
+        },
+    }
 
-    Attributes:
-        model_path: 模型路径或 ModelScope ID
-        device: 运行设备
-        language: 默认语言
-    """
+    def __init__(self, model_name: str = "qwen_asr", **kwargs):
+        super().__init__(model_name, **kwargs)
+        self._model = None
+        self._processor = None
+        self.model_config = self.MODEL_CONFIGS.get(model_name, self.MODEL_CONFIGS["qwen_asr"])
 
-    def __init__(
-        self,
-        model_path: str = "qwen/Qwen2-Audio-7B-Instruct",
-        device: str = "auto",
-        language: str = "zh",
-        **kwargs
-    ):
-        """
-        初始化 Qwen ASR 引擎
-
-        Args:
-            model_path: 模型路径或 ID
-            device: 运行设备
-            language: 默认语言
-            **kwargs: 额外参数
-        """
-        super().__init__(model_path, device, language, **kwargs)
-        self._pipeline = None
-
-    def _get_supported_languages(self) -> list[str]:
-        """获取支持的语言列表"""
-        return ["zh", "en", "ja", "ko"]
-
-    def _get_description(self) -> str:
-        """获取引擎描述"""
-        return f"Qwen Audio ASR ({self.model_path}) - Alibaba's advanced audio-language model"
-
-    async def load_model(self) -> None:
-        """
-        加载 Qwen 模型
-        """
+    async def load(self) -> None:
         if self._is_loaded:
             return
 
-        logger.info(f"Loading Qwen ASR model: {self.model_path}")
+        logger.info(f"Loading Qwen3-ASR model: {self.model_config['model_id']}")
 
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._load_model_sync)
+            await loop.run_in_executor(None, self._load_sync)
             self._is_loaded = True
-            logger.info("Qwen ASR model loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load Qwen ASR: {e}")
-            raise ModelNotLoadedError(f"Failed to load Qwen ASR: {e}")
+            raise STTEngineError(f"Failed to load model: {e}")
 
-    def _load_model_sync(self) -> None:
-        """同步加载模型"""
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        if self.device != "auto":
-            device = self.device
+    def _load_sync(self):
+        try:
+            from modelscope import snapshot_download, AutoProcessor, AutoModelForSpeech
+        except ImportError:
+            from transformers import AutoProcessor, AutoModelForSpeech
+            # 从 HuggingFace 下载
+            model_id = self.model_config["model_id"]
+            device = self.detect_device()
+            dtype = torch.float16 if device == "cuda" else torch.float32
 
-        # 使用 ModelScope pipeline
-        self._pipeline = pipeline(
-            task=Tasks.auto_speech_recognition,
-            model=self.model_path,
-            device=device,
-        )
-
-    async def unload_model(self) -> None:
-        """卸载模型"""
-        if not self._is_loaded:
+            self._processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+            self._model = AutoModelForSpeech.from_pretrained(
+                model_id, torch_dtype=dtype, device=device, trust_remote_code=True
+            )
             return
 
-        self._pipeline = None
+        # Modelscope 下载
+        model_dir = snapshot_download(self.model_config["model_id"])
+        device = self.detect_device()
+        dtype = torch.float16 if device == "cuda" else torch.float32
+
+        self._processor = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True)
+        self._model = AutoModelForSpeech.from_pretrained(
+            model_dir, torch_dtype=dtype, device=device, trust_remote_code=True
+        )
+
+    async def unload(self) -> None:
+        if not self._is_loaded:
+            return
+        self._model = None
+        self._processor = None
+        self._is_loaded = False
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        self._is_loaded = False
-        logger.info("Qwen ASR model unloaded")
+
+    def _convert_audio(self, audio_data: bytes, sample_rate: int = 16000):
+        audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        audio_array = audio_array.astype(np.float32) / 32768.0
+        return audio_array
 
     async def transcribe(
         self,
-        audio: bytes,
-        language: Optional[str] = None,
-        **kwargs
+        audio_data: bytes,
+        language: str = "auto",
+        sample_rate: int = 16000,
     ) -> TranscriptionResult:
-        """同步转写"""
-        self._ensure_loaded()
+        if not self._is_loaded:
+            await self.load()
 
-        try:
-            # Qwen pipeline 通常接受文件路径或 wav 格式的 bytes
-            # 这里我们简单地传递 bytes，ModelScope pipeline 会处理
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: self._pipeline(audio)
-            )
+        loop = asyncio.get_event_loop()
+        audio_array = self._convert_audio(audio_data, sample_rate)
 
-            text = result.get("text", "") if isinstance(result, dict) else str(result)
+        inputs = self._processor(
+            audio_array, sampling_rate=sample_rate, return_tensors="pt"
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-            return TranscriptionResult(
-                text=text,
-                confidence=1.0,
-                language=language or self.language,
-                is_final=True,
-            )
-        except Exception as e:
-            logger.error(f"Qwen transcription failed: {e}")
-            raise InferenceError(f"Qwen transcription failed: {e}")
+        def _do():
+            with torch.no_grad():
+                generated_ids = self._model.generate(**inputs, max_new_tokens=256)
+            return self._processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+
+        text = await loop.run_in_executor(None, _do)
+        text = text.strip()
+
+        return TranscriptionResult(
+            text=text,
+            confidence=1.0,
+            language=language,
+            is_final=True,
+        )
+
+    async def transcribe_stream(
+        self,
+        audio_stream: AsyncIterator[bytes],
+        language: str = "auto",
+        sample_rate: int = 16000,
+    ) -> AsyncIterator[TranscriptionResult]:
+        if not self._is_loaded:
+            await self.load()
+
+        buffer = []
+        async for chunk in audio_stream:
+            buffer.append(chunk)
+            if len(buffer) >= 5:
+                combined = b"".join(buffer)
+                result = await self.transcribe(combined, language, sample_rate)
+                if result.text:
+                    yield result
+                buffer = []
+
+        if buffer:
+            combined = b"".join(buffer)
+            result = await self.transcribe(combined, language, sample_rate)
+            if result.text:
+                yield result
