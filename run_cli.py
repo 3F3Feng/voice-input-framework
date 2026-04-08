@@ -403,6 +403,9 @@ class VoiceInputCLI:
             self.console.print(f"[red]识别失败: {e}[/red]")
             logger.error(f"Recognition error: {e}")
         
+        # 确保重置录音状态
+        self.is_recording = False
+        
         self.console.print()
         
         if full_text:
@@ -417,6 +420,9 @@ class VoiceInputCLI:
                 self.console.print("[dim]已复制到剪贴板[/dim]")
         else:
             self.console.print("[yellow]未检测到语音内容[/yellow]")
+        
+        # 确保状态重置
+        self.is_recording = False
 
     def settings_menu(self):
         while True:
