@@ -21,10 +21,18 @@ PORT="${VIF_PORT:-6543}"
 HOST="${VIF_HOST:-0.0.0.0}"
 
 # 模型配置
-declare -A MODEL_SIZES
-MODEL_SIZES["whisper-small"]="~242MB"
-MODEL_SIZES["qwen_asr"]="~3.5GB"
-MODEL_SIZES["whisper-large-v3"]="~3.1GB"
+MODEL_SIZE_WHISPER_SMALL="~242MB"
+MODEL_SIZE_QWEN_ASR="~3.5GB"
+MODEL_SIZE_WHISPER_LARGE="~3.1GB"
+
+get_model_size() {
+    case "$1" in
+        whisper-small) echo "$MODEL_SIZE_WHISPER_SMALL" ;;
+        qwen_asr) echo "$MODEL_SIZE_QWEN_ASR" ;;
+        whisper-large-v3) echo "$MODEL_SIZE_WHISPER_LARGE" ;;
+        *) echo "unknown" ;;
+    esac
+}
 
 # 确保日志目录存在
 mkdir -p "$LOG_DIR"
@@ -55,7 +63,7 @@ check_model() {
 download_model() {
     local model_name="$1"
     local model_path="$MODELS_DIR/$model_name"
-    local size="${MODEL_SIZES[$model_name]:-'unknown'}"
+    local size=$(get_model_size "$model_name")
     
     if check_model "$model_name"; then
         log "[模型] $model_name 已存在，跳过下载"
