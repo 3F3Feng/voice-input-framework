@@ -162,6 +162,9 @@ start() {
     # 启动服务
     cd "$PROJECT_DIR"
     
+    # 设置 PYTHONPATH
+    export PYTHONPATH="$PROJECT_DIR:$PYTHONPATH"
+    
     # 设置环境变量
     export VIF_PORT="$PORT"
     export VIF_HOST="$HOST"

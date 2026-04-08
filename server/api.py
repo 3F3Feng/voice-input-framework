@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Voice Input Framework - FastAPI 服务
 
@@ -13,19 +14,24 @@ import time
 from pathlib import Path
 from typing import List
 
+# 添加项目路径
+project_dir = Path(__file__).parent.parent
+if str(project_dir) not in sys.path:
+    sys.path.insert(0, str(project_dir))
+
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from voice_input_framework.server.config import get_default_config
-from voice_input_framework.server.stt_engine import STTEngineManager
-from voice_input_framework.shared.protocol import (
+from server.config import get_default_config
+from server.stt_engine import STTEngineManager
+from shared.protocol import (
     ErrorCode,
     MessageType,
     StreamRequest,
     StreamResponse,
 )
-from voice_input_framework.shared.types import HealthStatus, ModelInfo
+from shared.data_types import HealthStatus, ModelInfo
 
 # 配置日志
 _log_level = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
@@ -86,7 +92,7 @@ async def health_check():
         uptime_seconds=time.time() - start_time,
         current_model=engine_manager.current_model_name,
         loaded_models=list(engine_manager.engines.keys()),
-        active_connections=0,  # 简化处理
+        active_connections=0,
     )
 
 
@@ -127,29 +133,29 @@ async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 流式识别接口"""
     await websocket.accept()
     logger.info("WebSocket connection accepted")
-
+    
     engine = await engine_manager.get_current_engine()
-
+    
     async def audio_generator():
         """从 WebSocket 接收音频数据的生成器"""
         try:
             while True:
                 message = await websocket.receive_text()
                 request = StreamRequest.from_json(message)
-
+                
                 if request.type == MessageType.AUDIO_CHUNK:
                     if request.data:
                         yield request.data
                 elif request.type == MessageType.CONTROL:
                     if request.control == "stop":
                         break
+                        
         except WebSocketDisconnect:
             logger.info("WebSocket disconnected")
         except Exception as e:
             logger.error(f"Error in audio generator: {e}")
-
+    
     try:
-        # 使用流式接口
         async for result in engine.transcribe_stream(audio_generator()):
             response = StreamResponse(
                 type=MessageType.TRANSCRIPTION,
@@ -159,7 +165,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 is_final=result.is_final
             )
             await websocket.send_text(response.to_json())
-
+            
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         error_response = StreamResponse(
@@ -180,7 +186,6 @@ def main():
     # 从环境变量读取配置
     host = os.getenv("VIF_HOST", config.host)
     port = int(os.getenv("VIF_PORT", config.port))
-    workers = int(os.getenv("VIF_WORKERS", 1))  # 单进程模式更稳定
     
     logger.info(f"Starting Voice Input Framework server on {host}:{port}")
     logger.info(f"Default model: {config.default_model}")
@@ -191,7 +196,6 @@ def main():
         app,
         host=host,
         port=port,
-        workers=workers,
         log_level=_log_level.lower(),
         access_log=True,
     )
