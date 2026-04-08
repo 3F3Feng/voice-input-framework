@@ -687,3 +687,118 @@ INFO:     connection closed
 INFO:     connection closed
 INFO:     connection closed
 INFO:     connection closed
+INFO:     100.88.250.104:14511 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:49:06,616 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:49:06,616 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:49:06,627 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:49:06,627 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+INFO:     connection closed
+[2026-04-08 16:51:04] [停止] Voice Input Framework...
+INFO:     Shutting down
+INFO:     Waiting for background tasks to complete. (CTRL+C to force quit)
+[2026-04-08 16:51:07] [停止] 服务已停止
+[2026-04-08 16:51:09] [启动] Voice Input Framework...
+[2026-04-08 16:51:09] [启动] 检查模型...
+[2026-04-08 16:51:09] [启动] 模型 qwen_asr 已就绪
+[2026-04-08 16:51:09] [启动] 服务端口: 6543, 模型: qwen_asr
+/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/mp-apmv6fy5'}
+  warnings.warn(
+[2026-04-08 16:51:12] [启动] 服务已启动 (PID: 18636)
+[2026-04-08 16:51:12] [启动] WebSocket: ws://0.0.0.0:6543/ws/stream
+[2026-04-08 16:51:12] [启动] HTTP: http://0.0.0.0:6543
+2026-04-08 16:51:14,335 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 16:51:14,335 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-08 16:51:14,345 [INFO] server.api: Default model: whisper
+2026-04-08 16:51:14,345 [INFO] server.api: Default model: whisper
+2026-04-08 16:51:14,345 [INFO] server.api: Log level: INFO
+2026-04-08 16:51:14,345 [INFO] server.api: Log level: INFO
+INFO:     Started server process [18636]
+INFO:     Waiting for application startup.
+2026-04-08 16:51:14,365 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 16:51:14,365 [INFO] server.models.whisper: Loading Whisper model: whisper
+2026-04-08 16:51:14,476 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 16:51:14,476 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 16:51:14,476 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 16:51:14,476 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-08 16:51:14,484 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+2026-04-08 16:51:14,484 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json "HTTP/1.1 200 OK"
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/1259 [00:00<?, ?it/s]Loading weights:   0%|          | 2/1259 [00:00<01:45, 11.96it/s]Loading weights:  18%|█▊        | 231/1259 [00:00<00:00, 1048.48it/s]Loading weights:  29%|██▉       | 363/1259 [00:00<00:00, 1131.24it/s]Loading weights:  39%|███▉      | 492/1259 [00:00<00:00, 1090.07it/s]Loading weights:  49%|████▊     | 611/1259 [00:00<00:00, 1028.49it/s]Loading weights:  58%|█████▊    | 735/1259 [00:00<00:00, 1014.48it/s]Loading weights:  67%|██████▋   | 841/1259 [00:00<00:00, 931.94it/s] Loading weights:  75%|███████▍  | 938/1259 [00:01<00:00, 859.52it/s]Loading weights:  82%|████████▏ | 1027/1259 [00:01<00:00, 809.87it/s]Loading weights:  88%|████████▊ | 1111/1259 [00:01<00:00, 781.25it/s]Loading weights:  95%|█████████▍| 1191/1259 [00:01<00:00, 772.57it/s]Loading weights: 100%|██████████| 1259/1259 [00:01<00:00, 860.92it/s]
+2026-04-08 16:51:16,196 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 16:51:16,196 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 16:51:16,203 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 16:51:16,203 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/generation_config.json "HTTP/1.1 200 OK"
+2026-04-08 16:51:16,285 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 16:51:16,285 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-04-08 16:51:16,325 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 16:51:16,325 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/openai/whisper-large-v3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-04-08 16:51:16,461 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 16:51:16,461 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 16:51:16,509 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 16:51:16,509 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 16:51:16,517 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 16:51:16,517 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 16:51:16,573 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 16:51:16,573 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 16:51:16,614 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 16:51:16,614 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 16:51:16,624 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 16:51:16,624 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 16:51:16,671 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 16:51:16,671 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-04-08 16:51:16,722 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 16:51:16,722 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/openai/whisper-large-v3/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-04-08 16:51:16,731 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 16:51:16,731 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/whisper-large-v3/06f233fe06e710322aca913c1bc4249a0d71fce1/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-04-08 16:51:17,597 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 16:51:17,597 [INFO] server.stt_engine: Model loaded: whisper
+2026-04-08 16:51:17,597 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 16:51:17,597 [INFO] server.stt_engine: Default model loaded: whisper
+2026-04-08 16:51:17,597 [INFO] server.api: Service started and default model initialized
+2026-04-08 16:51:17,597 [INFO] server.api: Service started and default model initialized
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:6543 (Press CTRL+C to quit)
+INFO:     100.88.250.104:6699 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:52:14,674 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:52:14,674 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:52:14,679 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:52:14,679 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:52:14,707 [INFO] server.api: Received message type: audio
+2026-04-08 16:52:14,707 [INFO] server.api: Received message type: audio
+2026-04-08 16:52:14,708 [INFO] server.api: Received audio chunk: 73728 bytes, total buffer: 73728 bytes
+2026-04-08 16:52:14,708 [INFO] server.api: Received audio chunk: 73728 bytes, total buffer: 73728 bytes
+2026-04-08 16:52:14,709 [INFO] server.api: Received message type: end
+2026-04-08 16:52:14,709 [INFO] server.api: Received message type: end
+2026-04-08 16:52:14,709 [INFO] server.api: Received end signal, processing 73728 bytes of audio
+2026-04-08 16:52:14,709 [INFO] server.api: Received end signal, processing 73728 bytes of audio
+Using custom `forced_decoder_ids` from the (generation) config. This is deprecated in favor of the `task` and `language` flags/config options.
+Transcription using a multilingual Whisper will default to language detection followed by transcription instead of translation to English. This might be a breaking change for your use case. If you want to instead always translate your audio to English, make sure to pass `language='en'`. See https://github.com/huggingface/transformers/pull/28687 for more details.
+A custom logits processor of type <class 'transformers.generation.logits_process.SuppressTokensLogitsProcessor'> has been passed to `.generate()`, but it was also created in `.generate()`, given its parameterization. The custom <class 'transformers.generation.logits_process.SuppressTokensLogitsProcessor'> will take precedence. Please check the docstring of <class 'transformers.generation.logits_process.SuppressTokensLogitsProcessor'> to see related `.generate()` flags.
+A custom logits processor of type <class 'transformers.generation.logits_process.SuppressTokensAtBeginLogitsProcessor'> has been passed to `.generate()`, but it was also created in `.generate()`, given its parameterization. The custom <class 'transformers.generation.logits_process.SuppressTokensAtBeginLogitsProcessor'> will take precedence. Please check the docstring of <class 'transformers.generation.logits_process.SuppressTokensAtBeginLogitsProcessor'> to see related `.generate()` flags.
+2026-04-08 16:52:17,619 [INFO] server.api: Transcription result: 测试测试
+2026-04-08 16:52:17,619 [INFO] server.api: Transcription result: 测试测试
+2026-04-08 16:52:17,619 [INFO] server.api: Sent done, closing connection
+2026-04-08 16:52:17,619 [INFO] server.api: Sent done, closing connection
+INFO:     connection closed
+INFO:     100.88.250.104:3929 - "WebSocket /ws/stream" [accepted]
+2026-04-08 16:52:38,982 [INFO] server.api: WebSocket connection accepted
+2026-04-08 16:52:38,982 [INFO] server.api: WebSocket connection accepted
+INFO:     connection open
+2026-04-08 16:52:38,988 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:52:38,988 [INFO] server.api: Received config: {'type': 'config', 'language': 'auto'}
+2026-04-08 16:52:39,031 [INFO] server.api: Received message type: audio
+2026-04-08 16:52:39,031 [INFO] server.api: Received message type: audio
+2026-04-08 16:52:39,033 [INFO] server.api: Received audio chunk: 167936 bytes, total buffer: 167936 bytes
+2026-04-08 16:52:39,033 [INFO] server.api: Received audio chunk: 167936 bytes, total buffer: 167936 bytes
+2026-04-08 16:52:39,033 [INFO] server.api: Received message type: end
+2026-04-08 16:52:39,033 [INFO] server.api: Received message type: end
+2026-04-08 16:52:39,033 [INFO] server.api: Received end signal, processing 167936 bytes of audio
+2026-04-08 16:52:39,033 [INFO] server.api: Received end signal, processing 167936 bytes of audio
+2026-04-08 16:52:41,827 [INFO] server.api: Transcription result: 你能听懂我在说什么吗?Can you understand what I'm speaking?
+2026-04-08 16:52:41,827 [INFO] server.api: Transcription result: 你能听懂我在说什么吗?Can you understand what I'm speaking?
+2026-04-08 16:52:41,827 [INFO] server.api: Sent done, closing connection
+2026-04-08 16:52:41,827 [INFO] server.api: Sent done, closing connection
+INFO:     connection closed
