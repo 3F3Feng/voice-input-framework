@@ -55,10 +55,20 @@ class STTEngineManager:
     
     async def switch_model(self, model_name: str) -> None:
         """切换当前模型"""
+        logger.info(f"switch_model called with: {model_name}")
         if model_name not in self.engines:
+            logger.info(f"Model {model_name} not in engines, loading...")
             await self.load_model(model_name)
+            logger.info(f"Model {model_name} loaded successfully")
+        else:
+            logger.info(f"Model {model_name} already in engines")
+        
+        # Verify the model is now loaded
+        if model_name not in self.engines:
+            raise ValueError(f"Model {model_name} failed to load")
+        
         self.current_model_name = model_name
-        logger.info(f"Switched to model: {model_name}")
+        logger.info(f"Switched to model: {model_name}, current_model_name is now: {self.current_model_name}")
     
     async def get_current_engine(self) -> Optional[BaseSTTEngine]:
         """获取当前引擎"""

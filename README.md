@@ -36,6 +36,18 @@ voice-input-framework/
 
 ## 🚀 快速开始
 
+### 0. 安装依赖
+
+```bash
+# 自动安装
+python install_dependencies.py
+
+# 或手动安装
+pip install -r requirements.txt
+```
+
+**Windows 用户**: 可以直接双击 `install.bat` 自动安装所有依赖
+
 ### 1. 启动服务端
 
 ```bash
@@ -44,26 +56,54 @@ git clone https://github.com/3F3Feng/voice-input-framework.git
 cd voice-input-framework
 
 # 启动服务
-./deploy/daemon.sh start
+python server/api.py
 ```
 
 ### 2. 使用客户端
 
-**方式一：下载 exe（推荐）**
-- 下载 `VoiceInputFramework-windows-x64.exe` 从 Releases
-- 双击运行
+#### 🎯 最简单的方式（推荐）
 
-**方式二：Python 运行**
+```bash
+# 直接运行启动脚本
+python run_client.py
+
+# 或指定服务器地址
+python run_client.py your.server.com 6543
+```
+
+#### 📦 下载 Windows exe（无需 Python）
+
+从 GitHub Releases 下载 `VoiceInputFramework-windows-x64.exe`，双击运行。
+
+#### 🐍 Python 运行（需要安装依赖）
 
 ```bash
 # 安装依赖
-pip install PySimpleGUI sounddevice websockets pyperclip
+pip install PySimpleGUI sounddevice websockets httpx pyautogui pyperclip pynput
 
-# 运行 GUI 客户端
+# 方式1：运行 GUI 客户端
 python -m client.gui
 
-# 或运行简单命令行客户端
+# 方式2：作为库导入
+python -c "from client import HotkeyVoiceInput; HotkeyVoiceInput().run()"
+
+# 方式3：运行简单命令行客户端
 python examples/simple_client.py
+```
+
+#### 🔧 使用环境变量配置
+
+```bash
+# 设置服务器地址
+export VIF_SERVER_HOST=your.server.com
+export VIF_SERVER_PORT=6543
+
+# 或 Windows PowerShell：
+$env:VIF_SERVER_HOST = "your.server.com"
+$env:VIF_SERVER_PORT = "6543"
+
+# 然后运行
+python run_client.py
 ```
 
 ## 📡 服务端 API

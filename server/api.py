@@ -107,10 +107,16 @@ async def list_models():
 async def select_model(model_name: str = Form(...)):
     """选择当前使用的模型"""
     try:
+        logger.info(f"Attempting to switch to model: {model_name}")
         await engine_manager.switch_model(model_name)
+        logger.info(f"Successfully switched to model: {model_name}, current_model_name is now: {engine_manager.current_model_name}")
         return {"status": "success", "current_model": model_name}
     except ValueError as e:
+        logger.error(f"ValueError switching model: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error switching model: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 
 @app.post("/transcribe")

@@ -1,1 +1,9 @@
 logs/voice_input_framework.log
+build/*
+.venv/*
+dist/*
+*.egg-info/*
+
+*.lock
+
+*/__pycache__/*

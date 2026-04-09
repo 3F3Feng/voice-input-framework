@@ -11,7 +11,7 @@ import base64
 import json
 import sounddevice as sd
 
-SERVER_URL = "ws://localhost:6543/ws/stream"
+SERVER_URL = "ws://100.124.8.85:6543/ws/stream"
 
 
 async def record_and_send():

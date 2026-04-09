@@ -88,20 +88,27 @@ class QwenASREngine(BaseSTTEngine):
         loop = asyncio.get_event_loop()
         audio_array = self._convert_audio(audio_data, sample_rate)
 
-        # Qwen2Audio 需要特定的输入格式
-        inputs = self._processor(
-            audios=audio_array,
-            sampling_rate=sample_rate,
-            return_tensors="pt",
-        )
-        inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
-
         def _do():
+            # Qwen2Audio 是多模态模型，需要同时提供文本和音频
+            # 文本提示用于指导模型进行转录任务
+            text_prompt = "Transcribe the audio."
+            
+            # 处理音频和文本
+            inputs = self._processor(
+                text=text_prompt,
+                audios=audio_array,
+                sampling_rate=sample_rate,
+                return_tensors="pt",
+                padding='longest',
+            )
+            inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
+            
             with torch.no_grad():
                 generated_ids = self._model.generate(
                     **inputs,
                     max_new_tokens=256,
                 )
+            
             return self._processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
         text = await loop.run_in_executor(None, _do)
