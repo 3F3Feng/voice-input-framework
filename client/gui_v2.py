@@ -348,12 +348,8 @@ class HotkeyVoiceInputV2:
         if self.window:
             self.window.write_event_value("-HOTKEY-RELEASE-", None)
 
-        # 异步发送音频
-        if self.async_loop:
-            asyncio.run_coroutine_threadsafe(
-                self._process_audio(),
-                self.async_loop
-            )
+ # 注意：音频处理在主线程的 -HOTKEY-RELEASE- 事件处理中执行
+ # 不在这里直接调用 _process_audio()，避免线程安全问题
 
     def _on_hotkey_recorded(self, hotkey_str: str):
         """快捷键录制完成回调"""
