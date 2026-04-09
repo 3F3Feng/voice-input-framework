@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # 默认配置
 DEFAULT_SERVER_HOST = "100.124.8.85"
 DEFAULT_SERVER_PORT = 6543
-DEFAULT_HOTKEY = "right_alt+v"  # 默认使用右侧 Alt，不影响左侧系统功能
+DEFAULT_HOTKEY = "left_cmd+left_alt"
 DEFAULT_START_MINIMIZED = False  # 启动时是否最小化到托盘
 DEFAULT_DISTINGUISH_LEFT_RIGHT = True  # 是否区分左右修饰键
 
@@ -857,6 +857,11 @@ class HotkeyVoiceInputV2:
         # 主 UI 循环
         while self.is_running:
             try:
+                # Ensure window exists before reading
+                if not self.window:
+                    logger.error("Window is None, breaking")
+                    break
+                    
                 event, values = self.window.read(timeout=100)
 
                 if event == sg.WIN_CLOSED or event == "-EXIT-":
@@ -991,69 +996,127 @@ class HotkeyVoiceInputV2:
                 # ======== 线程安全的快捷键事件处理 ========
                 elif event == "-HOTKEY-PRESS-":
                     # 在主线程中处理快捷键按下
-                    self.log("🎙️ 快捷键激活 - 开始录音!")
-                    self._hotkey_pressed = True
-                    self._start_recording()
-                    # 更新托盘状态
-                    if self.tray_manager:
-                        self.tray_manager.set_status(TrayStatus.RECORDING)
-                    # 显示悬浮指示器
-                    if self.use_floating_indicator and self.floating_indicator:
-                        self.floating_indicator.show()
+                    try:
+                        self.log("🎙️ 快捷键激活 - 开始录音!")
+                        self._hotkey_pressed = True
+                        self._start_recording()
+                        # 更新托盘状态
+                        if self.tray_manager:
+                            self.tray_manager.set_status(TrayStatus.RECORDING)
+                        # 显示悬浮指示器
+                        if self.use_floating_indicator and self.floating_indicator:
+                            try:
+                                self.floating_indicator.show()
+                            except Exception as e:
+                                logger.warning(f"Failed to show floating indicator: {e}")
+                    except Exception as e:
+                        logger.error(f"Error in hotkey press: {e}", exc_info=True)
+                        self.log(f"❌ 快捷键处理错误: {e}")
                 elif event == "-HOTKEY-RELEASE-":
                     # 在主线程中处理快捷键释放
-                    self.log("⏹️ 快捷键释放 - 停止录音!")
-                    self._hotkey_pressed = False
-                    self._stop_recording()
-                    # 隐藏悬浮指示器
-                    if self.floating_indicator:
-                        self.floating_indicator.hide()
-                    # 更新托盘状态
-                    if self.tray_manager:
-                        self.tray_manager.set_status(TrayStatus.PROCESSING)
-                    # 显示处理中指示器
-                    if self.use_floating_indicator and self.processing_indicator:
-                        self.processing_indicator.show()
-                    # 异步发送音频
-                    if self.async_loop:
-                        asyncio.run_coroutine_threadsafe(
-                            self._process_audio(), self.async_loop
-                        )
+                    try:
+                        self.log("⏹️ 快捷键释放 - 停止录音!")
+                        self._hotkey_pressed = False
+                        self._stop_recording()
+                        # 隐藏悬浮指示器
+                        if self.floating_indicator:
+                            try:
+                                self.floating_indicator.hide()
+                            except Exception as e:
+                                logger.warning(f"Failed to hide floating indicator: {e}")
+                        # 更新托盘状态
+                        if self.tray_manager:
+                            self.tray_manager.set_status(TrayStatus.PROCESSING)
+                        # 显示处理中指示器
+                        if self.use_floating_indicator and self.processing_indicator:
+                            try:
+                                self.processing_indicator.show()
+                            except Exception as e:
+                                logger.warning(f"Failed to show processing indicator: {e}")
+                        # 异步发送音频
+                        if self.async_loop:
+                            asyncio.run_coroutine_threadsafe(
+                                self._process_audio(), self.async_loop
+                            )
+                    except Exception as e:
+                        logger.error(f"Error in hotkey release: {e}", exc_info=True)
+                        self.log(f"❌ 快捷键释放处理错误: {e}")
                 # ==========================================
                 # ===================================
 
                 # 处理悬浮指示器事件
                 if self.use_floating_indicator:
-                    if self.floating_indicator and self.floating_indicator.is_visible:
-                        self.floating_indicator.process_events(timeout=0)
-                    if self.processing_indicator and self.processing_indicator.is_visible:
-                        self.processing_indicator.process_events(timeout=0)
+                    try:
+                        if self.floating_indicator and hasattr(self.floating_indicator, 'is_visible') and self.floating_indicator.is_visible:
+                            self.floating_indicator.process_events(timeout=0)
+                    except Exception as e:
+                        logger.warning(f"Floating indicator error: {e}")
+                    try:
+                        if self.processing_indicator and hasattr(self.processing_indicator, 'is_visible') and self.processing_indicator.is_visible:
+                            self.processing_indicator.process_events(timeout=0)
+                    except Exception as e:
+                        logger.warning(f"Processing indicator error: {e}")
 
             except Exception as e:
+                import traceback
                 logger.error(f"UI 循环错误: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                # Log to GUI as well
+                self.log(f"❌ GUI 错误: {e}")
+                # Don't exit, continue running to allow recovery
+                continue
 
         # 清理资源
         self._cleanup()
 
     def _cleanup(self):
         """清理资源"""
-        self.is_running = False
+        try:
+            self.is_running = False
 
-        if self.is_recording:
-            self._stop_recording()
+            if self.is_recording:
+                try:
+                    self._stop_recording()
+                except Exception as e:
+                    logger.warning(f"Error stopping recording: {e}")
 
-        # 停止快捷键监听器
-        self.hotkey_manager.stop_listener()
+            # 停止快捷键监听器
+            try:
+                if self.hotkey_manager:
+                    self.hotkey_manager.stop_listener()
+            except Exception as e:
+                logger.warning(f"Error stopping hotkey listener: {e}")
 
-        # 停止托盘
-        if self.tray_manager:
-            self.tray_manager.stop()
+            # 停止托盘
+            try:
+                if self.tray_manager:
+                    self.tray_manager.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping tray manager: {e}")
 
-        # 隐藏指示器
-        if self.floating_indicator:
-            self.floating_indicator.hide()
-        if self.processing_indicator:
-            self.processing_indicator.hide()
+            # 隐藏指示器
+            try:
+                if self.floating_indicator:
+                    self.floating_indicator.hide()
+            except Exception as e:
+                logger.warning(f"Error hiding floating indicator: {e}")
+            
+            try:
+                if self.processing_indicator:
+                    self.processing_indicator.hide()
+            except Exception as e:
+                logger.warning(f"Error hiding processing indicator: {e}")
+
+            # 关闭窗口
+            try:
+                if self.window:
+                    self.window.close()
+            except Exception as e:
+                logger.warning(f"Error closing window: {e}")
+
+            logger.info("Cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}", exc_info=True)
 
         if self.ws and self.async_loop:
             asyncio.run_coroutine_threadsafe(self.ws.close(), self.async_loop)

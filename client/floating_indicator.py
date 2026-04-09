@@ -19,6 +19,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Thread safety lock for window operations
+_window_lock = threading.Lock()
+
 # 尝试导入 PySimpleGUI
 try:
     import PySimpleGUI as sg
@@ -53,6 +56,9 @@ class FloatingIndicator:
         self.window: Optional[sg.Window] = None
         self.is_visible = False
         self.is_recording = False
+        
+        # Thread safety lock for window operations
+        self._window_lock = threading.Lock()
 
         # 录音计时
         self.recording_start_time: Optional[float] = None
@@ -64,51 +70,58 @@ class FloatingIndicator:
 
         # 窗口位置(记住用户拖动)
         self.position = None  # (x, y)
+        
+        # 待处理的计时器更新(线程安全)
+        self._pending_timer_update: Optional[str] = None
 
     def _create_window(self):
         """创建悬浮窗口"""
         if not PYSIMPLEGUI_AVAILABLE:
             return None
 
-        # 设置主题和样式
-        sg.theme("DarkBlue3")
+        try:
+            # 设置主题和样式
+            sg.theme("DarkBlue3")
 
-        # 半透明背景色
-        bg_color = "#1a1a1a"
+            # 半透明背景色
+            bg_color = "#1a1a1a"
 
-        # 布局
-        layout = [
-            # 录音状态图标和文字
-            [sg.Text("🔴", font=("Helvetica", 24), key="-ICON-",
-                     background_color=bg_color, justification="center", expand_x=True)],
-            [sg.Text("录音中", font=("Helvetica", 12, "bold"), key="-STATUS-",
-                     text_color="white", background_color=bg_color,
-                     justification="center", expand_x=True)],
-            [sg.Text("00:00", font=("Consolas", 16), key="-TIMER-",
-                     text_color="#ff6b6b", background_color=bg_color,
-                     justification="center", expand_x=True)],
-        ]
+            # 布局
+            layout = [
+                # 录音状态图标和文字
+                [sg.Text("🔴", font=("Helvetica", 24), key="-ICON-",
+                         background_color=bg_color, justification="center", expand_x=True)],
+                [sg.Text("录音中", font=("Helvetica", 12, "bold"), key="-STATUS-",
+                         text_color="white", background_color=bg_color,
+                         justification="center", expand_x=True)],
+                [sg.Text("00:00", font=("Consolas", 16), key="-TIMER-",
+                         text_color="#ff6b6b", background_color=bg_color,
+                         justification="center", expand_x=True)],
+            ]
 
-        # 创建窗口
-        window_kwargs = {
-            "layout": layout,
-            "finalize": True,
-            "keep_on_top": True,
-            "no_titlebar": True,  # 无标题栏
-            "grab_anywhere": True,  # 可拖动
-            "alpha_channel": self.opacity,  # 透明度
-            "background_color": bg_color,
-            "element_justification": "center",
-            "margins": (10, 5),
-        }
+            # 创建窗口
+            window_kwargs = {
+                "layout": layout,
+                "finalize": True,
+                "keep_on_top": True,
+                "no_titlebar": True,  # 无标题栏
+                "grab_anywhere": True,  # 可拖动
+                "alpha_channel": self.opacity,  # 透明度
+                "background_color": bg_color,
+                "element_justification": "center",
+                "margins": (10, 5),
+            }
 
-        # 如果有保存的位置，使用它
-        if self.position:
-            window_kwargs["location"] = self.position
+            # 如果有保存的位置，使用它
+            if self.position:
+                window_kwargs["location"] = self.position
 
-        window = sg.Window("", **window_kwargs)  # title 作为位置参数
-
-        return window
+            window = sg.Window("", **window_kwargs)  # title 作为位置参数
+            
+            return window
+        except Exception as e:
+            logger.error(f"创建悬浮窗口失败: {e}")
+            return None
 
     def show(self):
         """显示悬浮指示器"""
@@ -119,16 +132,17 @@ class FloatingIndicator:
             logger.warning("PySimpleGUI 不可用,无法显示悬浮指示器")
             return
 
-        # 创建窗口
-        self.window = self._create_window()
-        if not self.window:
-            return
+        with self._window_lock:
+            # 创建窗口
+            self.window = self._create_window()
+            if not self.window:
+                return
 
-        self.is_visible = True
-        self.is_recording = True
-        self.recording_start_time = time.time()
+            self.is_visible = True
+            self.is_recording = True
+            self.recording_start_time = time.time()
 
-        # 启动更新线程
+        # 启动更新线程（线程锁释放后）
         self.stop_update = False
         self.update_thread = threading.Thread(target=self._update_loop, daemon=True)
         self.update_thread.start()
@@ -148,16 +162,17 @@ class FloatingIndicator:
             self.update_thread.join(timeout=1.0)
             self.update_thread = None
 
-        if self.window:
-            try:
-                # 记住位置
-                if self.window.TKroot:
-                    self.position = self.window.current_location()
-                self.window.close()
-            except Exception as e:
-                logger.warning(f"关闭悬浮窗口时出错: {e}")
-            finally:
-                self.window = None
+        with self._window_lock:
+            if self.window:
+                try:
+                    # 记住位置
+                    if self.window.TKroot:
+                        self.position = self.window.current_location()
+                    self.window.close()
+                except Exception as e:
+                    logger.warning(f"关闭悬浮窗口时出错: {e}")
+                finally:
+                    self.window = None
 
         logger.info("悬浮录音指示器已隐藏")
 
@@ -206,12 +221,9 @@ class FloatingIndicator:
                         seconds = duration_int % 60
                         time_str = f"{minutes:02d}:{seconds:02d}"
 
-                        # 更新 UI
-                        if self.window:
-                            try:
-                                self.window.write_event_value("-UPDATE-TIMER-", time_str)
-                            except:
-                                pass
+                        # 将更新值存储在成员变量中，让主线程读取
+                        # 不直接调用 window.write_event_value() 以避免线程冲突
+                        self._pending_timer_update = time_str
 
                 time.sleep(0.1)  # 100ms 更新间隔
 
@@ -229,18 +241,28 @@ class FloatingIndicator:
         if not self.window or not self.is_visible:
             return
 
-        try:
-            event, values = self.window.read(timeout=timeout)
+        with self._window_lock:
+            if not self.window or not self.is_visible:
+                return
+                
+            try:
+                event, values = self.window.read(timeout=max(0, min(100, timeout)))
 
-            if event == sg.WIN_CLOSED:
-                self.hide()
-            elif event == "-UPDATE-TIMER-":
-                # 更新计时器显示
-                time_str = values.get("-UPDATE-TIMER-", "00:00")
-                self.window["-TIMER-"].update(time_str)
+                if event == sg.WIN_CLOSED or event == sg.TIMEOUT_EVENT:
+                    if event == sg.WIN_CLOSED:
+                        self.window = None
+                        self.is_visible = False
+                
+                # 检查后台线程是否有待处理的计时器更新
+                if self._pending_timer_update and self.window:
+                    try:
+                        self.window["-TIMER-"].update(self._pending_timer_update)
+                        self._pending_timer_update = None  # 清除待处理更新
+                    except Exception as e:
+                        logger.debug(f"计时器更新失败: {e}")
 
-        except Exception as e:
-            logger.error(f"处理悬浮窗口事件时出错: {e}")
+            except Exception as e:
+                logger.debug(f"处理悬浮窗口事件时出错: {e}")
 
     def pulse(self):
         """
@@ -279,50 +301,61 @@ class ProcessingIndicator:
         self.animation_frame = 0
         self.animation_thread: Optional[threading.Thread] = None
         self.stop_animation = False
+        
+        # Thread safety lock for window operations
+        self._window_lock = threading.Lock()
+        
+        # 待处理的图标更新(线程安全)
+        self._pending_icon_update: Optional[str] = None
 
     def _create_window(self) -> Optional[sg.Window]:
         """创建处理中窗口"""
         if not PYSIMPLEGUI_AVAILABLE:
             return None
 
-        sg.theme("DarkBlue3")
-        bg_color = "#1a1a1a"
+        try:
+            sg.theme("DarkBlue3")
+            bg_color = "#1a1a1a"
 
-        layout = [
-            [sg.Text("⏳", font=("Helvetica", 20), key="-ICON-",
-                     background_color=bg_color, justification="center", expand_x=True)],
-            [sg.Text("处理中...", font=("Helvetica", 11), key="-STATUS-",
-                     text_color="#4ecdc4", background_color=bg_color,
-                     justification="center", expand_x=True)],
-        ]
+            layout = [
+                [sg.Text("⏳", font=("Helvetica", 20), key="-ICON-",
+                         background_color=bg_color, justification="center", expand_x=True)],
+                [sg.Text("处理中...", font=("Helvetica", 11), key="-STATUS-",
+                         text_color="#4ecdc4", background_color=bg_color,
+                         justification="center", expand_x=True)],
+            ]
 
-        window = sg.Window(
-            "",  # title 为空字符串
-            layout,
-            finalize=True,
-            keep_on_top=True,
-            no_titlebar=True,
-            grab_anywhere=True,
-            alpha_channel=self.opacity,
-            background_color=bg_color,
-            element_justification="center",
-            margins=(10, 5),
-        )
+            window = sg.Window(
+                "",  # title 为空字符串
+                layout,
+                finalize=True,
+                keep_on_top=True,
+                no_titlebar=True,
+                grab_anywhere=True,
+                alpha_channel=self.opacity,
+                background_color=bg_color,
+                element_justification="center",
+                margins=(10, 5),
+            )
 
-        return window
+            return window
+        except Exception as e:
+            logger.error(f"创建处理中窗口失败: {e}")
+            return None
 
     def show(self):
         """显示处理中指示器"""
         if self.is_visible:
             return
 
-        self.window = self._create_window()
-        if not self.window:
-            return
+        with self._window_lock:
+            self.window = self._create_window()
+            if not self.window:
+                return
 
-        self.is_visible = True
+            self.is_visible = True
 
-        # 启动动画线程
+        # 启动动画线程（线程锁释放后）
         self.stop_animation = False
         self.animation_thread = threading.Thread(target=self._animation_loop, daemon=True)
         self.animation_thread.start()
@@ -341,13 +374,14 @@ class ProcessingIndicator:
             self.animation_thread.join(timeout=1.0)
             self.animation_thread = None
 
-        if self.window:
-            try:
-                self.window.close()
-            except Exception as e:
-                logger.warning(f"关闭处理中窗口时出错: {e}")
-            finally:
-                self.window = None
+        with self._window_lock:
+            if self.window:
+                try:
+                    self.window.close()
+                except Exception as e:
+                    logger.warning(f"关闭处理中窗口时出错: {e}")
+                finally:
+                    self.window = None
 
         logger.info("处理中指示器已隐藏")
 
@@ -359,7 +393,9 @@ class ProcessingIndicator:
             try:
                 if self.window:
                     icon = icons[self.animation_frame % len(icons)]
-                    self.window.write_event_value("-UPDATE-ICON-", icon)
+                    # 将更新值存储在成员变量中，让主线程读取
+                    # 不直接调用 window.write_event_value() 以避免线程冲突
+                    self._pending_icon_update = icon
                     self.animation_frame += 1
                 time.sleep(0.5)
             except Exception as e:
@@ -371,17 +407,28 @@ class ProcessingIndicator:
         if not self.window or not self.is_visible:
             return
 
-        try:
-            event, values = self.window.read(timeout=timeout)
+        with self._window_lock:
+            if not self.window or not self.is_visible:
+                return
+                
+            try:
+                event, values = self.window.read(timeout=max(0, min(100, timeout)))
 
-            if event == sg.WIN_CLOSED:
-                self.hide()
-            elif event == "-UPDATE-ICON-":
-                icon = values.get("-UPDATE-ICON-", "⏳")
-                self.window["-ICON-"].update(icon)
+                if event == sg.WIN_CLOSED or event == sg.TIMEOUT_EVENT:
+                    if event == sg.WIN_CLOSED:
+                        self.window = None
+                        self.is_visible = False
+                
+                # 检查后台线程是否有待处理的图标更新
+                if self._pending_icon_update and self.window:
+                    try:
+                        self.window["-ICON-"].update(self._pending_icon_update)
+                        self._pending_icon_update = None  # 清除待处理更新
+                    except Exception as e:
+                        logger.debug(f"图标更新失败: {e}")
 
-        except Exception as e:
-            logger.error(f"处理事件出错: {e}")
+            except Exception as e:
+                logger.debug(f"处理事件出错: {e}")
 
 
 # 导出

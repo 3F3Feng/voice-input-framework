@@ -197,12 +197,26 @@ class TrayIconManager:
         self.callbacks[action] = callback
     
     def set_current_model(self, model: str):
-        """设置当前模型"""
+        """设置当前模型，并更新托盘菜单"""
         self.current_model = model
+        # 更新托盘菜单以反映新的当前模型
+        if self.icon:
+            try:
+                self.icon.menu = self.create_menu()
+                logger.debug(f"托盘菜单已更新: 当前模型 = {model}")
+            except Exception as e:
+                logger.warning(f"更新托盘菜单失败: {e}")
     
     def set_available_models(self, models: list):
-        """设置可用模型列表"""
+        """设置可用模型列表，并更新托盘菜单"""
         self.available_models = models
+        # 更新托盘菜单以反映新的模型列表
+        if self.icon:
+            try:
+                self.icon.menu = self.create_menu()
+                logger.debug(f"托盘菜单已更新: 可用模型 = {len(models)} 个")
+            except Exception as e:
+                logger.warning(f"更新托盘菜单失败: {e}")
     
     def create_menu(self) -> pystray.Menu:
         """
@@ -255,14 +269,14 @@ class TrayIconManager:
             ),
             pystray.Menu.SEPARATOR,
             
-            # 状态显示
+            # 状态显示 - 使用当前状态生成文本
             pystray.MenuItem(
-                lambda text: f"状态: {self._get_status_text()}",
+                f"状态: {self._get_status_text()}",
                 None,
                 enabled=False
             ),
             pystray.MenuItem(
-                lambda text: f"当前模型: {self.current_model or '未选择'}",
+                f"当前模型: {self.current_model or '未选择'}",
                 None,
                 enabled=False
             ),
@@ -316,12 +330,22 @@ class TrayIconManager:
             status: 新状态
         """
         self.status = status
-        if self.icon and self.is_visible:
-            # 更新图标
+        if self.icon:
+            # 更新图标 - 直接修改icon属性
             if status in self._icons:
-                self.icon.icon = self._icons[status]
-            # 更新菜单
-            self.icon.menu = self.create_menu()
+                try:
+                    self.icon.icon = self._icons[status]
+                    logger.debug(f"托盘图标已更新: {status.value}")
+                except Exception as e:
+                    logger.warning(f"更新托盘图标失败: {e}")
+            
+            # 更新菜单 - 重新生成菜单项以反映最新状态
+            try:
+                new_menu = self.create_menu()
+                self.icon.menu = new_menu
+                logger.debug(f"托盘菜单已更新")
+            except Exception as e:
+                logger.warning(f"更新托盘菜单失败: {e}")
     
     def start(self):
         """启动托盘图标"""

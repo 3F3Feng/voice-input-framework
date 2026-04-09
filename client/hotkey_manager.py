@@ -79,21 +79,21 @@ class HotkeyParser:
     }
     
     @classmethod
-    def parse(cls, hotkey_str: str, distinguish_left_right: bool = False) -> Tuple[List[str], str]:
+    def parse(cls, hotkey_str: str, distinguish_left_right: bool = False) -> Tuple[List[str], Optional[str]]:
         """
         解析快捷键字符串
         
         Args:
-            hotkey_str: 快捷键字符串，如 "right_alt+v", "ctrl+shift+a"
+            hotkey_str: 快捷键字符串，如 "right_alt+v", "ctrl+shift", "ctrl+shift+a"
             distinguish_left_right: 是否区分左右修饰键
             
         Returns:
-            (修饰键列表, 主键)
-            例如: (['right_alt'], 'v')
+            (修饰键列表, 主键或None)
+            例如: (['right_alt'], 'v') 或 (['ctrl', 'shift'], None)
         """
         # 清理字符串
         cleaned = hotkey_str.lower().strip()
-        cleaned = cleaned.replace('<', '').replace('>', '')
+        cleaned = cleaned.replace('<', '').replace('>', '').replace(' ', '')
         
         # 分割
         parts = [p.strip() for p in cleaned.split('+')]
@@ -105,6 +105,9 @@ class HotkeyParser:
         main_key = None
         
         for part in parts:
+            if not part:  # 跳过空部分
+                continue
+                
             is_modifier = False
             
             # 检查是否是修饰键
@@ -125,40 +128,38 @@ class HotkeyParser:
             if not is_modifier:
                 # 这是主键
                 if main_key is not None:
-                    raise ValueError(f"快捷键 '{hotkey_str}' 包含多个主键")
+                    raise ValueError(f"快捷键 '{hotkey_str}' 包含多个主键或格式错误")
                 main_key = part
         
-        if main_key is None:
-            raise ValueError(f"快捷键 '{hotkey_str}' 缺少主键")
+        # 允许只有修饰键的快捷键（不要求主键）
+        if not modifiers and main_key is None:
+            raise ValueError(f"快捷键 '{hotkey_str}' 必须至少包含一个修饰键或主键")
         
         return modifiers, main_key
     
     @classmethod
-    def to_string(cls, modifiers: List[str], main_key: str) -> str:
+    def to_string(cls, modifiers: List[str], main_key: Optional[str] = None) -> str:
         """
-        将修饰键和主键转换为字符串
+        将修饰键和主键转换为字符串（可被 parse 解析的格式）
         
         Args:
             modifiers: 修饰键列表
-            main_key: 主键
+            main_key: 主键（可选）
             
         Returns:
-            快捷键字符串，如 "Right Alt + V"
+            快捷键字符串，如 "right_alt+v" 或 "ctrl+shift"
         """
-        mod_strs = []
+        parts = []
+        
+        # 添加修饰键
         for mod in modifiers:
-            # 格式化显示
-            if mod.startswith('left_') or mod.startswith('right_'):
-                # left_alt -> Left Alt
-                parts = mod.split('_')
-                mod_str = ' '.join(p.capitalize() for p in parts)
-            else:
-                mod_str = mod.capitalize()
-            mod_strs.append(mod_str)
+            parts.append(mod)
         
-        main_key_display = main_key.upper() if len(main_key) == 1 else main_key.capitalize()
+        # 添加主键（如果有）
+        if main_key:
+            parts.append(main_key)
         
-        return ' + '.join(mod_strs + [main_key_display])
+        return '+'.join(parts)
 
 
 class HotkeyManager:
@@ -191,6 +192,9 @@ class HotkeyManager:
         self.recorded_modifiers: List[str] = []
         self.recorded_main_key: str = ''
         self.on_record_callback: Optional[Callable] = None
+        
+        # 快捷键状态追踪
+        self._hotkey_triggered = False  # 快捷键是否已触发
         
     def set_hotkey(self, hotkey_str: str) -> bool:
         """
@@ -275,13 +279,18 @@ class HotkeyManager:
                 self._handle_recording_press(key)
                 return
             
-            # 检查是否匹配当前快捷键
-            if self._check_hotkey_match():
+            # 检查是否匹配当前快捷键，且未触发过
+            if not self._hotkey_triggered and self._check_hotkey_match():
+                self._hotkey_triggered = True
+                logger.info(f"快捷键已触发: 修饰键: {self.current_modifiers}, 主键: {self.current_main_key}")
                 if self.on_press_callback:
-                    self.on_press_callback()
+                    try:
+                        self.on_press_callback()
+                    except Exception as e:
+                        logger.error(f"快捷键按下回调出错: {e}")
         
         except Exception as e:
-            logger.error(f"按键处理错误: {e}")
+            logger.error(f"按键处理错误: {e}", exc_info=True)
     
     def _on_key_release(self, key):
         """按键释放处理"""
@@ -299,12 +308,22 @@ class HotkeyManager:
                     )
                     self.on_record_callback(hotkey_str)
                     self.is_recording = False
+                # 如果只有修饰键，也在释放任何修饰键时完成
+                elif self.recorded_modifiers and self.on_record_callback and self._is_modifier_key(key, self._get_key_name(key)):
+                    hotkey_str = HotkeyParser.to_string(self.recorded_modifiers, None)
+                    self.on_record_callback(hotkey_str)
+                    self.is_recording = False
                 return
             
-            # 检查快捷键是否释放
-            if not self._check_hotkey_match():
+            # 检查快捷键是否被按下（通过释放事件检查状态变化）
+            # 如果快捷键曾被触发过，且现在不再匹配，则触发释放回调
+            if self._hotkey_triggered and not self._check_hotkey_match():
+                self._hotkey_triggered = False
                 if self.on_release_callback:
-                    self.on_release_callback()
+                    try:
+                        self.on_release_callback()
+                    except Exception as e:
+                        logger.error(f"快捷键释放回调出错: {e}")
         
         except Exception as e:
             logger.error(f"按键释放处理错误: {e}")
@@ -314,127 +333,204 @@ class HotkeyManager:
         # 获取键的名称
         key_name = self._get_key_name(key)
         
+        logger.info(f"录制模式：键按下 - key: {key}, key_name: {key_name}")
+        
         # 检查是否是修饰键
         if self._is_modifier_key(key, key_name):
             # 添加修饰键
             mod_name = self._get_modifier_name(key, key_name)
             if mod_name and mod_name not in self.recorded_modifiers:
                 self.recorded_modifiers.append(mod_name)
+                logger.info(f"录制模式：添加修饰键 - {mod_name}，当前修饰键: {self.recorded_modifiers}")
         else:
             # 这是主键
             if not self.recorded_main_key:
                 self.recorded_main_key = key_name
+                logger.info(f"录制模式：设置主键 - {key_name}")
     
     def _get_key_name(self, key) -> str:
-        """获取键的名称"""
+        """获取键的名称，使用多重策略确保可靠性"""
         try:
+            # 策略1: 尝试使用 key.name（最可靠，对所有特殊键有效）
+            if hasattr(key, 'name') and key.name:
+                name = str(key.name).lower()
+                # 移除可能的修饰符前缀
+                if name.startswith('key.'):
+                    name = name.split('.')[-1]
+                return name
+            
+            # 策略2: 对于字符键，使用 key.char
             if hasattr(key, 'char') and key.char:
-                return key.char.lower()
-            elif hasattr(key, 'name') and key.name:
-                return key.name.lower()
-            elif hasattr(key, 'vk'):
-                # 尝试从虚拟键码获取名称
-                return f'vk_{key.vk}'
-        except:
-            pass
+                char = str(key.char).lower()
+                # 只有在是有效字符的情况下才使用
+                if char and char != 'none':
+                    return char
+            
+            # 策略3: 使用虚拟键码
+            if hasattr(key, 'vk') and key.vk is not None:
+                vk = key.vk
+                # 对于字母键 (A-Z 的虚拟键码是 0x41-0x5A)
+                if 0x41 <= vk <= 0x5A:
+                    return chr(vk).lower()
+                # 对于数字键 (0-9 的虚拟键码是 0x30-0x39)
+                elif 0x30 <= vk <= 0x39:
+                    return chr(vk)
+                # 其他特殊键
+                else:
+                    return f'vk_{vk}'
+        except Exception as e:
+            logger.debug(f"获取键名异常: {e}")
+        
         return 'unknown'
     
     def _is_modifier_key(self, key, key_name: str) -> bool:
-        """判断是否是修饰键"""
-        # 检查键名
-        for mod_name, aliases in HotkeyParser.MODIFIER_ALIASES.items():
-            if key_name in aliases:
-                return True
+        """判断是否是修饰键 - 优先使用 pynput 内置对象"""
+        # 首先检查是否是 pynput 的标准修饰键对象
+        standard_modifiers = [
+            keyboard.Key.shift_l, keyboard.Key.shift_r,
+            keyboard.Key.ctrl_l, keyboard.Key.ctrl_r,
+            keyboard.Key.alt_l, keyboard.Key.alt_r,
+        ]
         
-        # 检查键码（用于区分左右）
-        if hasattr(key, 'vk'):
-            vk = key.vk
-            mod_keys = ModifierKey.get_modifier_keys()
-            for mod_list in mod_keys.values():
-                for mod_key in mod_list:
-                    if hasattr(mod_key, 'vk') and mod_key.vk == vk:
-                        return True
+        # 添加通用修饰键对象（如果存在）
+        if hasattr(keyboard.Key, 'shift'):
+            standard_modifiers.append(keyboard.Key.shift)
+        if hasattr(keyboard.Key, 'ctrl'):
+            standard_modifiers.append(keyboard.Key.ctrl)
+        if hasattr(keyboard.Key, 'alt'):
+            standard_modifiers.append(keyboard.Key.alt)
         
-        return False
+        # 添加 Cmd 键支持
+        if hasattr(keyboard.Key, 'cmd_l'):
+            standard_modifiers.extend([keyboard.Key.cmd_l, keyboard.Key.cmd_r])
+            if hasattr(keyboard.Key, 'cmd'):
+                standard_modifiers.append(keyboard.Key.cmd)
+        
+        if key in standard_modifiers:
+            return True
+        
+        # 对于名称识别，只检查完整的修饰键名称，不检查别名
+        # 这避免了字母键被误识别的问题
+        modifier_names = {
+            'shift', 'shift_l', 'shift_r',
+            'ctrl', 'ctrl_l', 'ctrl_r', 'control', 'control_l', 'control_r',
+            'alt', 'alt_l', 'alt_r', 'altgr',
+            'cmd', 'cmd_l', 'cmd_r', 'option', 'option_l', 'option_r',
+        }
+        
+        return key_name in modifier_names
     
     def _get_modifier_name(self, key, key_name: str) -> Optional[str]:
         """获取修饰键名称"""
-        # 首先检查键名
-        for mod_name, aliases in HotkeyParser.MODIFIER_ALIASES.items():
-            if key_name in aliases:
-                return mod_name
+        # 首先尝试使用 pynput 标准对象匹配
+        modifier_map = {
+            keyboard.Key.shift: 'shift',
+            keyboard.Key.shift_l: 'left_shift',
+            keyboard.Key.shift_r: 'right_shift',
+            keyboard.Key.ctrl: 'ctrl',
+            keyboard.Key.ctrl_l: 'left_ctrl',
+            keyboard.Key.ctrl_r: 'right_ctrl',
+            keyboard.Key.alt: 'alt',
+            keyboard.Key.alt_l: 'left_alt',
+            keyboard.Key.alt_r: 'right_alt',
+            keyboard.Key.cmd: 'cmd',
+            keyboard.Key.cmd_l: 'left_cmd',
+            keyboard.Key.cmd_r: 'right_cmd',
+        }
         
-        # 检查键码（用于区分左右）
-        if hasattr(key, 'vk'):
-            vk = key.vk
-            
-            # macOS 键码
-            if vk == ModifierKey.LEFT_CMD_MACOS:
-                return 'left_cmd'
-            elif vk == ModifierKey.RIGHT_CMD_MACOS:
-                return 'right_cmd'
-            elif vk == ModifierKey.LEFT_SHIFT_MACOS:
-                return 'left_shift'
-            elif vk == ModifierKey.RIGHT_SHIFT_MACOS:
-                return 'right_shift'
-            elif vk == ModifierKey.LEFT_ALT_MACOS:
-                return 'left_alt'
-            elif vk == ModifierKey.RIGHT_ALT_MACOS:
-                return 'right_alt'
-            elif vk == ModifierKey.LEFT_CTRL_MACOS:
-                return 'left_ctrl'
-            elif vk == ModifierKey.RIGHT_CTRL_MACOS:
-                return 'right_ctrl'
-            
-            # Windows 键码
-            if vk == ModifierKey.LEFT_SHIFT_WIN:
-                return 'left_shift'
-            elif vk == ModifierKey.RIGHT_SHIFT_WIN:
-                return 'right_shift'
-            elif vk == ModifierKey.LEFT_CTRL_WIN:
-                return 'left_ctrl'
-            elif vk == ModifierKey.RIGHT_CTRL_WIN:
-                return 'right_ctrl'
-            elif vk == ModifierKey.LEFT_ALT_WIN:
-                return 'left_alt'
-            elif vk == ModifierKey.RIGHT_ALT_WIN:
-                return 'right_alt'
+        if key in modifier_map:
+            return modifier_map[key]
+        
+        # 备选：使用键名映射
+        key_name_map = {
+            'shift': 'shift',
+            'shift_l': 'left_shift',
+            'shift_r': 'right_shift',
+            'ctrl': 'ctrl',
+            'ctrl_l': 'left_ctrl',
+            'ctrl_r': 'right_ctrl',
+            'control': 'ctrl',
+            'control_l': 'left_ctrl',
+            'control_r': 'right_ctrl',
+            'alt': 'alt',
+            'alt_l': 'left_alt',
+            'alt_r': 'right_alt',
+            'altgr': 'right_alt',
+            'cmd': 'cmd',
+            'cmd_l': 'left_cmd',
+            'cmd_r': 'right_cmd',
+            'option': 'alt',
+            'option_l': 'left_alt',
+            'option_r': 'right_alt',
+        }
+        
+        if key_name in key_name_map:
+            return key_name_map[key_name]
         
         return None
     
     def _check_hotkey_match(self) -> bool:
         """检查当前按下的键是否匹配快捷键"""
-        if not self.current_main_key:
+        # 如果没有配置任何快捷键，则不匹配
+        if not self.current_modifiers and not self.current_main_key:
+            return False
+        
+        # 如果有主键定义，则主键必须按下
+        if self.current_main_key and not self._is_main_key_pressed():
             return False
         
         # 检查所有修饰键是否按下
         for mod in self.current_modifiers:
             if not self._is_modifier_pressed(mod):
+                logger.debug(f"修饰键 '{mod}' 未按下，快捷键不匹配")
                 return False
         
-        # 检查主键是否按下
-        return self._is_main_key_pressed()
+        logger.debug(f"快捷键匹配成功: 修饰键: {self.current_modifiers}, 主键: {self.current_main_key}")
+        return True
     
     def _is_modifier_pressed(self, mod_name: str) -> bool:
         """检查指定修饰键是否按下"""
-        # 获取对应的 pynput 键对象
-        mod_keys = ModifierKey.get_modifier_keys()
+        if not mod_name:
+            return False
         
-        if mod_name in mod_keys:
-            # 指定了左右
-            for key in mod_keys[mod_name]:
-                if key in self.pressed_keys:
-                    return True
-            # 也检查通用修饰键对象
-            generic_keys = self._get_generic_modifier_keys(mod_name)
-            for key in generic_keys:
-                if key in self.pressed_keys:
-                    return True
-        else:
-            # 通用修饰键，不区分左右
-            generic_keys = self._get_generic_modifier_keys(mod_name)
-            for key in generic_keys:
-                if key in self.pressed_keys:
+        # 标准化修饰键名称
+        mod_lower = mod_name.lower()
+        
+        # 定义修饰键的所有可能形式
+        modifier_key_mappings = {
+            'left_shift': [keyboard.Key.shift_l],
+            'right_shift': [keyboard.Key.shift_r],
+            'left_ctrl': [keyboard.Key.ctrl_l],
+            'right_ctrl': [keyboard.Key.ctrl_r],
+            'left_alt': [keyboard.Key.alt_l],
+            'right_alt': [keyboard.Key.alt_r],
+            # 通用修饰键（匹配任意左右）
+            'shift': [keyboard.Key.shift_l, keyboard.Key.shift_r],
+            'ctrl': [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r],
+            'alt': [keyboard.Key.alt_l, keyboard.Key.alt_r],
+        }
+        
+        # 添加通用修饰键对象（如果存在）
+        if hasattr(keyboard.Key, 'shift'):
+            modifier_key_mappings['shift'].insert(0, keyboard.Key.shift)
+        if hasattr(keyboard.Key, 'ctrl'):
+            modifier_key_mappings['ctrl'].insert(0, keyboard.Key.ctrl)
+        if hasattr(keyboard.Key, 'alt'):
+            modifier_key_mappings['alt'].insert(0, keyboard.Key.alt)
+        
+        # 为 Cmd 键添加支持
+        if hasattr(keyboard.Key, 'cmd_l'):
+            modifier_key_mappings['left_cmd'] = [keyboard.Key.cmd_l]
+            modifier_key_mappings['right_cmd'] = [keyboard.Key.cmd_r]
+            modifier_key_mappings['cmd'] = [keyboard.Key.cmd_l, keyboard.Key.cmd_r]
+            if hasattr(keyboard.Key, 'cmd'):
+                modifier_key_mappings['cmd'].insert(0, keyboard.Key.cmd)
+        
+        # 检查是否有对应的修饰键被按下
+        if mod_lower in modifier_key_mappings:
+            target_keys = modifier_key_mappings[mod_lower]
+            for pressed_key in self.pressed_keys:
+                if pressed_key in target_keys:
                     return True
         
         return False
@@ -456,11 +552,40 @@ class HotkeyManager:
         return result
     
     def _is_main_key_pressed(self) -> bool:
-        """检查主键是否按下"""
+        """检查主键是否按下，使用多重策略确保可靠性"""
+        if not self.current_main_key:
+            return False
+        
         for key in self.pressed_keys:
-            key_name = self._get_key_name(key)
-            if key_name == self.current_main_key:
-                return True
+            try:
+                # 策略1: 使用 key.name（最可靠）
+                if hasattr(key, 'name') and key.name:
+                    name = str(key.name).lower()
+                    if name.startswith('key.'):
+                        name = name.split('.')[-1]
+                    if name == self.current_main_key:
+                        return True
+                
+                # 策略2: 对于字符键，使用 key.char
+                if hasattr(key, 'char') and key.char:
+                    char = str(key.char).lower()
+                    if char and char != 'none' and char == self.current_main_key:
+                        return True
+                
+                # 策略3: 使用虚拟键码
+                if hasattr(key, 'vk') and key.vk is not None:
+                    vk = key.vk
+                    # 对于字母键
+                    if 0x41 <= vk <= 0x5A:
+                        if chr(vk).lower() == self.current_main_key:
+                            return True
+                    # 对于数字键
+                    elif 0x30 <= vk <= 0x39:
+                        if chr(vk) == self.current_main_key:
+                            return True
+            except Exception as e:
+                logger.debug(f"检查主键时异常: {e}")
+                continue
         
         return False
 
@@ -471,9 +596,9 @@ class HotkeyPresets:
     
     PRESETS = {
         'default': {
-            'name': '默认 (Right Alt + V)',
-            'hotkey': 'right_alt+v',
-            'description': '推荐：使用右侧 Alt 键，不影响左侧 Alt 的系统功能'
+            'name': '默认 (Left Cmd + Left Alt)',
+            'hotkey': 'left_cmd+left_alt',
+            'description': '推荐：使用左侧 Cmd 和 Alt 键'
         },
         'game_mode': {
             'name': '游戏模式 (F13)',
