@@ -331,36 +331,22 @@ class HotkeyVoiceInputV2:
             self.log(f"✗ 快捷键设置失败: {e}")
 
     def _on_hotkey_press(self):
-        """快捷键按下回调"""
-        self.log("🎙️ 快捷键激活 - 开始录音!")
-        self._hotkey_pressed = True
-        self._start_recording()
-
-        # 更新托盘状态
-        if self.tray_manager:
-            self.tray_manager.set_status(TrayStatus.RECORDING)
-
-        # 显示悬浮指示器
-        if self.use_floating_indicator and self.floating_indicator:
-            self.floating_indicator.show()
+        """快捷键按下回调 - 线程安全版本
+        
+        注意：此方法在 pynput 的后台线程中调用，不能直接操作 GUI。
+        使用 write_event_value 将事件发送到主线程处理。
+        """
+        if self.window:
+            self.window.write_event_value("-HOTKEY-PRESS-", None)
 
     def _on_hotkey_release(self):
-        """快捷键释放回调"""
-        self.log("⏹️ 快捷键释放 - 停止录音!")
-        self._hotkey_pressed = False
-        self._stop_recording()
-
-        # 隐藏悬浮指示器
-        if self.floating_indicator:
-            self.floating_indicator.hide()
-
-        # 更新托盘状态
-        if self.tray_manager:
-            self.tray_manager.set_status(TrayStatus.PROCESSING)
-
-        # 显示处理中指示器
-        if self.use_floating_indicator and self.processing_indicator:
-            self.processing_indicator.show()
+        """快捷键释放回调 - 线程安全版本
+        
+        注意：此方法在 pynput 的后台线程中调用，不能直接操作 GUI。
+        使用 write_event_value 将事件发送到主线程处理。
+        """
+        if self.window:
+            self.window.write_event_value("-HOTKEY-RELEASE-", None)
 
         # 异步发送音频
         if self.async_loop:
@@ -1006,6 +992,38 @@ class HotkeyVoiceInputV2:
 
                 elif event == "-SHOW-WINDOW-":
                     self._show_window_from_tray()
+                # ======== 线程安全的快捷键事件处理 ========
+                elif event == "-HOTKEY-PRESS-":
+                    # 在主线程中处理快捷键按下
+                    self.log("🎙️ 快捷键激活 - 开始录音!")
+                    self._hotkey_pressed = True
+                    self._start_recording()
+                    # 更新托盘状态
+                    if self.tray_manager:
+                        self.tray_manager.set_status(TrayStatus.RECORDING)
+                    # 显示悬浮指示器
+                    if self.use_floating_indicator and self.floating_indicator:
+                        self.floating_indicator.show()
+                elif event == "-HOTKEY-RELEASE-":
+                    # 在主线程中处理快捷键释放
+                    self.log("⏹️ 快捷键释放 - 停止录音!")
+                    self._hotkey_pressed = False
+                    self._stop_recording()
+                    # 隐藏悬浮指示器
+                    if self.floating_indicator:
+                        self.floating_indicator.hide()
+                    # 更新托盘状态
+                    if self.tray_manager:
+                        self.tray_manager.set_status(TrayStatus.PROCESSING)
+                    # 显示处理中指示器
+                    if self.use_floating_indicator and self.processing_indicator:
+                        self.processing_indicator.show()
+                    # 异步发送音频
+                    if self.async_loop:
+                        asyncio.run_coroutine_threadsafe(
+                            self._process_audio(), self.async_loop
+                        )
+                # ==========================================
                 # ===================================
 
                 # 处理悬浮指示器事件
