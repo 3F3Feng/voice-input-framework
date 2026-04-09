@@ -6,4 +6,4 @@ dist/*
 
 *.lock
 
-*/__pycache__/*
+*/__pycache__/*logs/server.log

@@ -105,28 +105,27 @@ async def list_models():
 
 @app.post("/models/select")
 async def select_model(model_name: str = Form(...)):
-    """选择当前使用的模型"""
+    """选择当前使用的模型（立即返回，后台加载）"""
     try:
         logger.info(f"Attempting to switch to model: {model_name}")
-        # 获取当前模型状态
-        is_loading = engine_manager.is_model_loading(model_name)
-        loading_time = engine_manager.get_model_loading_time(model_name)
         
+        # 立即返回，不等待模型加载
         await engine_manager.switch_model(model_name)
-        logger.info(f"Successfully switched to model: {model_name}, current_model_name is now: {engine_manager.current_model_name}")
+        
+        is_loading = engine_manager.is_model_loading(model_name)
+        is_loaded = model_name in engine_manager.engines
         
         return {
-            "status": "success", 
-            "current_model": model_name,
+            "status": "success",
+            "message": f"Switched to {model_name}",
+            "current_model": engine_manager.current_model_name,
             "is_loading": is_loading,
-            "loading_started_at": loading_time
+            "is_loaded": is_loaded,
+            "note": "Model is loading in background if not already loaded"
         }
     except ValueError as e:
         logger.error(f"ValueError switching model: {e}")
         raise HTTPException(status_code=400, detail=str(e))
-    except TimeoutError as e:
-        logger.error(f"Timeout switching model: {e}")
-        raise HTTPException(status_code=408, detail=f"Model loading timeout: {str(e)}")
     except Exception as e:
         logger.error(f"Unexpected error switching model: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
