@@ -282,13 +282,21 @@ class HotkeyVoiceInput:
                                         name = m.get("name", "")
                                         if name:
                                             self.available_models.append(name)
+                                        if m.get("is_loaded", False):
+                                            self.current_model = name
                                     elif hasattr(m, 'name'):
                                         # 如果是对象
                                         self.available_models.append(m.name)
+                                        if m.is_loaded:
+                                            self.current_model = m.name
                             elif isinstance(response_data, dict):
                                 # 字典格式，可能带有 "models" 键
                                 if "models" in response_data:
                                     self.available_models = [m.get("name", "") for m in response_data.get("models", [])]
+                                    for m in response_data.get("models", []):
+                                        if m.get("is_loaded", False):
+                                            self.current_model = m.get("name", "")
+                                            break
                                 else:
                                     self.available_models = []
                             else:
@@ -306,8 +314,7 @@ class HotkeyVoiceInput:
                             # 更新UI下拉菜单
                             if self.window and self.available_models:
                                 # 使用update()方法更新Combo的值
-                                self.window["-MODEL-SELECT-"].update(values=self.available_models, value=self.available_models[0])
-                                self.current_model = self.available_models[0]
+                                self.window["-MODEL-SELECT-"].update(values=self.available_models, value=self.current_model)
                                 self.window["-MODEL-STATUS-"].update(f"当前模型: {self.current_model}", text_color="yellow")
                             elif self.window:
                                 self.log("没有可用的模型")
