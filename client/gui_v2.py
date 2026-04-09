@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Voice Input Framework - 快捷键驱动的语音输入客户端
+Voice Input Framework - 快捷键驱动的语音输入客户端 v1.1
 
 按住快捷键说话，松开快捷键后自动将识别结果输入到当前窗口。
 
@@ -28,7 +28,6 @@ import threading
 import time
 from datetime import datetime
 from typing import Optional
-
 import PySimpleGUI as sg
 from pynput import keyboard
 
@@ -57,8 +56,8 @@ AUDIO_CHANNELS = 1
 AUDIO_CHUNK_SIZE = 1024
 
 
-class HotkeyVoiceInput:
-    """快捷键驱动的语音输入客户端"""
+class HotkeyVoiceInputV2:
+    """快捷键驱动的语音输入客户端 v1.1 - 支持左右修饰键、托盘、悬浮指示器"""
 
     def __init__(self, server_host: str = DEFAULT_SERVER_HOST, server_port: int = DEFAULT_SERVER_PORT):
         self.server_host = server_host
@@ -73,7 +72,7 @@ class HotkeyVoiceInput:
         self.audio_buffer = []
         self.last_result = ""
         self.available_models = []  # 可用的模型列表
-        self.current_model = None   # 当前模型
+        self.current_model = None  # 当前模型
 
         # 资源
         self.stream = None
@@ -93,6 +92,22 @@ class HotkeyVoiceInput:
         self.audio_devices = self._get_audio_devices()
         self.selected_device = None  # None 表示用默认设备
 
+        # ======== v1.1 新增功能 ========
+        # 快捷键管理器
+        self.hotkey_manager = HotkeyManager(distinguish_left_right=DEFAULT_DISTINGUISH_LEFT_RIGHT)
+        self.hotkey_manager.set_hotkey(DEFAULT_HOTKEY)
+
+        # 系统托盘
+        self.tray_manager = TrayIconManager()
+        self.use_tray = True  # 是否使用系统托盘
+        self.is_minimized_to_tray = False
+
+        # 悬浮录音指示器
+        self.floating_indicator = FloatingIndicator()
+        self.processing_indicator = ProcessingIndicator()
+        self.use_floating_indicator = True  # 是否使用悬浮指示器
+        # ================================
+
         self._setup_ui()
 
     def _get_audio_devices(self):
@@ -100,13 +115,11 @@ class HotkeyVoiceInput:
         try:
             import sounddevice as sd
             devices = sd.query_devices()
-
             # 过滤出输入设备
             input_devices = {}
             for i, device in enumerate(devices):
                 if device['max_input_channels'] > 0:
                     input_devices[i] = f"{device['name']}"
-
             return input_devices if input_devices else {-1: "默认设备"}
         except Exception as e:
             logger.warning(f"获取音频设备失败: {e}")
@@ -117,28 +130,40 @@ class HotkeyVoiceInput:
         sg.theme("DarkBlue3")
 
         layout = [
-            [sg.Text("🎤 Voice Input", font=("Helvetica", 14, "bold"), justification="center", expand_x=True)],
+            [sg.Text("🎤 Voice Input v1.1", font=("Helvetica", 14, "bold"),
+                     justification="center", expand_x=True)],
             [sg.HorizontalSeparator()],
 
             # 连接状态
             [sg.Text(f"服务器: {self.server_host}:{self.server_port}", size=(50, 1)),
              sg.Text("未连接", key="-STATUS-", text_color="red", size=(15, 1))],
 
-            # 快捷键设置
+            # ======== v1.1 快捷键设置（增强版） ========
             [sg.Frame("快捷键设置", [
-                [sg.Text("开始/停止录音:"), sg.Input(DEFAULT_HOTKEY, key="-HOTKEY-", size=(20, 1)),
-                 sg.Button("更新", key="-UPDATE-HOTKEY-", size=(8, 1))],
-                [sg.Text("(按住快捷键说话,松开后自动输入)", text_color="gray", font=("Helvetica", 9))],
+                [sg.Text("开始/停止录音:"),
+                 sg.Input(DEFAULT_HOTKEY, key="-HOTKEY-", size=(30, 1)),
+                 sg.Button("录制", key="-RECORD-HOTKEY-", size=(8, 1)),
+                 sg.Button("更新", key="-UPDATE-HOTKEY-", size=(8, 1)),
+                 sg.Button("清除", key="-CLEAR-HOTKEY-", size=(8, 1))],
+                [sg.Checkbox("区分左右修饰键", default=DEFAULT_DISTINGUISH_LEFT_RIGHT,
+                            key="-DISTINGUISH-LR-", enable_events=True)],
+                [sg.Text("(按住快捷键说话，松开后自动输入)",
+                        text_color="gray", font=("Helvetica", 9))],
+                # 快捷键预设方案
+                [sg.Text("预设方案:"),
+                 sg.Combo(list(HotkeyPresets.get_preset_names()),
+                         default_value="default", key="-HOTKEY-PRESET-",
+                         size=(20, 1), readonly=True, enable_events=True),
+                 sg.Button("应用预设", key="-APPLY-PRESET-", size=(10, 1))],
             ])],
+            # ==========================================
 
             # 麦克风选择
             [sg.Frame("麦克风设置", [
                 [sg.Text("麦克风:"),
                  sg.Combo(list(self.audio_devices.values()),
                          default_value=self.audio_devices.get(list(self.audio_devices.keys())[0], "默认设备"),
-                         key="-MICROPHONE-",
-                         size=(50, 1),
-                         readonly=True)],
+                         key="-MICROPHONE-", size=(50, 1), readonly=True)],
             ])],
 
             # 服务器配置
@@ -158,31 +183,46 @@ class HotkeyVoiceInput:
                 [sg.Text("", key="-MODEL-STATUS-", text_color="yellow", size=(70, 1))],
             ])],
 
+            # ======== v1.1 新增：托盘和指示器设置 ========
+            [sg.Frame("界面设置", [
+                [sg.Checkbox("启动时最小化到托盘", default=DEFAULT_START_MINIMIZED,
+                            key="-START-MINIMIZED-", enable_events=True)],
+                [sg.Checkbox("使用悬浮录音指示器", default=True,
+                            key="-USE-INDICATOR-", enable_events=True)],
+                [sg.Button("最小化到托盘", key="-MINIMIZE-TRAY-", size=(15, 1)),
+                 sg.Button("显示主窗口", key="-SHOW-WINDOW-", size=(15, 1))],
+            ])],
+            # =============================================
+
             # 错误信息显示
             [sg.Frame("错误信息", [
                 [sg.Multiline("", key="-ERROR-", size=(80, 3), font=("Consolas", 8),
-                          autoscroll=True, disabled=True, background_color="#3e1e1e", text_color="#ff8888")],
+                             autoscroll=True, disabled=True,
+                             background_color="#3e1e1e", text_color="#ff8888")],
             ])],
 
             # 识别结果
             [sg.Frame("识别结果", [
                 [sg.Multiline("", key="-RESULT-", size=(70, 8), font=("Consolas", 10),
-                          autoscroll=True, disabled=True, background_color="#1e1e1e", text_color="white")],
+                             autoscroll=True, disabled=True,
+                             background_color="#1e1e1e", text_color="white")],
                 [sg.Button("📋 复制", key="-COPY-", size=(10, 1)),
                  sg.Button("🗑️ 清空", key="-CLEAR-", size=(10, 1)),
-                 sg.Button("✏️ 输入(自动)", key="-PASTE-", size=(15, 1))],
+                 sg.Button("✏️ 输入（自动）", key="-PASTE-", size=(15, 1))],
             ])],
 
             # 日志
             [sg.Frame("日志", [
                 [sg.Multiline("", key="-LOG-", size=(80, 5), font=("Consolas", 8),
-                          autoscroll=True, disabled=True, background_color="#1e1e1e", text_color="#aaaaaa")],
+                             autoscroll=True, disabled=True,
+                             background_color="#1e1e1e", text_color="#aaaaaa")],
             ])],
 
             [sg.Button("退出", key="-EXIT-", button_color=("white", "gray"), size=(10, 1))],
         ]
 
-        self.window = sg.Window("🎤 Voice Input Framework", layout, finalize=True, keep_on_top=True)
+        self.window = sg.Window("🎤 Voice Input Framework v1.1", layout,
+                               finalize=True, keep_on_top=True)
         self.is_running = True
 
     def log(self, message: str):
@@ -204,11 +244,142 @@ class HotkeyVoiceInput:
         if self.window:
             self.window["-STATUS-"].update(status, text_color=color)
 
+    # ======== v1.1 新增方法 ========
+
+    def _setup_tray(self):
+        """设置系统托盘"""
+        if not self.use_tray:
+            return
+
+        # 设置托盘回调
+        self.tray_manager.set_callback("show_window", self._show_window_from_tray)
+        self.tray_manager.set_callback("hide_window", self._minimize_to_tray)
+        self.tray_manager.set_callback("start_recording", self._start_recording_from_tray)
+        self.tray_manager.set_callback("stop_recording", self._stop_recording_from_tray)
+        self.tray_manager.set_callback("switch_model", self._switch_model_from_tray)
+        self.tray_manager.set_callback("refresh_models", self._refresh_models_from_tray)
+        self.tray_manager.set_callback("quit", self._quit_from_tray)
+
+        # 设置模型列表
+        self.tray_manager.set_available_models(self.available_models)
+        self.tray_manager.set_current_model(self.current_model or "")
+
+        # 启动托盘
+        self.tray_manager.start()
+
+    def _minimize_to_tray(self):
+        """最小化到托盘"""
+        if self.window:
+            self.window.hide()
+            self.is_minimized_to_tray = True
+            self.log("已最小化到系统托盘")
+
+    def _show_window_from_tray(self):
+        """从托盘显示窗口"""
+        if self.window and self.is_minimized_to_tray:
+            self.window.un_hide()
+            self.is_minimized_to_tray = False
+            self.log("已显示主窗口")
+
+    def _start_recording_from_tray(self):
+        """从托盘开始录音"""
+        if not self.is_recording:
+            self._start_recording()
+
+    def _stop_recording_from_tray(self):
+        """从托盘停止录音"""
+        if self.is_recording:
+            self._stop_recording()
+            if self.async_loop:
+                asyncio.run_coroutine_threadsafe(
+                    self._process_audio(),
+                    self.async_loop
+                )
+
+    def _switch_model_from_tray(self, model_name: str):
+        """从托盘切换模型"""
+        if self.async_loop:
+            asyncio.run_coroutine_threadsafe(
+                self.async_switch_model(model_name),
+                self.async_loop
+            )
+
+    def _refresh_models_from_tray(self):
+        """从托盘刷新模型列表"""
+        if self.async_loop:
+            asyncio.run_coroutine_threadsafe(
+                self.async_fetch_models(),
+                self.async_loop
+            )
+
+    def _quit_from_tray(self):
+        """从托盘退出"""
+        self.is_running = False
+        if self.window:
+            self.window.close()
+
+    def _setup_hotkey_with_manager(self, hotkey_str: str):
+        """使用新的快捷键管理器设置快捷键"""
+        try:
+            self.hotkey_manager.set_hotkey(hotkey_str)
+            self.hotkey_manager.start_listener(
+                on_press=self._on_hotkey_press,
+                on_release=self._on_hotkey_release
+            )
+            self.log(f"✓ 快捷键已激活: {hotkey_str}")
+        except Exception as e:
+            self.log(f"✗ 快捷键设置失败: {e}")
+
+    def _on_hotkey_press(self):
+        """快捷键按下回调"""
+        self.log("🎙️ 快捷键激活 - 开始录音!")
+        self._hotkey_pressed = True
+        self._start_recording()
+
+        # 更新托盘状态
+        if self.tray_manager:
+            self.tray_manager.set_status(TrayStatus.RECORDING)
+
+        # 显示悬浮指示器
+        if self.use_floating_indicator and self.floating_indicator:
+            self.floating_indicator.show()
+
+    def _on_hotkey_release(self):
+        """快捷键释放回调"""
+        self.log("⏹️ 快捷键释放 - 停止录音!")
+        self._hotkey_pressed = False
+        self._stop_recording()
+
+        # 隐藏悬浮指示器
+        if self.floating_indicator:
+            self.floating_indicator.hide()
+
+        # 更新托盘状态
+        if self.tray_manager:
+            self.tray_manager.set_status(TrayStatus.PROCESSING)
+
+        # 显示处理中指示器
+        if self.use_floating_indicator and self.processing_indicator:
+            self.processing_indicator.show()
+
+        # 异步发送音频
+        if self.async_loop:
+            asyncio.run_coroutine_threadsafe(
+                self._process_audio(),
+                self.async_loop
+            )
+
+    def _on_hotkey_recorded(self, hotkey_str: str):
+        """快捷键录制完成回调"""
+        self.window["-HOTKEY-"].update(hotkey_str)
+        self.log(f"录制到快捷键: {hotkey_str}")
+
+    # ================================
+
     async def connect_to_server(self) -> bool:
         """连接到服务器并验证连接"""
         try:
             import websockets
-
             self.log(f"连接到 {self.server_url}...")
             self.set_status("连接中...", "yellow")
 
@@ -225,18 +396,26 @@ class HotkeyVoiceInput:
             if data.get("type") == "ready":
                 model = data.get("model", "unknown")
                 is_loading = data.get("is_loading", False)
-                self.log(f"✓ 已连接,服务器模型: {model}")
+                self.log(f"✓ 已连接，服务器模型: {model}")
 
                 if is_loading:
-                    self.log(f"⚠️ 模型 {model} 正在加载中,切换模型可能会有延迟")
+                    self.log(f"⚠️ 模型 {model} 正在加载中，切换模型可能会有延迟")
                     self.set_status(f"已连接 ({model} 加载中...)", "yellow")
+                    if self.tray_manager:
+                        self.tray_manager.set_status(TrayStatus.PROCESSING)
                 else:
                     self.set_status(f"已连接 ({model})", "green")
+                    if self.tray_manager:
+                        self.tray_manager.set_status(TrayStatus.READY)
 
                 self.is_connected = True
                 self.current_model = model
 
-                # 关闭测试连接,后续会为每次转写创建新连接
+                # 更新托盘模型信息
+                if self.tray_manager:
+                    self.tray_manager.set_current_model(model)
+
+                # 关闭测试连接，后续会为每次转写创建新连接
                 try:
                     await self.ws.close()
                 except:
@@ -245,11 +424,12 @@ class HotkeyVoiceInput:
 
                 # 自动获取模型列表
                 await self.fetch_models()
-
                 return True
             else:
                 self.log(f"✗ 服务器响应错误: {data}")
                 self.set_status("连接失败", "red")
+                if self.tray_manager:
+                    self.tray_manager.set_status(TrayStatus.ERROR)
                 try:
                     await self.ws.close()
                 except:
@@ -260,11 +440,15 @@ class HotkeyVoiceInput:
         except asyncio.TimeoutError:
             self.log("✗ 连接超时")
             self.set_status("连接超时", "red")
+            if self.tray_manager:
+                self.tray_manager.set_status(TrayStatus.ERROR)
+            return False
         except Exception as e:
             self.log(f"✗ 连接失败: {e}")
             self.set_status("连接失败", "red")
-
-        return False
+            if self.tray_manager:
+                self.tray_manager.set_status(TrayStatus.ERROR)
+            return False
 
     async def fetch_models(self):
         """获取服务器上的可用模型列表"""
@@ -273,6 +457,7 @@ class HotkeyVoiceInput:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 url = f"{self.rest_api_url}/models"
                 self.log(f"正在获取模型列表 from {url}...")
+
                 try:
                     resp = await client.get(url)
                     self.log(f"模型列表响应状态: {resp.status_code}")
@@ -293,15 +478,11 @@ class HotkeyVoiceInput:
                                             self.available_models.append(name)
                                         if m.get("is_loaded", False):
                                             self.current_model = name
-                                    elif hasattr(m, 'name'):
-                                        # 如果是对象
-                                        self.available_models.append(m.name)
-                                        if m.is_loaded:
-                                            self.current_model = m.name
                             elif isinstance(response_data, dict):
-                                # 字典格式,可能带有 "models" 键
+                                # 字典格式，可能带有 "models" 键
                                 if "models" in response_data:
-                                    self.available_models = [m.get("name", "") for m in response_data.get("models", [])]
+                                    self.available_models = [m.get("name", "")
+                                                            for m in response_data.get("models", [])]
                                     for m in response_data.get("models", []):
                                         if m.get("is_loaded", False):
                                             self.current_model = m.get("name", "")
@@ -317,20 +498,30 @@ class HotkeyVoiceInput:
                             if self.available_models:
                                 self.log(f"✓ 获取到模型列表: {', '.join(self.available_models)}")
                             else:
-                                self.log(f"⚠️ 响应中未找到模型,响应完整内容: {response_data}")
+                                self.log(f"⚠️ 响应中未找到模型，响应完整内容: {response_data}")
                                 self.show_error(f"未找到可用的模型。服务器响应: {response_data}")
 
                             # 更新UI下拉菜单
                             if self.window and self.available_models:
-                                # 使用update()方法更新Combo的值
-                                self.window["-MODEL-SELECT-"].update(values=self.available_models, value=self.current_model)
-                                self.window["-MODEL-STATUS-"].update(f"当前模型: {self.current_model}", text_color="yellow")
+                                self.window["-MODEL-SELECT-"].update(
+                                    values=self.available_models,
+                                    value=self.current_model
+                                )
+                                self.window["-MODEL-STATUS-"].update(
+                                    f"当前模型: {self.current_model}",
+                                    text_color="yellow"
+                                )
+                                # 更新托盘
+                                if self.tray_manager:
+                                    self.tray_manager.set_available_models(self.available_models)
+                                    self.tray_manager.set_current_model(self.current_model or "")
                             elif self.window:
                                 self.log("没有可用的模型")
                                 self.window["-MODEL-SELECT-"].update(values=[], value="")
                                 self.window["-MODEL-STATUS-"].update("未找到可用模型", text_color="red")
 
                             return bool(self.available_models)
+
                         except json.JSONDecodeError as e:
                             self.log(f"✗ JSON 解析失败: {e}")
                             self.log(f"响应内容: {resp.text}")
@@ -342,12 +533,14 @@ class HotkeyVoiceInput:
                         self.log(f"错误响应: {error_text}")
                         self.show_error(f"获取模型失败: HTTP {resp.status_code}\n{error_text[:200]}")
                         return False
+
                 except Exception as e:
                     import traceback
                     self.log(f"✗ HTTP 请求失败: {e}")
                     self.log(f"错误堆栈: {traceback.format_exc()}")
                     self.show_error(f"HTTP 请求失败: {e}")
                     return False
+
         except ImportError:
             self.log("⚠️ 需要安装 httpx: pip install httpx")
             self.show_error("需要安装 httpx:\npip install httpx")
@@ -363,45 +556,61 @@ class HotkeyVoiceInput:
         """切换模型"""
         try:
             import httpx
-            # 大幅增加超时时间以允许 qwen_asr 模型(14GB)加载
+            # 大幅增加超时时间以允许 qwen_asr 模型（14GB）加载
             async with httpx.AsyncClient(timeout=300.0) as client:  # 5 分钟超时
                 url = f"{self.rest_api_url}/models/select"
                 data = {"model_name": model_name}
+
                 try:
-                    self.log(f"正在切换到模型: {model_name},请等待(qwen_asr 模型较大,需几分钟)...")
+                    self.log(f"正在切换到模型: {model_name}，请等待（qwen_asr 模型较大，需几分钟）...")
                     if self.window:
-                        self.window["-MODEL-STATUS-"].update(f"正在切换到 {model_name}...(请等待)", text_color="yellow")
+                        self.window["-MODEL-STATUS-"].update(
+                            f"正在切换到 {model_name}...（请等待）",
+                            text_color="yellow"
+                        )
 
                     resp = await client.post(url, data=data)
+
                     if resp.status_code == 200:
                         result = resp.json()
                         self.current_model = model_name
                         is_loading = result.get("is_loading", False)
 
                         if is_loading:
-                            self.log(f"✓ 切换请求已接受,模型 {model_name} 正在后台加载")
+                            self.log(f"✓ 切换请求已接受，模型 {model_name} 正在后台加载")
                             if self.window:
-                                self.window["-MODEL-STATUS-"].update(f"模型 {model_name} 正在加载中...", text_color="yellow")
+                                self.window["-MODEL-STATUS-"].update(
+                                    f"模型 {model_name} 正在加载中...",
+                                    text_color="yellow"
+                                )
                         else:
                             self.log(f"✓ 已切换到模型: {model_name}")
                             if self.window:
-                                self.window["-MODEL-STATUS-"].update(f"当前模型: {model_name}", text_color="green")
+                                self.window["-MODEL-STATUS-"].update(
+                                    f"当前模型: {model_name}",
+                                    text_color="green"
+                                )
+                            if self.tray_manager:
+                                self.tray_manager.set_current_model(model_name)
+
                         return True
                     elif resp.status_code == 408:  # Timeout
                         self.log(f"✗ 切换模型超时: 模型加载时间过长")
-                        self.show_error(f"切换模型超时\n{model_name} 模型太大,加载时间超过 5 分钟")
+                        self.show_error(f"切换模型超时\n{model_name} 模型太大，加载时间超过 5 分钟")
                         return False
                     else:
                         error_text = resp.text
                         self.log(f"✗ 切换模型失败: HTTP {resp.status_code}")
                         self.show_error(f"切换模型失败: HTTP {resp.status_code}\n{error_text}")
                         return False
+
                 except Exception as e:
                     import traceback
                     self.log(f"✗ HTTP 请求失败: {type(e).__name__}: {e}")
                     self.log(f"错误堆栈: {traceback.format_exc()}")
                     self.show_error(f"HTTP 请求失败: {type(e).__name__}: {e}")
                     return False
+
         except ImportError:
             self.log("⚠️ 需要安装 httpx: pip install httpx")
             self.show_error("需要安装 httpx:\npip install httpx")
@@ -419,47 +628,12 @@ class HotkeyVoiceInput:
         self.window["-ERROR-"].print(f"[{timestamp}] ❌ {message}")
 
     async def async_fetch_models(self):
-        """异步获取模型列表(在事件循环中执行)"""
+        """异步获取模型列表（在事件循环中执行）"""
         await self.fetch_models()
 
     async def async_switch_model(self, model_name: str):
-        """异步切换模型(在事件循环中执行)"""
+        """异步切换模型（在事件循环中执行）"""
         await self.switch_model(model_name)
-
-    async def wait_for_model_ready(self, model_name: str, timeout: float = 300.0) -> bool:
-        """等待模型加载完成"""
-        import httpx
-        start_time = time.time()
-        check_interval = 5.0  # 每 5 秒检查一次
-
-        self.log(f"等待模型 {model_name} 加载完成...")
-
-        while time.time() - start_time < timeout:
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    url = f"{self.rest_api_url}/models/status/{model_name}"
-                    resp = await client.get(url)
-
-                    if resp.status_code == 200:
-                        status = resp.json()
-                        is_loaded = status.get("is_loaded", False)
-                        is_current = status.get("is_current", False)
-
-                        if is_loaded and is_current:
-                            elapsed = time.time() - start_time
-                            self.log(f"✓ 模型 {model_name} 加载完成(耗时 {elapsed:.1f} 秒)")
-                            if self.window:
-                                self.window["-MODEL-STATUS-"].update(f"当前模型: {model_name}", text_color="green")
-                            return True
-                        else:
-                            self.log(f"模型状态: loaded={is_loaded}, current={is_current}")
-            except Exception as e:
-                self.log(f"检查模型状态失败: {e}")
-
-            await asyncio.sleep(check_interval)
-
-        self.log(f"✗ 等待模型 {model_name} 超时")
-        return False
 
     async def send_audio_to_server(self) -> Optional[str]:
         """发送音频到服务器并获取识别结果"""
@@ -468,7 +642,7 @@ class HotkeyVoiceInput:
             return None
 
         if not self.is_connected:
-            self.log("未连接到服务器,正在重新连接...")
+            self.log("未连接到服务器，正在重新连接...")
             if not await self.connect_to_server():
                 return None
 
@@ -494,12 +668,12 @@ class HotkeyVoiceInput:
 
             ready_model = data.get("model", "unknown")
             is_loading = data.get("is_loading", False)
-            self.log(f"服务器准备就绪,当前模型: {ready_model}")
+            self.log(f"服务器准备就绪，当前模型: {ready_model}")
 
             if is_loading:
-                self.log("⚠️ 模型正在加载中,可能需要等待...")
+                self.log("⚠️ 模型正在加载中，可能需要等待...")
 
-            # 发送配置消息(服务器期望的第一条消息)
+            # 发送配置消息（服务器期望的第一条消息）
             await ws.send(json.dumps({
                 "type": "config",
                 "language": "auto"
@@ -519,34 +693,33 @@ class HotkeyVoiceInput:
             # 发送结束信号
             await ws.send(json.dumps({"type": "end"}))
 
-            # 接收结果 - qwen_asr 模型很大,增加超时时间到 5 分钟
+            # 接收结果 - qwen_asr 模型很大，增加超时时间到 5 分钟
             self.log("等待识别结果...")
             result_text = ""
+
             while True:
                 try:
                     response = await asyncio.wait_for(ws.recv(), timeout=300.0)  # 5 分钟超时
                     data = json.loads(response)
-
                     msg_type = data.get("type")
 
                     if msg_type == "result":
                         result_text = data.get("text", "")
                         confidence = data.get("confidence", 0)
                         self.log(f"识别结果: {result_text} (置信度: {confidence:.2f})")
-
                     elif msg_type == "done":
                         self.log("识别完成")
                         await ws.close()
                         return result_text
-
                     elif msg_type == "error":
                         error_msg = data.get("error_message", "未知错误")
                         error_code = data.get("error_code", "")
                         self.log(f"识别错误 [{error_code}]: {error_msg}")
                         await ws.close()
                         return None
+
                 except asyncio.TimeoutError:
-                    self.log("识别超时(5分钟) - 模型可能还在加载中")
+                    self.log("识别超时（5分钟） - 模型可能还在加载中")
                     await ws.close()
                     return None
 
@@ -554,11 +727,10 @@ class HotkeyVoiceInput:
             self.log("连接超时")
         except Exception as e:
             self.log(f"发送音频失败: {e}")
-
-        return None
+            return None
 
     def _start_recording(self):
-        """开始录音(在后台线程中)"""
+        """开始录音（在后台线程中）"""
         import sounddevice as sd
 
         self.is_recording = True
@@ -602,6 +774,11 @@ class HotkeyVoiceInput:
         """处理录制的音频"""
         try:
             self.log("处理音频...")
+
+            # 更新托盘状态
+            if self.tray_manager:
+                self.tray_manager.set_status(TrayStatus.PROCESSING)
+
             result = await self.send_audio_to_server()
 
             if result:
@@ -611,23 +788,38 @@ class HotkeyVoiceInput:
                 # 自动输入文本
                 await self._auto_input_text(result)
                 self.log(f"自动输入完成")
+
+                # 更新托盘状态为就绪
+                if self.tray_manager:
+                    self.tray_manager.set_status(TrayStatus.READY)
             else:
                 self.log("未收到识别结果")
+                if self.tray_manager:
+                    self.tray_manager.set_status(TrayStatus.ERROR)
+
+            # 隐藏处理中指示器
+            if self.processing_indicator:
+                self.processing_indicator.hide()
+
         except Exception as e:
             import traceback
             self.log(f"处理音频出错: {e}")
+            self.log(traceback.format_exc())
+            if self.tray_manager:
+                self.tray_manager.set_status(TrayStatus.ERROR)
+            if self.processing_indicator:
+                self.processing_indicator.hide()
 
     async def _auto_input_text(self, text: str):
         """自动将文本输入到活跃窗口"""
         try:
             import pyautogui
-
             self.log(f"准备输入文本: {text[:50]}...")
 
-            # 短暂延迟,让窗口获得焦点
+            # 短暂延迟，让窗口获得焦点
             await asyncio.sleep(0.5)
 
-            # 使用剪贴板粘贴(更可靠,支持特殊字符)
+            # 使用剪贴板粘贴（更可靠，支持特殊字符）
             try:
                 import pyperclip
                 pyperclip.copy(text)
@@ -639,13 +831,13 @@ class HotkeyVoiceInput:
                 await asyncio.sleep(0.2)
 
             except ImportError as e:
-                self.log(f"⚠️ pyperclip 不可用,使用逐字输入: {e}")
+                self.log(f"⚠️ pyperclip 不可用，使用逐字输入: {e}")
                 # 回退到逐字输入
                 pyautogui.typewrite(text, interval=0.01)
                 self.log(f"✓ 已逐字输入: {text[:50]}...")
 
             except Exception as e:
-                self.log(f"粘贴失败: {e},尝试逐字输入...")
+                self.log(f"粘贴失败: {e}，尝试逐字输入...")
                 pyautogui.typewrite(text, interval=0.01)
                 self.log(f"✓ 已逐字输入: {text[:50]}...")
 
@@ -653,146 +845,6 @@ class HotkeyVoiceInput:
             self.log("⚠️ 需要安装 pyautogui 进行自动输入")
         except Exception as e:
             self.log(f"输入文本失败: {e}")
-
-    def _setup_hotkey_listener(self, hotkey_str: str):
-        """设置快捷键监听器"""
-        try:
-            # 移除旧的监听器
-            if self.hotkey_listener:
-                try:
-                    self.hotkey_listener.stop()
-                except:
-                    pass
-
-            self.log(f"设置快捷键: {hotkey_str}")
-
-            # 解析快捷键字符串 - 移除< >括号
-            cleaned = hotkey_str.lower().replace('<', '').replace('>', '')
-            hotkey_parts = [p.strip() for p in cleaned.split("+")]
-
-            required_mods = []
-            required_char = None
-
-            for part in hotkey_parts:
-                if part in ("ctrl", "control"):
-                    required_mods.append(("ctrl", [keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]))
-                elif part in ("alt",):
-                    required_mods.append(("alt", [keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r]))
-                elif part in ("shift",):
-                    required_mods.append(("shift", [keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r]))
-                elif part in ("cmd", "command"):
-                    required_mods.append(("cmd", [keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r]))
-                else:
-                    required_char = part
-
-            if not required_char:
-                raise ValueError("快捷键必须包含至少一个非修饰符的键")
-
-            # Track currently pressed keys
-            pressed_keys = set()
-            hotkey_active = False
-
-            def on_press(key):
-                nonlocal hotkey_active
-                try:
-                    pressed_keys.add(key)
-
-                    if not hotkey_active:
-                        # Check all required modifiers are pressed
-                        mods_satisfied = True
-                        for mod_name, mod_keys in required_mods:
-                            if not any(k in pressed_keys for k in mod_keys):
-                                mods_satisfied = False
-                                break
-
-                        if not mods_satisfied:
-                            return
-
-                        # Check the main key
-                        has_char = False
-                        try:
-                            if hasattr(key, 'char') and key.char:
-                                if key.char.lower() == required_char:
-                                    has_char = True
-                        except:
-                            pass
-
-                        try:
-                            if not has_char and hasattr(key, 'name') and key.name:
-                                if key.name.lower() == required_char:
-                                    has_char = True
-                        except:
-                            pass
-
-                        # Also check all pressed keys for the char
-                        for k in pressed_keys:
-                            if has_char:
-                                break
-                            try:
-                                if hasattr(k, 'char') and k.char:
-                                    if k.char.lower() == required_char:
-                                        has_char = True
-                            except:
-                                pass
-                            try:
-                                if not has_char and hasattr(k, 'name') and k.name:
-                                    if k.name.lower() == required_char:
-                                        has_char = True
-                            except:
-                                pass
-
-                        if has_char:
-                            hotkey_active = True
-                            self.log(f"🎙️ 快捷键激活 - 开始录音!")
-                            self._hotkey_pressed = True
-                            self._start_recording()
-
-                except Exception as e:
-                    self.log(f"快捷键按下错误: {e}")
-
-            def on_release(key):
-                nonlocal hotkey_active
-                try:
-                    pressed_keys.discard(key)
-
-                    if hotkey_active:
-                        has_char = False
-                        try:
-                            if hasattr(key, 'char') and key.char:
-                                if key.char.lower() == required_char:
-                                    has_char = True
-                        except:
-                            pass
-
-                        try:
-                            if not has_char and hasattr(key, 'name') and key.name:
-                                if key.name.lower() == required_char:
-                                    has_char = True
-                        except:
-                            pass
-
-                        if has_char:
-                            hotkey_active = False
-                            self.log(f"⏹️ 快捷键释放 - 停止录音!")
-                            self._hotkey_pressed = False
-                            self._stop_recording()
-                            # 异步发送音频
-                            if self.async_loop:
-                                asyncio.run_coroutine_threadsafe(
-                                    self._process_audio(),
-                                    self.async_loop
-                                )
-
-                except Exception as e:
-                    self.log(f"快捷键释放错误: {e}")
-
-            # 创建监听器
-            self.hotkey_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-            self.hotkey_listener.start()
-            self.log(f"✓ 快捷键已激活: {hotkey_str}")
-
-        except Exception as e:
-            self.log(f"✗ 快捷键设置失败: {e}")
 
     def _run_async_loop(self):
         """在后台线程中运行异步事件循环"""
@@ -807,8 +859,11 @@ class HotkeyVoiceInput:
         self.loop_thread.start()
         time.sleep(0.1)  # 等待事件循环启动
 
-        # 设置初始快捷键
-        self._setup_hotkey_listener(DEFAULT_HOTKEY)
+        # 设置系统托盘
+        self._setup_tray()
+
+        # 设置初始快捷键（使用新的管理器）
+        self._setup_hotkey_with_manager(DEFAULT_HOTKEY)
 
         # 自动连接到服务器
         if self.async_loop:
@@ -828,7 +883,6 @@ class HotkeyVoiceInput:
                 elif event == "-CONNECT-":
                     host = values.get("-HOST-") or self.server_host
                     port_str = values.get("-PORT-") or str(self.server_port)
-
                     self.server_host = host
                     try:
                         self.server_port = int(port_str)
@@ -849,7 +903,40 @@ class HotkeyVoiceInput:
 
                 elif event == "-UPDATE-HOTKEY-":
                     hotkey = values.get("-HOTKEY-", DEFAULT_HOTKEY).strip()
-                    self._setup_hotkey_listener(hotkey)
+                    self._setup_hotkey_with_manager(hotkey)
+
+                elif event == "-RECORD-HOTKEY-":
+                    # 开始录制快捷键
+                    self.log("请按下目标快捷键...")
+                    self.hotkey_manager.start_recording(self._on_hotkey_recorded)
+
+                elif event == "-CLEAR-HOTKEY-":
+                    self.window["-HOTKEY-"].update("")
+                    self.log("已清除快捷键")
+
+                elif event == "-DISTINGUISH-LR-":
+                    # 切换是否区分左右修饰键
+                    distinguish = values["-DISTINGUISH-LR-"]
+                    self.hotkey_manager.distinguish_left_right = distinguish
+                    self.log(f"已{'启用' if distinguish else '禁用'}左右修饰键区分")
+
+                elif event == "-HOTKEY-PRESET-":
+                    # 选择预设方案
+                    preset_name = values["-HOTKEY-PRESET-"]
+                    preset = HotkeyPresets.get_preset(preset_name)
+                    if preset:
+                        self.window["-HOTKEY-"].update(preset['hotkey'])
+                        self.log(f"选择预设: {preset['name']}")
+
+                elif event == "-APPLY-PRESET-":
+                    # 应用预设方案
+                    preset_name = values.get("-HOTKEY-PRESET-", "default")
+                    preset = HotkeyPresets.get_preset(preset_name)
+                    if preset:
+                        hotkey = preset['hotkey']
+                        self._setup_hotkey_with_manager(hotkey)
+                        self.window["-HOTKEY-"].update(hotkey)
+                        self.log(f"✓ 已应用预设: {preset['name']}")
 
                 elif event == "-MICROPHONE-":
                     selected_name = values.get("-MICROPHONE-")
@@ -896,12 +983,37 @@ class HotkeyVoiceInput:
                         self.log("❌ 未选择模型")
                     else:
                         self.log(f"正在切换到模型: {selected_model}")
-                        self.window["-MODEL-STATUS-"].update(f"正在切换到 {selected_model}...", text_color="yellow")
+                        self.window["-MODEL-STATUS-"].update(
+                            f"正在切换到 {selected_model}...",
+                            text_color="yellow"
+                        )
                         if self.async_loop:
                             asyncio.run_coroutine_threadsafe(
                                 self.async_switch_model(selected_model),
                                 self.async_loop
                             )
+
+                # ======== v1.1 新增事件处理 ========
+                elif event == "-START-MINIMIZED-":
+                    self.log(f"启动最小化设置: {values['-START-MINIMIZED-']}")
+
+                elif event == "-USE-INDICATOR-":
+                    self.use_floating_indicator = values["-USE-INDICATOR-"]
+                    self.log(f"悬浮指示器: {'启用' if self.use_floating_indicator else '禁用'}")
+
+                elif event == "-MINIMIZE-TRAY-":
+                    self._minimize_to_tray()
+
+                elif event == "-SHOW-WINDOW-":
+                    self._show_window_from_tray()
+                # ===================================
+
+                # 处理悬浮指示器事件
+                if self.use_floating_indicator:
+                    if self.floating_indicator and self.floating_indicator.is_visible:
+                        self.floating_indicator.process_events(timeout=0)
+                    if self.processing_indicator and self.processing_indicator.is_visible:
+                        self.processing_indicator.process_events(timeout=0)
 
             except Exception as e:
                 logger.error(f"UI 循环错误: {e}")
@@ -916,11 +1028,18 @@ class HotkeyVoiceInput:
         if self.is_recording:
             self._stop_recording()
 
-        if self.hotkey_listener:
-            try:
-                self.hotkey_listener.stop()
-            except Exception:
-                pass
+        # 停止快捷键监听器
+        self.hotkey_manager.stop_listener()
+
+        # 停止托盘
+        if self.tray_manager:
+            self.tray_manager.stop()
+
+        # 隐藏指示器
+        if self.floating_indicator:
+            self.floating_indicator.hide()
+        if self.processing_indicator:
+            self.processing_indicator.hide()
 
         if self.ws and self.async_loop:
             asyncio.run_coroutine_threadsafe(self.ws.close(), self.async_loop)
@@ -943,7 +1062,7 @@ def main():
     except ImportError as e:
         print(f"缺少依赖: {e}")
         print("\n请运行以下命令安装依赖:")
-        print("pip install websockets sounddevice httpx pyautogui pyperclip pynput PySimpleGUI")
+        print("pip install websockets sounddevice httpx pyautogui pyperclip pynput PySimpleGUI pystray Pillow")
         return
 
     # 解析配置
@@ -961,7 +1080,7 @@ def main():
             pass
 
     # 创建客户端并运行
-    client = HotkeyVoiceInput(server_host=host, server_port=port)
+    client = HotkeyVoiceInputV2(server_host=host, server_port=port)
 
     try:
         client.run()

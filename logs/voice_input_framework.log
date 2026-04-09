@@ -1708,3 +1708,47 @@ INFO:     127.0.0.1:58600 - "GET /health HTTP/1.1" 200 OK
 [2026-04-09 01:00:29] [状态] Python  50263 shifengzhang    8u  IPv4 0x330a3fa6f445154d      0t0  TCP *:6543 (LISTEN)
 INFO:     127.0.0.1:58670 - "GET /health HTTP/1.1" 200 OK
 [2026-04-09 01:00:29] [状态] 健康检查: {"status":"ok","version":"1.0.0","uptime_seconds":251.03690767288208,"current_model":"qwen_asr","loaded_models":["qwen_asr"],"active_connections":0,"memory_usage_mb":null}
+[2026-04-09 08:20:14] [状态] 未运行
+[2026-04-09 08:20:22] [停止] Voice Input Framework...
+[2026-04-09 08:20:22] [停止] 服务未运行
+[2026-04-09 08:20:24] [启动] Voice Input Framework...
+[2026-04-09 08:20:24] [启动] 检查模型...
+[2026-04-09 08:20:24] [启动] 模型 qwen_asr 已就绪
+[2026-04-09 08:20:24] [启动] 服务端口: 6543, 模型: qwen_asr
+[2026-04-09 08:20:27] [启动] 服务已启动 (PID: 70267)
+[2026-04-09 08:20:27] [启动] WebSocket: ws://0.0.0.0:6543/ws/stream
+[2026-04-09 08:20:27] [启动] HTTP: http://0.0.0.0:6543
+2026-04-09 08:20:27,506 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-09 08:20:27,506 [INFO] server.api: Starting Voice Input Framework server on 0.0.0.0:6543
+2026-04-09 08:20:27,506 [INFO] server.api: Default model: qwen_asr
+2026-04-09 08:20:27,506 [INFO] server.api: Default model: qwen_asr
+2026-04-09 08:20:27,506 [INFO] server.api: Log level: INFO
+2026-04-09 08:20:27,506 [INFO] server.api: Log level: INFO
+INFO:     Started server process [70267]
+INFO:     Waiting for application startup.
+2026-04-09 08:20:27,527 [INFO] server.stt_engine: Default model qwen_asr loading in background
+2026-04-09 08:20:27,527 [INFO] server.stt_engine: Default model qwen_asr loading in background
+2026-04-09 08:20:27,527 [INFO] server.api: Service started and default model initialized
+2026-04-09 08:20:27,527 [INFO] server.api: Service started and default model initialized
+2026-04-09 08:20:27,527 [INFO] server.stt_engine: Background loading model qwen_asr...
+2026-04-09 08:20:27,527 [INFO] server.stt_engine: Background loading model qwen_asr...
+2026-04-09 08:20:27,527 [INFO] server.models.qwen3_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+2026-04-09 08:20:27,527 [INFO] server.models.qwen3_asr: Loading Qwen3-ASR model: Qwen/Qwen3-ASR-1.7B
+INFO:     Application startup complete.
+ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 6543): [errno 48] address already in use
+INFO:     Waiting for application shutdown.
+2026-04-09 08:20:27,527 [INFO] server.api: Service shutdown and models unloaded
+2026-04-09 08:20:27,527 [INFO] server.api: Service shutdown and models unloaded
+INFO:     Application shutdown complete.
+2026-04-09 08:20:28,328 [INFO] server.models.qwen3_asr: Loading model on mps with torch.bfloat16
+2026-04-09 08:20:28,328 [INFO] server.models.qwen3_asr: Loading model on mps with torch.bfloat16
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:03<00:03,  3.20s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:03<00:00,  1.49s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:03<00:00,  1.75s/it]
+The following generation flags are not valid and may be ignored: ['temperature']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+[2026-04-09 08:21:09] [状态] 未运行
+[2026-04-09 08:38:11] [状态] 未运行
+[2026-04-09 08:38:47] [状态] 运行中 (PID: 51326)
+[2026-04-09 08:38:47] [状态] Python  51326 shifengzhang    8u  IPv4 0xd9f7db3d655a9ddb      0t0  TCP *:6543 (LISTEN)
+[2026-04-09 08:38:47] [状态] 健康检查: {"status":"ok","version":"1.0.0","uptime_seconds":27037.54891896248,"current_model":"qwen_asr","loaded_models":["qwen_asr"],"active_connections":0,"memory_usage_mb":null}
+[2026-04-09 09:42:33] [状态] 运行中 (PID: 51326)
+[2026-04-09 09:42:33] [状态] Python  51326 shifengzhang    8u  IPv4 0xd9f7db3d655a9ddb      0t0  TCP *:6543 (LISTEN)
+[2026-04-09 09:42:33] [状态] 健康检查: {"status":"ok","version":"1.0.0","uptime_seconds":30863.650216817856,"current_model":"qwen_asr","loaded_models":["qwen_asr"],"active_connections":0,"memory_usage_mb":null}
