@@ -31,6 +31,15 @@ from typing import Optional
 import PySimpleGUI as sg
 from pynput import keyboard
 
+# 焦点管理（Windows）
+try:
+    import ctypes
+    import win32gui
+    import win32con
+    WINAPI_AVAILABLE = True
+except ImportError:
+    WINAPI_AVAILABLE = False
+
 # 导入新模块
 from hotkey_manager import HotkeyManager, HotkeyParser, HotkeyPresets
 from tray_manager import TrayIconManager, TrayStatus
@@ -46,7 +55,7 @@ logger = logging.getLogger(__name__)
 # 默认配置
 DEFAULT_SERVER_HOST = "100.124.8.85"
 DEFAULT_SERVER_PORT = 6543
-DEFAULT_HOTKEY = "left_cmd+left_alt"
+DEFAULT_HOTKEY = "left_ctrl+left_alt"
 DEFAULT_START_MINIMIZED = False  # 启动时是否最小化到托盘
 DEFAULT_DISTINGUISH_LEFT_RIGHT = True  # 是否区分左右修饰键
 
@@ -54,6 +63,62 @@ DEFAULT_DISTINGUISH_LEFT_RIGHT = True  # 是否区分左右修饰键
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNELS = 1
 AUDIO_CHUNK_SIZE = 1024
+
+
+# 焦点管理函数
+def get_foreground_window():
+    """获取当前活跃窗口句柄"""
+    if WINAPI_AVAILABLE:
+        try:
+            return win32gui.GetForegroundWindow()
+        except Exception as e:
+            logger.debug(f"获取焦点窗口失败: {e}")
+    return None
+
+
+def restore_focus(hwnd):
+    """恢复给定窗口的焦点"""
+    if not hwnd or not WINAPI_AVAILABLE:
+        return False
+    
+    try:
+        # 使用 SetForegroundWindow 恢复焦点
+        win32gui.SetForegroundWindow(hwnd)
+        logger.debug(f"焦点已恢复到窗口 {hwnd}")
+        return True
+    except Exception as e:
+        logger.debug(f"恢复焦点失败: {e}")
+        return False
+
+
+def restore_focus_later(hwnd, delay_ms: int = 100):
+    """延迟一段时间后恢复焦点"""
+    def _restore():
+        time.sleep(delay_ms / 1000.0)
+        restore_focus(hwnd)
+    
+    thread = threading.Thread(target=_restore, daemon=True)
+    thread.start()
+
+
+def get_input_cursor_position():
+    """
+    获取合适的光标位置显示浮标
+    对于输入框，在鼠标位置上方显示（假设用户在该位置输入）
+    这是最可靠的跨应用方式
+    """
+    try:
+        # 获取现在的鼠标位置
+        # 这是最可靠的方式，因为用户通常在鼠标位置输入
+        import pyautogui
+        x, y = pyautogui.position()
+        # 将浮标显示在鼠标上方（而不是旁边）
+        # 这样更接近输入框光标的位置
+        return (x, y - 20)
+    except Exception as e:
+        logger.debug(f"获取光标位置失败: {e}")
+        # 无法获取鼠标位置，返回默认位置
+        return None
 
 
 class HotkeyVoiceInputV2:
@@ -103,8 +168,34 @@ class HotkeyVoiceInputV2:
         self.is_minimized_to_tray = False
 
         # 悬浮录音指示器
-        self.floating_indicator = FloatingIndicator()
-        self.processing_indicator = ProcessingIndicator()
+        # 创建音量回调函数
+        def get_audio_level():
+            """获取当前音频电平"""
+            try:
+                if not self.audio_buffer:
+                    return 0, 0
+                # 获取最后一个音频块（最新的音频数据）
+                last_chunk = self.audio_buffer[-1] if self.audio_buffer else b''
+                if not last_chunk:
+                    return 0, 0
+                
+                import numpy as np
+                # 将字节转换为 numpy 数组
+                audio_data = np.frombuffer(last_chunk, dtype=np.int16)
+                if len(audio_data) == 0:
+                    return 0, 0
+                
+                # 计算 RMS（均方根）音量，转换为 dB
+                rms = np.sqrt(np.mean(audio_data.astype(np.float32) ** 2))
+                # 转换为 dB（0-100 范围）
+                db = min(100, max(0, int((np.log10(max(rms, 1)) / 5) * 100)))
+                return db, db
+            except Exception as e:
+                logger.debug(f"获取音频电平失败: {e}")
+                return 0, 0
+        
+        self.floating_indicator = FloatingIndicator(follow_mouse=False, audio_callback=get_audio_level)
+        self.processing_indicator = ProcessingIndicator(follow_mouse=False)
         self.use_floating_indicator = True  # 是否使用悬浮指示器
         # ================================
 
@@ -1006,7 +1097,15 @@ class HotkeyVoiceInputV2:
                         # 显示悬浮指示器
                         if self.use_floating_indicator and self.floating_indicator:
                             try:
-                                self.floating_indicator.show()
+                                # 保存当前焦点窗口
+                                focus_hwnd = get_foreground_window()
+                                # 获取光标位置
+                                cursor_pos = get_input_cursor_position()
+                                # 显示浮标（传递光标位置）
+                                self.floating_indicator.show(cursor_pos=cursor_pos)
+                                # 立即恢复焦点
+                                if focus_hwnd:
+                                    restore_focus_later(focus_hwnd, delay_ms=50)
                             except Exception as e:
                                 logger.warning(f"Failed to show floating indicator: {e}")
                     except Exception as e:
@@ -1030,7 +1129,15 @@ class HotkeyVoiceInputV2:
                         # 显示处理中指示器
                         if self.use_floating_indicator and self.processing_indicator:
                             try:
-                                self.processing_indicator.show()
+                                # 保存当前焦点窗口
+                                focus_hwnd = get_foreground_window()
+                                # 获取光标位置
+                                cursor_pos = get_input_cursor_position()
+                                # 显示处理中指示器（传递光标位置）
+                                self.processing_indicator.show(cursor_pos=cursor_pos)
+                                # 立即恢复焦点
+                                if focus_hwnd:
+                                    restore_focus_later(focus_hwnd, delay_ms=50)
                             except Exception as e:
                                 logger.warning(f"Failed to show processing indicator: {e}")
                         # 异步发送音频

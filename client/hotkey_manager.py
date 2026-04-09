@@ -596,9 +596,9 @@ class HotkeyPresets:
     
     PRESETS = {
         'default': {
-            'name': '默认 (Left Cmd + Left Alt)',
-            'hotkey': 'left_cmd+left_alt',
-            'description': '推荐：使用左侧 Cmd 和 Alt 键'
+            'name': '默认 (Left Ctrl + Left Alt)',
+            'hotkey': 'left_ctrl+left_alt',
+            'description': '推荐：使用左侧 Ctrl 和 Alt 键'
         },
         'game_mode': {
             'name': '游戏模式 (F13)',
