@@ -108,15 +108,45 @@ async def select_model(model_name: str = Form(...)):
     """选择当前使用的模型"""
     try:
         logger.info(f"Attempting to switch to model: {model_name}")
+        # 获取当前模型状态
+        is_loading = engine_manager.is_model_loading(model_name)
+        loading_time = engine_manager.get_model_loading_time(model_name)
+        
         await engine_manager.switch_model(model_name)
         logger.info(f"Successfully switched to model: {model_name}, current_model_name is now: {engine_manager.current_model_name}")
-        return {"status": "success", "current_model": model_name}
+        
+        return {
+            "status": "success", 
+            "current_model": model_name,
+            "is_loading": is_loading,
+            "loading_started_at": loading_time
+        }
     except ValueError as e:
         logger.error(f"ValueError switching model: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+    except TimeoutError as e:
+        logger.error(f"Timeout switching model: {e}")
+        raise HTTPException(status_code=408, detail=f"Model loading timeout: {str(e)}")
     except Exception as e:
         logger.error(f"Unexpected error switching model: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
+
+
+@app.get("/models/status/{model_name}")
+async def model_status(model_name: str):
+    """获取指定模型的状态"""
+    is_loaded = model_name in engine_manager.engines
+    is_loading = engine_manager.is_model_loading(model_name)
+    loading_time = engine_manager.get_model_loading_time(model_name)
+    is_current = model_name == engine_manager.current_model_name
+    
+    return {
+        "model_name": model_name,
+        "is_loaded": is_loaded,
+        "is_loading": is_loading,
+        "loading_since": loading_time,
+        "is_current": is_current
+    }
 
 
 @app.post("/transcribe")
@@ -143,12 +173,14 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("WebSocket connection accepted")
     
-    engine = await engine_manager.get_current_engine()
+    # 发送就绪消息（不立即获取 engine，因为模型可能还在加载）
+    current_model = engine_manager.current_model_name
+    is_loading = engine_manager.is_model_loading(current_model)
     
-    # 发送就绪消息
     await websocket.send_text(json.dumps({
         "type": "ready",
-        "model": engine.model_name if engine else "unknown"
+        "model": current_model,
+        "is_loading": is_loading
     }))
     
     try:
@@ -168,7 +200,7 @@ async def websocket_endpoint(websocket: WebSocket):
         # 主循环：接收音频块
         while True:
             try:
-                message = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=120.0)  # 增加超时时间到 120 秒
                 data = json.loads(message)
                 msg_type = data.get("type")
                 
@@ -184,15 +216,32 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg_type in ("end", "stop"):
                     logger.info(f"Received end signal, processing {len(audio_buffer)} bytes of audio")
                     if audio_buffer:
-                        result = await engine.transcribe(bytes(audio_buffer))
-                        logger.info(f"Transcription result: {result.text}")
-                        await websocket.send_text(json.dumps({
-                            "type": "result",
-                            "text": result.text,
-                            "confidence": result.confidence,
-                            "language": result.language,
-                            "is_final": True,
-                        }))
+                        # 每次处理音频时获取当前 engine（支持动态切换）
+                        engine = await engine_manager.get_current_engine()
+                        if not engine:
+                            raise RuntimeError("No engine available")
+                        
+                        try:
+                            # qwen_asr 模型很大，增加处理超时时间
+                            result = await asyncio.wait_for(
+                                engine.transcribe(bytes(audio_buffer)),
+                                timeout=300.0  # 5 分钟超时
+                            )
+                            logger.info(f"Transcription result: {result.text}")
+                            await websocket.send_text(json.dumps({
+                                "type": "result",
+                                "text": result.text,
+                                "confidence": result.confidence,
+                                "language": result.language,
+                                "is_final": True,
+                            }))
+                        except asyncio.TimeoutError:
+                            logger.error("Transcription timeout")
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "error_code": "E5002",
+                                "error_message": "Transcription timeout - model may still be loading"
+                            }))
                     
                     await websocket.send_text(json.dumps({"type": "done"}))
                     logger.info("Sent done, closing connection")

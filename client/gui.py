@@ -210,13 +210,20 @@ class HotkeyVoiceInput:
             )
             
             # 等待服务器准备就绪
-            ready_msg = await asyncio.wait_for(self.ws.recv(), timeout=10.0)
+            ready_msg = await asyncio.wait_for(self.ws.recv(), timeout=30.0)
             data = json.loads(ready_msg)
             
             if data.get("type") == "ready":
                 model = data.get("model", "unknown")
+                is_loading = data.get("is_loading", False)
                 self.log(f"✓ 已连接，服务器模型: {model}")
-                self.set_status(f"已连接 ({model})", "green")
+                
+                if is_loading:
+                    self.log(f"⚠️ 模型 {model} 正在加载中，切换模型可能会有延迟")
+                    self.set_status(f"已连接 ({model} 加载中...)", "yellow")
+                else:
+                    self.set_status(f"已连接 ({model})", "green")
+                
                 self.is_connected = True
                 self.current_model = model
                 
@@ -340,20 +347,34 @@ class HotkeyVoiceInput:
         """切换模型"""
         try:
             import httpx
-            # 增加超时时间以允许大模型（如qwen_asr）加载
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            # 大幅增加超时时间以允许 qwen_asr 模型（14GB）加载
+            async with httpx.AsyncClient(timeout=300.0) as client:  # 5 分钟超时
                 url = f"{self.rest_api_url}/models/select"
                 data = {"model_name": model_name}
                 try:
-                    self.log(f"正在切换到模型: {model_name}，等待中...")
+                    self.log(f"正在切换到模型: {model_name}，请等待（qwen_asr 模型较大，需几分钟）...")
+                    if self.window:
+                        self.window["-MODEL-STATUS-"].update(f"正在切换到 {model_name}...（请等待）", text_color="yellow")
+                    
                     resp = await client.post(url, data=data)
                     if resp.status_code == 200:
                         result = resp.json()
                         self.current_model = model_name
-                        self.log(f"✓ 已切换到模型: {model_name}")
-                        if self.window:
-                            self.window["-MODEL-STATUS-"].update(f"当前模型: {model_name}", text_color="green")
+                        is_loading = result.get("is_loading", False)
+                        
+                        if is_loading:
+                            self.log(f"✓ 切换请求已接受，模型 {model_name} 正在后台加载")
+                            if self.window:
+                                self.window["-MODEL-STATUS-"].update(f"模型 {model_name} 正在加载中...", text_color="yellow")
+                        else:
+                            self.log(f"✓ 已切换到模型: {model_name}")
+                            if self.window:
+                                self.window["-MODEL-STATUS-"].update(f"当前模型: {model_name}", text_color="green")
                         return True
+                    elif resp.status_code == 408:  # Timeout
+                        self.log(f"✗ 切换模型超时: 模型加载时间过长")
+                        self.show_error(f"切换模型超时\n{model_name} 模型太大，加载时间超过 5 分钟")
+                        return False
                     else:
                         error_text = resp.text
                         self.log(f"✗ 切换模型失败: HTTP {resp.status_code}")
@@ -389,6 +410,41 @@ class HotkeyVoiceInput:
         """异步切换模型（在事件循环中执行）"""
         await self.switch_model(model_name)
     
+    async def wait_for_model_ready(self, model_name: str, timeout: float = 300.0) -> bool:
+        """等待模型加载完成"""
+        import httpx
+        start_time = time.time()
+        check_interval = 5.0  # 每 5 秒检查一次
+        
+        self.log(f"等待模型 {model_name} 加载完成...")
+        
+        while time.time() - start_time < timeout:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    url = f"{self.rest_api_url}/models/status/{model_name}"
+                    resp = await client.get(url)
+                    
+                    if resp.status_code == 200:
+                        status = resp.json()
+                        is_loaded = status.get("is_loaded", False)
+                        is_current = status.get("is_current", False)
+                        
+                        if is_loaded and is_current:
+                            elapsed = time.time() - start_time
+                            self.log(f"✓ 模型 {model_name} 加载完成（耗时 {elapsed:.1f} 秒）")
+                            if self.window:
+                                self.window["-MODEL-STATUS-"].update(f"当前模型: {model_name}", text_color="green")
+                            return True
+                        else:
+                            self.log(f"模型状态: loaded={is_loaded}, current={is_current}")
+            except Exception as e:
+                self.log(f"检查模型状态失败: {e}")
+            
+            await asyncio.sleep(check_interval)
+        
+        self.log(f"✗ 等待模型 {model_name} 超时")
+        return False
+    
     async def send_audio_to_server(self) -> Optional[str]:
         """发送音频到服务器并获取识别结果"""
         if not self.audio_buffer:
@@ -404,19 +460,28 @@ class HotkeyVoiceInput:
             import websockets
             
             # 创建新的WebSocket连接用于此次转写
+            self.log("正在连接到服务器...")
             ws = await asyncio.wait_for(
-                websockets.connect(self.server_url, close_timeout=5),
-                timeout=10.0
+                websockets.connect(self.server_url, close_timeout=10),
+                timeout=15.0
             )
             
             # 等待服务器准备就绪
-            ready_msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
+            self.log("等待服务器准备就绪...")
+            ready_msg = await asyncio.wait_for(ws.recv(), timeout=30.0)
             data = json.loads(ready_msg)
             
             if data.get("type") != "ready":
-                self.log(f"服务器没有准备就绪")
+                self.log(f"服务器没有准备就绪: {data}")
                 await ws.close()
                 return None
+            
+            ready_model = data.get("model", "unknown")
+            is_loading = data.get("is_loading", False)
+            self.log(f"服务器准备就绪，当前模型: {ready_model}")
+            
+            if is_loading:
+                self.log("⚠️ 模型正在加载中，可能需要等待...")
             
             # 发送配置消息（服务器期望的第一条消息）
             await ws.send(json.dumps({
@@ -438,11 +503,12 @@ class HotkeyVoiceInput:
             # 发送结束信号
             await ws.send(json.dumps({"type": "end"}))
             
-            # 接收结果
+            # 接收结果 - qwen_asr 模型很大，增加超时时间到 5 分钟
+            self.log("等待识别结果...")
             result_text = ""
             while True:
                 try:
-                    response = await asyncio.wait_for(ws.recv(), timeout=60.0)
+                    response = await asyncio.wait_for(ws.recv(), timeout=300.0)  # 5 分钟超时
                     data = json.loads(response)
                     
                     msg_type = data.get("type")
@@ -459,11 +525,12 @@ class HotkeyVoiceInput:
                         
                     elif msg_type == "error":
                         error_msg = data.get("error_message", "未知错误")
-                        self.log(f"识别错误: {error_msg}")
+                        error_code = data.get("error_code", "")
+                        self.log(f"识别错误 [{error_code}]: {error_msg}")
                         await ws.close()
                         return None
                 except asyncio.TimeoutError:
-                    self.log("识别超时")
+                    self.log("识别超时（5分钟） - 模型可能还在加载中")
                     await ws.close()
                     return None
             
