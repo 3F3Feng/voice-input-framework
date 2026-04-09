@@ -96,7 +96,7 @@ class QwenASREngine(BaseSTTEngine):
             # 处理音频和文本
             inputs = self._processor(
                 text=text_prompt,
-                audios=audio_array,
+                audio=audio_array,
                 sampling_rate=sample_rate,
                 return_tensors="pt",
                 padding='longest',
