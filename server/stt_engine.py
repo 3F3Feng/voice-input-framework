@@ -27,13 +27,18 @@ class STTEngineManager:
         self._loading_models: Dict[str, float] = {}  # 正在加载的模型及开始时间
     
     async def initialize(self) -> None:
-        """初始化管理器，加载默认模型"""
+        """初始化管理器，后台加载默认模型（非阻塞）"""
         if self.config.auto_load_default:
             try:
-                await self.load_model(self.current_model_name)
-                logger.info(f"Default model loaded: {self.current_model_name}")
+                # 后台加载，不阻塞启动
+                if self.current_model_name not in self.engines and self.current_model_name not in self._loading_models:
+                    self._loading_models[self.current_model_name] = time.time()
+                    asyncio.create_task(self._background_load_model(self.current_model_name))
+                    logger.info(f"Default model {self.current_model_name} loading in background")
+                else:
+                    logger.info(f"Default model {self.current_model_name} already loaded or loading")
             except Exception as e:
-                logger.warning(f"Failed to load default model: {e}")
+                logger.warning(f"Failed to start loading default model: {e}")
     
     async def load_model(self, model_name: str) -> None:
         """加载指定模型（外部调用，需要锁）"""
