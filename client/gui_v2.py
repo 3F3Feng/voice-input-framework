@@ -30,6 +30,7 @@ from datetime import datetime
 from typing import Optional
 import PySimpleGUI as sg
 from pynput import keyboard
+import numpy as np
 
 # 焦点管理（Windows）
 try:
@@ -44,6 +45,7 @@ except ImportError:
 from hotkey_manager import HotkeyManager, HotkeyParser, HotkeyPresets
 from tray_manager import TrayIconManager, TrayStatus
 from floating_indicator import FloatingIndicator, ProcessingIndicator
+from config_manager import ConfigManager
 
 # 日志配置
 logging.basicConfig(
@@ -124,9 +126,13 @@ def get_input_cursor_position():
 class HotkeyVoiceInputV2:
     """快捷键驱动的语音输入客户端 v1.1 - 支持左右修饰键、托盘、悬浮指示器"""
 
-    def __init__(self, server_host: str = DEFAULT_SERVER_HOST, server_port: int = DEFAULT_SERVER_PORT):
-        self.server_host = server_host
-        self.server_port = server_port
+    def __init__(self, server_host: str = None, server_port: int = None):
+        # 加载配置
+        self.config_manager = ConfigManager()
+        
+        # 从配置或参数获取服务器设置
+        self.server_host = server_host or self.config_manager.server_host
+        self.server_port = server_port or self.config_manager.server_port
         self.server_url = f"ws://{server_host}:{server_port}/ws/stream"
         self.rest_api_url = f"http://{server_host}:{server_port}"
 
@@ -159,8 +165,8 @@ class HotkeyVoiceInputV2:
 
         # ======== v1.1 新增功能 ========
         # 快捷键管理器
-        self.hotkey_manager = HotkeyManager(distinguish_left_right=DEFAULT_DISTINGUISH_LEFT_RIGHT)
-        self.hotkey_manager.set_hotkey(DEFAULT_HOTKEY)
+        self.hotkey_manager = HotkeyManager(distinguish_left_right=self.config_manager.distinguish_left_right)
+        self.hotkey_manager.set_hotkey(self.config_manager.hotkey)
 
         # 系统托盘
         self.tray_manager = TrayIconManager()
@@ -179,7 +185,7 @@ class HotkeyVoiceInputV2:
                 if not last_chunk:
                     return 0, 0
                 
-                import numpy as np
+    
                 # 将字节转换为 numpy 数组
                 audio_data = np.frombuffer(last_chunk, dtype=np.int16)
                 if len(audio_data) == 0:
@@ -408,6 +414,15 @@ class HotkeyVoiceInputV2:
         self.is_running = False
         if self.window:
             self.window.close()
+
+    def _show_indicator_with_focus_preservation(self, indicator, cursor_pos=None):
+        """显示指示器并保留焦点"""
+        focus_hwnd = get_foreground_window()
+        if cursor_pos is None:
+            cursor_pos = get_input_cursor_position()
+        indicator.show(cursor_pos=cursor_pos)
+        if focus_hwnd:
+            restore_focus_later(focus_hwnd, delay_ms=50)
 
     def _setup_hotkey_with_manager(self, hotkey_str: str):
         """使用新的快捷键管理器设置快捷键"""
@@ -935,8 +950,8 @@ class HotkeyVoiceInputV2:
         # 设置系统托盘
         self._setup_tray()
 
-        # 设置初始快捷键（使用新的管理器）
-        self._setup_hotkey_with_manager(DEFAULT_HOTKEY)
+        # 设置初始快捷键（使用配置）
+        self._setup_hotkey_with_manager(self.config_manager.hotkey)
 
         # 自动连接到服务器
         if self.async_loop:
@@ -980,8 +995,11 @@ class HotkeyVoiceInputV2:
                         )
 
                 elif event == "-UPDATE-HOTKEY-":
-                    hotkey = values.get("-HOTKEY-", DEFAULT_HOTKEY).strip()
+                    hotkey = values.get("-HOTKEY-", self.config_manager.hotkey).strip()
                     self._setup_hotkey_with_manager(hotkey)
+                    # 保存配置
+                    self.config_manager.hotkey = hotkey
+                    self.config_manager.save()
 
                 elif event == "-RECORD-HOTKEY-":
                     # 开始录制快捷键
@@ -996,6 +1014,8 @@ class HotkeyVoiceInputV2:
                     # 切换是否区分左右修饰键
                     distinguish = values["-DISTINGUISH-LR-"]
                     self.hotkey_manager.distinguish_left_right = distinguish
+                    self.config_manager.distinguish_left_right = distinguish
+                    self.config_manager.save()
                     self.log(f"已{'启用' if distinguish else '禁用'}左右修饰键区分")
 
                 elif event == "-HOTKEY-PRESET-":
@@ -1021,6 +1041,8 @@ class HotkeyVoiceInputV2:
                     for device_id, device_name in self.audio_devices.items():
                         if device_name == selected_name:
                             self.selected_device = device_id if device_id != -1 else None
+                            self.config_manager.selected_device = self.selected_device
+                            self.config_manager.save()
                             self.log(f"✓ 已选择麦克风: {device_name}")
                             break
 
@@ -1073,10 +1095,14 @@ class HotkeyVoiceInputV2:
 
                 # ======== v1.1 新增事件处理 ========
                 elif event == "-START-MINIMIZED-":
+                    self.config_manager.start_minimized = values['-START-MINIMIZED-']
+                    self.config_manager.save()
                     self.log(f"启动最小化设置: {values['-START-MINIMIZED-']}")
 
                 elif event == "-USE-INDICATOR-":
                     self.use_floating_indicator = values["-USE-INDICATOR-"]
+                    self.config_manager.use_floating_indicator = self.use_floating_indicator
+                    self.config_manager.save()
                     self.log(f"悬浮指示器: {'启用' if self.use_floating_indicator else '禁用'}")
 
                 elif event == "-MINIMIZE-TRAY-":
@@ -1097,15 +1123,7 @@ class HotkeyVoiceInputV2:
                         # 显示悬浮指示器
                         if self.use_floating_indicator and self.floating_indicator:
                             try:
-                                # 保存当前焦点窗口
-                                focus_hwnd = get_foreground_window()
-                                # 获取光标位置
-                                cursor_pos = get_input_cursor_position()
-                                # 显示浮标（传递光标位置）
-                                self.floating_indicator.show(cursor_pos=cursor_pos)
-                                # 立即恢复焦点
-                                if focus_hwnd:
-                                    restore_focus_later(focus_hwnd, delay_ms=50)
+                                self._show_indicator_with_focus_preservation(self.floating_indicator)
                             except Exception as e:
                                 logger.warning(f"Failed to show floating indicator: {e}")
                     except Exception as e:
@@ -1129,15 +1147,7 @@ class HotkeyVoiceInputV2:
                         # 显示处理中指示器
                         if self.use_floating_indicator and self.processing_indicator:
                             try:
-                                # 保存当前焦点窗口
-                                focus_hwnd = get_foreground_window()
-                                # 获取光标位置
-                                cursor_pos = get_input_cursor_position()
-                                # 显示处理中指示器（传递光标位置）
-                                self.processing_indicator.show(cursor_pos=cursor_pos)
-                                # 立即恢复焦点
-                                if focus_hwnd:
-                                    restore_focus_later(focus_hwnd, delay_ms=50)
+                                self._show_indicator_with_focus_preservation(self.processing_indicator)
                             except Exception as e:
                                 logger.warning(f"Failed to show processing indicator: {e}")
                         # 异步发送音频
@@ -1180,6 +1190,14 @@ class HotkeyVoiceInputV2:
         """清理资源"""
         try:
             self.is_running = False
+            
+            # 保存配置
+            try:
+                if hasattr(self, 'config_manager'):
+                    self.config_manager.save()
+                    logger.info("配置已保存")
+            except Exception as e:
+                logger.warning(f"Error saving config: {e}")
 
             if self.is_recording:
                 try:
@@ -1249,11 +1267,11 @@ def main():
         print("pip install websockets sounddevice httpx pyautogui pyperclip pynput PySimpleGUI pystray Pillow")
         return
 
-    # 解析配置
-    host = DEFAULT_SERVER_HOST
-    port = DEFAULT_SERVER_PORT
+    # 配置管理器会自动处理默认值
+    # 但仍支持环境变量覆盖
+    host = None
+    port = None
 
-    # 从环境变量读取配置
     import os
     if "VIF_SERVER_HOST" in os.environ:
         host = os.getenv("VIF_SERVER_HOST")
@@ -1263,7 +1281,7 @@ def main():
         except ValueError:
             pass
 
-    # 创建客户端并运行
+    # 创建客户端并运行（None 值会从配置文件读取）
     client = HotkeyVoiceInputV2(server_host=host, server_port=port)
 
     try:
