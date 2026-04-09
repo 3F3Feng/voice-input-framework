@@ -68,6 +68,8 @@ class STTEngineManager:
         if model_name in self.engines:
             self.current_model_name = model_name
             logger.info(f"Model {model_name} already loaded, switched immediately")
+            # Offload other models to save memory
+            await self._offload_other_models(model_name)
             return
         
         # If currently loading, just set as current (will wait in get_current_engine)
@@ -84,14 +86,42 @@ class STTEngineManager:
         # Fire and forget - load in background task
         asyncio.create_task(self._background_load_model(model_name))
     
+    async def _offload_other_models(self, except_model: str) -> None:
+        """卸载除指定模型外的所有模型"""
+        models_to_offload = [m for m in self.engines.keys() if m != except_model]
+        if models_to_offload:
+            logger.info(f"Offloading models to free memory: {models_to_offload}")
+            for old_model in models_to_offload:
+                try:
+                    await self.engines[old_model].unload()
+                    logger.info(f"Offloaded model: {old_model}")
+                except Exception as e:
+                    logger.warning(f"Failed to offload {old_model}: {e}")
+                finally:
+                    del self.engines[old_model]
+    
     async def _background_load_model(self, model_name: str) -> None:
-        """后台加载模型（不阻塞）"""
+        """后台加载模型（不阻塞，加载前自动 offload 其他模型以节省内存）"""
         try:
             async with self._lock:
                 if model_name in self.engines:
                     logger.info(f"Model {model_name} already loaded (race)")
                     self._loading_models.pop(model_name, None)
                     return
+                
+                # Offload 其他模型（节省内存）
+                models_to_offload = [m for m in self.engines.keys() if m != model_name]
+                if models_to_offload:
+                    logger.info(f"Offloading models to free memory: {models_to_offload}")
+                    for old_model in models_to_offload:
+                        if old_model in self.engines:
+                            try:
+                                await self.engines[old_model].unload()
+                                logger.info(f"Offloaded model: {old_model}")
+                            except Exception as e:
+                                logger.warning(f"Failed to offload {old_model}: {e}")
+                            finally:
+                                del self.engines[old_model]
                 
                 engine_class = AVAILABLE_MODELS[model_name]
                 engine = engine_class(model_name=model_name)
