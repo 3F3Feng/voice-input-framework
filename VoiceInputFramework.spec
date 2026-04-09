@@ -1,12 +1,50 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
     ['client\\gui.py'],
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=[
+        'pynput',
+        'pynput.keyboard',
+        'pynput.keyboard._win32',
+        'pynput.mouse',
+        'pynput.mouse._win32',
+        'sounddevice',
+        'websockets',
+        'websockets.client',
+        'websockets.exceptions',
+        'httpx',
+        'httpx._client',
+        'httpx._transports',
+        'httpx._transports.default',
+        'httpcore',
+        'httpcore._backends',
+        'httpcore._backends.sync',
+        'httpcore._backends.auto',
+        'pyautogui',
+        'pyperclip',
+        'PySimpleGUI',
+        'h11',
+        'h11._abnf',
+        'certifi',
+        'ssl',
+        'json',
+        'asyncio',
+        'threading',
+        'queue',
+        'base64',
+        'datetime',
+        'time',
+        'typing',
+        'logging',
+        'os',
+        'sys',
+        'io',
+        'struct',
+        'wave',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -14,6 +52,7 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -29,7 +68,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=False,  # 设置为 True 可以看到错误信息
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
