@@ -133,14 +133,27 @@ download_default_model() {
     fi
 }
 
-# 检查服务是否运行
+# 检查服务是否运行（同时检查 PID 文件和端口）
 is_running() {
+    # 先检查 PID 文件
     if [ -f "$PID_FILE" ]; then
         local PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
             return 0
         fi
     fi
+    
+    # PID 文件不存在或进程已死，检查端口
+    if command -v lsof &> /dev/null; then
+        local PORT_PID=$(lsof -iTCP:$PORT -sTCP:LISTEN -t -n 2>/dev/null | head -1)
+        if [ -n "$PORT_PID" ]; then
+            # 找到运行中的进程，更新 PID 文件
+            echo "$PORT_PID" > "$PID_FILE"
+            log "[自动修复] 发现运行中的进程 (PID: $PORT_PID)，已更新 PID 文件"
+            return 0
+        fi
+    fi
+    
     return 1
 }
 
