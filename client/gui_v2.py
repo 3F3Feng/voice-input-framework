@@ -23,13 +23,12 @@ import asyncio
 import base64
 import json
 import logging
-import sys
 import threading
 import time
 from datetime import datetime
+from turtle import back
 from typing import Optional
 import PySimpleGUI as sg
-from pynput import keyboard
 import numpy as np
 
 # 焦点管理（Windows）
@@ -54,12 +53,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 默认配置
-DEFAULT_SERVER_HOST = "100.124.8.85"
-DEFAULT_SERVER_PORT = 6543
-DEFAULT_HOTKEY = "left_ctrl+left_alt"
-DEFAULT_START_MINIMIZED = False  # 启动时是否最小化到托盘
-DEFAULT_DISTINGUISH_LEFT_RIGHT = True  # 是否区分左右修饰键
+BACKGROUND_COLOR = "#2e2e2e"
+TITLE_TEXT_COLOR = "#ffcc66"
+GROUP_TEXT_COLOR = "#66ccff"
+TEXT_COLOR = "#66ccff"
+TIP_TEXT_COLOR = "#cccccc"
+BUTTON_COLOR = ("white", "gray")
 
 # 音频参数
 AUDIO_SAMPLE_RATE = 16000
@@ -133,8 +132,8 @@ class HotkeyVoiceInputV2:
         # 从配置或参数获取服务器设置
         self.server_host = server_host or self.config_manager.server_host
         self.server_port = server_port or self.config_manager.server_port
-        self.server_url = f"ws://{server_host}:{server_port}/ws/stream"
-        self.rest_api_url = f"http://{server_host}:{server_port}"
+        self.server_url = f"ws://{self.server_host}:{self.server_port}/ws/stream"
+        self.rest_api_url = f"http://{self.server_host}:{self.server_port}"
 
         # 状态
         self.is_running = False
@@ -170,7 +169,7 @@ class HotkeyVoiceInputV2:
 
         # 系统托盘
         self.tray_manager = TrayIconManager()
-        self.use_tray = True  # 是否使用系统托盘
+        self.use_tray = self.config_manager.use_tray  # 是否使用系统托盘
         self.is_minimized_to_tray = False
 
         # 悬浮录音指示器
@@ -228,98 +227,106 @@ class HotkeyVoiceInputV2:
 
         layout = [
             [sg.Text("🎤 Voice Input v1.1", font=("Helvetica", 14, "bold"),
-                     justification="center", expand_x=True)],
+                     justification="center", expand_x=True, background_color=BACKGROUND_COLOR, text_color=TITLE_TEXT_COLOR)],
             [sg.HorizontalSeparator()],
 
             # 连接状态
-            [sg.Text(f"服务器: {self.server_host}:{self.server_port}", size=(50, 1)),
-             sg.Text("未连接", key="-STATUS-", text_color="red", size=(15, 1))],
+            [sg.Text(f"服务器: {self.server_host}:{self.server_port}", size=(50, 1), background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
+             sg.Text("未连接", key="-STATUS-", text_color="red", size=(15, 1), background_color=BACKGROUND_COLOR)],
 
             # ======== v1.1 快捷键设置（增强版） ========
             [sg.Frame("快捷键设置", [
-                [sg.Text("开始/停止录音:"),
-                 sg.Input(DEFAULT_HOTKEY, key="-HOTKEY-", size=(30, 1)),
+                [sg.Text("开始/停止录音:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
+                 sg.Input(self.config_manager.hotkey, key="-HOTKEY-", size=(30, 1)),
                  sg.Button("录制", key="-RECORD-HOTKEY-", size=(8, 1)),
                  sg.Button("更新", key="-UPDATE-HOTKEY-", size=(8, 1)),
                  sg.Button("清除", key="-CLEAR-HOTKEY-", size=(8, 1))],
-                [sg.Checkbox("区分左右修饰键", default=DEFAULT_DISTINGUISH_LEFT_RIGHT,
-                            key="-DISTINGUISH-LR-", enable_events=True)],
+                [sg.Checkbox("区分左右修饰键", default=self.config_manager.distinguish_left_right,
+                            key="-DISTINGUISH-LR-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR)],
                 [sg.Text("(按住快捷键说话，松开后自动输入)",
-                        text_color="gray", font=("Helvetica", 9))],
+                        text_color=TIP_TEXT_COLOR, font=("Helvetica", 9), background_color=BACKGROUND_COLOR)],
                 # 快捷键预设方案
-                [sg.Text("预设方案:"),
+                [sg.Text("预设方案:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
                  sg.Combo(list(HotkeyPresets.get_preset_names()),
                          default_value="default", key="-HOTKEY-PRESET-",
                          size=(20, 1), readonly=True, enable_events=True),
                  sg.Button("应用预设", key="-APPLY-PRESET-", size=(10, 1))],
-            ])],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
             # ==========================================
 
             # 麦克风选择
             [sg.Frame("麦克风设置", [
-                [sg.Text("麦克风:"),
+                [sg.Text("麦克风:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
                  sg.Combo(list(self.audio_devices.values()),
                          default_value=self.audio_devices.get(list(self.audio_devices.keys())[0], "默认设备"),
                          key="-MICROPHONE-", size=(50, 1), readonly=True)],
-            ])],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
 
             # 服务器配置
             [sg.Frame("服务器配置", [
-                [sg.Text("主机:"), sg.Input(self.server_host, key="-HOST-", size=(20, 1)),
-                 sg.Text("端口:"), sg.Input(str(self.server_port), key="-PORT-", size=(8, 1))],
+                [sg.Text("主机:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR), sg.Input(self.server_host, key="-HOST-", size=(20, 1)),
+                 sg.Text("端口:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR), sg.Input(str(self.server_port), key="-PORT-", size=(8, 1))],
                 [sg.Button("连接", key="-CONNECT-", button_color=("white", "green"), size=(10, 1)),
-                 sg.Text("", key="-CONN-STATUS-", text_color="yellow")],
-            ])],
+                 sg.Text("", key="-CONN-STATUS-", text_color="yellow", background_color=BACKGROUND_COLOR)],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
 
             # 模型选择
             [sg.Frame("模型设置", [
-                [sg.Text("选择模型:"),
+                [sg.Text("选择模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
                  sg.Combo([], default_value="", key="-MODEL-SELECT-", size=(30, 1), readonly=True),
-                 sg.Button("🔄 刷新", key="-REFRESH-MODELS-", size=(8, 1)),
+                 sg.Button("刷新", key="-REFRESH-MODELS-", size=(8, 1)),
                  sg.Button("切换", key="-SWITCH-MODEL-", button_color=("white", "blue"), size=(8, 1))],
-                [sg.Text("", key="-MODEL-STATUS-", text_color="yellow", size=(70, 1))],
-            ])],
+                [sg.Text("", key="-MODEL-STATUS-", text_color="yellow", size=(70, 1), background_color=BACKGROUND_COLOR)],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
 
             # ======== v1.1 新增：托盘和指示器设置 ========
             [sg.Frame("界面设置", [
-                [sg.Checkbox("启动时最小化到托盘", default=DEFAULT_START_MINIMIZED,
-                            key="-START-MINIMIZED-", enable_events=True)],
-                [sg.Checkbox("使用悬浮录音指示器", default=True,
-                            key="-USE-INDICATOR-", enable_events=True)],
-                [sg.Button("最小化到托盘", key="-MINIMIZE-TRAY-", size=(15, 1)),
+                [sg.Checkbox("启动时最小化到托盘", default=self.config_manager.start_minimized,
+                            key="-START-MINIMIZED-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
+                 sg.Button("最小化到托盘", key="-MINIMIZE-TRAY-", size=(15, 1)),],
+                [sg.Checkbox("使用悬浮录音指示器", default=self.config_manager.use_floating_indicator,
+                            key="-USE-INDICATOR-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
                  sg.Button("显示主窗口", key="-SHOW-WINDOW-", size=(15, 1))],
-            ])],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
             # =============================================
-
-            # 错误信息显示
-            [sg.Frame("错误信息", [
-                [sg.Multiline("", key="-ERROR-", size=(80, 3), font=("Consolas", 8),
-                             autoscroll=True, disabled=True,
-                             background_color="#3e1e1e", text_color="#ff8888")],
-            ])],
 
             # 识别结果
             [sg.Frame("识别结果", [
-                [sg.Multiline("", key="-RESULT-", size=(70, 8), font=("Consolas", 10),
+                [sg.Multiline("", key="-RESULT-", size=(80, 8), font=("Consolas", 10),
                              autoscroll=True, disabled=True,
                              background_color="#1e1e1e", text_color="white")],
-                [sg.Button("📋 复制", key="-COPY-", size=(10, 1)),
-                 sg.Button("🗑️ 清空", key="-CLEAR-", size=(10, 1)),
-                 sg.Button("✏️ 输入（自动）", key="-PASTE-", size=(15, 1))],
-            ])],
+                [sg.Button("复制", key="-COPY-", size=(10, 1)),
+                 sg.Button("清空", key="-CLEAR-", size=(10, 1)),
+                 sg.Button("输入（自动）", key="-PASTE-", size=(15, 1))],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
 
             # 日志
             [sg.Frame("日志", [
-                [sg.Multiline("", key="-LOG-", size=(80, 5), font=("Consolas", 8),
+                [sg.Multiline("", key="-LOG-", size=(80, 5), font=("Consolas", 10),
                              autoscroll=True, disabled=True,
                              background_color="#1e1e1e", text_color="#aaaaaa")],
-            ])],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
 
-            [sg.Button("退出", key="-EXIT-", button_color=("white", "gray"), size=(10, 1))],
+            # 错误信息显示
+            [sg.Frame("错误信息", [
+                [sg.Multiline("", key="-ERROR-", size=(80, 3), font=("Consolas", 10),
+                             autoscroll=True, disabled=True,
+                             background_color="#3e1e1e", text_color="#ff8888")],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
+
+            [sg.Push(background_color=BACKGROUND_COLOR),
+              sg.Button("退出", key="-EXIT-", button_color=("white", "gray"), size=(10, 1)),
+                sg.Push(background_color=BACKGROUND_COLOR)],
         ]
 
         self.window = sg.Window("🎤 Voice Input Framework v1.1", layout,
-                               finalize=True, keep_on_top=True)
+                               finalize=True, keep_on_top=True, no_titlebar=True, grab_anywhere=True,
+                               background_color="#2e2e2e", button_color=("white", "#4e4e4e")
+                               )
+        
+        if self.config_manager.start_minimized:
+            self._minimize_to_tray()
+
         self.is_running = True
 
     def log(self, message: str):

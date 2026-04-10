@@ -294,9 +294,9 @@ class TrayIconManager:
         for model in self.available_models:
             items.append(
                 pystray.MenuItem(
-                    model,
-                    lambda m=model: self._switch_model(m),
-                    checked=lambda item, m=model: self.current_model == m
+                    text=model,
+                    action=(lambda m: lambda icon, item: self._switch_model(m))(model),
+                    checked=(lambda m: lambda item: self.current_model == m)(model)
                 )
             )
         return items

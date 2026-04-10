@@ -2,6 +2,8 @@ logs/voice_input_framework.log
 build/*
 .venv/*
 dist/*
+.vscode/*
+.idea/*
 *.egg-info/*
 
 *.lock
