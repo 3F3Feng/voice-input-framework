@@ -33,9 +33,6 @@ except ImportError:
     except ImportError:
         PYAUTOGUI_AVAILABLE = False
 
-# Thread safety lock for window operations
-_window_lock = threading.Lock()
-
 # 尝试导入 PySimpleGUI
 try:
     import PySimpleGUI as sg
