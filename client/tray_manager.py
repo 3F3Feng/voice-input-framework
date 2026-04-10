@@ -398,6 +398,31 @@ class TrayIconManager:
         """
         if self.icon:
             self.icon.title = text
+    
+    def notify(self, title: str, message: str):
+        """
+        显示系统通知
+        
+        Args:
+            title: 通知标题
+            message: 通知内容
+        """
+        if not self.icon:
+            logger.warning("托盘图标未启动，无法显示通知")
+            return
+        
+        try:
+            # pystray 的 notify 方法在 Windows 上支持气泡通知
+            if hasattr(self.icon, 'notify'):
+                self.icon.notify(message, title)
+            else:
+                # 备选：更新 tooltip 显示通知
+                self.update_tooltip(f"{title}: {message}")
+                logger.info(f"托盘通知: {title} - {message}")
+        except Exception as e:
+            logger.warning(f"显示托盘通知失败: {e}")
+            # 备选：更新 tooltip
+            self.update_tooltip(f"{title}: {message}")
 
 
 # 导出

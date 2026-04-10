@@ -427,6 +427,23 @@ class HotkeyVoiceInputV2:
         if focus_hwnd:
             restore_focus_later(focus_hwnd, delay_ms=50)
 
+    def _show_startup_notification(self):
+        """显示启动通知"""
+        hotkey = self.config_manager.hotkey
+        version = "v1.1.0"
+        
+        # 托盘通知
+        if self.tray_manager:
+            self.tray_manager.notify(
+                "Voice Input Framework",
+                f"已就绪！快捷键: {hotkey}"
+            )
+        
+        # 同时显示在状态栏
+        self.log(f"✓ Voice Input Framework {version} 已启动")
+        self.log(f"✓ 快捷键: {hotkey}")
+        self.log(f"✓ 服务器: {self.server_host}:{self.server_port}")
+
     def _setup_hotkey_with_manager(self, hotkey_str: str):
         """使用新的快捷键管理器设置快捷键"""
         try:
@@ -1113,6 +1130,9 @@ class HotkeyVoiceInputV2:
                 self.connect_to_server(),
                 self.async_loop
             )
+        
+        # 显示启动通知
+        self._show_startup_notification()
 
         # 主 UI 循环
         while self.is_running:
