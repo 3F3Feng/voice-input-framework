@@ -18,7 +18,8 @@ import re
 logger = logging.getLogger(__name__)
 
 # 当前版本
-CURRENT_VERSION = "1.1.5"
+# 从 __init__.py 导入版本号，保持单一来源
+from . import __version__ as CURRENT_VERSION
 GITHUB_REPO = "3F3Feng/voice-input-framework"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 

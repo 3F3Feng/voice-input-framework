@@ -45,7 +45,7 @@ from .hotkey_manager import HotkeyManager, HotkeyParser, HotkeyPresets
 from .tray_manager import TrayIconManager, TrayStatus
 from .floating_indicator import FloatingIndicator, ProcessingIndicator
 from .config_manager import ConfigManager
-from .update_checker import check_for_updates, format_version_message, CURRENT_VERSION
+from .update_checker import check_for_updates, format_version_message
 from .auto_start import AutoStartManager
 
 # 日志配置
@@ -441,7 +441,9 @@ class HotkeyVoiceInputV2:
     def _show_startup_notification(self):
         """显示启动通知"""
         hotkey = self.config_manager.hotkey
-        version = "v1.1.5"
+        # 从 __init__.py 获取版本号
+        from . import __version__
+        version = f"v{__version__}"
         
         # 托盘通知
         if self.tray_manager and self.tray_manager.icon:
