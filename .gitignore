@@ -11,3 +11,8 @@ dist/*
 */__pycache__/*
 logs/*.log
 
+
+# Voice Input Framework specific
+voice_input_framework.pid
+logs/*.log
+logs/*.log.*
