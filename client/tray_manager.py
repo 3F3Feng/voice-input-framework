@@ -269,6 +269,13 @@ class TrayIconManager:
             ),
             pystray.Menu.SEPARATOR,
             
+            # 检查更新
+            pystray.MenuItem(
+                "检查更新",
+                lambda: self._call_callback("check_update")
+            ),
+            pystray.Menu.SEPARATOR,
+            
             # 状态显示 - 使用当前状态生成文本
             pystray.MenuItem(
                 f"状态: {self._get_status_text()}",

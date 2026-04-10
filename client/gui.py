@@ -45,6 +45,7 @@ from .hotkey_manager import HotkeyManager, HotkeyParser, HotkeyPresets
 from .tray_manager import TrayIconManager, TrayStatus
 from .floating_indicator import FloatingIndicator, ProcessingIndicator
 from .config_manager import ConfigManager
+from .update_checker import check_for_updates, format_version_message, CURRENT_VERSION
 
 # 日志配置
 logging.basicConfig(
@@ -362,6 +363,7 @@ class HotkeyVoiceInputV2:
         self.tray_manager.set_callback("stop_recording", self._stop_recording_from_tray)
         self.tray_manager.set_callback("switch_model", self._switch_model_from_tray)
         self.tray_manager.set_callback("refresh_models", self._refresh_models_from_tray)
+        self.tray_manager.set_callback("check_update", self._check_for_updates)
         self.tray_manager.set_callback("quit", self._quit_from_tray)
 
         # 设置模型列表
@@ -443,6 +445,26 @@ class HotkeyVoiceInputV2:
         self.log(f"✓ Voice Input Framework {version} 已启动")
         self.log(f"✓ 快捷键: {hotkey}")
         self.log(f"✓ 服务器: {self.server_host}:{self.server_port}")
+
+    def _check_for_updates(self):
+        """检查更新（从托盘菜单调用）"""
+        self.log("正在检查更新...")
+        
+        try:
+            version_info = check_for_updates()
+            message = format_version_message(version_info)
+            
+            self.log(message)
+            
+            # 如果有更新，显示通知
+            if version_info.is_outdated and self.tray_manager:
+                self.tray_manager.notify(
+                    "发现新版本",
+                    f"{version_info.latest_version} 可用，点击下载"
+                )
+                
+        except Exception as e:
+            self.log(f"检查更新失败: {e}")
 
     def _setup_hotkey_with_manager(self, hotkey_str: str):
         """使用新的快捷键管理器设置快捷键"""
