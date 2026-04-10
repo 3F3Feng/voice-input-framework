@@ -330,11 +330,13 @@ class HotkeyVoiceInputV2:
         self.is_running = True
 
     def log(self, message: str):
-        """添加日志条目"""
-        if not self.window:
-            return
+        """添加日志条目（同时输出到 GUI 和命令行）"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.window["-LOG-"].print(f"[{timestamp}] {message}")
+        # 输出到命令行
+        print(f"[{timestamp}] {message}")
+        # 输出到 GUI
+        if self.window:
+            self.window["-LOG-"].print(f"[{timestamp}] {message}")
 
     def update_result(self, text: str):
         """更新识别结果"""
