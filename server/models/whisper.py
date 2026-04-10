@@ -15,7 +15,6 @@ from transformers import pipeline
 
 from server.models.base import BaseSTTEngine, STTEngineError
 from shared.data_types import TranscriptionResult
-from shared.audio_confidence import estimate_confidence
 
 logger = logging.getLogger(__name__)
 
@@ -95,13 +94,10 @@ class WhisperEngine(BaseSTTEngine):
 
         result = await loop.run_in_executor(None, _do)
         text = result.get("text", "").strip()
-        
-        # 估算置信度
-        confidence = estimate_confidence(audio_data, text, sample_rate)
 
         return TranscriptionResult(
             text=text,
-            confidence=confidence,
+            confidence=1.0,
             language=language,
             is_final=True,
         )
