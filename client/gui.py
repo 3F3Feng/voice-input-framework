@@ -796,8 +796,7 @@ class HotkeyVoiceInputV2:
 
                     if msg_type == "result":
                         result_text = data.get("text", "")
-                        confidence = data.get("confidence", 0)
-                        self.log(f"识别结果: {result_text} (置信度: {confidence:.2f})")
+                        self.log(f"识别结果: {result_text}")
                     elif msg_type == "done":
                         self.log("识别完成")
                         await ws.close()
@@ -958,8 +957,7 @@ class HotkeyVoiceInputV2:
                         
                         if msg_type == "result":
                             result_text = data.get("text", "")
-                            confidence = data.get("confidence", 0)
-                            self.log(f"识别结果: {result_text} (置信度: {confidence:.2f})")
+                            self.log(f"识别结果: {result_text}")
                         elif msg_type == "done":
                             self.log("识别完成")
                             self.stream_result = result_text
