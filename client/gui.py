@@ -1184,7 +1184,9 @@ class HotkeyVoiceInputV2:
         
         # 等待托盘启动完成后显示通知
         def _delayed_startup_notification():
-            time.sleep(1.0)  # 等待托盘完全启动
+            logger.info("等待托盘启动...")
+            time.sleep(2.0)  # Windows 上需要更长时间
+            logger.info("准备显示启动通知...")
             self._show_startup_notification()
         
         notification_thread = threading.Thread(target=_delayed_startup_notification, daemon=True)
