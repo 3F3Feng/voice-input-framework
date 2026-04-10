@@ -153,7 +153,7 @@ class ConfigManager:
         
         # 导航到目标位置
         for k in keys[:-1]:
-            if k not in config:
+            if k not in config or not isinstance(config[k], dict):
                 config[k] = {}
             config = config[k]
         
