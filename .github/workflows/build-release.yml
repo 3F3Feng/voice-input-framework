@@ -12,6 +12,8 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,7 +27,6 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          # 从 client/__init__.py 读取版本号
           $versionLine = Select-String -Path "client/__init__.py" -Pattern '__version__\s*=\s*"([^"]+)"'
           $version = $versionLine.Matches.Groups[1].Value
           echo "VERSION=$version" >> $env:GITHUB_OUTPUT
@@ -39,68 +40,26 @@ jobs:
 
       - name: Build with PyInstaller
         shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          pyinstaller --name "VoiceInput-v${{ steps.version.outputs.VERSION }}" `
-            --windowed `
-            --onefile `
-            --add-data "client;client" `
-            --add-data "shared;shared" `
-            --hidden-import=client.hotkey_manager `
-            --hidden-import=client.tray_manager `
-            --hidden-import=client.floating_indicator `
-            --hidden-import=client.config_manager `
-            --hidden-import=client.notifier `
-            --hidden-import=client.update_checker `
-            --hidden-import=shared.data_types `
-            --hidden-import=shared.protocol `
-            --hidden-import=numpy `
-            --hidden-import=pynput `
-            --hidden-import=pynput.keyboard `
-            --hidden-import=pynput.keyboard._win32 `
-            --hidden-import=pynput.mouse `
-            --hidden-import=sounddevice `
-            --hidden-import=websockets `
-            --hidden-import=websockets.client `
-            --hidden-import=httpx `
-            --hidden-import=httpx._client `
-            --hidden-import=httpcore `
-            --hidden-import=pyautogui `
-            --hidden-import=pyperclip `
-            --hidden-import=PySimpleGUI `
-            --hidden-import=h11 `
-            --hidden-import=certifi `
-            --hidden-import=pystray `
-            --hidden-import=PIL `
-            --hidden-import=PIL.Image `
-            --hidden-import=winotify `
-            --collect-all=numpy `
-            --collect-all=pynput `
-            --collect-all=sounddevice `
-            --collect-all=websockets `
-            --collect-all=httpx `
-            --collect-all=PIL `
-            run_client.py
+          $version = "${{ steps.version.outputs.VERSION }}"
+          pyinstaller --name "VoiceInput-v$version" --windowed --onefile --add-data "client;client" --add-data "shared;shared" --hidden-import=client.hotkey_manager --hidden-import=client.tray_manager --hidden-import=client.floating_indicator --hidden-import=client.config_manager --hidden-import=client.notifier --hidden-import=client.update_checker --hidden-import=shared.data_types --hidden-import=shared.protocol --hidden-import=numpy --hidden-import=pynput --hidden-import=pynput.keyboard --hidden-import=pynput.keyboard._win32 --hidden-import=pynput.mouse --hidden-import=sounddevice --hidden-import=websockets --hidden-import=websockets.client --hidden-import=httpx --hidden-import=httpx._client --hidden-import=httpcore --hidden-import=pyautogui --hidden-import=pyperclip --hidden-import=PySimpleGUI --hidden-import=h11 --hidden-import=certifi --hidden-import=pystray --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=winotify --collect-all=numpy --collect-all=pynput --collect-all=sounddevice --collect-all=websockets --collect-all=httpx --collect-all=PIL run_client.py
 
       - name: Rename output
         shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          if (Test-Path "dist/VoiceInput-v${{ steps.version.outputs.VERSION }}.exe") {
-            Copy-Item "dist/VoiceInput-v${{ steps.version.outputs.VERSION }}.exe" "dist/VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe"
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $src = "dist/VoiceInput-v$version.exe"
+          $dst = "dist/VoiceInput-v$version-windows-x64.exe"
+          if (Test-Path $src) {
+            Copy-Item $src $dst
           }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64
-          path: dist/VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe
+          name: windows-build
+          path: dist/*.exe
           retention-days: 30
-
-      - name: Output artifact name
-        run: echo "Artifact: VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe"
 
   release:
     needs: build-windows
@@ -110,33 +69,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get version
-        id: version
-        run: |
-          version=$(grep -oP '__version__\s*=\s*"\K[^"]+' client/__init__.py)
-          echo "VERSION=$version" >> $GITHUB_OUTPUT
-          echo "Version: $version"
-
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          pattern: VoiceInput-v*
+          name: windows-build
+          path: dist
+
+      - name: Get version from tag
+        id: version
+        run: |
+          version="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=$version" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*.exe
+          files: dist/*.exe
           generate_release_notes: true
           body: |
-            ## Voice Input Framework v${{ steps.version.outputs.VERSION }}
-            
-            ### 下载
-            - `VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe` - Windows 可执行文件
-            
+            ## Voice Input Framework
+
             ### 使用方法
-            1. 下载并运行 exe 文件
-            2. 配置服务器地址（默认连接到 Tailscale IP）
+            1. 下载 exe 文件
+            2. 运行程序
             3. 按住快捷键说话，松开后自动输入
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
