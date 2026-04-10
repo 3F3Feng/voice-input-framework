@@ -4,17 +4,17 @@
 <dict>
     <key>Label</key>
     <string>com.openclaw.voice-input-framework</string>
-    
+
     <key>ProgramArguments</key>
     <array>
         <string>/Users/shifengzhang/.openclaw/workspace/.venv/bin/python3</string>
-        <string>-m</string>
-        <string>voice_input_framework.server.api</string>
+        <string>-c</string>
+        <string>import sys; sys.path.insert(0, '/Users/shifengzhang/voice-input-framework'); from server.api import main; main()</string>
     </array>
-    
+
     <key>WorkingDirectory</key>
     <string>/Users/shifengzhang/voice-input-framework</string>
-    
+
     <key>EnvironmentVariables</key>
     <dict>
         <key>VIF_PORT</key>
@@ -27,23 +27,25 @@
         <string>qwen_asr</string>
         <key>VIF_AUTO_DOWNLOAD</key>
         <string>true</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/shifengzhang/voice-input-framework</string>
     </dict>
-    
+
     <key>RunAtLoad</key>
     <true/>
-    
+
     <key>KeepAlive</key>
     <true/>
-    
+
     <key>StandardOutPath</key>
     <string>/Users/shifengzhang/voice-input-framework/logs/stdout.log</string>
-    
+
     <key>StandardErrorPath</key>
     <string>/Users/shifengzhang/voice-input-framework/logs/stderr.log</string>
-    
+
     <key>ProcessType</key>
     <string>Background</string>
-    
+
     <key>LowPriorityIO</key>
     <true/>
 </dict>
