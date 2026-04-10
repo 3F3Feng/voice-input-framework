@@ -23,6 +23,7 @@ import asyncio
 import base64
 import json
 import logging
+import queue
 import threading
 import time
 from datetime import datetime
@@ -824,22 +825,30 @@ class HotkeyVoiceInputV2:
             return None
 
     def _start_recording(self):
-        """开始录音（在后台线程中）"""
+        """开始录音并建立 WebSocket 流式传输"""
         import sounddevice as sd
 
         self.is_recording = True
-        self.audio_buffer = []
+        self.audio_buffer = []  # 保留用于备用
+        self.audio_queue = queue.Queue()  # 音频块队列，用于边录边发
+        self.stream_result = None  # 存储识别结果
+        self.stream_error = None  # 存储错误信息
         self.log("🔴 开始录音...")
 
         def callback(indata, frames, time_info, status):
             if status:
                 logger.warning(f"Audio status: {status}")
             if self.is_recording:
-                self.audio_buffer.append(indata.copy().tobytes())
+                audio_bytes = indata.copy().tobytes()
+                self.audio_buffer.append(audio_bytes)  # 存入 buffer
+                try:
+                    self.audio_queue.put_nowait(audio_bytes)  # 存入队列供发送
+                except queue.Full:
+                    pass  # 队列满时丢弃旧数据
 
         try:
             self.stream = sd.InputStream(
-                device=self.selected_device,  # 使用选择的麦克风
+                device=self.selected_device,
                 samplerate=AUDIO_SAMPLE_RATE,
                 channels=AUDIO_CHANNELS,
                 dtype='int16',
@@ -847,14 +856,23 @@ class HotkeyVoiceInputV2:
                 callback=callback
             )
             self.stream.start()
+            
+            # 启动流式发送协程
+            if self.async_loop:
+                asyncio.run_coroutine_threadsafe(
+                    self._stream_audio_to_server(),
+                    self.async_loop
+                )
+                
         except Exception as e:
             self.log(f"启动录音失败: {e}")
             self.is_recording = False
 
     def _stop_recording(self):
-        """停止录音"""
+        """停止录音并发送结束信号"""
         self.is_recording = False
-        self.log(f"⏹️ 停止录音 ({len(self.audio_buffer)} 个音频块)")
+        chunks_count = len(self.audio_buffer)
+        self.log(f"⏹️ 停止录音 ({chunks_count} 个音频块)")
 
         if self.stream:
             try:
@@ -863,9 +881,138 @@ class HotkeyVoiceInputV2:
             except Exception as e:
                 logger.warning(f"关闭音频流失败: {e}")
             self.stream = None
+        
+        # 通知发送协程结束
+        try:
+            self.audio_queue.put_nowait(None)  # None 表示结束
+        except:
+            pass
+
+    async def _stream_audio_to_server(self):
+        """流式发送音频到服务器（边录边发）"""
+        import websockets
+        
+        try:
+            self.log("建立 WebSocket 连接...")
+            
+            async with websockets.connect(self.server_url, close_timeout=10) as ws:
+                # 发送配置
+                language = self.config_manager.get('audio.language', 'auto')
+                await ws.send(json.dumps({
+                    "type": "config",
+                    "language": language
+                }))
+                self.log(f"已发送配置 (language: {language})")
+                
+                # 等待准备就绪
+                try:
+                    ready_msg = await asyncio.wait_for(ws.recv(), timeout=30.0)
+                    data = json.loads(ready_msg)
+                    if data.get("type") == "ready":
+                        self.log("服务器已准备就绪，开始流式传输...")
+                    else:
+                        self.log(f"服务器响应异常: {data}")
+                except asyncio.TimeoutError:
+                    self.log("等待服务器准备超时")
+                    return
+                
+                # 流式发送音频块
+                while self.is_recording or not self.audio_queue.empty():
+                    try:
+                        # 从队列获取音频块（最多等待 0.1 秒）
+                        chunk = self.audio_queue.get(timeout=0.1)
+                        
+                        if chunk is None:  # 收到结束信号
+                            break
+                            
+                        # 发送音频块
+                        await ws.send(json.dumps({
+                            "type": "audio",
+                            "data": base64.b64encode(chunk).decode()
+                        }))
+                        
+                    except queue.Empty:
+                        # 队列为空但还在录音，继续等待
+                        continue
+                    except Exception as e:
+                        self.log(f"发送音频块出错: {e}")
+                        break
+                
+                # 发送结束信号
+                self.log("发送结束信号...")
+                await ws.send(json.dumps({"type": "end"}))
+                
+                # 等待识别结果
+                self.log("等待识别结果...")
+                result_text = ""
+                
+                while True:
+                    try:
+                        response = await asyncio.wait_for(ws.recv(), timeout=300.0)
+                        data = json.loads(response)
+                        msg_type = data.get("type")
+                        
+                        if msg_type == "result":
+                            result_text = data.get("text", "")
+                            confidence = data.get("confidence", 0)
+                            self.log(f"识别结果: {result_text} (置信度: {confidence:.2f})")
+                        elif msg_type == "done":
+                            self.log("识别完成")
+                            self.stream_result = result_text
+                            break
+                        elif msg_type == "error":
+                            error_msg = data.get("error_message", "未知错误")
+                            error_code = data.get("error_code", "")
+                            self.log(f"识别错误 [{error_code}]: {error_msg}")
+                            self.stream_error = error_msg
+                            break
+                            
+                    except asyncio.TimeoutError:
+                        self.log("等待结果超时")
+                        break
+                        
+        except Exception as e:
+            self.log(f"流式传输出错: {e}")
+            self.stream_error = str(e)
+        finally:
+            # 在主线程处理结果
+            if self.async_loop:
+                asyncio.run_coroutine_threadsafe(
+                    self._handle_stream_result(),
+                    self.async_loop
+                )
+
+    async def _handle_stream_result(self):
+        """处理流式传输的结果（在主线程中调用）"""
+        if self.stream_error:
+            self.log(f"流式识别失败: {self.stream_error}")
+            if self.tray_manager:
+                self.tray_manager.set_status(TrayStatus.ERROR)
+            if self.processing_indicator:
+                self.processing_indicator.hide()
+            return
+        
+        result = self.stream_result
+        
+        if result:
+            self.log(f"更新结果显示...")
+            self.update_result(result)
+            self.log(f"开始自动输入...")
+            await self._auto_input_text(result)
+            self.log(f"自动输入完成")
+            
+            if self.tray_manager:
+                self.tray_manager.set_status(TrayStatus.READY)
+        else:
+            self.log("未收到识别结果")
+            if self.tray_manager:
+                self.tray_manager.set_status(TrayStatus.ERROR)
+        
+        if self.processing_indicator:
+            self.processing_indicator.hide()
 
     async def _process_audio(self):
-        """处理录制的音频"""
+        """处理录制的音频（备用模式：录完再发）"""
         try:
             self.log("处理音频...")
 
