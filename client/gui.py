@@ -330,13 +330,11 @@ class HotkeyVoiceInputV2:
         self.is_running = True
 
     def log(self, message: str):
-        """添加日志条目（同时输出到 GUI 和命令行）"""
+        """添加日志条目"""
+        if not self.window:
+            return
         timestamp = datetime.now().strftime("%H:%M:%S")
-        # 输出到命令行
-        print(f"[{timestamp}] {message}")
-        # 输出到 GUI
-        if self.window:
-            self.window["-LOG-"].print(f"[{timestamp}] {message}")
+        self.window["-LOG-"].print(f"[{timestamp}] {message}")
 
     def update_result(self, text: str):
         """更新识别结果"""
@@ -994,7 +992,8 @@ class HotkeyVoiceInputV2:
         total_time = time.time() - self._record_start_time if hasattr(self, '_record_start_time') and self._record_start_time else 0
         
         if self.stream_error:
-            self.log(f"流式识别失败: {self.stream_error} (总耗时: {total_time:.1f}s)")
+            self.log(f"流式识别失败: {self.stream_error}")
+            print(f"[耗时统计] 录音: {total_time:.1f}s, 错误: {self.stream_error}")
             if self.tray_manager:
                 self.tray_manager.set_status(TrayStatus.ERROR)
             if self.processing_indicator:
@@ -1004,16 +1003,15 @@ class HotkeyVoiceInputV2:
         result = self.stream_result
         
         if result:
-            self.log(f"更新结果显示... (总耗时: {total_time:.1f}s)")
             self.update_result(result)
-            self.log(f"开始自动输入...")
             await self._auto_input_text(result)
-            self.log(f"自动输入完成 (总耗时: {total_time:.1f}s)")
+            print(f"[耗时统计] 录音: {total_time:.1f}s, 结果: {result[:50]}...")
             
             if self.tray_manager:
                 self.tray_manager.set_status(TrayStatus.READY)
         else:
-            self.log(f"未收到识别结果 (总耗时: {total_time:.1f}s)")
+            self.log("未收到识别结果")
+            print(f"[耗时统计] 录音: {total_time:.1f}s, 结果: (无)")
             if self.tray_manager:
                 self.tray_manager.set_status(TrayStatus.ERROR)
         
