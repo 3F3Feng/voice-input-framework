@@ -25,7 +25,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install pynput sounddevice websockets httpx pyautogui pyperclip PySimpleGUI
+          pip install numpy pynput sounddevice websockets httpx pyautogui pyperclip PySimpleGUI
 
       - name: Build with PyInstaller
         shell: pwsh
@@ -46,6 +46,7 @@ jobs:
             --hidden-import=pyautogui `
             --hidden-import=pyperclip `
             --hidden-import=PySimpleGUI `
+            --hidden-import=numpy `
             --hidden-import=h11 `
             --hidden-import=certifi `
             --collect-all pynput `
