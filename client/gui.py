@@ -46,6 +46,7 @@ from .tray_manager import TrayIconManager, TrayStatus
 from .floating_indicator import FloatingIndicator, ProcessingIndicator
 from .config_manager import ConfigManager
 from .update_checker import check_for_updates, format_version_message, CURRENT_VERSION
+from .auto_start import AutoStartManager
 
 # 日志配置
 logging.basicConfig(
@@ -172,6 +173,9 @@ class HotkeyVoiceInputV2:
         self.tray_manager = TrayIconManager()
         self.use_tray = self.config_manager.use_tray  # 是否使用系统托盘
         self.is_minimized_to_tray = False
+        
+        # 开机自启动管理器
+        self.auto_start_manager = AutoStartManager()
 
         # 悬浮录音指示器
         # 创建音量回调函数
@@ -364,11 +368,16 @@ class HotkeyVoiceInputV2:
         self.tray_manager.set_callback("switch_model", self._switch_model_from_tray)
         self.tray_manager.set_callback("refresh_models", self._refresh_models_from_tray)
         self.tray_manager.set_callback("check_update", self._check_for_updates)
+        self.tray_manager.set_callback("toggle_auto_start", self._toggle_auto_start)
         self.tray_manager.set_callback("quit", self._quit_from_tray)
 
         # 设置模型列表
         self.tray_manager.set_available_models(self.available_models)
         self.tray_manager.set_current_model(self.current_model or "")
+        
+        # 设置开机自启动状态
+        auto_start_enabled = self.auto_start_manager.is_enabled()
+        self.tray_manager.set_auto_start_enabled(auto_start_enabled)
 
         # 启动托盘
         self.tray_manager.start()
@@ -465,6 +474,19 @@ class HotkeyVoiceInputV2:
                 
         except Exception as e:
             self.log(f"检查更新失败: {e}")
+
+    def _toggle_auto_start(self):
+        """切换开机自启动状态"""
+        try:
+            new_state = self.auto_start_manager.toggle()
+            self.tray_manager.set_auto_start_enabled(new_state)
+            
+            if new_state:
+                self.log("✓ 开机自启动已启用")
+            else:
+                self.log("✓ 开机自启动已禁用")
+        except Exception as e:
+            self.log(f"切换开机自启动失败: {e}")
 
     def _setup_hotkey_with_manager(self, hotkey_str: str):
         """使用新的快捷键管理器设置快捷键"""
