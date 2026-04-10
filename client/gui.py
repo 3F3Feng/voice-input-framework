@@ -910,9 +910,6 @@ class HotkeyVoiceInputV2:
             import pyautogui
             self.log(f"准备输入文本: {text[:50]}...")
 
-            # 短暂延迟，让窗口获得焦点
-            await asyncio.sleep(0.5)
-
             # 使用剪贴板粘贴（更可靠，支持特殊字符）
             try:
                 import pyperclip
@@ -922,7 +919,6 @@ class HotkeyVoiceInputV2:
                 # 粘贴文本
                 pyautogui.hotkey('ctrl', 'v')
                 self.log(f"✓ 已粘贴: {text[:50]}...")
-                await asyncio.sleep(0.2)
 
             except ImportError as e:
                 self.log(f"⚠️ pyperclip 不可用，使用逐字输入: {e}")
