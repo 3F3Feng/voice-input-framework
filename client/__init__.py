@@ -6,4 +6,12 @@ Voice Input Framework - Client Library
 
 __version__ = "1.1.0"
 __author__ = "Voice Input Framework"
-__all__ = []
+
+# 延迟导入避免测试时触发 GUI 依赖
+def __getattr__(name):
+    if name == "HotkeyVoiceInput":
+        from .gui import HotkeyVoiceInputV2 as HotkeyVoiceInput
+        return HotkeyVoiceInput
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+__all__ = ["HotkeyVoiceInput"]
