@@ -11,7 +11,7 @@ Voice Input Framework - 版本检查和更新管理模块
 import logging
 from dataclasses import dataclass
 from typing import Optional
-import urllib.request
+import subprocess
 import json
 import re
 
@@ -20,8 +20,37 @@ logger = logging.getLogger(__name__)
 # 当前版本
 CURRENT_VERSION = "1.1.0"
 GITHUB_REPO = "3F3Feng/voice-input-framework"
-GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
+
+
+def gh_api(endpoint: str) -> Optional[dict]:
+    """
+    使用 gh CLI 执行 GitHub API 请求
+    
+    Args:
+        endpoint: API 端点 (如 'repos/owner/repo/releases/latest')
+    
+    Returns:
+        JSON 响应字典，或失败时返回 None
+    """
+    try:
+        result = subprocess.run(
+            ['gh', 'api', endpoint],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+        else:
+            logger.warning(f"gh api failed: {result.stderr.strip()}")
+            return None
+    except FileNotFoundError:
+        logger.warning("gh CLI 未安装，无法使用 GitHub API")
+        return None
+    except Exception as e:
+        logger.warning(f"gh api 请求失败: {e}")
+        return None
 
 
 @dataclass
@@ -93,72 +122,55 @@ def check_for_updates() -> VersionInfo:
     Returns:
         VersionInfo 对象，包含版本比较结果
     """
-    try:
-        # 使用 GitHub API 获取最新 release 信息
-        request = urllib.request.Request(
-            GITHUB_API_URL,
-            headers={
-                'Accept': 'application/vnd.github.v3+json',
-                'User-Agent': 'VoiceInputFramework'
-            }
-        )
-        
-        with urllib.request.urlopen(request, timeout=10) as response:
-            data = json.loads(response.read().decode('utf-8'))
-        
-        latest_version = data.get('tag_name', '')
-        if not latest_version:
-            logger.warning("GitHub API 未返回版本信息")
-            return VersionInfo(
-                current_version=CURRENT_VERSION,
-                latest_version=CURRENT_VERSION,
-                is_outdated=False,
-                release_url=GITHUB_RELEASES_URL
-            )
-        
-        # 检查是否需要更新
-        is_outdated = compare_versions(CURRENT_VERSION, latest_version) < 0
-        
-        # 获取下载链接（Windows exe）
-        download_url = None
-        assets = data.get('assets', [])
-        for asset in assets:
-            if asset.get('name', '').endswith('.exe'):
-                download_url = asset.get('browser_download_url')
-                break
-        
-        # 获取 release notes（取前500字符）
-        release_notes = data.get('body', '')
-        if release_notes and len(release_notes) > 500:
-            release_notes = release_notes[:500] + "..."
-        
-        logger.info(f"版本检查完成: 当前={CURRENT_VERSION}, 最新={latest_version}, 需要更新={is_outdated}")
-        
-        return VersionInfo(
-            current_version=CURRENT_VERSION,
-            latest_version=latest_version,
-            is_outdated=is_outdated,
-            release_url=data.get('html_url', GITHUB_RELEASES_URL),
-            download_url=download_url,
-            release_notes=release_notes
-        )
-        
-    except urllib.error.URLError as e:
-        logger.warning(f"检查更新失败（网络错误）: {e}")
+    # 使用 gh api 获取最新 release 信息
+    data = gh_api(f'repos/{GITHUB_REPO}/releases/latest')
+    
+    if not data:
+        # gh api 失败，尝试直接使用 GitHub Releases 页面作为后备
+        logger.warning("GitHub API 获取失败，使用 releases 页面作为后备")
         return VersionInfo(
             current_version=CURRENT_VERSION,
             latest_version=CURRENT_VERSION,
             is_outdated=False,
             release_url=GITHUB_RELEASES_URL
         )
-    except Exception as e:
-        logger.warning(f"检查更新失败: {e}")
+    
+    latest_version = data.get('tag_name', '')
+    if not latest_version:
+        logger.warning("GitHub API 未返回版本信息")
         return VersionInfo(
             current_version=CURRENT_VERSION,
             latest_version=CURRENT_VERSION,
             is_outdated=False,
             release_url=GITHUB_RELEASES_URL
         )
+    
+    # 检查是否需要更新
+    is_outdated = compare_versions(CURRENT_VERSION, latest_version) < 0
+    
+    # 获取下载链接（Windows exe）
+    download_url = None
+    assets = data.get('assets', [])
+    for asset in assets:
+        if asset.get('name', '').endswith('.exe'):
+            download_url = asset.get('browser_download_url')
+            break
+    
+    # 获取 release notes（取前500字符）
+    release_notes = data.get('body', '')
+    if release_notes and len(release_notes) > 500:
+        release_notes = release_notes[:500] + "..."
+    
+    logger.info(f"版本检查完成: 当前={CURRENT_VERSION}, 最新={latest_version}, 需要更新={is_outdated}")
+    
+    return VersionInfo(
+        current_version=CURRENT_VERSION,
+        latest_version=latest_version,
+        is_outdated=is_outdated,
+        release_url=data.get('html_url', GITHUB_RELEASES_URL),
+        download_url=download_url,
+        release_notes=release_notes
+    )
 
 
 def format_version_message(version_info: VersionInfo) -> str:
