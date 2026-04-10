@@ -5,6 +5,7 @@ Voice Input Framework - 配置文件管理模块
 支持 JSON 配置文件，自动加载/保存配置，配置验证
 """
 
+import copy
 import json
 import logging
 import os
@@ -65,15 +66,15 @@ class ConfigManager:
                 logger.info(f"已加载配置文件: {self.config_path}")
             else:
                 # 首次运行，使用默认配置并保存
-                self.config = DEFAULT_CONFIG.copy()
+                self.config = copy.deepcopy(DEFAULT_CONFIG)
                 self.save()
                 logger.info(f"已创建默认配置文件: {self.config_path}")
         except json.JSONDecodeError as e:
             logger.warning(f"配置文件损坏，使用默认值: {e}")
-            self.config = DEFAULT_CONFIG.copy()
+            self.config = copy.deepcopy(DEFAULT_CONFIG)
         except Exception as e:
             logger.warning(f"加载配置文件失败，使用默认值: {e}")
-            self.config = DEFAULT_CONFIG.copy()
+            self.config = copy.deepcopy(DEFAULT_CONFIG)
     
     def _merge_with_defaults(self, loaded_config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -85,7 +86,7 @@ class ConfigManager:
         Returns:
             合并后的配置
         """
-        result = DEFAULT_CONFIG.copy()
+        result = copy.deepcopy(DEFAULT_CONFIG)
         
         # 递归合并字典
         def deep_merge(base: Dict, override: Dict) -> Dict:
@@ -280,7 +281,7 @@ class ConfigManager:
     
     def reset_to_defaults(self) -> None:
         """重置为默认配置"""
-        self.config = DEFAULT_CONFIG.copy()
+        self.config = copy.deepcopy(DEFAULT_CONFIG)
         self.save()
         logger.info("配置已重置为默认值")
     
