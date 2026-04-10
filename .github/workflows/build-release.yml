@@ -21,16 +21,28 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Get version
+        id: version
+        shell: pwsh
+        run: |
+          # 从 client/__init__.py 读取版本号
+          $versionLine = Select-String -Path "client/__init__.py" -Pattern '__version__\s*=\s*"([^"]+)"'
+          $version = $versionLine.Matches.Groups[1].Value
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "Version: $version"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install numpy pynput sounddevice websockets httpx pyautogui pyperclip PySimpleGUI pystray Pillow
+          pip install numpy pynput sounddevice websockets httpx pyautogui pyperclip PySimpleGUI pystray Pillow winotify
 
       - name: Build with PyInstaller
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          pyinstaller --name VoiceInputFramework `
+          pyinstaller --name "VoiceInput-v${{ steps.version.outputs.VERSION }}" `
             --windowed `
             --onefile `
             --add-data "client;client" `
@@ -39,6 +51,8 @@ jobs:
             --hidden-import=client.tray_manager `
             --hidden-import=client.floating_indicator `
             --hidden-import=client.config_manager `
+            --hidden-import=client.notifier `
+            --hidden-import=client.update_checker `
             --hidden-import=shared.data_types `
             --hidden-import=shared.protocol `
             --hidden-import=numpy `
@@ -60,6 +74,7 @@ jobs:
             --hidden-import=pystray `
             --hidden-import=PIL `
             --hidden-import=PIL.Image `
+            --hidden-import=winotify `
             --collect-all=numpy `
             --collect-all=pynput `
             --collect-all=sounddevice `
@@ -70,17 +85,22 @@ jobs:
 
       - name: Rename output
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          if (Test-Path "dist/VoiceInputFramework.exe") {
-            Copy-Item "dist/VoiceInputFramework.exe" "dist/VoiceInputFramework-windows-x64.exe"
+          if (Test-Path "dist/VoiceInput-v${{ steps.version.outputs.VERSION }}.exe") {
+            Copy-Item "dist/VoiceInput-v${{ steps.version.outputs.VERSION }}.exe" "dist/VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe"
           }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceInputFramework-windows-x64
-          path: dist/VoiceInputFramework-windows-x64.exe
+          name: VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64
+          path: dist/VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe
           retention-days: 30
+
+      - name: Output artifact name
+        run: echo "Artifact: VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe"
 
   release:
     needs: build-windows
@@ -90,15 +110,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Get version
+        id: version
+        run: |
+          version=$(grep -oP '__version__\s*=\s*"\K[^"]+' client/__init__.py)
+          echo "VERSION=$version" >> $GITHUB_OUTPUT
+          echo "Version: $version"
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: VoiceInput-v*
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*.exe
           generate_release_notes: true
+          body: |
+            ## Voice Input Framework v${{ steps.version.outputs.VERSION }}
+            
+            ### 下载
+            - `VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe` - Windows 可执行文件
+            
+            ### 使用方法
+            1. 下载并运行 exe 文件
+            2. 配置服务器地址（默认连接到 Tailscale IP）
+            3. 按住快捷键说话，松开后自动输入
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
