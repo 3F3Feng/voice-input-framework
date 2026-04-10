@@ -130,6 +130,88 @@ def create_tray_icon():
 
 ---
 
+### 阶段一点五：系统集成 (v1.1.5)
+
+**目标**：提升桌面端用户体验的收尾功能
+
+#### 1.5.1 启动后托盘弹窗通知
+
+**目标**：程序启动后在托盘显示欢迎通知
+
+**功能**：
+- [ ] 启动成功后显示托盘通知："Voice Input Framework 已就绪"
+- [ ] 显示当前快捷键信息
+- [ ] 可选：显示服务器连接状态
+- [ ] 通知可点击打开主窗口
+
+**技术方案**：
+```python
+# 使用 pystray 或系统通知 API
+import pystray
+from PIL import Image, ImageDraw
+
+def show_startup_notification():
+    icon = pystray.Icon("voice_input")
+    icon.notify("Voice Input Framework 已就绪！", "快捷键: Right Alt+V")
+```
+
+#### 1.5.2 更新和版本管理
+
+**目标**：内置版本检查和自动更新功能
+
+**功能**：
+- [ ] 启动时检查 GitHub 最新版本
+- [ ] 托盘菜单显示"检查更新"选项
+- [ ] 发现新版本时显示下载链接
+- [ ] 支持手动下载安装
+
+**API 设计**：
+```python
+def check_for_updates():
+    """检查最新版本"""
+    response = requests.get(
+        "https://api.github.com/repos/3F3Feng/voice-input-framework/releases/latest"
+    )
+    latest_version = response.json()["tag_name"]
+    return latest_version
+```
+
+#### 1.5.3 开机自启动注册
+
+**目标**：用户可一键启用开机自启动
+
+**功能**：
+- [ ] 托盘菜单添加"开机自启动"选项
+- [ ] Windows: 注册表 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`
+- [ ] macOS: `~/Library/LaunchAgents/com.voice-input-framework.plist`
+- [ ] Linux: `~/.config/autostart/voice-input-framework.desktop`
+
+**技术方案**：
+```python
+import platform
+import os
+
+def enable_auto_start(enable: bool):
+    system = platform.system()
+    if system == "Windows":
+        # 写入注册表
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            0, winreg.KEY_SET_VALUE
+        )
+        if enable:
+            winreg.SetValueEx(key, "VoiceInputFramework", 0, winreg.REG_SZ, exe_path)
+        else:
+            winreg.DeleteValue(key, "VoiceInputFramework")
+    elif system == "Darwin":
+        # 创建/删除 LaunchAgent plist
+        plist_path = os.path.expanduser("~/Library/LaunchAgents/com.voice-input-framework.plist")
+        # ...
+```
+
+---
+
 ### 阶段二：智能后处理 (v1.2)
 
 **目标**：使用小型 LLM 对 ASR 输出进行智能规整
