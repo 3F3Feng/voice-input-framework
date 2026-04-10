@@ -441,14 +441,21 @@ class HotkeyVoiceInputV2:
     def _show_startup_notification(self):
         """显示启动通知"""
         hotkey = self.config_manager.hotkey
-        version = "v1.1.0"
+        version = "v1.1.5"
         
         # 托盘通知
-        if self.tray_manager:
-            self.tray_manager.notify(
-                "Voice Input Framework",
-                f"已就绪！快捷键: {hotkey}"
-            )
+        if self.tray_manager and self.tray_manager.icon:
+            logger.info("正在显示托盘启动通知...")
+            try:
+                self.tray_manager.notify(
+                    "Voice Input Framework",
+                    f"已就绪！快捷键: {hotkey}"
+                )
+                logger.info("托盘启动通知已发送")
+            except Exception as e:
+                logger.warning(f"托盘通知失败: {e}")
+        else:
+            logger.warning("托盘未启动或不可用，跳过托盘通知")
         
         # 同时显示在状态栏
         self.log(f"✓ Voice Input Framework {version} 已启动")
@@ -1175,8 +1182,13 @@ class HotkeyVoiceInputV2:
                 self.async_loop
             )
         
-        # 显示启动通知
-        self._show_startup_notification()
+        # 等待托盘启动完成后显示通知
+        def _delayed_startup_notification():
+            time.sleep(1.0)  # 等待托盘完全启动
+            self._show_startup_notification()
+        
+        notification_thread = threading.Thread(target=_delayed_startup_notification, daemon=True)
+        notification_thread.start()
 
         # 主 UI 循环
         while self.is_running:
