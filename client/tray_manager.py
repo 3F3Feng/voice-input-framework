@@ -7,6 +7,7 @@ Voice Input Framework - 系统托盘模块
 - 最小化到系统托盘
 - 托盘菜单快速操作
 - 托盘图标状态指示
+- 跨平台通知
 """
 
 import logging
@@ -14,6 +15,10 @@ import threading
 import time
 from typing import Optional, Callable, Dict, Any
 from enum import Enum
+
+# 导入通知模块
+from .notifier import send_notification as _send_platform_notification
+from .notifier import is_notification_available, get_notifier_backend
 
 logger = logging.getLogger(__name__)
 
@@ -432,31 +437,29 @@ class TrayIconManager:
         if self.icon:
             self.icon.title = text
 
+
     def notify(self, title: str, message: str):
         """
         显示系统通知
+
+        使用独立的跨平台通知模块，不依赖 pystray 的 notify 方法。
 
         Args:
             title: 通知标题
             message: 通知内容
         """
-        if not self.icon:
-            logger.warning("托盘图标未启动,无法显示通知")
+        if not is_notification_available():
+            logger.warning(f"通知功能不可用，使用 tooltip 替代: {title} - {message}")
+            self.update_tooltip(f"{title}: {message}")
             return
 
-        try:
-            # pystray 的 notify 方法在 Windows 上支持气泡通知
-            if hasattr(self.icon, 'notify'):
-                self.icon.notify(message, title)
-            else:
-                # 备选:更新 tooltip 显示通知
-                self.update_tooltip(f"{title}: {message}")
-                logger.info(f"托盘通知: {title} - {message}")
-        except Exception as e:
-            logger.warning(f"显示托盘通知失败: {e}")
-            # 备选:更新 tooltip
-            self.update_tooltip(f"{title}: {message}")
+        logger.info(f"正在发送通知 (后端: {get_notifier_backend()}): {title} - {message}")
+        success = _send_platform_notification(title, message)
 
+        if not success:
+            # 失败时更新 tooltip 作为备选
+            logger.warning("通知发送失败，使用 tooltip 替代")
+            self.update_tooltip(f"{title}: {message}")
 
 # 导出
 if PYSTRAY_AVAILABLE:
