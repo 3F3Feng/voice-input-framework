@@ -282,8 +282,7 @@ class HotkeyVoiceInputV2:
             # ======== v1.1 新增：托盘和指示器设置 ========
             [sg.Frame("界面设置", [
                 [sg.Checkbox("启动时最小化到托盘", default=self.config_manager.start_minimized,
-                            key="-START-MINIMIZED-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-                 sg.Button("最小化到托盘", key="-MINIMIZE-TRAY-", size=(15, 1)),],
+                            key="-START-MINIMIZED-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR)],
                 [sg.Checkbox("使用悬浮录音指示器", default=self.config_manager.use_floating_indicator,
                             key="-USE-INDICATOR-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
                  sg.Button("显示主窗口", key="-SHOW-WINDOW-", size=(15, 1))],
@@ -316,6 +315,7 @@ class HotkeyVoiceInputV2:
 
             [sg.Push(background_color=BACKGROUND_COLOR),
               sg.Button("退出", key="-EXIT-", button_color=("white", "gray"), size=(10, 1)),
+              sg.Button("最小化到托盘", key="-MINIMIZE-TRAY-", size=(15, 1)),
                 sg.Push(background_color=BACKGROUND_COLOR)],
         ]
 
