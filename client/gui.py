@@ -394,11 +394,7 @@ class HotkeyVoiceInputV2:
         """从托盘停止录音"""
         if self.is_recording:
             self._stop_recording()
-            if self.async_loop:
-                asyncio.run_coroutine_threadsafe(
-                    self._process_audio(),
-                    self.async_loop
-                )
+            # 流式传输已在 _stop_recording() 中触发，会自动处理结果
 
     def _switch_model_from_tray(self, model_name: str):
         """从托盘切换模型"""
@@ -1299,11 +1295,7 @@ class HotkeyVoiceInputV2:
                                 self._show_indicator_with_focus_preservation(self.processing_indicator)
                             except Exception as e:
                                 logger.warning(f"Failed to show processing indicator: {e}")
-                        # 异步发送音频
-                        if self.async_loop:
-                            asyncio.run_coroutine_threadsafe(
-                                self._process_audio(), self.async_loop
-                            )
+                        # 流式传输已在 _stop_recording() 中触发，会自动处理结果
                     except Exception as e:
                         logger.error(f"Error in hotkey release: {e}", exc_info=True)
                         self.log(f"❌ 快捷键释放处理错误: {e}")
