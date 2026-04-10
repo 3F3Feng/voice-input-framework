@@ -853,6 +853,9 @@ class HotkeyVoiceInputV2:
             )
             self.stream.start()
             
+            # 记录录音开始时间
+            self._record_start_time = time.time()
+            
             # 启动流式发送协程
             if self.async_loop:
                 asyncio.run_coroutine_threadsafe(
@@ -868,7 +871,12 @@ class HotkeyVoiceInputV2:
         """停止录音并发送结束信号"""
         self.is_recording = False
         chunks_count = len(self.audio_buffer)
-        self.log(f"⏹️ 停止录音 ({chunks_count} 个音频块)")
+        # 计算录音时长
+        if hasattr(self, '_record_start_time') and self._record_start_time:
+            record_duration = time.time() - self._record_start_time
+            self.log(f"⏹️ 停止录音 ({chunks_count} 个音频块, 录音时长: {record_duration:.1f}s)")
+        else:
+            self.log(f"⏹️ 停止录音 ({chunks_count} 个音频块)")
 
         if self.stream:
             try:
@@ -980,8 +988,11 @@ class HotkeyVoiceInputV2:
 
     async def _handle_stream_result(self):
         """处理流式传输的结果（在主线程中调用）"""
+        # 计算总处理时间
+        total_time = time.time() - self._record_start_time if hasattr(self, '_record_start_time') and self._record_start_time else 0
+        
         if self.stream_error:
-            self.log(f"流式识别失败: {self.stream_error}")
+            self.log(f"流式识别失败: {self.stream_error} (总耗时: {total_time:.1f}s)")
             if self.tray_manager:
                 self.tray_manager.set_status(TrayStatus.ERROR)
             if self.processing_indicator:
@@ -991,16 +1002,16 @@ class HotkeyVoiceInputV2:
         result = self.stream_result
         
         if result:
-            self.log(f"更新结果显示...")
+            self.log(f"更新结果显示... (总耗时: {total_time:.1f}s)")
             self.update_result(result)
             self.log(f"开始自动输入...")
             await self._auto_input_text(result)
-            self.log(f"自动输入完成")
+            self.log(f"自动输入完成 (总耗时: {total_time:.1f}s)")
             
             if self.tray_manager:
                 self.tray_manager.set_status(TrayStatus.READY)
         else:
-            self.log("未收到识别结果")
+            self.log(f"未收到识别结果 (总耗时: {total_time:.1f}s)")
             if self.tray_manager:
                 self.tray_manager.set_status(TrayStatus.ERROR)
         
