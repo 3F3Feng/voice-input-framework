@@ -18,7 +18,7 @@ import re
 logger = logging.getLogger(__name__)
 
 # 当前版本
-CURRENT_VERSION = "1.1.0"
+CURRENT_VERSION = "1.1.5"
 GITHUB_REPO = "3F3Feng/voice-input-framework"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 
