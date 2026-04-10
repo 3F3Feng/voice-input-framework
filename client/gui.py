@@ -40,10 +40,10 @@ except ImportError:
     WINAPI_AVAILABLE = False
 
 # 导入新模块
-from hotkey_manager import HotkeyManager, HotkeyParser, HotkeyPresets
-from tray_manager import TrayIconManager, TrayStatus
-from floating_indicator import FloatingIndicator, ProcessingIndicator
-from config_manager import ConfigManager
+from .hotkey_manager import HotkeyManager, HotkeyParser, HotkeyPresets
+from .tray_manager import TrayIconManager, TrayStatus
+from .floating_indicator import FloatingIndicator, ProcessingIndicator
+from .config_manager import ConfigManager
 
 # 日志配置
 logging.basicConfig(
