@@ -54,31 +54,6 @@ class ServerConfig:
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
     llm: LLMConfig = field(default_factory=LLMConfig)  # LLM后处理配置
 
-
-@dataclass
-class ServerConfig:
-    """服务端配置"""
-    host: str = "0.0.0.0"
-    port: int = 6543
-    debug: bool = False
-    default_model: str = "qwen_asr"
-    models: dict[str, ModelConfig] = field(default_factory=dict)
-    models_dir: str = "./models"
-    auto_load_default: bool = True
-    max_concurrent_requests: int = 10
-    max_concurrent_streams: int = 20
-    queue_timeout: int = 30
-    enable_cache: bool = True
-    cache_size_mb: int = 500
-    cache_ttl: int = 3600
-    ws_ping_interval: int = 30
-    ws_ping_timeout: int = 10
-    ws_max_message_size: int = 10 * 1024 * 1024
-    log_level: str = "INFO"
-    log_file: Optional[str] = None
-    api_key: Optional[str] = None
-    cors_origins: list[str] = field(default_factory=lambda: ["*"])
-
     @classmethod
     def from_env(cls) -> "ServerConfig":
         config = cls()
