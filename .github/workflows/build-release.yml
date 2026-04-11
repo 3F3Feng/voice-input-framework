@@ -51,7 +51,7 @@ jobs:
           $src = "dist/VoiceInput-v$version.exe"
           $dst = "dist/VoiceInput-v$version-windows-x64.exe"
           if (Test-Path $src) {
-            Copy-Item $src $dst
+            Move-Item $src $dst -Force
           }
 
       - name: Upload artifact
