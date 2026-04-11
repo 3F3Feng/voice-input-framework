@@ -81,7 +81,7 @@ class PostProcessPrompt:
         - 适合网络环境发布
         """
         return [
-            {'role': 'user', 'content': f'/no_think 将语音转为简洁网络文案：移除填充词，保持原意，添加标点，输出简短版本：{text}'}
+            {'role': 'user', 'content': f'/no_think 优化STT识别结果，转为简洁的对话文案：移除填充词，保持原意，输出清晰准确的文本：{text}'}
         ]
 
     @staticmethod
@@ -97,13 +97,60 @@ class PostProcessPrompt:
 class LLMEvaluator:
     """LLM评估器"""
 
-    def __init__(self, model_name: str, verbose: bool = False):
+    def __init__(self, model_name: str, verbose: bool = False, thinking_timeout: float = 5.0):
         self.model_name = model_name
         self.model_info = get_model_by_name(model_name)
+        # 如果没在注册表中找到，假设 model_name 就是完整的 model_id
+        self._model_id = self.model_info.model_id if self.model_info else model_name
         self.verbose = verbose
+        self.thinking_timeout = thinking_timeout  # 思考超时时间（秒）
         self._model = None
         self._tokenizer = None
         self._use_mlx = False
+
+    def _has_incomplete_thinking(self, response: str) -> bool:
+        """检查响应是否包含未完成的思考内容"""
+        has_think_start = '<think>' in response or 'Thinking Process' in response
+        has_think_end = '</think>' in response
+        return has_think_start and not has_think_end
+
+    def _extract_result_from_thinking(self, response: str, original_text: str) -> str:
+        """
+        从思考内容中提取最终结果
+        如果模型在思考中给出答案，尝试提取
+        """
+        # 尝试提取 Final, Output, Answer 等标记后的内容
+        markers = ['Final Output:', 'Final:', 'Output:', '**Output**', 'Answer:', '**Answer**']
+        for marker in markers:
+            if marker in response:
+                parts = response.split(marker)
+                if len(parts) > 1:
+                    result = parts[-1].strip()
+                    # 清理并返回
+                    result = result.split('\n')[0].strip()
+                    if result:
+                        return result
+
+        # 尝试从 Input 字段提取原始输入（模型可能会重复输入）
+        import re
+        # 查找 Input: 或 "输入": 后的内容
+        input_patterns = [r'Input:\s*["\'](.+?)["\']', r'输入:\s*["\'](.+?)["\']',
+                         r'Input:\s*(.+?)(?:\n|$)', r'输入:\s*(.+?)(?:\n|$)']
+        for pattern in input_patterns:
+            match = re.search(pattern, response)
+            if match:
+                extracted = match.group(1).strip()
+                if len(extracted) > 3:
+                    return extracted
+
+        # 尝试提取引号中的答案（排除 Input 相关）
+        quotes = re.findall(r'["\']([^"\']{10,100})["\']', response)
+        for q in quotes:
+            if not any(x in q.lower() for x in ['input', 'analyze', 'request', 'constraint']):
+                return q
+
+        # 如果所有方法都失败，返回原始文本（不做处理）
+        return original_text
 
     def load(self) -> bool:
         """加载模型"""
@@ -114,8 +161,7 @@ class LLMEvaluator:
         try:
             import mlx_lm
 
-            model_id = self.model_info.model_id
-            self._model, self._tokenizer = mlx_lm.load(model_id)
+            self._model, self._tokenizer = mlx_lm.load(self._model_id)
             self._use_mlx = True
 
             if self.verbose:
@@ -192,6 +238,12 @@ class LLMEvaluator:
                     add_generation_prompt=True
                 )
 
+                # 移除 Qwen3.5 模板默认添加的  <think>\n 思考标签
+                # 使用 Unicode 码点明确构建字符串
+                mlx_think_end = chr(0x0a) + chr(0x3c) + 'think' + chr(0x3e) + chr(0x0a)  # \nthink\n
+                if prompt_formatted.endswith(mlx_think_end):
+                    prompt_formatted = prompt_formatted[:-len(mlx_think_end)]
+
                 response = mlx_lm.generate(
                     model=self._model,
                     tokenizer=self._tokenizer,
@@ -228,6 +280,52 @@ class LLMEvaluator:
 
             # 清理思考内容
             response = PostProcessPrompt.clean_thinking_content(response)
+
+            # 如果仍有未完成的思考内容，等待思考完成
+            if self._has_incomplete_thinking(response):
+                if self.verbose:
+                    print(f"  ⏳ 检测到未完成的思考，等待完成... (超时: {self.thinking_timeout}s)")
+
+                elapsed = time.time() - start_time
+                timeout = self.thinking_timeout
+
+                # 继续生成直到思考完成或超时
+                max_attempts = 10
+                for attempt in range(max_attempts):
+                    # 检查是否超时
+                    current_elapsed = time.time() - start_time
+                    if current_elapsed >= timeout:
+                        if self.verbose:
+                            print(f"  ⏸️  思考等待超时 ({current_elapsed:.1f}s >= {timeout}s)")
+                        break
+
+                    # 继续生成更多 token
+                    if self._use_mlx:
+                        import mlx_lm
+                        try:
+                            continue_response = mlx_lm.generate(
+                                model=self._model,
+                                tokenizer=self._tokenizer,
+                                prompt=response,  # 用当前响应继续
+                                max_tokens=64,
+                            )
+                            if continue_response:
+                                response = response + continue_response
+                                response = PostProcessPrompt.clean_thinking_content(response)
+
+                                # 检查思考是否完成
+                                if not self._has_incomplete_thinking(response):
+                                    if self.verbose:
+                                        print(f"  ✅ 思考完成 (尝试 {attempt + 1})")
+                                    break
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"  ⚠️  继续生成失败: {e}")
+                            break
+                    else:
+                        # transformers 路径 - 简化处理
+                        break
+
             latency = (time.time() - start_time) * 1000
 
             return response.strip(), latency
