@@ -42,6 +42,7 @@ dependencies = [
     "rich>=13.7.0",
     "click>=8.1.0",
     "winotify>=1.1.0; platform_system=='Windows'",
+    "uiautomation>=2.0.29; platform_system=='Windows'",
 ]
 
 [project.optional-dependencies]

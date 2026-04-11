@@ -744,6 +744,8 @@ class HotkeyVoiceInputV2:
                                     f"模型 {model_name} 正在加载中...",
                                     text_color="yellow"
                                 )
+                            # 启动轮询任务检查模型加载状态
+                            asyncio.create_task(self._poll_model_loading_status(model_name))
                         else:
                             self.log(f"✓ 已切换到模型: {model_name}")
                             if self.window:
@@ -795,6 +797,55 @@ class HotkeyVoiceInputV2:
     async def async_switch_model(self, model_name: str):
         """异步切换模型（在事件循环中执行）"""
         await self.switch_model(model_name)
+
+    async def _poll_model_loading_status(self, model_name: str):
+        """轮询检查模型加载状态"""
+        import httpx
+        self.log(f"开始轮询模型 {model_name} 的加载状态...")
+        poll_count = 0
+        max_polls = 300  # 最多轮询300次，每次2秒，共10分钟
+        
+        while poll_count < max_polls:
+            await asyncio.sleep(2.0)  # 每2秒检查一次
+            poll_count += 1
+            
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    url = f"{self.rest_api_url}/models/status/{model_name}"
+                    resp = await client.get(url)
+                    
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        is_loading = data.get("is_loading", False)
+                        
+                        if not is_loading:
+                            # 模型加载完成
+                            self.log(f"✓ 模型 {model_name} 加载完成！")
+                            self.current_model = model_name
+                            if self.window:
+                                self.window["-MODEL-STATUS-"].update(
+                                    f"当前模型: {model_name}",
+                                    text_color="green"
+                                )
+                            self.set_status(f"已连接 ({model_name})", "green")
+                            if self.tray_manager:
+                                self.tray_manager.set_current_model(model_name)
+                                self.tray_manager.set_status(TrayStatus.READY)
+                            return
+                        else:
+                            # 仍在加载中
+                            loading_since = data.get("loading_since")
+                            if loading_since:
+                                elapsed = time.time() - loading_since
+                                self.log(f"模型 {model_name} 加载中... ({elapsed:.0f}s)")
+                    else:
+                        self.log(f"⚠️ 检查模型状态失败: HTTP {resp.status_code}")
+                        
+            except Exception as e:
+                self.log(f"⚠️ 轮询模型状态出错: {e}")
+                continue
+        
+        self.log(f"⚠️ 轮询超时: 模型 {model_name} 加载时间过长")
 
     async def send_audio_to_server(self) -> Optional[str]:
         """发送音频到服务器并获取识别结果"""

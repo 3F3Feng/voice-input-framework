@@ -21,6 +21,10 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# 平台检测
+import platform
+IS_WINDOWS = platform.system() == "Windows"
+
 # 尝试导入鼠标位置库
 try:
     from pynput import mouse
@@ -40,6 +44,22 @@ try:
 except ImportError:
     PYSIMPLEGUI_AVAILABLE = False
     logger.warning("PySimpleGUI 未安装,悬浮指示器不可用")
+
+
+# 尝试导入 CursorTracker（仅 Windows）
+CURSOR_TRACKER_AVAILABLE = False
+_CursorTracker = None
+
+if IS_WINDOWS:
+    try:
+        from .cursor_tracker import CursorTracker as _CursorTracker
+        CURSOR_TRACKER_AVAILABLE = True
+    except ImportError:
+        try:
+            from cursor_tracker import CursorTracker as _CursorTracker
+            CURSOR_TRACKER_AVAILABLE = True
+        except ImportError:
+            logger.debug("CursorTracker 不可用，浮标将使用鼠标位置")
 
 
 class FloatingIndicator:
@@ -90,6 +110,10 @@ class FloatingIndicator:
         self.last_mouse_pos = None  # (x, y) - 上一次鼠标位置
         self.cursor_pos = None  # (x, y) - 输入光标位置
         
+        # CursorTracker（仅 Windows，自动跟踪输入光标）
+        self._cursor_tracker = None
+        self._last_tracker_pos = None  # tracker 返回的最新位置
+        
         # 音量显示
         self.current_level = 0  # 当前音量级别 (0-100)
         self.peak_level = 0     # 峰值音量级别 (0-100)
@@ -97,6 +121,7 @@ class FloatingIndicator:
         # 待处理的更新(线程安全)
         self._pending_timer_update: Optional[str] = None
         self._pending_volume_update: Optional[tuple] = None  # (current, peak)
+        self._pending_position_update: Optional[tuple] = None  # (x, y) - 窗口位置更新
 
     def _get_mouse_position(self) -> Optional[tuple]:
         """获取鼠标当前位置"""
@@ -109,6 +134,21 @@ class FloatingIndicator:
         except Exception as e:
             logger.debug(f"获取鼠标位置失败: {e}")
         return None
+
+    def _on_cursor_position_update(self, x: int, y: int, window_title: str):
+        """
+        CursorTracker 回调：新的光标位置可用
+        
+        Args:
+            x, y: 光标屏幕坐标
+            window_title: 当前窗口标题
+        """
+        # 计算浮标应该在的位置（光标右上方）
+        indicator_x = x + 10
+        indicator_y = y - 50
+        self._last_tracker_pos = (indicator_x, indicator_y)
+        self._pending_position_update = (indicator_x, indicator_y)
+        logger.debug(f"Tracker 光标: ({x}, {y}) -> 浮标: ({indicator_x}, {indicator_y})")
 
     def _calculate_window_position(self, pos: tuple = None) -> tuple:
         """
@@ -233,6 +273,16 @@ class FloatingIndicator:
             self.is_recording = True
             self.recording_start_time = time.time()
             
+            # 启动 CursorTracker（仅 Windows，仅在未提供 cursor_pos 时）
+            if IS_WINDOWS and CURSOR_TRACKER_AVAILABLE and self._cursor_tracker is None and not cursor_pos:
+                try:
+                    self._cursor_tracker = _CursorTracker(poll_interval=0.15)
+                    self._cursor_tracker.start(callback=self._on_cursor_position_update)
+                    logger.info("CursorTracker 已启动，自动跟踪输入光标位置")
+                except Exception as e:
+                    logger.warning(f"启动 CursorTracker 失败: {e}")
+                    self._cursor_tracker = None
+            
             # 确保窗口显示
             try:
                 if self.window.TKroot:
@@ -258,6 +308,15 @@ class FloatingIndicator:
         self.stop_update = True
         self.is_recording = False
         self.is_visible = False
+
+        # 停止 CursorTracker
+        if self._cursor_tracker:
+            try:
+                self._cursor_tracker.stop()
+                self._cursor_tracker = None
+                logger.debug("CursorTracker 已停止")
+            except Exception as e:
+                logger.warning(f"停止 CursorTracker 失败: {e}")
 
         if self.update_thread:
             self.update_thread.join(timeout=1.0)
@@ -385,6 +444,27 @@ class FloatingIndicator:
                         self._pending_volume_update = None  # 清除待处理更新
                     except Exception as e:
                         logger.debug(f"音量更新失败: {e}")
+                
+                # 处理位置更新（跟随光标）
+                if self._pending_position_update and self.window:
+                    try:
+                        new_x, new_y = self._pending_position_update
+                        # 只有位置变化时才移动窗口（减少闪烁）
+                        try:
+                            current_geom = self.window.TKroot.geometry()
+                            parts = current_geom.split('+')
+                            if len(parts) >= 3:
+                                current_loc = (int(parts[1]), int(parts[2]))
+                            else:
+                                current_loc = None
+                        except:
+                            current_loc = None
+                        
+                        if current_loc is None or (abs(current_loc[0] - new_x) > 5 or abs(current_loc[1] - new_y) > 5):
+                            self.window.move(new_x, new_y)
+                        self._pending_position_update = None
+                    except Exception as e:
+                        logger.debug(f"位置更新失败: {e}")
 
             except Exception as e:
                 logger.debug(f"处理悬浮窗口事件时出错: {e}")
@@ -437,6 +517,11 @@ class ProcessingIndicator:
         self.position = None  # (x, y)
         self.last_mouse_pos = None  # (x, y)
         self.cursor_pos = None  # (x, y) - 光标位置
+        
+        # CursorTracker（仅 Windows，自动跟踪输入光标）
+        self._cursor_tracker = None
+        self._last_tracker_pos = None  # tracker 返回的最新位置
+        self._pending_position_update: Optional[tuple] = None  # (x, y) - 窗口位置更新
 
     def _get_mouse_position(self) -> Optional[tuple]:
         """获取鼠标当前位置"""
@@ -449,6 +534,21 @@ class ProcessingIndicator:
         except Exception as e:
             logger.debug(f"获取鼠标位置失败: {e}")
         return None
+
+    def _on_cursor_position_update(self, x: int, y: int, window_title: str):
+        """
+        CursorTracker 回调：新的光标位置可用
+        
+        Args:
+            x, y: 光标屏幕坐标
+            window_title: 当前窗口标题
+        """
+        # 计算浮标应该在的位置（光标右上方）
+        indicator_x = x + 10
+        indicator_y = y - 50
+        self._last_tracker_pos = (indicator_x, indicator_y)
+        self._pending_position_update = (indicator_x, indicator_y)
+        logger.debug(f"Tracker 光标(Processing): ({x}, {y}) -> 浮标: ({indicator_x}, {indicator_y})")
 
     def _calculate_window_position(self, pos: tuple = None) -> tuple:
         """
@@ -542,6 +642,16 @@ class ProcessingIndicator:
 
             self.is_visible = True
             
+            # 启动 CursorTracker（仅 Windows，仅在未提供 cursor_pos 时）
+            if IS_WINDOWS and CURSOR_TRACKER_AVAILABLE and self._cursor_tracker is None and not cursor_pos:
+                try:
+                    self._cursor_tracker = _CursorTracker(poll_interval=0.15)
+                    self._cursor_tracker.start(callback=self._on_cursor_position_update)
+                    logger.info("CursorTracker 已启动(ProcessingIndicator)")
+                except Exception as e:
+                    logger.warning(f"启动 CursorTracker 失败: {e}")
+                    self._cursor_tracker = None
+            
             # 确保窗口显示
             try:
                 if self.window.TKroot:
@@ -566,6 +676,15 @@ class ProcessingIndicator:
 
         self.stop_animation = True
         self.is_visible = False
+
+        # 停止 CursorTracker
+        if self._cursor_tracker:
+            try:
+                self._cursor_tracker.stop()
+                self._cursor_tracker = None
+                logger.debug("CursorTracker 已停止(ProcessingIndicator)")
+            except Exception as e:
+                logger.warning(f"停止 CursorTracker 失败: {e}")
 
         if self.animation_thread:
             self.animation_thread.join(timeout=1.0)
@@ -650,6 +769,26 @@ class ProcessingIndicator:
                         self._pending_icon_update = None  # 清除待处理更新
                     except Exception as e:
                         logger.debug(f"图标更新失败: {e}")
+                
+                # 处理位置更新（跟随光标）
+                if self._pending_position_update and self.window:
+                    try:
+                        new_x, new_y = self._pending_position_update
+                        try:
+                            current_geom = self.window.TKroot.geometry()
+                            parts = current_geom.split('+')
+                            if len(parts) >= 3:
+                                current_loc = (int(parts[1]), int(parts[2]))
+                            else:
+                                current_loc = None
+                        except:
+                            current_loc = None
+                        
+                        if current_loc is None or (abs(current_loc[0] - new_x) > 5 or abs(current_loc[1] - new_y) > 5):
+                            self.window.move(new_x, new_y)
+                        self._pending_position_update = None
+                    except Exception as e:
+                        logger.debug(f"位置更新失败(Processing): {e}")
 
             except Exception as e:
                 logger.debug(f"处理事件出错: {e}")
