@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.voiceinput.llm</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/Caskroom/miniconda/base/bin/conda</string>
+        <string>run</string>
+        <string>-n</string>
+        <string>mlx-test</string>
+        <string>python</string>
+        <string>/Users/shifengzhang/voice-input-framework/services/llm_server.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/voiceinput-llm.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/voiceinput-llm-error.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/shifengzhang/voice-input-framework</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>VIF_LOG_LEVEL</key>
+        <string>INFO</string>
+        <key>VIF_LLM_HOST</key>
+        <string>127.0.0.1</string>
+        <key>VIF_LLM_PORT</key>
+        <string>6545</string>
+    </dict>
+</dict>
+</plist>
