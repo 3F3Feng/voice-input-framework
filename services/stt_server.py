@@ -5,7 +5,6 @@ Voice Input Framework - STT Service
 运行在独立的 conda 环境: vif-stt (transformers 4.x)
 Port: 6544
 """
-
 import asyncio
 import base64
 import json
@@ -50,20 +49,16 @@ class StructuredLogFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
-        
         # 添加请求ID
         req_id = request_id_ctx.get()
         if req_id:
             log_data["request_id"] = req_id
-            
         # 添加额外字段
         if hasattr(record, "extra"):
             log_data.update(record.extra)
-            
         # 添加异常信息
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
-            
         return json.dumps(log_data, ensure_ascii=False, default=str)
 
 # 配置日志
@@ -74,7 +69,6 @@ if os.getenv("VIF_LOG_JSON", "").lower() == "true":
     logging.basicConfig(level=LOG_LEVEL, handlers=[handler])
 else:
     logging.basicConfig(level=LOG_LEVEL, format=_log_format)
-
 logger = logging.getLogger("stt-server")
 
 # ============== Data Models ==============
@@ -139,6 +133,7 @@ def with_retry(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
                         await asyncio.sleep(delay * (2 ** attempt))  # 指数退避
                     else:
                         logger.error(f"Failed after {max_retries + 1} attempts: {e}")
+                        raise
             raise last_exception
         return wrapper
     return decorator
@@ -146,7 +141,6 @@ def with_retry(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
 # ============== STT Engine ==============
 class STTEngine:
     """STT 引擎管理器"""
-    
     AVAILABLE_MODELS = {
         "qwen_asr": {
             "model_id": "Qwen/Qwen3-ASR-1.7B",
@@ -159,7 +153,7 @@ class STTEngine:
             "memory_gb": 1.5,
         },
     }
-    
+
     def __init__(self, default_model: str = "qwen_asr"):
         self.default_model = default_model
         self.current_model_name = default_model
@@ -176,54 +170,52 @@ class STTEngine:
         self.total_requests = 0
         self.failed_requests = 0
         self._active_connections = 0
-        
+
     async def load(self, load_aligner: bool = False) -> bool:
         """加载模型"""
         async with self._load_lock:
             if self._is_loaded and (not load_aligner or self._aligner_loaded):
                 return True
-                
+
             if self._loading:
                 logger.info("Model is loading, waiting...")
                 while self._loading:
                     await asyncio.sleep(0.5)
                 return self._is_loaded
-                
+
             self._loading = True
-            
-        try:
-            logger.info(f"Loading STT model: {self._model_info['model_id']}")
-            loop = asyncio.get_event_loop()
-            
-            # 加载主模型
-            if not self._is_loaded:
-                await loop.run_in_executor(None, self._load_model_sync)
-                self._is_loaded = True
-                logger.info("STT model loaded successfully")
-            
-            # 加载 ForcedAligner（如果需要时间戳功能）
-            if load_aligner and not self._aligner_loaded:
-                logger.info(f"Loading ForcedAligner: {self._model_info['aligner_id']}")
-                await loop.run_in_executor(None, self._load_aligner_sync)
-                self._aligner_loaded = True
-                logger.info("ForcedAligner loaded successfully")
-                
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to load STT model: {e}", exc_info=True)
-            self.failed_requests += 1
-            return False
-        finally:
-            self._loading = False
-            
+            try:
+                logger.info(f"Loading STT model: {self._model_info['model_id']}")
+                loop = asyncio.get_event_loop()
+
+                # 加载主模型
+                if not self._is_loaded:
+                    await loop.run_in_executor(None, self._load_model_sync)
+                    self._is_loaded = True
+                    logger.info("STT model loaded successfully")
+
+                # 加载 ForcedAligner（如果需要时间戳功能）
+                if load_aligner and not self._aligner_loaded:
+                    logger.info(f"Loading ForcedAligner: {self._model_info['aligner_id']}")
+                    await loop.run_in_executor(None, self._load_aligner_sync)
+                    self._aligner_loaded = True
+                    logger.info("ForcedAligner loaded successfully")
+
+                return True
+            except Exception as e:
+                logger.error(f"Failed to load STT model: {e}", exc_info=True)
+                self.failed_requests += 1
+                return False
+            finally:
+                self._loading = False
+
     def _load_model_sync(self):
         """同步加载主模型"""
         import torch
         from qwen_asr import Qwen3ASRModel
-        
+
         model_id = self._model_info["model_id"]
-        
+
         # 检测设备
         if torch.backends.mps.is_available():
             device = "mps"
@@ -231,26 +223,25 @@ class STTEngine:
             device = "cuda"
         else:
             device = "cpu"
-            
+
         # Qwen3-ASR 使用 bfloat16 效果更好
         dtype = torch.bfloat16 if device != "cpu" else torch.float32
-        
         logger.info(f"Loading ASR model on {device} with {dtype}")
-        
+
         self._model = Qwen3ASRModel.from_pretrained(
             model_id,
             dtype=dtype,
             device_map=device,
             max_new_tokens=256,
         )
-        
+
     def _load_aligner_sync(self):
         """同步加载 ForcedAligner 模型"""
         import torch
         from qwen_asr import Qwen3ForcedAligner
-        
+
         aligner_id = self._model_info.get("aligner_id", "Qwen/Qwen3-ForcedAligner-0.6B")
-        
+
         # 检测设备
         if torch.backends.mps.is_available():
             device = "mps"
@@ -258,52 +249,51 @@ class STTEngine:
             device = "cuda"
         else:
             device = "cpu"
-            
+
         # ForcedAligner 使用 bfloat16
         dtype = torch.bfloat16 if device != "cpu" else torch.float32
-        
         logger.info(f"Loading ForcedAligner on {device} with {dtype}")
-        
+
         self._aligner = Qwen3ForcedAligner.from_pretrained(
             aligner_id,
             dtype=dtype,
             device_map=device,
         )
-        
+
     async def transcribe(
-        self, 
-        audio_data: bytes, 
+        self,
+        audio_data: bytes,
         language: str = "auto",
         return_timestamps: bool = False
     ) -> TranscriptionResult:
         """转写音频"""
         import numpy as np
-        
+
         start_time = time.time()
         self.total_requests += 1
-        
+
         try:
             # 确保模型已加载
             if not self._is_loaded:
                 success = await self.load(load_aligner=return_timestamps)
                 if not success:
                     raise RuntimeError("Failed to load STT model")
-            
+
             # 如果需要时间戳但 aligner 未加载，尝试加载
             if return_timestamps and not self._aligner_loaded:
                 success = await self.load(load_aligner=True)
                 if not success:
                     logger.warning("Failed to load ForcedAligner, returning without timestamps")
                     return_timestamps = False
-            
+
             # 转换音频
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
             audio_array = audio_array.astype(np.float32) / 32768.0
             sample_rate = 16000
-            
+
             # 执行转写
             loop = asyncio.get_event_loop()
-            
+
             def _do_transcribe():
                 lang = None if language == "auto" else language
                 results = self._model.transcribe(
@@ -313,19 +303,18 @@ class STTEngine:
                 if results and len(results) > 0:
                     return results[0].text, results[0].language
                 return "", language
-            
+
             text, detected_lang = await loop.run_in_executor(None, _do_transcribe)
             text = text.strip()
-            
+
             # 生成时间戳（如果需要）
             timestamps = None
             if return_timestamps and text and self._aligner_loaded:
                 timestamps = await self._generate_timestamps(
                     audio_array, sample_rate, text, detected_lang or language
                 )
-            
+
             latency = (time.time() - start_time) * 1000
-            
             return TranscriptionResult(
                 text=text,
                 confidence=1.0,
@@ -335,15 +324,14 @@ class STTEngine:
                 model=self.current_model_name,
                 timestamps=timestamps,
             )
-            
         except Exception as e:
             self.failed_requests += 1
             logger.error(f"Transcription error: {e}", exc_info=True)
             raise
-            
+
     async def _generate_timestamps(
-        self, 
-        audio_array: np.ndarray, 
+        self,
+        audio_array,
         sample_rate: int,
         text: str,
         language: str
@@ -351,18 +339,17 @@ class STTEngine:
         """使用 ForcedAligner 生成词级别时间戳"""
         import tempfile
         import os
-        
+
         try:
             # 保存音频到临时文件
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 tmp_path = tmp.name
-                
-            # 使用 soundfile 写入音频
-            import soundfile as sf
-            sf.write(tmp_path, audio_array, sample_rate)
-            
+                # 使用 soundfile 写入音频
+                import soundfile as sf
+                sf.write(tmp_path, audio_array, sample_rate)
+
             loop = asyncio.get_event_loop()
-            
+
             def _do_align():
                 results = self._aligner.align(
                     audio=tmp_path,
@@ -370,15 +357,15 @@ class STTEngine:
                     language=language if language != "auto" else "Chinese",
                 )
                 return results
-            
+
             results = await loop.run_in_executor(None, _do_align)
-            
+
             # 清理临时文件
             try:
                 os.unlink(tmp_path)
             except:
                 pass
-            
+
             # 转换结果格式
             if results and hasattr(results, 'segments'):
                 timestamps = []
@@ -390,35 +377,33 @@ class STTEngine:
                             end=word_info.get('end', 0.0),
                         ))
                 return timestamps if timestamps else None
-                
+
             return None
-            
         except Exception as e:
             logger.warning(f"Failed to generate timestamps: {e}")
             return None
-            
+
     def is_loading(self) -> bool:
         return self._loading
-        
+
     def is_model_loaded(self) -> bool:
         return self._is_loaded
-        
+
     def is_aligner_loaded(self) -> bool:
         return self._aligner_loaded
-        
+
     def get_stats(self) -> Dict[str, Any]:
         return {
             "total_requests": self.total_requests,
             "failed_requests": self.failed_requests,
             "active_connections": self._active_connections,
         }
-        
+
     def increment_connections(self):
         self._active_connections += 1
-        
+
     def decrement_connections(self):
         self._active_connections = max(0, self._active_connections - 1)
-
 
 # ============== FastAPI App ==============
 engine = STTEngine(default_model=STT_MODEL)
@@ -444,25 +429,20 @@ async def request_id_middleware(request: Request, call_next):
     """为每个请求生成唯一ID"""
     request_id = str(uuid.uuid4())
     request_id_ctx.set(request_id)
-    
     start_time = time.time()
-    
     try:
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
-        
         # 记录请求指标
         duration = (time.time() - start_time) * 1000
         logger.info(
             f"{request.method} {request.url.path} - {response.status_code} - {duration:.2f}ms",
             extra={"request_id": request_id, "duration_ms": duration}
         )
-        
         return response
     except Exception as e:
         logger.error(f"Request failed: {e}", extra={"request_id": request_id})
         raise
-
 
 @app.on_event("startup")
 async def startup_event():
@@ -470,4 +450,163 @@ async def startup_event():
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
     logger.info(f"Default model: {STT_MODEL}")
     # 后台加载模型（非阻塞）
-    asyncio.create_task
+    asyncio.create_task(engine.load())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """关闭时清理"""
+    logger.info("STT Service shutting down")
+
+@app.get("/health", response_model=HealthStatus)
+async def health_check():
+    """健康检查"""
+    return HealthStatus(
+        status="ok" if engine.is_model_loaded() else "loading",
+        version="1.1.0",
+        uptime_seconds=time.time() - engine.start_time,
+        current_model=engine.current_model_name,
+        loaded_models=[engine.current_model_name] if engine.is_model_loaded() else [],
+        active_connections=engine._active_connections,
+        total_requests=engine.total_requests,
+        failed_requests=engine.failed_requests,
+    )
+
+@app.get("/models", response_model=List[ModelInfo])
+async def list_models():
+    """获取可用模型列表"""
+    models = []
+    for name, info in STTEngine.AVAILABLE_MODELS.items():
+        models.append(ModelInfo(
+            name=name,
+            description=f"STT model: {info['model_id']}",
+            is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
+            is_default=(name == engine.default_model),
+        ))
+    return models
+
+@app.post("/transcribe", response_model=TranscriptionResult)
+async def transcribe(
+    file: UploadFile = File(...),
+    language: str = Form("auto"),
+    return_timestamps: bool = Form(False),
+):
+    """转写音频文件"""
+    req_id = request_id_ctx.get()
+    try:
+        audio_content = await file.read()
+        result = await engine.transcribe(
+            audio_content,
+            language=language,
+            return_timestamps=return_timestamps
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Transcription error: {e}", extra={"request_id": req_id})
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/ws/stream")
+async def websocket_stream(websocket: WebSocket):
+    """WebSocket 流式识别"""
+    await websocket.accept()
+    engine.increment_connections()
+    logger.info("WebSocket connection accepted")
+
+    # 发送就绪消息
+    await websocket.send_text(json.dumps({
+        "type": "ready",
+        "model": engine.current_model_name,
+        "is_loading": engine.is_loading(),
+        "aligner_loaded": engine.is_aligner_loaded(),
+    }))
+
+    audio_buffer = bytearray()
+    return_timestamps = False
+
+    try:
+        while True:
+            message = await asyncio.wait_for(websocket.receive_text(), timeout=120.0)
+            data = json.loads(message)
+            msg_type = data.get("type")
+
+            if msg_type == "audio":
+                audio_b64 = data.get("data", "")
+                if audio_b64:
+                    audio_chunk = base64.b64decode(audio_b64)
+                    audio_buffer.extend(audio_chunk)
+
+            elif msg_type == "config":
+                # 处理配置消息
+                return_timestamps = data.get("return_timestamps", False)
+                language = data.get("language", "auto")
+                await websocket.send_text(json.dumps({
+                    "type": "config_ack",
+                    "return_timestamps": return_timestamps,
+                    "language": language,
+                }))
+
+            elif msg_type in ("end", "stop"):
+                if audio_buffer:
+                    try:
+                        result = await asyncio.wait_for(
+                            engine.transcribe(
+                                bytes(audio_buffer),
+                                return_timestamps=return_timestamps
+                            ),
+                            timeout=300.0
+                        )
+                        response = {
+                            "type": "result",
+                            "text": result.text,
+                            "confidence": result.confidence,
+                            "language": result.language,
+                            "is_final": True,
+                            "stt_latency_ms": result.stt_latency_ms,
+                            "model": result.model,
+                        }
+                        if result.timestamps:
+                            response["timestamps"] = [
+                                {"word": ts.word, "start": ts.start, "end": ts.end}
+                                for ts in result.timestamps
+                            ]
+                        await websocket.send_text(json.dumps(response))
+                    except asyncio.TimeoutError:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "error_code": "E5002",
+                            "error_message": "Transcription timeout",
+                        }))
+
+                await websocket.send_text(json.dumps({"type": "done"}))
+                break
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "error_code": "E5001",
+                "error_message": str(e),
+            }))
+        except:
+            pass
+    finally:
+        engine.decrement_connections()
+        try:
+            await websocket.close()
+        except:
+            pass
+
+def main():
+    """主函数"""
+    logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
+    uvicorn.run(
+        app,
+        host=STT_HOST,
+        port=STT_PORT,
+        log_level=LOG_LEVEL.lower(),
+    )
+
+if __name__ == "__main__":
+    main()
