@@ -14,8 +14,10 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from contextvars import ContextVar
+
+import httpx
 
 # 添加项目路径
 project_dir = Path(__file__).parent.parent
@@ -35,6 +37,11 @@ LOG_LEVEL = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
 REQUEST_TIMEOUT = float(os.getenv("VIF_REQUEST_TIMEOUT", "300.0"))
 MAX_RETRIES = int(os.getenv("VIF_MAX_RETRIES", "3"))
 RETRY_DELAY = float(os.getenv("VIF_RETRY_DELAY", "1.0"))
+
+# LLM Server Configuration
+LLM_SERVER_HOST = os.getenv("VIF_LLM_HOST", "localhost")
+LLM_SERVER_PORT = int(os.getenv("VIF_LLM_PORT", "6545"))
+LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 
 # ============== Context Variables ==============
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
@@ -137,6 +144,32 @@ def with_retry(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
             raise last_exception
         return wrapper
     return decorator
+
+
+# ============== LLM Client ==============
+async def call_llm_server(text: str, request_id: str = "") -> Tuple[str, float]:
+    """调用 LLM 服务器进行后处理
+    
+    Returns:
+        tuple: (processed_text, latency_ms)
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{LLM_SERVER_URL}/process",
+                json={"text": text, "options": {}},
+                headers={"X-Request-ID": request_id},
+                timeout=30.0
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("text", text), data.get("llm_latency_ms", 0)
+            else:
+                logger.warning(f"LLM server returned {response.status_code}")
+                return text, 0
+    except Exception as e:
+        logger.error(f"Failed to call LLM server: {e}")
+        return text, 0
 
 # ============== STT Engine ==============
 class STTEngine:
@@ -554,21 +587,45 @@ async def websocket_stream(websocket: WebSocket):
                             ),
                             timeout=300.0
                         )
-                        response = {
-                            "type": "result",
+                        # 发送 STT 结果
+                        await websocket.send_text(json.dumps({
+                            "type": "stt_result",
                             "text": result.text,
+                            "stt_latency_ms": result.stt_latency_ms,
+                        }))
+                        # 调用 LLM 服务器进行后处理
+                        req_id = request_id_ctx.get()
+                        if result.text.strip():
+                            # 发送 LLM 开始消息
+                            await websocket.send_text(json.dumps({
+                                "type": "llm_start",
+                                "text": result.text[:50],
+                            }))
+                            # 调用 LLM 服务器
+                            processed_text, llm_latency = await call_llm_server(result.text, req_id)
+                        else:
+                            processed_text = result.text
+                            llm_latency = 0
+                        # 发送最终结果
+                        await websocket.send_text(json.dumps({
+                            "type": "result",
+                            "text": processed_text,
                             "confidence": result.confidence,
                             "language": result.language,
                             "is_final": True,
                             "stt_latency_ms": result.stt_latency_ms,
+                            "llm_latency_ms": llm_latency,
                             "model": result.model,
-                        }
+                        }))
                         if result.timestamps:
-                            response["timestamps"] = [
-                                {"word": ts.word, "start": ts.start, "end": ts.end}
-                                for ts in result.timestamps
-                            ]
-                        await websocket.send_text(json.dumps(response))
+                            timestamps_response = {
+                                "type": "timestamps",
+                                "timestamps": [
+                                    {"word": ts.word, "start": ts.start, "end": ts.end}
+                                    for ts in result.timestamps
+                                ]
+                            }
+                            await websocket.send_text(json.dumps(timestamps_response))
                     except asyncio.TimeoutError:
                         await websocket.send_text(json.dumps({
                             "type": "error",
