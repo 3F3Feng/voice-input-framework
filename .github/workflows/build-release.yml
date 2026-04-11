@@ -73,7 +73,8 @@ jobs:
       - name: Get version
         id: version
         run: |
-          version=$(grep -oP '__version__\s*=\s*"\K[^"]+' client/__init__.py)
+          # macOS grep 不支持 -P，使用 sed
+          version=$(sed -n 's/__version__\s*=\s*"\([^"]\+\)"/\1/p' client/__init__.py)
           echo "VERSION=$version" >> $GITHUB_OUTPUT
           echo "Version: $version"
 
