@@ -71,9 +71,9 @@ class PostProcessPrompt:
     
     @staticmethod
     def get_chat_prompt(text: str) -> list:
-        """获取聊天格式的提示词"""
+        """获取聊天格式的提示词（使用 /no_think 禁用思考模式）"""
         return [
-            {'role': 'user', 'content': f'请给以下文字添加标点并分段，只输出结果：{text}'}
+            {'role': 'user', 'content': f'/no_think 请给以下文字添加标点并分段，只输出结果：{text}'}
         ]
     
     @staticmethod
