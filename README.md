@@ -2,6 +2,8 @@
 
 基于大模型的语音识别框架，支持实时流式语音识别。
 
+> **NEW**: 分离架构 - STT 和 LLM 独立服务，解决 transformers 版本冲突问题。详见 [docs/split-architecture.md](docs/split-architecture.md)
+
 ## 🎯 下载 Windows 客户端 (免安装)
 
 直接从 GitHub Releases 下载 exe 文件：
@@ -31,13 +33,30 @@ https://github.com/3F3Feng/voice-input-framework/releases
 
 ## 🚀 快速开始
 
-### 服务端
+### 方式 1: 分离架构 (推荐)
+
+解决 STT (qwen_asr) 和 LLM (mlx-lm) 的 transformers 版本冲突。
 
 ```bash
-# 克隆项目
-git clone https://github.com/3F3Feng/voice-input-framework.git
-cd voice-input-framework
+# 1. 创建 STT 环境 (首次)
+./scripts/setup_stt_env.sh
 
+# 2. 启动两个服务
+./scripts/start_services.sh start
+
+# 3. 检查状态
+./scripts/start_services.sh status
+```
+
+服务地址:
+- STT Service: http://localhost:6544
+- LLM Service: http://localhost:6545
+
+### 方式 2: 传统架构
+
+适用于不需要 LLM 后处理的场景。
+
+```bash
 # 安装依赖
 pip install -r requirements.txt
 
@@ -56,6 +75,28 @@ python -m client.gui
 ```
 
 ## 📡 API
+
+### 分离架构 API
+
+**STT Service (Port 6544)**
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | 健康检查 |
+| `/models` | GET | 获取可用模型列表 |
+| `/transcribe` | POST | 转写音频文件 |
+| `/ws/stream` | WebSocket | 流式识别 |
+
+**LLM Service (Port 6545)**
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | 健康检查 |
+| `/models` | GET | 获取可用模型列表 |
+| `/models/select` | POST | 切换模型 |
+| `/process` | POST | 处理文本 |
+
+### 传统架构 API
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
