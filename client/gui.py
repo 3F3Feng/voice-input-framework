@@ -1005,7 +1005,12 @@ class HotkeyVoiceInputV2:
 
                     if msg_type == "result":
                         result_text = data.get("text", "")
-                        self.log(f"识别结果: {result_text}")
+                        llm_latency = data.get("llm_latency_ms")
+                        llm_model = data.get("llm_model", "")
+                        if llm_latency is not None:
+                            self.log(f"识别结果: {result_text} (LLM: {llm_latency:.0f}ms)")
+                        else:
+                            self.log(f"识别结果: {result_text}")
                     elif msg_type == "done":
                         self.log("识别完成")
                         await ws.close()
@@ -1166,7 +1171,21 @@ class HotkeyVoiceInputV2:
                         
                         if msg_type == "result":
                             result_text = data.get("text", "")
-                            self.log(f"识别结果: {result_text}")
+                            llm_latency = data.get("llm_latency_ms")
+                            llm_model = data.get("llm_model", "")
+                            if llm_latency is not None:
+                                self.log(f"识别结果: {result_text} (LLM: {llm_latency:.0f}ms)")
+                            else:
+                                self.log(f"识别结果: {result_text}")
+                        elif msg_type == "llm_start":
+                            # LLM开始处理，更新浮标状态
+                            original_text = data.get("text", "")
+                            if self.use_floating_indicator and self.processing_indicator:
+                                try:
+                                    self.processing_indicator.set_status("LLM处理中...", "#9b59b6")
+                                except Exception as e:
+                                    logger.warning(f"更新LLM状态失败: {e}")
+                            self.log(f"LLM处理中: {original_text[:30]}...")
                         elif msg_type == "done":
                             self.log("识别完成")
                             self.stream_result = result_text
