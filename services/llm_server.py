@@ -177,9 +177,14 @@ class LLMEngine:
                 max_tokens=128,
             )
             
-            # 清理响应
+            # 清理响应 - 移除思考标签
             import re
-            cleaned = re.sub(r'osopher[\\s\\S]*?tter', '', response)
+            # 移除 <think>...</think> 标签
+            cleaned = re.sub(r'<think>[\\s\\S]*?</think>', '', response)
+            # 移除单独的 <think> 或 </think> 标签
+            cleaned = re.sub(r'</?think>', '', cleaned)
+            # 移除开头的 \nquirer 或 thinker
+            cleaned = re.sub(r'^\\s*(?:quirer|thinker)\\s*', '', cleaned)
             cleaned = cleaned.strip()
             
             latency = (time.time() - start_time) * 1000
