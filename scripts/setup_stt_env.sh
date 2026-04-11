@@ -4,6 +4,13 @@
 
 set -e
 
+# Source conda environment
+if [ -f "$HOME/.zshrc" ]; then
+    source "$HOME/.zshrc"
+elif [ -f "$HOME/.bashrc" ]; then
+    source "$HOME/.bashrc"
+fi
+
 echo "========================================"
 echo "Voice Input Framework - STT Environment Setup"
 echo "========================================"
@@ -41,25 +48,12 @@ echo ""
 echo "Installing dependencies..."
 echo ""
 
-# 激活环境并安装依赖
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate ${ENV_NAME}
-
-# 安装 PyTorch (先安装，因为其他包依赖它)
-echo "Installing PyTorch..."
-pip install torch
-
-# 安装 transformers 4.x (兼容 qwen_asr)
-echo "Installing transformers 4.x..."
-pip install "transformers<5.0"
-
-# 安装 qwen_asr
-echo "Installing qwen_asr..."
-pip install qwen_asr
-
-# 安装其他依赖
-echo "Installing other dependencies..."
-pip install numpy fastapi uvicorn websockets python-multipart
+# 使用 conda run 安装依赖
+conda run -n ${ENV_NAME} pip install \
+    torch \
+    "transformers<5.0" \
+    qwen_asr \
+    numpy fastapi uvicorn websockets python-multipart
 
 echo ""
 echo "========================================"
@@ -71,5 +65,6 @@ echo "    conda activate ${ENV_NAME}"
 echo ""
 echo "To start the STT service, run:"
 echo "    cd /Users/shifengzhang/voice-input-framework"
+echo "    conda activate ${ENV_NAME}"
 echo "    python -m services.stt_server"
 echo ""
