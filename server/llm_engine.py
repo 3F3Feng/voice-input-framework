@@ -60,7 +60,7 @@ class LLMEngine:
 
             thinking_timeout = self.config.thinking_timeout if self.config else 5.0
             self._evaluator = LLMEvaluator(
-                model_info.model_id,
+                model_name,  # 使用模型名称，不是 model_id
                 verbose=False,
                 thinking_timeout=thinking_timeout
             )
@@ -159,10 +159,19 @@ class LLMManager:
 
             self._available_models = get_all_model_names()
 
+            # 获取 LLM 配置（从 ServerConfig 中获取 LLMConfig）
+            from server.config import LLMConfig
+            if isinstance(self.config, LLMConfig):
+                llm_config = self.config
+            elif hasattr(self.config, 'llm'):
+                llm_config = self.config.llm
+            else:
+                llm_config = LLMConfig()
+
             # 加载默认模型
             default_model = get_default_model()
             if default_model:
-                self._engine = LLMEngine(self.config)
+                self._engine = LLMEngine(llm_config)
                 if not self._engine.load_model(default_model.name):
                     logger.warning(f"Failed to load default LLM model: {default_model.name}")
                     self._engine = None
