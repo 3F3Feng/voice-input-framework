@@ -145,6 +145,8 @@ class HotkeyVoiceInputV2:
         self.last_result = ""
         self.available_models = []  # 可用的模型列表
         self.current_model = None  # 当前模型
+        self.available_llm_models = []  # 可用的LLM模型列表
+        self.current_llm_model = None  # 当前LLM模型
 
         # 资源
         self.stream = None
@@ -277,11 +279,18 @@ class HotkeyVoiceInputV2:
 
             # 模型选择
             [sg.Frame("模型设置", [
-                [sg.Text("选择模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-                 sg.Combo([], default_value="", key="-MODEL-SELECT-", size=(30, 1), readonly=True),
+                [sg.Text("STT模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
+                 sg.Combo([], default_value="", key="-MODEL-SELECT-", size=(25, 1), readonly=True),
                  sg.Button("刷新", key="-REFRESH-MODELS-", size=(8, 1)),
                  sg.Button("切换", key="-SWITCH-MODEL-", button_color=("white", "blue"), size=(8, 1))],
                 [sg.Text("", key="-MODEL-STATUS-", text_color="yellow", size=(70, 1), background_color=BACKGROUND_COLOR)],
+                # LLM 模型选择
+                [sg.HorizontalSeparator()],
+                [sg.Text("LLM模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
+                 sg.Combo([], default_value="", key="-LLM-MODEL-SELECT-", size=(25, 1), readonly=True),
+                 sg.Button("刷新", key="-REFRESH-LLM-MODELS-", size=(8, 1)),
+                 sg.Button("切换", key="-SWITCH-LLM-MODEL-", button_color=("white", "purple"), size=(8, 1))],
+                [sg.Text("", key="-LLM-MODEL-STATUS-", text_color="cyan", size=(70, 1), background_color=BACKGROUND_COLOR)],
             ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
 
             # ======== v1.1 新增：托盘和指示器设置 ========
@@ -797,6 +806,85 @@ class HotkeyVoiceInputV2:
     async def async_switch_model(self, model_name: str):
         """异步切换模型（在事件循环中执行）"""
         await self.switch_model(model_name)
+
+    # ========== LLM 模型相关方法 ==========
+
+    async def fetch_llm_models(self):
+        """获取服务器上的可用LLM模型列表"""
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                url = f"{self.rest_api_url}/llm/models"
+                self.log(f"正在获取LLM模型列表 from {url}...")
+
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self.available_llm_models = data.get("models", [])
+                    self.current_llm_model = data.get("current_model", "")
+                    llm_enabled = data.get("enabled", True)
+
+                    self.log(f"✓ 获取到LLM模型列表: {', '.join(self.available_llm_models)}")
+                    self.log(f"  当前LLM模型: {self.current_llm_model}, 启用: {llm_enabled}")
+
+                    if self.window:
+                        self.window["-LLM-MODEL-SELECT-"].update(
+                            values=self.available_llm_models,
+                            value=self.current_llm_model
+                        )
+                        status_color = "cyan" if llm_enabled else "gray"
+                        self.window["-LLM-MODEL-STATUS-"].update(
+                            f"当前: {self.current_llm_model} {'(已启用)' if llm_enabled else '(已禁用)'}",
+                            text_color=status_color
+                        )
+                    return True
+                else:
+                    self.log(f"⚠️ 获取LLM模型失败: HTTP {resp.status_code}")
+                    return False
+        except Exception as e:
+            self.log(f"⚠️ 获取LLM模型出错: {e}")
+            return False
+
+    async def switch_llm_model(self, model_name: str):
+        """切换LLM模型"""
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                url = f"{self.rest_api_url}/llm/models/select"
+                self.log(f"正在切换LLM模型到: {model_name}...")
+
+                resp = await client.post(url, data={"model_name": model_name})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    success = data.get("status") == "success"
+                    current = data.get("current_model", "")
+
+                    if success:
+                        self.current_llm_model = current
+                        self.window["-LLM-MODEL-STATUS-"].update(
+                            f"当前: {current} (已启用)",
+                            text_color="cyan"
+                        )
+                        self.log(f"✓ LLM模型切换成功: {current}")
+                    else:
+                        self.log(f"✗ LLM模型切换失败: {data.get('message', 'Unknown error')}")
+                    return success
+                else:
+                    self.log(f"⚠️ LLM模型切换失败: HTTP {resp.status_code}")
+                    return False
+        except Exception as e:
+            self.log(f"⚠️ 切换LLM模型出错: {e}")
+            return False
+
+    async def async_fetch_llm_models(self):
+        """异步获取LLM模型列表"""
+        await self.fetch_llm_models()
+
+    async def async_switch_llm_model(self, model_name: str):
+        """异步切换LLM模型"""
+        await self.switch_llm_model(model_name)
+
+    # ======================================
 
     async def _poll_model_loading_status(self, model_name: str):
         """轮询检查模型加载状态"""
@@ -1389,6 +1477,32 @@ class HotkeyVoiceInputV2:
                     self.config_manager.use_floating_indicator = self.use_floating_indicator
                     self.config_manager.save()
                     self.log(f"悬浮指示器: {'启用' if self.use_floating_indicator else '禁用'}")
+
+                # ======== LLM 模型切换 ========
+                elif event == "-REFRESH-LLM-MODELS-":
+                    self.log("正在获取LLM模型列表...")
+                    self.window["-LLM-MODEL-STATUS-"].update("正在获取LLM模型列表...", text_color="yellow")
+                    if self.async_loop:
+                        asyncio.run_coroutine_threadsafe(
+                            self.async_fetch_llm_models(),
+                            self.async_loop
+                        )
+
+                elif event == "-SWITCH-LLM-MODEL-":
+                    selected_model = values.get("-LLM-MODEL-SELECT-", "").strip()
+                    if not selected_model:
+                        self.log("未选择LLM模型")
+                    else:
+                        self.log(f"正在切换LLM模型: {selected_model}")
+                        self.window["-LLM-MODEL-STATUS-"].update(
+                            f"切换中: {selected_model}...", text_color="yellow"
+                        )
+                        if self.async_loop:
+                            asyncio.run_coroutine_threadsafe(
+                                self.async_switch_llm_model(selected_model),
+                                self.async_loop
+                            )
+                # ================================
 
                 elif event == "-MINIMIZE-TRAY-":
                     self._minimize_to_tray()

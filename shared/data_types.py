@@ -92,6 +92,8 @@ class HealthStatus:
     loaded_models: list[str]
     active_connections: int = 0
     memory_usage_mb: Optional[float] = None
+    llm_model: str = ""  # 当前LLM模型名称
+    llm_enabled: bool = True  # LLM是否启用
 
     def to_dict(self) -> dict:
         return {
@@ -102,6 +104,8 @@ class HealthStatus:
             "loaded_models": self.loaded_models,
             "active_connections": self.active_connections,
             "memory_usage_mb": self.memory_usage_mb,
+            "llm_model": self.llm_model,
+            "llm_enabled": self.llm_enabled,
         }
 
 
