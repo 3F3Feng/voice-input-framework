@@ -184,9 +184,13 @@ class LLMEngine:
         try:
             import mlx_lm
 
-            # 构建提示词
+            # 加载提示词
+            system_prompt = load_prompt()
+            
+            # 构建消息
             messages = [
-                {"role": "user", "content": f"/no_think 优化STT识别结果,转为简洁的对话文案:移除填充词,保持原意,输出清晰准确的文本:{text}"}
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
             ]
 
             prompt = self._tokenizer.apply_chat_template(
