@@ -2,9 +2,7 @@
 Tests for STT Server
 """
 import pytest
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
 import sys
-import asyncio
 from pathlib import Path
 
 # Add project path

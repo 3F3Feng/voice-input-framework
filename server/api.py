@@ -103,7 +103,7 @@ async def health_check():
     llm_engine = llm_manager.get_engine()
     return HealthStatus(
         status="ok",
-        version="1.0.0",
+        version="1.1.5",
         uptime_seconds=time.time() - start_time,
         current_model=engine_manager.current_model_name,
         loaded_models=list(engine_manager.engines.keys()),

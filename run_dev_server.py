@@ -33,12 +33,14 @@ if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
 if __name__ == "__main__":
+    host = os.getenv("VIF_HOST", "127.0.0.1")
+    port = os.getenv("VIF_PORT", "6544")
     print("=" * 60)
     print("Voice Input Framework - 开发服务器")
     print("=" * 60)
     print(f"Python: {sys.executable}")
-    print(f"地址: http://127.0.0.1:6544")
-    print(f"API 文档: http://127.0.0.1:6544/docs")
+    print(f"地址: http://{host}:{port}")
+    print(f"API 文档: http://{host}:{port}/docs")
     print("=" * 60)
     
     from server.api import main

@@ -2,7 +2,6 @@
 Tests for LLM Server
 """
 import pytest
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
 import sys
 from pathlib import Path
 
