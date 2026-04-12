@@ -27,7 +27,7 @@ class WhisperCppEngine(BaseSTTEngine):
     MODEL_CONFIGS = {
         "whisper-v3-base": {
             "name": "Whisper V3 Base",
-            "model_path": "~/.cache/whisper/ggml-base.bin",
+            "model_path": "~/.cache/whisper/base-v3.bin",
             "memory_gb": 1,
         },
         "whisper-v3-large": {
@@ -37,7 +37,7 @@ class WhisperCppEngine(BaseSTTEngine):
         },
     }
 
-    def __init__(self, model_name: str = "whisper-v3-large", **kwargs):
+    def __init__(self, model_name: str = "whisper-v3-base", **kwargs):
         super().__init__(model_name, **kwargs)
         self._pipeline = None
         self.model_config = self.MODEL_CONFIGS.get(

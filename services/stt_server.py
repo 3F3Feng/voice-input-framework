@@ -188,11 +188,19 @@ class STTEngine:
             "aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
             "memory_gb": 1.5,
         },
-        "whisper_cpp": {
-            "model_id": "whisper_cpp",
+        "whisper_cpp_base": {
+            "model_id": "whisper_cpp_base",
+            "whisper_model": "whisper-v3-base",
+            "aligner_id": None,
+            "memory_gb": 1,
+            "description": "Whisper V3 Base via whisper.cpp (Metal GPU, fast)",
+        },
+        "whisper_cpp_large": {
+            "model_id": "whisper_cpp_large",
+            "whisper_model": "whisper-v3-large",
             "aligner_id": None,
             "memory_gb": 3,
-            "description": "Whisper V3 Large via whisper.cpp (Metal GPU)",
+            "description": "Whisper V3 Large via whisper.cpp (Metal GPU, accurate)",
         },
     }
 
@@ -267,10 +275,11 @@ class STTEngine:
             device = "cpu"
 
         # whisper_cpp 使用独立的 WhisperCppEngine
-        if model_id == "whisper_cpp":
+        if model_id in ("whisper_cpp_base", "whisper_cpp_large"):
             from server.models.whisper_cpp import WhisperCppEngine
-            logger.info("Loading Whisper.cpp model...")
-            whisper_engine = WhisperCppEngine(model_name="whisper-v3-large")
+            whisper_model = self._model_info.get("whisper_model", "whisper-v3-base")
+            logger.info(f"Loading Whisper.cpp model: {whisper_model}...")
+            whisper_engine = WhisperCppEngine(model_name=whisper_model)
             # WhisperCppEngine 同步加载
             import asyncio
             asyncio.run(whisper_engine.load())
