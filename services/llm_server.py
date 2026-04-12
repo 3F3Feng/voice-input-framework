@@ -187,22 +187,12 @@ class LLMEngine:
             # 加载提示词
             system_prompt = load_prompt()
             
-            # 构建消息
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
-            ]
+            # 直接构建提示词，不使用 chat template
+            prompt = f"{system_prompt}\n\n输入：{text}\n输出："
 
-            prompt = self._tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-
-            # 移除 Qwen3.5 模板默认添加的思考标签
-            mlx_think_end = chr(0x0a) + chr(0x3c) + 'think' + chr(0x3e) + chr(0x0a)
-            if prompt.endswith(mlx_think_end):
-                prompt = prompt[:-len(mlx_think_end)]
+            # 移除可能触发思考的特殊标记
+            prompt = prompt.replace("<|think|>", "")
+            prompt = prompt.replace("<think>", "")
 
             # 生成
             response = mlx_lm.generate(
