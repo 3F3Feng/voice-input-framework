@@ -542,11 +542,12 @@ async def select_llm_model(request: Request):
     """转发：选择 LLM 模型"""
     try:
         body = await request.json()
+        model_name = body.get("model_name", "")
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{LLM_SERVER_URL}/models/select",
-                json=body,
-                timeout=10.0
+                data={"model_name": model_name},
+                timeout=30.0
             )
             if resp.status_code == 200:
                 return resp.json()
