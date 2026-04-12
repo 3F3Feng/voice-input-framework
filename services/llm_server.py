@@ -199,7 +199,7 @@ class LLMEngine:
                 model=self._model,
                 tokenizer=self._tokenizer,
                 prompt=prompt,
-                max_tokens=128,
+                max_tokens=256,
                 
             )
 
