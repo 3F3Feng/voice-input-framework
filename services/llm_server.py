@@ -223,38 +223,34 @@ class LLMEngine:
             has_analysis = 'Thinking Process:' in cleaned or 'Analyze the Request:' in cleaned or 'Process the Input:' in cleaned
             
             if has_analysis:
-                # 尝试找 "输出：" 后的内容
-                if '输出：' in cleaned:
-                    cleaned = cleaned.split('输出：')[-1].strip()
-                elif 'Construct Output:' in cleaned:
-                    cleaned = cleaned.split('Construct Output:')[-1].strip()
-                elif 'Final Output:' in cleaned:
-                    cleaned = cleaned.split('Final Output:')[-1].strip()
-                elif 'Thinking Process:' in cleaned:
-                    parts = cleaned.split('Thinking Process:')
-                    if len(parts) > 1:
-                        cleaned = parts[-1].strip()
-                        lines = cleaned.split('\n')
-                        if lines:
-                            for line in reversed(lines):
+                # 方法1: 尝试找 "输出：" 或 "Output:" 后的内容
+                for marker in ['输出：', 'Output:', 'Construct Output:', 'Final Output:']:
+                    if marker in cleaned:
+                        parts = cleaned.split(marker)
+                        if len(parts) > 1:
+                            # 取最后一个标记后的内容
+                            potential = parts[-1].strip()
+                            # 如果内容太长，可能还包含分析，继续分割
+                            lines = potential.split('\n')
+                            for line in lines:
                                 line = line.strip()
-                                if line and not line.startswith(('1.', '2.', '3.', '4.', '5.', '**', '*', '-', '•')):
-                                    if 'Thinking' not in line and 'Process' not in line and 'Analyze' not in line:
+                                # 找第一个实际的中文输出行（不是英文分析）
+                                if line and len(line) < 100 and not line.startswith(('1.', '2.', '3.', '4.', '5.', '*', '-')):
+                                    if not any(en in line for en in ['Analyze', 'Process', 'Rules:', 'Task:', 'Role:', 'Input']):
                                         cleaned = line
                                         break
+                            break
                 else:
-                    # 没有 Thinking Process 标记但包含分析内容
-                    # 尝试提取最后的非分析行
+                    # 方法2: 如果没有找到输出标记，从后往前找第一行中文
                     lines = cleaned.split('\n')
-                    result_lines = []
-                    for line in lines:
+                    for line in reversed(lines):
                         line = line.strip()
-                        # 跳过分析相关行
-                        if line and not any(keyword in line for keyword in ['Analyze', 'Process the Input', 'Final Output', 'Rules:', 'Task:', 'Role:', 'Input text:']):
-                            if not line.startswith(('1.', '2.', '3.', '4.', '5.', '**', '*', '-')):
-                                result_lines.append(line)
-                    if result_lines:
-                        cleaned = result_lines[-1]
+                        # 找包含中文的行，且不是分析内容
+                        if line and len(line) < 100:
+                            if not line.startswith(('1.', '2.', '3.', '4.', '5.', '*', '-', '**')):
+                                if not any(en in line for en in ['Analyze', 'Process', 'Rules:', 'Task:', 'Role:', 'Input', 'Thinking', 'Construct']):
+                                    cleaned = line
+                                    break
             
             # 移除 markdown 标记
             cleaned = cleaned.replace('**', '')
