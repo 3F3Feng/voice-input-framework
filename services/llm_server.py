@@ -265,7 +265,7 @@ class LLMEngine:
 # 配置
 LLM_HOST = os.getenv("VIF_LLM_HOST", "0.0.0.0")
 LLM_PORT = int(os.getenv("VIF_LLM_PORT", "6545"))
-LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-0.8B-OptiQ")
+LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
 
 # 初始化引擎
 engine = LLMEngine(default_model=LLM_MODEL)
