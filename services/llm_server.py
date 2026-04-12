@@ -102,6 +102,8 @@ class LLMEngine:
     AVAILABLE_MODELS = [
         "Qwen3.5-0.8B-OptiQ",
         "Qwen3.5-2B-OptiQ",
+        "Qwen3.5-4B-MLX",
+        "Qwen3.5-4B-OptiQ",
         "Qwen3-0.6B",
         "Qwen3-1.7B",
     ]
@@ -109,6 +111,8 @@ class LLMEngine:
     MODEL_IDS = {
         "Qwen3.5-0.8B-OptiQ": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
         "Qwen3.5-2B-OptiQ": "mlx-community/Qwen3.5-2B-OptiQ-4bit",
+        "Qwen3.5-4B-MLX": "mlx-community/Qwen3.5-4B-MLX-4bit",
+        "Qwen3.5-4B-OptiQ": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
         "Qwen3-0.6B": "mlx-community/Qwen3-0.6B-4bit",
         "Qwen3-1.7B": "mlx-community/Qwen3-1.7B-4bit",
     }
