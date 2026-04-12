@@ -43,6 +43,9 @@ LLM_SERVER_HOST = os.getenv("VIF_LLM_HOST", "localhost")
 LLM_SERVER_PORT = int(os.getenv("VIF_LLM_PORT", "6545"))
 LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 
+# LLM Processing Toggle
+LLM_ENABLED = os.getenv("VIF_LLM_ENABLED", "true").lower() == "true"
+
 # ============== Context Variables ==============
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
 
@@ -567,6 +570,20 @@ async def llm_health():
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+@app.get("/llm/enabled")
+async def get_llm_enabled():
+    """获取 LLM 后处理是否启用"""
+    return {"enabled": LLM_ENABLED}
+
+@app.put("/llm/enabled")
+async def set_llm_enabled(request: Request):
+    """设置 LLM 后处理是否启用"""
+    global LLM_ENABLED
+    body = await request.json()
+    enabled = body.get("enabled", True)
+    LLM_ENABLED = bool(enabled)
+    return {"enabled": LLM_ENABLED}
+
 # ============== LLM Prompt API ==============
 @app.get("/llm/prompt")
 async def get_llm_prompt():
@@ -625,14 +642,14 @@ async def websocket_stream(websocket: WebSocket):
     logger.info("WebSocket connection accepted")
 
     # 获取 LLM 服务器状态
-    llm_info = {"llm_enabled": False, "llm_model": None}
+    llm_info = {"llm_enabled": LLM_ENABLED, "llm_model": None}
     try:
         async with httpx.AsyncClient() as client:
             llm_resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
             if llm_resp.status_code == 200:
                 llm_data = llm_resp.json()
                 llm_info = {
-                    "llm_enabled": True,
+                    "llm_enabled": LLM_ENABLED,
                     "llm_model": llm_data.get("current_model", "unknown")
                 }
     except Exception as e:
@@ -691,7 +708,7 @@ async def websocket_stream(websocket: WebSocket):
                         }))
                         # 调用 LLM 服务器进行后处理
                         req_id = request_id_ctx.get()
-                        if result.text.strip():
+                        if result.text.strip() and LLM_ENABLED:
                             # 发送 LLM 开始消息
                             await websocket.send_text(json.dumps({
                                 "type": "llm_start",
@@ -704,6 +721,8 @@ async def websocket_stream(websocket: WebSocket):
                         else:
                             processed_text = result.text
                             llm_latency = 0
+                            if not LLM_ENABLED:
+                                logger.info("LLM processing disabled, skipping")
                         # 发送最终结果
                         await websocket.send_text(json.dumps({
                             "type": "result",

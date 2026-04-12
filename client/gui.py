@@ -289,7 +289,9 @@ class HotkeyVoiceInputV2:
                 [sg.Text("LLM模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
                  sg.Combo([], default_value="", key="-LLM-MODEL-SELECT-", size=(25, 1), readonly=True),
                  sg.Button("刷新", key="-REFRESH-LLM-MODELS-", size=(8, 1)),
-                 sg.Button("切换", key="-SWITCH-LLM-MODEL-", button_color=("white", "purple"), size=(8, 1))],
+                 sg.Button("切换", key="-SWITCH-LLM-MODEL-", button_color=("white", "purple"), size=(8, 1)),
+                 sg.Text("", size=(5, 1), background_color=BACKGROUND_COLOR),
+                 sg.Checkbox("启用LLM后处理", key="-LLM-ENABLED-", enable_events=True, default=True, text_color=TEXT_COLOR, background_color=BACKGROUND_COLOR, size=(15, 1))],
                 [sg.Text("", key="-LLM-MODEL-STATUS-", text_color="cyan", size=(70, 1), background_color=BACKGROUND_COLOR)],
             ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
             # LLM 提示词配置
@@ -587,6 +589,14 @@ class HotkeyVoiceInputV2:
                 self.is_connected = True
                 self.current_model = model
 
+                # 解析 LLM 信息
+                llm_info = data.get("llm_info", {})
+                llm_enabled = llm_info.get("llm_enabled", True)
+                llm_model = llm_info.get("llm_model", None)
+                self.log(f"LLM后处理: {'启用' if llm_enabled else '禁用'}, 模型: {llm_model or '未设置'}")
+                if self.window:
+                    self.window["-LLM-ENABLED-"].update(llm_enabled)
+
                 # 更新托盘模型信息
                 if self.tray_manager:
                     self.tray_manager.set_current_model(model)
@@ -600,6 +610,8 @@ class HotkeyVoiceInputV2:
 
                 # 自动获取模型列表
                 await self.fetch_models()
+                # 自动获取LLM模型列表
+                await self.fetch_llm_models()
                 return True
             else:
                 self.log(f"✗ 服务器响应错误: {data}")
@@ -1470,6 +1482,30 @@ class HotkeyVoiceInputV2:
                     self.config_manager.distinguish_left_right = distinguish
                     self.config_manager.save()
                     self.log(f"已{'启用' if distinguish else '禁用'}左右修饰键区分")
+
+                elif event == "-LLM-ENABLED-":
+                    # 切换 LLM 后处理开关
+                    enabled = values["-LLM-ENABLED-"]
+                    self.config_manager.llm_enabled = enabled
+                    self.config_manager.save()
+                    # 同步到服务器
+                    if self.rest_api_url:
+                        import httpx
+                        try:
+                            async def update_llm_enabled():
+                                async with httpx.AsyncClient(timeout=5.0) as client:
+                                    resp = await client.put(
+                                        f"{self.rest_api_url}/llm/enabled",
+                                        json={"enabled": enabled}
+                                    )
+                                    if resp.status_code == 200:
+                                        self.log(f"✓ LLM后处理已{'启用' if enabled else '禁用'}")
+                                    else:
+                                        self.log(f"✗ 更新失败: {resp.status_code}")
+                            asyncio.run(update_llm_enabled())
+                        except Exception as e:
+                            self.log(f"✗ 更新LLM状态失败: {e}")
+                    self.log(f"已{'启用' if enabled else '禁用'}LLM后处理")
 
                 elif event == "-HOTKEY-PRESET-":
                     # 选择预设方案
