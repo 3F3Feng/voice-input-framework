@@ -91,6 +91,16 @@ class PostProcessPrompt:
 3. 自我纠正: 用户后半句推翻了前半句的逻辑
 4. 标点缺失: 连续无标点的语句流
 5. 中英混杂: 中英文混合的连读错误
+6. 语法错误: 不符合语言学逻辑的语法错误
+
+【英文保留规则 - 重要】
+- 保留所有英文单词和词组不变，不要翻译成中文
+- 保留技术术语: API, interface, refactor, function, class, database, server, client等
+- 保留品牌名称: Ollama, Python, JavaScript, React, Vue, Docker等
+- 保留程序中的命名: myFunction, UserController, MainApp等
+- 保留口语化的英文表达: OK, cool, thanks, sorry等
+- 保留符合英文大小写习惯的词汇（如句首除外）
+- 规则: 除非用户明确用中文解释某个英文词，否则保持原文
 
 【输出约束 - 绝对禁止】
 - 禁止在输出开头或结尾添加任何问候语("好的"、 "以下是"等)
@@ -107,6 +117,12 @@ class PostProcessPrompt:
 
 输入: "嗯今天天气真的好啊我们出去玩吧"
 输出: "今天天气真好，我们出去玩吧"
+
+输入: "这个API的interface需要refactor一下"
+输出: "这个API的interface需要refactor"
+
+输入: "如果说我说一段很长话，你会怎么处理呢？"
+输出: "如果我说很长的一段话，你会怎么处理？"
 
 【执行标准】
 - Temperature: 极低(0.2-0.4)，防止过度发散
