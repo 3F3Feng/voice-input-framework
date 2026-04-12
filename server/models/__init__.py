@@ -8,6 +8,7 @@ from server.models.base import BaseSTTEngine, STTEngineError
 from server.models.whisper import WhisperEngine
 from server.models.qwen3_asr import Qwen3ASREngine
 from server.models.whisper_mlx import WhisperMLXEngine
+from server.models.whisper_cpp import WhisperCppEngine
 
 # 可用模型注册表
 AVAILABLE_MODELS = {
@@ -20,6 +21,9 @@ AVAILABLE_MODELS = {
     "whisper_mlx_medium": WhisperMLXEngine,  # MLX Whisper Medium
     "whisper_mlx_small": WhisperMLXEngine,  # MLX Whisper Small
     "whisper_mlx_turbo": WhisperMLXEngine,  # MLX Whisper Large V3 Turbo
+    # Whisper.cpp 模型 (C++ 实现)
+    "whisper_cpp": WhisperCppEngine,      # Whisper.cpp V3 Large
+    "whisper_cpp_base": WhisperCppEngine, # Whisper.cpp V3 Base
 }
 
 __all__ = [
@@ -28,5 +32,6 @@ __all__ = [
     "WhisperEngine",
     "Qwen3ASREngine",
     "WhisperMLXEngine",
+    "WhisperCppEngine",
     "AVAILABLE_MODELS",
 ]
