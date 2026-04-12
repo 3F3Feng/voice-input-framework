@@ -124,17 +124,12 @@ Output: "我需要用React写一个component然后deploy到Docker上面"
 
         return [
             {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': f'''优化以下STT转写文本。
+            {'role': 'user', 'content': f'''CRITICAL: DO NOT TRANSLATE. DO NOT TRANSLATE. DO NOT TRANSLATE.
+Keep the language exactly as input. English stays English. Chinese stays Chinese.
+Clean the following STT text by removing filler words. Output only the cleaned text.
 
-规则：
-- 如果是英文→只输出英文，不要翻译成中文
-- 如果是中文→只输出中文，不要翻译成英文
-- 移除填充词和错误
-- 直接输出清洗结果，不要解释
-
-输入文本：{text}
-
-输出：'''}
+Input: {text}
+Output: '''}
         ]
 
     @staticmethod
