@@ -102,11 +102,13 @@ class LLMEngine:
     AVAILABLE_MODELS = [
         "Qwen3.5-2B-OptiQ",
         "Qwen3.5-4B-OptiQ",
+        "Gemma-4-E4B-DECKARD",
     ]
 
     MODEL_IDS = {
         "Qwen3.5-2B-OptiQ": "mlx-community/Qwen3.5-2B-OptiQ-4bit",
         "Qwen3.5-4B-OptiQ": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        "Gemma-4-E4B-DECKARD": "nightmedia/gemma-4-E4B-it-The-DECKARD-V2-Strong-HERETIC-UNCENSORED-Instruct-mxfp8-mlx",
     }
 
     def __init__(self, default_model: str = "Qwen3.5-4B-OptiQ"):
