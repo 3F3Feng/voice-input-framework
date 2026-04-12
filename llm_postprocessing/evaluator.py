@@ -313,13 +313,12 @@ class LLMEvaluator:
             if self._use_mlx:
                 import mlx_lm
 
-                prompt_formatted = self._tokenizer.apply_chat_template(
+                                prompt_formatted = self._tokenizer.apply_chat_template(
                     messages,
                     tokenize=False,
-                    add_generation_prompt=True
-                )
-
-                # 移除 Qwen3.5 模板默认添加的  <think>\n 思考标签
+                    add_generation_prompt=True,
+                    chat_template_kwargs={"enable_thinking": False}
+                )# 移除 Qwen3.5 模板默认添加的  <think>\n 思考标签
                 # 使用 Unicode 码点明确构建字符串
                 mlx_think_end = chr(0x0a) + chr(0x3c) + 'think' + chr(0x3e) + chr(0x0a)  # \nthink\n
                 if prompt_formatted.endswith(mlx_think_end):
@@ -338,7 +337,8 @@ class LLMEvaluator:
                 inputs = self._tokenizer.apply_chat_template(
                     messages,
                     return_tensors="pt",
-                    add_generation_prompt=True
+                    add_generation_prompt=True,
+                    chat_template_kwargs={"enable_thinking": False}  # 关闭思考模式
                 ).to(self._model.device)
 
                 with torch.no_grad():
