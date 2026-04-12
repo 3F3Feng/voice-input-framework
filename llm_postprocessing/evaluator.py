@@ -81,17 +81,41 @@ class PostProcessPrompt:
         - 适合网络环境发布
         """
         return [
-            {'role': 'user', 'content': f'/no_think 优化STT识别结果，转为简洁的对话文案：移除填充词，保持原意，输出清晰准确的文本：{text}'}
+            {'role': 'user', 'content': f'/no_think 关闭思考模式，只输出纯文本。优化STT识别结果：移除填充词，保持原意，添加标点，输出简洁准确的文本。直接输出结果，不要思考过程：{text}'}
         ]
 
     @staticmethod
     def clean_thinking_content(response: str) -> str:
-        """清理思考内容(去除 <think>...</think> 或 <思考>...</思考>)"""
-        # Qwen3 uses <think>...</think>
-        cleaned = re.sub(r'<think>[\s\S]*?</think>', '', response)
-        # Some models use <思考>...</思考>
+        """
+        清理思考内容
+
+        移除各种格式的思考标签和内容:
+        - <tool_call>...</tool_call> (Qwen3/Qwen3.5)
+        - <思考>...</思考>
+        - R\n...\nR (旧格式)
+        - <thinking>...</thinking>
+        """
+        if not response:
+            return response
+
+        cleaned = response
+
+        # 1. 移除 <tool_call>...</tool_call> (最常见)
+        import re
+        cleaned = re.sub(r'<tool_call>[\s\S]*?</tool_call>', '', cleaned, flags=re.IGNORECASE)
+
+        # 2. 移除 <思考>...</思考>
         cleaned = re.sub(r'<思考>[\s\S]*?</思考>', '', cleaned)
+
+        # 3. 移除 R\n...\nR 格式（旧格式）
+        cleaned = re.sub(r'R\n[\s\S]*?\nR', '', cleaned)
+
+        # 4. 移除 <thinking>...</thinking>
+        cleaned = re.sub(r'<thinking>[\s\S]*?</thinking>', '', cleaned, flags=re.IGNORECASE)
+
         return cleaned.strip()
+
+
 
 
 class LLMEvaluator:
