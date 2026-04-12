@@ -72,16 +72,50 @@ class PostProcessPrompt:
     @staticmethod
     def get_chat_prompt(text: str) -> list:
         """
-        获取聊天格式的提示词
+        获取聊天格式的提示词 - 基于深度提示词工程优化
 
-        目标：输出简洁、适合网络发布的文字
-        - 移除填充词（嗯、啊、就是吧、那个啥）
-        - 添加标点
-        - 保持原意，表述更简洁
-        - 适合网络环境发布
+        参考: Typeless 架构 + 2026 前沿 SLM 优化实践
+
+        设计原则:
+        1. 零闲聊协议 (Zero-Chatter Protocol): 绝对禁止对话属性
+        2. 病理特征库: 定义待修复的声学转写垃圾模式
+        3. Few-Shot 锚定: 通过示例收敛模型行为
+        4. 极低温度: 防止过度修改，保持原意
         """
+        system_prompt = """你是一个专业的语音识别后处理引擎。
+当前输入文本是由语音识别(ASR)软件机械生成的转写内容，可能存在以下问题：
+
+【待修复的病理特征】
+1. 填充词: 嗯、啊、就是吧、那个啥、然后、就是说、其实等
+2. 声学混淆: 同音字替换、口音导致的错误识别
+3. 自我纠正: 用户后半句推翻了前半句的逻辑
+4. 标点缺失: 连续无标点的语句流
+5. 中英混杂: 中英文混合的连读错误
+
+【输出约束 - 绝对禁止】
+- 禁止在输出开头或结尾添加任何问候语("好的"、 "以下是"等)
+- 禁止添加任何解释性文字
+- 禁止添加总结性语句
+- 唯一输出: 清洗重构后的纯文本
+
+【Few-Shot 示例 - 行为锚定】
+输入: "我昨天用那个、那个Ollama跑了一下，速度实在太、太卡了"
+输出: "我昨天使用Ollama，速度实在太卡了"
+
+输入: "就是说明天三点——不对是两点半"
+输出: "明天两点半"
+
+输入: "嗯今天天气真的好啊我们出去玩吧"
+输出: "今天天气真好，我们出去玩吧"
+
+【执行标准】
+- Temperature: 极低(0.2-0.4)，防止过度发散
+- 直接输出结果，不得有误
+"""
+
         return [
-            {'role': 'user', 'content': f'/no_think 关闭思考模式，只输出纯文本。优化STT识别结果：移除填充词，保持原意，添加标点，输出简洁准确的文本。直接输出结果，不要思考过程：{text}'}
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': f'优化以下STT转写文本，直接输出清洗结果：{text}'}
         ]
 
     @staticmethod
@@ -273,6 +307,7 @@ class LLMEvaluator:
                     tokenizer=self._tokenizer,
                     prompt=prompt_formatted,
                     max_tokens=128,
+                    temperature=0.3,  # 极低温度，防止过度发散
                 )
             else:
                 import torch
@@ -287,7 +322,7 @@ class LLMEvaluator:
                     outputs = self._model.generate(
                         **inputs,
                         max_new_tokens=128,
-                        temperature=0.1,
+                        temperature=0.3,  # 极低温度，防止过度发散
                         do_sample=False,
                     )
 
