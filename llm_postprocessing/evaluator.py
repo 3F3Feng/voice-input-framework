@@ -121,21 +121,24 @@ class PostProcessPrompt:
     @staticmethod
     def clean_thinking_content(response: str) -> str:
         """
-        清理思考内容
+        清理思考内容 - 增强版
 
-        移除各种格式的思考标签和内容:
+        移除各种格式的思考标签和残留:
         - <tool_call>...</tool_call> (Qwen3/Qwen3.5)
         - <思考>...</思考>
         - R\n...\nR (旧格式)
         - <thinking>...</thinking>
+        - 开头的冒号、竖线、箭头等残留
+        - 多余的换行符
         """
         if not response:
             return response
 
         cleaned = response
 
-        # 1. 移除 <tool_call>...</tool_call> (最常见)
         import re
+
+        # 1. 移除 <tool_call>...</tool_call> (最常见)
         cleaned = re.sub(r'<tool_call>[\s\S]*?</tool_call>', '', cleaned, flags=re.IGNORECASE)
 
         # 2. 移除 <思考>...</思考>
@@ -147,7 +150,27 @@ class PostProcessPrompt:
         # 4. 移除 <thinking>...</thinking>
         cleaned = re.sub(r'<thinking>[\s\S]*?</thinking>', '', cleaned, flags=re.IGNORECASE)
 
-        return cleaned.strip()
+        # 5. 移除开头的思考残留符号 (:, |, ->, ⇒, →, 等等)
+        cleaned = re.sub(r'^[\s:：|→⇒\-\>]+', '', cleaned)
+
+        # 6. 移除开头的单独冒号或特殊字符行
+        cleaned = re.sub(r'^\s*[：:]\s*$', '', cleaned, flags=re.MULTILINE)
+
+        # 7. 规范化连续换行符（超过2个换行 → 最多2个）
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+
+        # 8. 移除开头和结尾的空白字符
+        cleaned = cleaned.strip()
+
+        # 9. 最后检查：如果开头是中文/英文/数字以外的内容，尝试修复
+        # 移除开头可能残留的奇怪字符
+        if cleaned and not re.match(r'^[\u4e00-\u9fa5a-zA-Z0-9]', cleaned[0]):
+            # 第一个字符不合法，尝试找到下一个合法字符
+            match = re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]', cleaned)
+            if match:
+                cleaned = cleaned[match.start():]
+
+        return cleaned
 
 
 
