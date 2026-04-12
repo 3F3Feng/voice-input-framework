@@ -188,6 +188,12 @@ class STTEngine:
             "aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
             "memory_gb": 1.5,
         },
+        "whisper_cpp": {
+            "model_id": "whisper_cpp",
+            "aligner_id": None,
+            "memory_gb": 3,
+            "description": "Whisper V3 Large via whisper.cpp (Metal GPU)",
+        },
     }
 
     def __init__(self, default_model: str = "qwen_asr"):
@@ -260,6 +266,19 @@ class STTEngine:
         else:
             device = "cpu"
 
+        # whisper_cpp 使用独立的 WhisperCppEngine
+        if model_id == "whisper_cpp":
+            from server.models.whisper_cpp import WhisperCppEngine
+            logger.info("Loading Whisper.cpp model...")
+            whisper_engine = WhisperCppEngine(model_name="whisper-v3-large")
+            # WhisperCppEngine 同步加载
+            import asyncio
+            asyncio.run(whisper_engine.load())
+            self._model = whisper_engine
+            self._model_type = "whisper_cpp"
+            return
+
+        self._model_type = "qwen_asr"
         # Qwen3-ASR 使用 bfloat16 效果更好
         dtype = torch.bfloat16 if device != "cpu" else torch.float32
         logger.info(f"Loading ASR model on {device} with {dtype}")
@@ -316,7 +335,7 @@ class STTEngine:
                     raise RuntimeError("Failed to load STT model")
 
             # 如果需要时间戳但 aligner 未加载，尝试加载
-            if return_timestamps and not self._aligner_loaded:
+            if return_timestamps and not self._aligner_loaded and getattr(self, "_model_type", None) != "whisper_cpp":
                 success = await self.load(load_aligner=True)
                 if not success:
                     logger.warning("Failed to load ForcedAligner, returning without timestamps")
@@ -332,6 +351,19 @@ class STTEngine:
 
             def _do_transcribe():
                 lang = None if language == "auto" else language
+                
+                # whisper_cpp 使用不同的 API
+                if getattr(self, '_model_type', None) == "whisper_cpp":
+                    import numpy as np
+                    # whisper.cpp 需要 bytes
+                    audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
+                    result = asyncio.run(self._model.transcribe(
+                        audio_data=audio_bytes,
+                        language=lang or "auto",
+                        sample_rate=sample_rate,
+                    ))
+                    return result.text, result.language
+                
                 results = self._model.transcribe(
                     audio=(audio_array, sample_rate),
                     language=lang,
@@ -345,7 +377,7 @@ class STTEngine:
 
             # 生成时间戳（如果需要）
             timestamps = None
-            if return_timestamps and text and self._aligner_loaded:
+            if return_timestamps and text and self._aligner_loaded and getattr(self, "_model_type", None) != "whisper_cpp":
                 timestamps = await self._generate_timestamps(
                     audio_array, sample_rate, text, detected_lang or language
                 )
