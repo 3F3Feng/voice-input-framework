@@ -210,7 +210,6 @@ class LLMEngine:
                 prompt=prompt,
                 max_tokens=256,
                 temp=0.1
-            )
                 
             )
 
