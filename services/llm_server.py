@@ -218,8 +218,11 @@ class LLMEngine:
             cleaned = re.sub(r'<think>[\\s\\S]*?</think>', '', response)
             # 移除单独的 <think> 或 </think> 标签
             cleaned = re.sub(r'</?think>', '', cleaned)
-            # 处理 Thinking Process 输出
-            if 'Thinking Process:' in cleaned:
+            # 处理 Thinking Process 或分析输出
+            # 检查是否包含分析标记
+            has_analysis = 'Thinking Process:' in cleaned or 'Analyze the Request:' in cleaned or 'Process the Input:' in cleaned
+            
+            if has_analysis:
                 # 尝试找 "输出：" 后的内容
                 if '输出：' in cleaned:
                     cleaned = cleaned.split('输出：')[-1].strip()
@@ -227,23 +230,31 @@ class LLMEngine:
                     cleaned = cleaned.split('Construct Output:')[-1].strip()
                 elif 'Final Output:' in cleaned:
                     cleaned = cleaned.split('Final Output:')[-1].strip()
-                else:
-                    # 移除 Thinking Process 部分，保留最后的实际输出
+                elif 'Thinking Process:' in cleaned:
                     parts = cleaned.split('Thinking Process:')
                     if len(parts) > 1:
-                        # 取最后一部分并去除首尾空白
                         cleaned = parts[-1].strip()
-                        # 如果还有编号或标记，继续清理
                         lines = cleaned.split('\n')
                         if lines:
-                            # 取最后非空行
                             for line in reversed(lines):
                                 line = line.strip()
-                                # 跳过空行、markdown标记、编号行
                                 if line and not line.startswith(('1.', '2.', '3.', '4.', '5.', '**', '*', '-', '•')):
-                                    if 'Thinking' not in line and 'Process' not in line:
+                                    if 'Thinking' not in line and 'Process' not in line and 'Analyze' not in line:
                                         cleaned = line
                                         break
+                else:
+                    # 没有 Thinking Process 标记但包含分析内容
+                    # 尝试提取最后的非分析行
+                    lines = cleaned.split('\n')
+                    result_lines = []
+                    for line in lines:
+                        line = line.strip()
+                        # 跳过分析相关行
+                        if line and not any(keyword in line for keyword in ['Analyze', 'Process the Input', 'Final Output', 'Rules:', 'Task:', 'Role:', 'Input text:']):
+                            if not line.startswith(('1.', '2.', '3.', '4.', '5.', '**', '*', '-')):
+                                result_lines.append(line)
+                    if result_lines:
+                        cleaned = result_lines[-1]
             
             # 移除 markdown 标记
             cleaned = cleaned.replace('**', '')
