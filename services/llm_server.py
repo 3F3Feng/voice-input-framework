@@ -117,7 +117,7 @@ class LLMEngine:
         "Qwen3-1.7B": "mlx-community/Qwen3-1.7B-4bit",
     }
 
-    def __init__(self, default_model: str = "Qwen3.5-0.8B-OptiQ"):
+    def __init__(self, default_model: str = "Qwen3.5-4B-OptiQ"):
         self.default_model = default_model
         self.current_model_name = default_model
         self._model = None
