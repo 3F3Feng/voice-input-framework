@@ -2,7 +2,7 @@
 """
 Voice Input Framework - LLM Service
 
-独立的 LLM 后处理服务器，使用 mlx-lm 进行文本优化。
+独立的 LLM 后处理服务器,使用 mlx-lm 进行文本优化。
 运行在现有的 mlx-test conda 环境 (transformers 5.x)
 
 Port: 6545
@@ -23,7 +23,7 @@ if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
 import uvicorn
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -32,6 +32,39 @@ _log_level = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
 _log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 logging.basicConfig(level=_log_level, format=_log_format)
 logger = logging.getLogger("llm-server")
+
+# ============== Prompt Configuration ==============
+PROMPT_FILE = Path.home() / ".config" / "voice-input-framework" / "llm_prompt.json"
+PROMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+# 默认提示词
+DEFAULT_PROMPT = """你是一个语音输入后处理助手。
+
+将用户的语音转文字进行优化：
+1. 移除填充词（"那个啥"、"就是吧"等）
+2. 保持原意
+3. 添加标点符号
+4. 输出简洁版本
+
+只返回优化后的文本，不要额外解释。"""
+
+def load_prompt() -> str:
+    """加载提示词"""
+    if PROMPT_FILE.exists():
+        try:
+            return PROMPT_FILE.read_text()
+        except Exception as e:
+            logger.warning(f"Failed to load prompt file: {e}")
+    return DEFAULT_PROMPT
+
+def save_prompt(prompt: str) -> bool:
+    """保存提示词"""
+    try:
+        PROMPT_FILE.write_text(prompt)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save prompt file: {e}")
+        return False
 
 # ============== Data Models ==============
 
@@ -65,21 +98,21 @@ class HealthStatus(BaseModel):
 
 class LLMEngine:
     """LLM 引擎管理器"""
-    
+
     AVAILABLE_MODELS = [
         "Qwen3.5-0.8B-OptiQ",
         "Qwen3.5-2B-OptiQ",
         "Qwen3-0.6B",
         "Qwen3-1.7B",
     ]
-    
+
     MODEL_IDS = {
         "Qwen3.5-0.8B-OptiQ": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
         "Qwen3.5-2B-OptiQ": "mlx-community/Qwen3.5-2B-OptiQ-4bit",
         "Qwen3-0.6B": "mlx-community/Qwen3-0.6B-4bit",
         "Qwen3-1.7B": "mlx-community/Qwen3-1.7B-4bit",
     }
-    
+
     def __init__(self, default_model: str = "Qwen3.5-0.8B-OptiQ"):
         self.default_model = default_model
         self.current_model_name = default_model
@@ -90,26 +123,26 @@ class LLMEngine:
         self._load_lock = asyncio.Lock()
         self._processing = False
         self.start_time = time.time()
-        
+
     async def load(self, model_name: Optional[str] = None) -> bool:
         """加载模型"""
         target_model = model_name or self.default_model
         model_id = self.MODEL_IDS.get(target_model)
-        
+
         if not model_id:
             logger.error(f"Unknown model: {target_model}")
             return False
-        
+
         async with self._load_lock:
             if self._is_loaded and self.current_model_name == target_model:
                 return True
-            
+
             if self._loading:
                 logger.info("Model is loading, waiting...")
                 while self._loading:
                     await asyncio.sleep(0.5)
                 return self._is_loaded and self.current_model_name == target_model
-            
+
             self._loading = True
             try:
                 logger.info(f"Loading LLM model: {model_id}")
@@ -125,7 +158,7 @@ class LLMEngine:
                 return False
             finally:
                 self._loading = False
-    
+
     def _load_sync(self, model_id: str) -> bool:
         """同步加载模型"""
         try:
@@ -135,7 +168,7 @@ class LLMEngine:
         except Exception as e:
             logger.error(f"Load error: {e}")
             return False
-    
+
     def process(self, text: str) -> ProcessResult:
         """处理文本"""
         if not self._is_loaded:
@@ -146,29 +179,29 @@ class LLMEngine:
                 model="",
                 success=False,
             )
-        
+
         self._processing = True
         start_time = time.time()
-        
+
         try:
             import mlx_lm
-            
+
             # 构建提示词
             messages = [
-                {"role": "user", "content": f"/no_think 优化STT识别结果，转为简洁的对话文案：移除填充词，保持原意，输出清晰准确的文本：{text}"}
+                {"role": "user", "content": f"/no_think 优化STT识别结果,转为简洁的对话文案:移除填充词,保持原意,输出清晰准确的文本:{text}"}
             ]
-            
+
             prompt = self._tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
-            
+
             # 移除 Qwen3.5 模板默认添加的思考标签
             mlx_think_end = chr(0x0a) + chr(0x3c) + 'think' + chr(0x3e) + chr(0x0a)
             if prompt.endswith(mlx_think_end):
                 prompt = prompt[:-len(mlx_think_end)]
-            
+
             # 生成
             response = mlx_lm.generate(
                 model=self._model,
@@ -176,7 +209,7 @@ class LLMEngine:
                 prompt=prompt,
                 max_tokens=128,
             )
-            
+
             # 清理响应 - 移除思考标签
             import re
             # 移除 <think>...</think> 标签
@@ -186,9 +219,9 @@ class LLMEngine:
             # 移除开头的 \nquirer 或 thinker
             cleaned = re.sub(r'^\\s*(?:quirer|thinker)\\s*', '', cleaned)
             cleaned = cleaned.strip()
-            
+
             latency = (time.time() - start_time) * 1000
-            
+
             return ProcessResult(
                 text=cleaned,
                 original_text=text,
@@ -196,7 +229,7 @@ class LLMEngine:
                 model=self.current_model_name,
                 success=True,
             )
-            
+
         except Exception as e:
             logger.error(f"Process error: {e}")
             return ProcessResult(
@@ -208,18 +241,18 @@ class LLMEngine:
             )
         finally:
             self._processing = False
-    
+
     async def process_async(self, text: str) -> ProcessResult:
         """异步处理文本"""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.process, text)
-    
+
     def is_loading(self) -> bool:
         return self._loading
-    
+
     def is_model_loaded(self) -> bool:
         return self._is_loaded
-    
+
     def is_processing(self) -> bool:
         return self._processing
 
@@ -235,7 +268,7 @@ engine = LLMEngine(default_model=LLM_MODEL)
 
 app = FastAPI(
     title="Voice Input Framework - LLM Service",
-    description="独立的文本后处理服务，使用 MLX-LM",
+    description="独立的文本后处理服务,使用 MLX-LM",
     version="1.0.0",
 )
 
@@ -253,7 +286,7 @@ async def startup_event():
     """启动时加载模型"""
     logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
     logger.info(f"Default model: {LLM_MODEL}")
-    # 后台加载模型（非阻塞）
+    # 后台加载模型(非阻塞)
     asyncio.create_task(engine.load())
 
 @app.on_event("shutdown")
@@ -311,7 +344,7 @@ async def process_text(request: ProcessRequest):
             loaded = await engine.load()
             if not loaded:
                 raise HTTPException(status_code=503, detail="LLM model not loaded")
-        
+
         result = await engine.process_async(request.text)
         return result
     except HTTPException:
@@ -319,6 +352,24 @@ async def process_text(request: ProcessRequest):
     except Exception as e:
         logger.error(f"Process error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============== Prompt Management API ==============
+@app.get("/prompt")
+async def get_prompt():
+    """获取当前提示词"""
+    return {"prompt": load_prompt()}
+
+@app.put("/prompt")
+async def update_prompt(request: Request):
+    """更新提示词"""
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    if save_prompt(prompt):
+        logger.info(f"Prompt updated successfully ({len(prompt)} chars)")
+        return {"status": "success"}
+    raise HTTPException(status_code=500, detail="Failed to save prompt")
 
 def main():
     """主函数"""

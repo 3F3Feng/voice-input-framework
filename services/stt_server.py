@@ -567,6 +567,36 @@ async def llm_health():
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+# ============== LLM Prompt API ==============
+@app.get("/llm/prompt")
+async def get_llm_prompt():
+    """转发：获取 LLM 提示词"""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{LLM_SERVER_URL}/prompt", timeout=5.0)
+            if resp.status_code == 200:
+                return resp.json()
+            return {"error": f"LLM server returned {resp.status_code}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.put("/llm/prompt")
+async def update_llm_prompt(request: Request):
+    """转发：更新 LLM 提示词"""
+    try:
+        body = await request.json()
+        async with httpx.AsyncClient() as client:
+            resp = await client.put(
+                f"{LLM_SERVER_URL}/prompt",
+                json=body,
+                timeout=10.0
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            return {"error": f"LLM server returned {resp.status_code}"}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.post("/transcribe", response_model=TranscriptionResult)
 async def transcribe(
     file: UploadFile = File(...),

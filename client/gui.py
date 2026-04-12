@@ -291,9 +291,15 @@ class HotkeyVoiceInputV2:
                  sg.Button("刷新", key="-REFRESH-LLM-MODELS-", size=(8, 1)),
                  sg.Button("切换", key="-SWITCH-LLM-MODEL-", button_color=("white", "purple"), size=(8, 1))],
                 [sg.Text("", key="-LLM-MODEL-STATUS-", text_color="cyan", size=(70, 1), background_color=BACKGROUND_COLOR)],
+            # LLM 提示词配置
+            [sg.HorizontalSeparator()],
+            [sg.Frame("LLM 提示词配置", [
+                [sg.Multiline("", key="-LLM-PROMPT-", size=(60, 5), font=("Consolas", 9))],
+                [sg.Button("加载", key="-LOAD-PROMPT-", size=(8, 1)), sg.Button("保存", key="-SAVE-PROMPT-", size=(8, 1)), sg.Text("", key="-PROMPT-STATUS-", text_color="yellow", size=(30, 1))],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
             ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
 
-            # ======== v1.1 新增：托盘和指示器设置 ========
+ # ======== v1.1 新增：托盘和指示器设置 ========
             [sg.Frame("界面设置", [
                 [sg.Checkbox("启动时最小化到托盘", default=self.config_manager.start_minimized,
                             key="-START-MINIMIZED-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR)],
@@ -888,7 +894,60 @@ class HotkeyVoiceInputV2:
 
     # ======================================
 
-    async def _poll_model_loading_status(self, model_name: str):
+    
+    # ========== LLM 提示词相关方法 ==========
+    async def load_llm_prompt(self):
+        """加载 LLM 提示词"""
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{self.rest_api_url}/llm/prompt")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    prompt = data.get("prompt", "")
+                    self.window["-LLM-PROMPT-"].update(prompt)
+                    self.window["-PROMPT-STATUS-"].update("已加载", text_color="green")
+                    self.log("LLM提示词已加载")
+                else:
+                    self.window["-PROMPT-STATUS-"].update("加载失败", text_color="red")
+                    self.log(f"加载LLM提示词失败: HTTP {resp.status_code}")
+        except Exception as e:
+            self.window["-PROMPT-STATUS-"].update(f"加载失败: {e}", text_color="red")
+            self.log(f"加载LLM提示词出错: {e}")
+
+    async def save_llm_prompt(self):
+        """保存 LLM 提示词"""
+        try:
+            import httpx
+            prompt = self.window["-LLM-PROMPT-"].get()
+            if not prompt.strip():
+                self.window["-PROMPT-STATUS-"].update("提示词不能为空", text_color="red")
+                return
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.put(
+                    f"{self.rest_api_url}/llm/prompt",
+                    json={"prompt": prompt}
+                )
+                if resp.status_code == 200:
+                    self.window["-PROMPT-STATUS-"].update("已保存", text_color="green")
+                    self.log("LLM提示词已保存")
+                else:
+                    self.window["-PROMPT-STATUS-"].update("保存失败", text_color="red")
+                    self.log(f"保存LLM提示词失败: HTTP {resp.status_code}")
+        except Exception as e:
+            self.window["-PROMPT-STATUS-"].update(f"保存失败: {e}", text_color="red")
+            self.log(f"保存LLM提示词出错: {e}")
+
+    async def async_load_llm_prompt(self):
+        """异步加载LLM提示词"""
+        await self.load_llm_prompt()
+
+    async def async_save_llm_prompt(self):
+        """异步保存LLM提示词"""
+        await self.save_llm_prompt()
+    # ======================================
+
+async def _poll_model_loading_status(self, model_name: str):
         """轮询检查模型加载状态"""
         import httpx
         self.log(f"开始轮询模型 {model_name} 的加载状态...")
@@ -1525,7 +1584,20 @@ class HotkeyVoiceInputV2:
                             )
                 # ================================
 
-                elif event == "-MINIMIZE-TRAY-":
+                # ========== LLM 提示词配置事件处理 ==========
+        elif event == "-LOAD-PROMPT-":
+            if self.async_loop:
+                asyncio.run_coroutine_threadsafe(
+                    self.async_load_llm_prompt(), self.async_loop
+                )
+        elif event == "-SAVE-PROMPT-":
+            if self.async_loop:
+                asyncio.run_coroutine_threadsafe(
+                    self.async_save_llm_prompt(), self.async_loop
+                )
+        # ================================
+
+ elif event == "-MINIMIZE-TRAY-":
                     self._minimize_to_tray()
 
                 elif event == "-SHOW-WINDOW-":
