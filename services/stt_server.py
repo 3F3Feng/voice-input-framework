@@ -202,6 +202,12 @@ class STTEngine:
             "memory_gb": 3,
             "description": "Whisper V3 Large via whisper.cpp (Metal GPU, accurate)",
         },
+        "whisper_turbo": {
+            "model_id": "openai/whisper-large-v3-turbo",
+            "aligner_id": None,
+            "memory_gb": 3,
+            "description": "Whisper Large V3 Turbo (transformers, fast)",
+        },
     }
 
     def __init__(self, default_model: str = "qwen_asr"):
@@ -285,6 +291,19 @@ class STTEngine:
             asyncio.run(whisper_engine.load())
             self._model = whisper_engine
             self._model_type = "whisper_cpp"
+            return
+
+        # whisper_turbo 使用 transformers Whisper
+        if model_id == "openai/whisper-large-v3-turbo":
+            from transformers import pipeline
+            logger.info(f"Loading Whisper turbo on {device}...")
+            self._model = pipeline(
+                "automatic-speech-recognition",
+                model=model_id,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                device=device,
+            )
+            self._model_type = "whisper_turbo"
             return
 
         self._model_type = "qwen_asr"
@@ -372,6 +391,14 @@ class STTEngine:
                         sample_rate=sample_rate,
                     ))
                     return result.text, result.language
+                
+                # whisper_turbo 使用 transformers pipeline
+                if getattr(self, '_model_type', None) == "whisper_turbo":
+                    result = self._model(
+                        audio_array,
+                        generate_kwargs={"language": lang},
+                    )
+                    return result.get("text", "").strip(), lang or "en"
                 
                 results = self._model.transcribe(
                     audio=(audio_array, sample_rate),

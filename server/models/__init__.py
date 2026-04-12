@@ -24,6 +24,8 @@ AVAILABLE_MODELS = {
     # Whisper.cpp 模型 (C++ 实现)
     "whisper_cpp": WhisperCppEngine,      # Whisper.cpp V3 Large
     "whisper_cpp_base": WhisperCppEngine, # Whisper.cpp V3 Base
+    # Whisper Turbo 模型 (transformers)
+    "whisper_turbo": WhisperEngine,       # Whisper Large V3 Turbo
 }
 
 __all__ = [
