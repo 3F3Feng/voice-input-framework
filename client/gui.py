@@ -820,8 +820,10 @@ class HotkeyVoiceInputV2:
                 resp = await client.get(url)
                 if resp.status_code == 200:
                     data = resp.json()
-                    self.available_llm_models = data.get("models", [])
-                    self.current_llm_model = data.get("current_model", "")
+                    # 提取模型名称列表
+                    models = data.get("models", [])
+                    self.available_llm_models = [m.get("name") if isinstance(m, dict) else m for m in models]
+                    self.current_llm_model = data.get("current_model", "") or (models[0].get("name") if models and isinstance(models[0], dict) else "")
                     llm_enabled = data.get("enabled", True)
 
                     self.log(f"✓ 获取到LLM模型列表: {', '.join(self.available_llm_models)}")
@@ -853,7 +855,7 @@ class HotkeyVoiceInputV2:
                 url = f"{self.rest_api_url}/llm/models/select"
                 self.log(f"正在切换LLM模型到: {model_name}...")
 
-                resp = await client.post(url, data={"model_name": model_name})
+                resp = await client.post(url, json={"model_name": model_name})
                 if resp.status_code == 200:
                     data = resp.json()
                     success = data.get("status") == "success"
