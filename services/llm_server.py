@@ -209,6 +209,9 @@ class LLMEngine:
             cleaned = re.sub(r'<think>[\\s\\S]*?</think>', '', response)
             # 移除单独的 <think> 或 </think> 标签
             cleaned = re.sub(r'</?think>', '', cleaned)
+            # 移除 "Thinking Process:" 及之后的内容
+            if 'Thinking Process:' in cleaned:
+                cleaned = cleaned.split('Thinking Process:')[0]
             # 移除开头的 \nquirer 或 thinker
             cleaned = re.sub(r'^\\s*(?:quirer|thinker)\\s*', '', cleaned)
             cleaned = cleaned.strip()
