@@ -208,7 +208,7 @@ class LLMEngine:
                 model=self._model,
                 tokenizer=self._tokenizer,
                 prompt=prompt,
-                max_tokens=256,
+                max_tokens=512,
                 
             )
 
@@ -218,11 +218,27 @@ class LLMEngine:
             cleaned = re.sub(r'<think>[\\s\\S]*?</think>', '', response)
             # 移除单独的 <think> 或 </think> 标签
             cleaned = re.sub(r'</?think>', '', cleaned)
-            # TODO: 调试 - 暂时移除 Thinking Process 处理
-            # if 'Thinking Process:' in cleaned:
-            #     parts = cleaned.split('Thinking Process:')
-            #     if parts[0].strip():
-            #         cleaned = parts[0]
+            # 处理 Thinking Process 输出
+            if 'Thinking Process:' in cleaned:
+                # 尝试找 "输出：" 后的内容
+                if '输出：' in cleaned:
+                    cleaned = cleaned.split('输出：')[-1].strip()
+                elif 'Construct Output:' in cleaned:
+                    cleaned = cleaned.split('Construct Output:')[-1].strip()
+                else:
+                    # 移除 Thinking Process 部分，保留最后的实际输出
+                    parts = cleaned.split('Thinking Process:')
+                    if len(parts) > 1:
+                        # 取最后一部分并去除首尾空白
+                        cleaned = parts[-1].strip()
+                        # 如果还有编号或标记，继续清理
+                        lines = cleaned.split('\n')
+                        if lines:
+                            # 取最后非空行
+                            for line in reversed(lines):
+                                if line.strip() and not line.strip().startswith(('1.', '2.', '3.', '4.', '5.', '**')):
+                                    cleaned = line.strip()
+                                    break
             # 移除开头的 \nquirer 或 thinker
             cleaned = re.sub(r'^\\s*(?:quirer|thinker)\\s*', '', cleaned)
             cleaned = cleaned.strip()
