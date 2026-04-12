@@ -526,7 +526,11 @@ async def list_llm_models():
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{LLM_SERVER_URL}/models", timeout=10.0)
             if resp.status_code == 200:
-                return resp.json()
+                data = resp.json()
+                # 包装成客户端期望的格式
+                if isinstance(data, list):
+                    return {"models": data}
+                return data
             else:
                 return {"error": f"LLM server returned {resp.status_code}"}
     except Exception as e:
