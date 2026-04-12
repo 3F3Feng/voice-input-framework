@@ -50,6 +50,7 @@ DEFAULT_PROMPT = """你是一个语音输入后处理助手。
 
 def load_prompt() -> str:
     """加载提示词"""
+    logger.info(f"Loading prompt from {PROMPT_FILE}")
     if PROMPT_FILE.exists():
         try:
             return PROMPT_FILE.read_text()
@@ -186,6 +187,7 @@ class LLMEngine:
 
             # 加载提示词
             system_prompt = load_prompt()
+            logger.info(f"Using prompt: {system_prompt[:200]}...")
             
             # 构建消息
             messages = [
@@ -209,7 +211,6 @@ class LLMEngine:
                 tokenizer=self._tokenizer,
                 prompt=prompt,
                 max_tokens=256,
-                temp=0.1
                 
             )
 
