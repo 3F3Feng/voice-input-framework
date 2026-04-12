@@ -187,12 +187,21 @@ class LLMEngine:
             # 加载提示词
             system_prompt = load_prompt()
             
-            # 直接构建提示词，不使用 chat template
-            prompt = f"{system_prompt}\n\n输入：{text}\n输出："
+            # 构建消息
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ]
+
+            prompt = self._tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
 
             # 移除可能触发思考的特殊标记
-            prompt = prompt.replace("<|think|>", "")
             prompt = prompt.replace("<think>", "")
+            prompt = prompt.replace("</think>", "")
 
             # 生成
             response = mlx_lm.generate(
