@@ -506,7 +506,7 @@ async def health_check():
 
 @app.get("/models", response_model=List[ModelInfo])
 async def list_models():
-    """获取可用模型列表"""
+    """获取可用 STT 模型列表"""
     models = []
     for name, info in STTEngine.AVAILABLE_MODELS.items():
         models.append(ModelInfo(
@@ -516,6 +516,51 @@ async def list_models():
             is_default=(name == engine.default_model),
         ))
     return models
+
+# ============== LLM 转发 API ==============
+
+@app.get("/llm/models")
+async def list_llm_models():
+    """转发：获取可用 LLM 模型列表"""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{LLM_SERVER_URL}/models", timeout=10.0)
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                return {"error": f"LLM server returned {resp.status_code}"}
+    except Exception as e:
+        logger.error(f"Failed to get LLM models: {e}")
+        return {"error": str(e)}
+
+@app.post("/llm/models/select")
+async def select_llm_model(request: Request):
+    """转发：选择 LLM 模型"""
+    try:
+        body = await request.json()
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{LLM_SERVER_URL}/models/select",
+                json=body,
+                timeout=10.0
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                return {"error": f"LLM server returned {resp.status_code}"}
+    except Exception as e:
+        logger.error(f"Failed to select LLM model: {e}")
+        return {"error": str(e)}
+
+@app.get("/llm/health")
+async def llm_health():
+    """转发：LLM 服务器健康检查"""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
+            return resp.json()
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 @app.post("/transcribe", response_model=TranscriptionResult)
 async def transcribe(
@@ -544,12 +589,28 @@ async def websocket_stream(websocket: WebSocket):
     engine.increment_connections()
     logger.info("WebSocket connection accepted")
 
+    # 获取 LLM 服务器状态
+    llm_info = {"llm_enabled": False, "llm_model": None}
+    try:
+        async with httpx.AsyncClient() as client:
+            llm_resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
+            if llm_resp.status_code == 200:
+                llm_data = llm_resp.json()
+                llm_info = {
+                    "llm_enabled": True,
+                    "llm_model": llm_data.get("current_model", "unknown")
+                }
+    except Exception as e:
+        logger.debug(f"Failed to get LLM status: {e}")
+
     # 发送就绪消息
     await websocket.send_text(json.dumps({
         "type": "ready",
         "model": engine.current_model_name,
         "is_loading": engine.is_loading(),
         "aligner_loaded": engine.is_aligner_loaded(),
+        "llm_enabled": llm_info["llm_enabled"],
+        "llm_model": llm_info["llm_model"],
     }))
 
     audio_buffer = bytearray()
@@ -601,8 +662,10 @@ async def websocket_stream(websocket: WebSocket):
                                 "type": "llm_start",
                                 "text": result.text[:50],
                             }))
+                            logger.info(f"Calling LLM server for text ({len(result.text)} chars)")
                             # 调用 LLM 服务器
                             processed_text, llm_latency = await call_llm_server(result.text, req_id)
+                            logger.info(f"LLM processing complete: {llm_latency:.1f}ms")
                         else:
                             processed_text = result.text
                             llm_latency = 0
