@@ -225,6 +225,8 @@ class LLMEngine:
                     cleaned = cleaned.split('输出：')[-1].strip()
                 elif 'Construct Output:' in cleaned:
                     cleaned = cleaned.split('Construct Output:')[-1].strip()
+                elif 'Final Output:' in cleaned:
+                    cleaned = cleaned.split('Final Output:')[-1].strip()
                 else:
                     # 移除 Thinking Process 部分，保留最后的实际输出
                     parts = cleaned.split('Thinking Process:')
@@ -236,9 +238,25 @@ class LLMEngine:
                         if lines:
                             # 取最后非空行
                             for line in reversed(lines):
-                                if line.strip() and not line.strip().startswith(('1.', '2.', '3.', '4.', '5.', '**')):
-                                    cleaned = line.strip()
-                                    break
+                                line = line.strip()
+                                # 跳过空行、markdown标记、编号行
+                                if line and not line.startswith(('1.', '2.', '3.', '4.', '5.', '**', '*', '-', '•')):
+                                    if 'Thinking' not in line and 'Process' not in line:
+                                        cleaned = line
+                                        break
+            
+            # 移除 markdown 标记
+            cleaned = cleaned.replace('**', '')
+            cleaned = cleaned.strip()
+            
+            # 处理重复内容：如果有多行相同内容，只保留一行
+            lines = cleaned.split('\n')
+            unique_lines = []
+            for line in lines:
+                line = line.strip()
+                if line and line not in unique_lines:
+                    unique_lines.append(line)
+            cleaned = ' '.join(unique_lines)
             # 移除开头的 \nquirer 或 thinker
             cleaned = re.sub(r'^\\s*(?:quirer|thinker)\\s*', '', cleaned)
             cleaned = cleaned.strip()
