@@ -252,8 +252,10 @@ class LLMEngine:
                                     cleaned = line
                                     break
             
-            # 移除 markdown 标记
+            # 移除 markdown 标记和引号
             cleaned = cleaned.replace('**', '')
+            cleaned = cleaned.replace('"', '')
+            cleaned = cleaned.replace("'", '')
             cleaned = cleaned.strip()
             
             # 处理重复内容：如果有多行相同内容，只保留一行
