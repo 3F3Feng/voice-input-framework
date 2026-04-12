@@ -6,7 +6,8 @@ LLM模型注册表
 实际可用的 mlx-community 量化版本:
 - mlx-community/Qwen3.5-0.8B-OptiQ-4bit (实测可用)
 - mlx-community/Qwen3.5-2B-OptiQ-4bit (实测可用)
-- mlx-community/Qwen3.5-4B-MLX-4bit (实测有问题)
+- mlx-community/Qwen3.5-4B-MLX-4bit (实测可用)
+- mlx-community/Qwen3.5-4B-OptiQ-4bit (实测可用)
 - mlx-community/Qwen3-0.6B-4bit
 - mlx-community/Qwen3-1.7B-4bit
 """
@@ -69,6 +70,32 @@ QWEN35_MODELS = [
         memory_int4="~2GB",
         chinese_capability=5,
         speed=4,
+        release_date="2026-03-02",
+        provider="Alibaba/Qwen",
+        repo_type="mlx",
+    ),
+    ModelInfo(
+        model_id="mlx-community/Qwen3.5-4B-MLX-4bit",
+        name="Qwen3.5-4B-MLX",
+        size="4B",
+        is_quantized=True,
+        memory_fp16="~8GB",
+        memory_int4="~4GB",
+        chinese_capability=5,
+        speed=3,
+        release_date="2026-03-02",
+        provider="Alibaba/Qwen",
+        repo_type="mlx",
+    ),
+    ModelInfo(
+        model_id="mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        name="Qwen3.5-4B-OptiQ",
+        size="4B",
+        is_quantized=True,
+        memory_fp16="~6GB",
+        memory_int4="~3GB",
+        chinese_capability=5,
+        speed=3,
         release_date="2026-03-02",
         provider="Alibaba/Qwen",
         repo_type="mlx",
