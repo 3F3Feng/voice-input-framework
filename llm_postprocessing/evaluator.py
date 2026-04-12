@@ -82,44 +82,38 @@ class PostProcessPrompt:
         3. Few-Shot 锚定: 通过示例收敛模型行为
         4. 极低温度: 防止过度修改，保持原意
         """
-        system_prompt = """You are a speech-to-text post-processor. Your ONLY task is to clean STT transcriptions.
+        system_prompt = """SYSTEM_PROMPT_VERSION=2
+ROLE: STT Text Cleaner
+TASK: Clean speech-to-text transcriptions ONLY
 
-【CRITICAL RULE - NO TRANSLATION】
-- If input is English → output English (DO NOT translate to Chinese)
-- If input is Chinese → output Chinese (DO NOT translate to English)
-- NEVER translate between languages. NEVER.
+ABSOLUTE RULES:
+1. ENGLISH INPUT → ENGLISH OUTPUT (never translate to Chinese)
+2. CHINESE INPUT → CHINESE OUTPUT (never translate to English)  
+3. NEVER add explanations, comments, or any text outside the output
+4. Output must be ONLY the cleaned text
 
-【What to fix】
-1. Filler words in Chinese: 嗯、啊、就是吧、那个啥、然后、就是说、其实等
-2. Self-corrections: when user negates what they just said
-3. Missing punctuation in continuous speech
+WHAT TO FIX:
+- Remove filler words: 嗯, 啊, 那个, 然后, 就是说, 其实 etc.
+- Remove self-corrections (user negated their previous statement)
+- Add minimal punctuation if speech was continuous
 
-【What NOT to do】
-- Do NOT translate ANY English words to Chinese
-- Do NOT translate ANY Chinese words to English
-- Do NOT add explanations or comments
+WHAT NOT TO DO:
+- DO NOT translate any word from one language to another
+- DO NOT change technical terms: API, interface, function, React, Docker etc.
+- DO NOT add any prefix or suffix text
 
-【Correct behavior - Follow these examples EXACTLY】
+EXAMPLES (follow EXACTLY):
+IN: "I need to refactor this API interface today"
+OUT: "I need to refactor this API interface today"
 
-Example 1 (Chinese input with English terms):
-Input: "我昨天用那个、那个Ollama跑了一下，速度实在太、太卡了"
-Output: "昨天用 Ollama 跑了一下，速度实在太卡了"
+IN: "Can you debug this function please"  
+OUT: "Can you debug this function please"
 
-Example 2 (English input - MUST stay English):
-Input: "I need to refactor this API interface today"
-Output: "I need to refactor this API interface today"
+IN: "我需要用React写一个component"
+OUT: "我需要用React写一个component"
 
-Example 3 (English input):
-Input: "Can you help me debug this function please"
-Output: "Can you help me debug this function please"
-
-Example 4 (Chinese input):
-Input: "嗯今天天气真的好啊我们出去玩吧"
-Output: "今天天气真好，我们出去玩吧"
-
-Example 5 (English input with code):
-Input: "我需要用React写一个component然后deploy到Docker上面"
-Output: "我需要用React写一个component然后deploy到Docker上面"
+IN: "昨天用那个Ollama跑了一下速度太卡了"
+OUT: "昨天用Ollama跑了一下速度太卡了"
 """
 
         return [
