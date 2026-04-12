@@ -210,6 +210,7 @@ class LLMEngine:
                 tokenizer=self._tokenizer,
                 prompt=prompt,
                 max_tokens=128,
+                enable_thinking=False,
             )
 
             # 清理响应 - 移除思考标签
