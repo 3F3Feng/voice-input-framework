@@ -82,48 +82,31 @@ class PostProcessPrompt:
         3. Few-Shot 锚定: 通过示例收敛模型行为
         4. 极低温度: 防止过度修改，保持原意
         """
-        system_prompt = """SYSTEM_PROMPT_VERSION=2
-ROLE: STT Text Cleaner
-TASK: Clean speech-to-text transcriptions ONLY
+        system_prompt = """你是一个专业的、无情感情的语音转文字（STT）后处理引擎。你的唯一任务是清洗和重构用户提供的原始语音转录文本，使其变得流畅，专业且易于阅读，同时绝对保持原意和原始语言。
 
-ABSOLUTE RULES:
-1. ENGLISH INPUT → ENGLISH OUTPUT (never translate to Chinese)
-2. CHINESE INPUT → CHINESE OUTPUT (never translate to English)  
-3. NEVER add explanations, comments, or any text outside the output
-4. Output must be ONLY the cleaned text
+【核心处理规则】
+1. 去除口语杂音：删除所有无意义的填充词（如"呃"、"那个"、"就是说"、"然后"、"嗯"、"like"、"you know"等）以及口吃造成的重复词汇
+2. 修复逻辑推翻：精准识别用户在说话时的"自我纠正"（如"明天下午三点，哦不对，是两点半"），直接输出最终的真实意图（"明天下午两点半"）
+3. 智能标点与排版：根据语境添加恰当的标点符号。对于较长的复杂长句，进行符合阅读习惯的短句切分或段落划分
+4. 同音字与上下文纠错：结合代码或专业语境，修复由于口音导致的同音字识别错误
 
-WHAT TO FIX:
-- Remove filler words: 嗯, 啊, 那个, 然后, 就是说, 其实 etc.
-- Remove self-corrections (user negated their previous statement)
-- Add minimal punctuation if speech was continuous
+【绝对禁止事项】
+1. 语言锁定协议（防翻译）：必须 100% 保持用户输入的原始语种结构。如果输入是纯中文，输出纯中文；如果输入是纯英文，输出纯英文；如果是中英夹杂（例如包含了英文专业术语或API名称），必须原样保留夹杂状态，绝对不可将其全部翻译或统一为单一语言
+2. 零废话协议（防闲聊）：你的唯一输出必须是清洗后的纯文本。严禁在开头或结尾添加任何诸如"好的"、"这是修改后的文本"、"这段话的意思是"等解释性、问候性或总结性的废话
+3. 事实保真协议（防幻觉）：不要扩写、不要总结、不要改变说话人的原始语气和情感色彩，仅做文本级的净化
 
-WHAT NOT TO DO:
-- DO NOT translate any word from one language to another
-- DO NOT change technical terms: API, interface, function, React, Docker etc.
-- DO NOT add any prefix or suffix text
-
-EXAMPLES (follow EXACTLY):
-IN: "I need to refactor this API interface today"
-OUT: "I need to refactor this API interface today"
-
-IN: "Can you debug this function please"  
-OUT: "Can you debug this function please"
-
-IN: "我需要用React写一个component"
-OUT: "我需要用React写一个component"
-
-IN: "昨天用那个Ollama跑了一下速度太卡了"
-OUT: "昨天用Ollama跑了一下速度太卡了"
+【处理示例】
+输入："那个，我昨天测试了一下，嗯，发现这个 API 的 interface 还需要、还需要 refactor 一下，顺便 check 那个，不对，是 update 那个 database 的 config。"
+输出："我昨天测试了一下，发现这个 API 的 interface 还需要 refactor 一下，顺便 update 那个 database 的 config。"
+输入："so basically uh we need to fix the bug right now because the server is like completely down."
+输出："So basically, we need to fix the bug right now because the server is completely down."
+输入："今天晚上吃、吃火锅吧，或者烤肉也行，算了还是火锅吧。"
+输出："今天晚上吃火锅吧。"
 """
 
         return [
             {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': f'''CRITICAL: DO NOT TRANSLATE. DO NOT TRANSLATE. DO NOT TRANSLATE.
-Keep the language exactly as input. English stays English. Chinese stays Chinese.
-Clean the following STT text by removing filler words. Output only the cleaned text.
-
-Input: {text}
-Output: '''}
+            {'role': 'user', 'content': f'{text}'}
         ]
 
     @staticmethod
@@ -332,13 +315,18 @@ class LLMEvaluator:
                 if prompt_formatted.endswith(mlx_think_end):
                     prompt_formatted = prompt_formatted[:-len(mlx_think_end)]
 
+                # 根据模型类型设置温度
+                is_gemma = 'gemma' in self.model_name.lower()
+                temp = 0.3 if is_gemma else 0.15
+                
                 response = mlx_lm.generate(
                     model=self._model,
                     tokenizer=self._tokenizer,
                     prompt=prompt_formatted,
                     max_tokens=128,
-                    temperature=0.3,  # 极低温度，防止过度发散
-                    enable_thinking=False,  # 关闭思考模式
+                    temperature=temp,
+                    repetition_penalty=1.05 if not is_gemma else 1.0,
+                    enable_thinking=False,
                 )
             else:
                 import torch
@@ -350,12 +338,17 @@ class LLMEvaluator:
                     chat_template_kwargs={"enable_thinking": False}  # 关闭思考模式
                 ).to(self._model.device)
 
+                # 根据模型类型设置温度
+                is_gemma = 'gemma' in self.model_name.lower()
+                temp = 0.3 if is_gemma else 0.15
+                
                 with torch.no_grad():
                     outputs = self._model.generate(
                         **inputs,
                         max_new_tokens=128,
-                        temperature=0.3,  # 极低温度，防止过度发散
-                        do_sample=False,
+                        temperature=temp,
+                        repetition_penalty=1.05 if not is_gemma else 1.0,
+                        do_sample=False if not is_gemma else True,
                     )
 
                 full_response = self._tokenizer.decode(outputs[0], skip_special_tokens=True)
