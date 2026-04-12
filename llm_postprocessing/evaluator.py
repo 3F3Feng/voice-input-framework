@@ -330,6 +330,7 @@ class LLMEvaluator:
                     prompt=prompt_formatted,
                     max_tokens=128,
                     temperature=0.3,  # 极低温度，防止过度发散
+                    enable_thinking=False,  # 关闭思考模式
                 )
             else:
                 import torch
