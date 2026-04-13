@@ -1,31 +1,18 @@
-# Core dependencies
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-websockets>=12.0
-httpx>=0.26.0
-pydantic>=2.5.0
+## --- requirements-client.txt ---
+## 运行环境：Windows (CMD / PowerShell)
+## 音频录制
+pyaudio
 
-# Audio capture and processing
-sounddevice>=0.4.6
-numpy>=1.26.0
-scipy>=1.12.0
+## 键鼠控制与全局快捷键 (Windows 原生调用)
+pynput
+pyautogui
+pyscreeze
+pyrect
+mouseinfo
+pygetwindow
+pytweening
 
-# ML models
-transformers>=4.57.0
-torch>=2.1.0
-qwen-asr>=0.0.6
-
-# GUI and Input Simulation
-PySimpleGUI>=4.60.0
-pynput>=1.7.6
-pyautogui>=0.9.54
-pyperclip>=1.8.2
-
-# System tray support
-pystray>=0.19.0
-Pillow>=10.0.0
-
-# Windows notifications (installed conditionally)
-# winotify>=1.1.0  # Windows only - auto-installed via pyproject.toml
-# win10toast>=0.9  # Alternative Windows notification backend
-# plyer>=2.1.0    # Cross-platform fallback
+## 网络请求与 API 通信
+requests
+httpx
+openai

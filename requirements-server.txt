@@ -1,0 +1,20 @@
+## --- requirements-server.txt ---
+## 运行环境：WSL2 (Ubuntu)
+## API 服务基础框架
+fastapi
+uvicorn[standard]
+
+## 语音识别 (ASR) 引擎
+vllm[audio]
+faster-whisper
+
+## 大语言模型 (LLM) 推理
+llama-cpp-python
+transformers
+huggingface-hub
+
+## 基础科学计算与音频处理
+torch
+torchaudio
+soundfile
+numpy
