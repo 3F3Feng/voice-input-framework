@@ -859,10 +859,9 @@ class HotkeyVoiceInputV2:
                             values=self.available_llm_models,
                             value=self.current_llm_model
                         )
-                        status_color = "cyan" if llm_enabled else "gray"
                         self.window["-LLM-MODEL-STATUS-"].update(
-                            f"当前: {self.current_llm_model} {'(已启用)' if llm_enabled else '(已禁用)'}",
-                            text_color=status_color
+                            f"当前: {self.current_llm_model}",
+                            text_color="cyan" if llm_enabled else "gray"
                         )
                     return True
                 else:
