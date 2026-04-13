@@ -291,7 +291,7 @@ class HotkeyVoiceInputV2:
                  sg.Button("刷新", key="-REFRESH-LLM-MODELS-", size=(8, 1)),
                  sg.Button("切换", key="-SWITCH-LLM-MODEL-", button_color=("white", "purple"), size=(8, 1)),
                  sg.Text("", size=(5, 1), background_color=BACKGROUND_COLOR),
-                 sg.Checkbox("启用LLM后处理", key="-LLM-ENABLED-", enable_events=True, default=True, text_color=TEXT_COLOR, background_color=BACKGROUND_COLOR, size=(15, 1))],
+                 sg.Checkbox("启用LLM后处理", key="-LLM-ENABLED-", enable_events=True, default=self.config_manager.llm_enabled, text_color=TEXT_COLOR, background_color=BACKGROUND_COLOR, size=(15, 1))],
                 [sg.Text("", key="-LLM-MODEL-STATUS-", text_color="cyan", size=(70, 1), background_color=BACKGROUND_COLOR)],
             ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
             # LLM 提示词配置

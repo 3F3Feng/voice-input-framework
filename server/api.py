@@ -151,6 +151,24 @@ async def select_llm_model(model_name: str = Form(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+
+@app.put("/llm/enabled")
+async def set_llm_enabled(data: dict):
+    """设置LLM启用状态"""
+    global llm_config
+    try:
+        is_enabled = data.get("enabled", True)
+        llm_config.enabled = is_enabled
+        logger.info(f"LLM enabled set to: {is_enabled}")
+        return {
+            "status": "success",
+            "llm_enabled": is_enabled,
+        }
+    except Exception as e:
+        logger.error(f"Error setting LLM enabled: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/models/select")
 async def select_model(model_name: str = Form(...)):
     """选择当前使用的模型（立即返回，后台加载）"""

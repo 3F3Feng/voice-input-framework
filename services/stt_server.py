@@ -343,6 +343,75 @@ class STTEngine:
             device_map=device,
         )
 
+    async def switch_model(self, model_name: str) -> dict:
+        """
+        切换到指定的 STT 模型
+
+        Args:
+            model_name: 模型名称 (如 "qwen_asr", "whisper_turbo")
+
+        Returns:
+            dict: 包含切换状态的字典
+        """
+        if model_name not in self.AVAILABLE_MODELS:
+            raise ValueError(f"Unknown model: {model_name}. Available: {list(self.AVAILABLE_MODELS.keys())}")
+
+        # 如果已经是当前模型且已加载，直接返回
+        if model_name == self.current_model_name and self._is_loaded:
+            logger.info(f"Model {model_name} is already loaded")
+            return {
+                "status": "success",
+                "message": f"Model {model_name} is already loaded",
+                "current_model": self.current_model_name,
+                "is_loaded": True,
+                "is_loading": False,
+            }
+
+        logger.info(f"Switching from {self.current_model_name} to {model_name}")
+
+        # 更新模型信息
+        self.current_model_name = model_name
+        self._model_info = self.AVAILABLE_MODELS[model_name]
+
+        # 重置状态
+        self._is_loaded = False
+        self._aligner_loaded = False
+        self._loading = False
+
+        # 释放旧模型内存
+        if self._model is not None:
+            import gc
+            import torch
+            del self._model
+            self._model = None
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            gc.collect()
+            logger.info("Old model memory released")
+
+        # 在后台异步加载新模型
+        async def load_in_background():
+            try:
+                success = await self.load(load_aligner=False)
+                if success:
+                    logger.info(f"Model {model_name} loaded successfully")
+                else:
+                    logger.error(f"Failed to load model {model_name}")
+            except Exception as e:
+                logger.error(f"Error loading model {model_name}: {e}")
+
+        # 启动后台加载任务
+        asyncio.create_task(load_in_background())
+
+        return {
+            "status": "success",
+            "message": f"Switching to {model_name}",
+            "current_model": self.current_model_name,
+            "is_loaded": False,
+            "is_loading": True,
+            "note": "Model is loading in background",
+        }
+
     async def transcribe(
         self,
         audio_data: bytes,
@@ -681,6 +750,38 @@ async def update_llm_prompt(request: Request):
             return {"error": f"LLM server returned {resp.status_code}"}
     except Exception as e:
         return {"error": str(e)}
+
+@app.post("/models/select")
+async def select_stt_model(model_name: str = Form(...)):
+    """切换 STT 模型（立即返回，后台加载）"""
+    try:
+        logger.info(f"Switching STT model to: {model_name}")
+        result = await engine.switch_model(model_name)
+        return result
+    except ValueError as e:
+        logger.error(f"ValueError switching model: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error switching model: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
+
+@app.get("/models/status/{model_name}")
+async def get_model_status(model_name: str):
+    """获取指定模型的加载状态"""
+    if model_name not in engine.AVAILABLE_MODELS:
+        raise HTTPException(status_code=404, detail=f"Unknown model: {model_name}")
+
+    is_current = model_name == engine.current_model_name
+    is_loaded = is_current and engine.is_model_loaded()
+    is_loading = is_current and engine.is_loading()
+
+    return {
+        "name": model_name,
+        "is_current": is_current,
+        "is_loaded": is_loaded,
+        "is_loading": is_loading,
+        "model_info": engine.AVAILABLE_MODELS.get(model_name, {}),
+    }
 
 @app.post("/transcribe", response_model=TranscriptionResult)
 async def transcribe(

@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 # 设置开发环境变量
-os.environ.setdefault("VIF_HOST", "127.0.0.1")
+os.environ.setdefault("VIF_HOST", "0.0.0.0")
 os.environ.setdefault("VIF_PORT", "6544")
 os.environ.setdefault("VIF_LOG_LEVEL", "DEBUG")
 
