@@ -1,35 +1,25 @@
-# Core dependencies
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
+# Voice Input Framework - Client Dependencies
+# 客户端依赖：GUI、录音、系统托盘、快捷键监听
+
+# ============== 核心依赖 ==============
+# WebSocket 客户端通信
 websockets>=12.0
 httpx>=0.26.0
-pydantic>=2.5.0
-python-multipart>=0.0.6  # FastAPI Form data support
 
-# Audio capture and processing
+# ============== 音频录制 ==============
 sounddevice>=0.4.6
 numpy>=1.26.0
-scipy>=1.12.0
 
-# ML models - Apple Silicon GPU acceleration
-mlx>=0.31.0
-mlx-lm>=0.31.0
-mlx-metal>=0.31.0
-transformers>=4.57.0
-torch>=2.1.0
-qwen-asr>=0.0.6
-
-# GUI and Input Simulation
+# ============== GUI 和系统托盘 ==============
 PySimpleGUI>=4.60.0
+pystray>=0.19.0
+Pillow>=10.0.0
+
+# ============== 输入模拟 ==============
 pynput>=1.7.6
 pyautogui>=0.9.54
 pyperclip>=1.8.2
 
-# System tray support
-pystray>=0.19.0
-Pillow>=10.0.0
-
-# Windows notifications (installed conditionally)
-# winotify>=1.1.0  # Windows only - auto-installed via pyproject.toml
-# win10toast>=0.9  # Alternative Windows notification backend
-# plyer>=2.1.0    # Cross-platform fallback
+# ============== 可选：Windows 通知 ==============
+# 仅在 Windows 上安装
+# winotify>=1.1.0; platform_system=='Windows'

@@ -1,0 +1,50 @@
+# Voice Input Framework - Server Dependencies
+# 服务器依赖：STT 引擎、LLM 后处理、API 服务
+
+# ============== Web 框架 ==============
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+websockets>=12.0
+httpx>=0.26.0
+python-multipart>=0.0.6
+pydantic>=2.5.0
+
+# ============== 音频处理 ==============
+numpy>=1.26.0
+scipy>=1.12.0
+noisereduce>=3.0.0
+
+# ============== STT 模型依赖 ==============
+# 注意：不同模型需要不同的依赖，根据使用的模型选择安装
+
+# --- Whisper (transformers) ---
+transformers>=4.37.0
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# --- Qwen3-ASR ---
+qwen_asr>=0.0.6
+# qwen_asr 需要 transformers<5.0
+
+# --- MLX 加速 (Apple Silicon) ---
+#mlx>=0.31.0
+#mlx-lm>=0.31.0
+
+# --- whisper.cpp (可选，需要编译) ---
+# 无 Python 依赖，使用 subprocess 调用
+
+# ============== LLM 后处理依赖 ==============
+# STT 服务调用 LLM 服务时使用 httpx（已在上方）
+# LLM 服务独立运行时需要：
+
+# --- MLX LLM (Apple Silicon) ---
+#mlx>=0.31.0
+#mlx-lm>=0.31.0
+
+# ============== 日志和工具 ==============
+rich>=13.7.0
+
+# ============== 开发依赖 (可选) ==============
+# pytest>=7.4.0
+# black>=24.0.0
+# mypy>=1.8.0
