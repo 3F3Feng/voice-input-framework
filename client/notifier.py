@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 跨平台通知模块
+
 支持:
-- Windows: 使用 win10toast 或 winotify
+- Windows: 使用 plyer (最可靠) 或 winotify
 - macOS: 使用 osascript 或 pyobjc
 - Linux: 使用 notify-send
 """
@@ -24,34 +25,33 @@ IS_LINUX = PLATFORM == "Linux"
 _notifier_backend = None
 
 if IS_WINDOWS:
-    # 优先尝试 winotify (Windows 10+ 原生 Toast 通知)
+    # Windows: 优先使用 plyer (最可靠)
+    # winotify 需要开始菜单快捷键才能显示通知，plyer 没有这个限制
     try:
-        from winotify import Notification, audio
-        # 注册 App ID（Windows 通知必需）
-        try:
-            from winotify import activate_notification
-            # 尝试注册 App User Model ID
-            import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("voiceinput.framework.v1")
-        except Exception:
-            pass
-        _notifier_backend = "winotify"
-        logger.info("使用 winotify 作为 Windows 通知后端")
+        from plyer import notification
+        _notifier_backend = "plyer"
+        logger.info("使用 plyer 作为 Windows 通知后端")
     except ImportError:
-        # 备选: win10toast
+        # 备选: winotify
         try:
-            from win10toast import ToastNotifier
-            _notifier_backend = "win10toast"
-            logger.info("使用 win10toast 作为 Windows 通知后端")
-        except ImportError:
-            # 最后备选: plyer (跨平台但功能有限)
+            from winotify import Notification, audio
+            # 注册 App ID
             try:
-                from plyer import notification
-                _notifier_backend = "plyer"
-                logger.info("使用 plyer 作为通知后端")
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("voiceinput.framework.v1")
+            except Exception:
+                pass
+            _notifier_backend = "winotify"
+            logger.info("使用 winotify 作为 Windows 通知后端")
+        except ImportError:
+            # 最后备选: win10toast
+            try:
+                from win10toast import ToastNotifier
+                _notifier_backend = "win10toast"
+                logger.info("使用 win10toast 作为 Windows 通知后端")
             except ImportError:
                 logger.warning("未找到 Windows 通知库，通知功能不可用")
-                logger.info("建议安装: pip install winotify 或 pip install win10toast 或 pip install plyer")
+                logger.info("建议安装: pip install plyer 或 pip install winotify")
 
 elif IS_MACOS:
     # macOS: 使用 osascript
@@ -93,15 +93,28 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
         return False
 
     try:
-        if _notifier_backend == "winotify":
+        if _notifier_backend == "plyer":
+            # Plyer 跨平台通知
+            from plyer import notification
+            notification.notify(
+                title=title,
+                message=message,
+                app_name="Voice Input Framework",
+                timeout=timeout
+            )
+            logger.info(f"plyer 通知已发送: {title} - {message}")
+            return True
+
+        elif _notifier_backend == "winotify":
             # Windows 10+ Toast 通知
+            from winotify import Notification, audio
             # 确保 App ID 已注册
             try:
                 import ctypes
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("voiceinput.framework.v1")
             except Exception:
                 pass
-            
+
             toast = Notification(
                 app_id="Voice Input Framework",
                 title=title,
@@ -116,6 +129,7 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
 
         elif _notifier_backend == "win10toast":
             # Windows 10 Toast 通知 (旧版)
+            from win10toast import ToastNotifier
             toaster = ToastNotifier()
             toaster.show_toast(
                 title,
@@ -124,18 +138,6 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
                 threaded=True
             )
             logger.info(f"win10toast 通知已发送: {title} - {message}")
-            return True
-
-        elif _notifier_backend == "plyer":
-            # Plyer 跨平台通知
-            from plyer import notification
-            notification.notify(
-                title=title,
-                message=message,
-                app_name="Voice Input Framework",
-                timeout=timeout
-            )
-            logger.info(f"plyer 通知已发送: {title} - {message}")
             return True
 
         elif _notifier_backend == "osascript":
