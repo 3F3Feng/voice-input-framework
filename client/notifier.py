@@ -27,6 +27,14 @@ if IS_WINDOWS:
     # 优先尝试 winotify (Windows 10+ 原生 Toast 通知)
     try:
         from winotify import Notification, audio
+        # 注册 App ID（Windows 通知必需）
+        try:
+            from winotify import activate_notification
+            # 尝试注册 App User Model ID
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("voiceinput.framework.v1")
+        except Exception:
+            pass
         _notifier_backend = "winotify"
         logger.info("使用 winotify 作为 Windows 通知后端")
     except ImportError:
@@ -87,6 +95,13 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
     try:
         if _notifier_backend == "winotify":
             # Windows 10+ Toast 通知
+            # 确保 App ID 已注册
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("voiceinput.framework.v1")
+            except Exception:
+                pass
+            
             toast = Notification(
                 app_id="Voice Input Framework",
                 title=title,
