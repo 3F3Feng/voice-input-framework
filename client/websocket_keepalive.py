@@ -10,7 +10,7 @@ import json
 import logging
 import time
 from enum import Enum
-from typing import Callable, Optional
+from typing import Callable, Optional, Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class WebSocketKeepAlive:
         pong_timeout: float = DEFAULT_PONG_TIMEOUT,
         max_missed_pongs: int = DEFAULT_MAX_MISSED_PONGS,
         on_state_change: Optional[Callable[[ConnectionState], None]] = None,
-        on_reconnect: Optional[Callable[[], asyncio.Coroutine]] = None,
+        on_reconnect: Optional[Callable[[], Awaitable[None]]] = None,
     ):
         """
         初始化保活管理器
