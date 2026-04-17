@@ -98,11 +98,20 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
         if _notifier_backend == "plyer":
             # Plyer 跨平台通知
             from plyer import notification
+            
+            # Windows: 设置 App User Model ID 避免显示 Python 包名
+            if IS_WINDOWS:
+                try:
+                    import ctypes
+                    # 注册应用 ID
+                    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("voiceinput.framework.v1")
+                except Exception:
+                    pass
+            
             notification.notify(
                 title=title,
                 message=message,
                 app_name="Voice Input",
-                app_icon="",  # 空字符串避免显示包名
                 timeout=timeout
             )
             logger.info(f"plyer 通知已发送: {title} - {message}")
