@@ -47,6 +47,7 @@ from .floating_indicator import FloatingIndicator, ProcessingIndicator
 from .config_manager import ConfigManager
 from .update_checker import check_for_updates, format_version_message
 from .auto_start import AutoStartManager
+from .websocket_keepalive import WebSocketKeepAlive, ConnectionState, ConnectionIndicator
 
 # 日志配置
 logging.basicConfig(
@@ -170,6 +171,10 @@ class HotkeyVoiceInputV2:
         # 快捷键管理器
         self.hotkey_manager = HotkeyManager(distinguish_left_right=self.config_manager.distinguish_left_right)
         self.hotkey_manager.set_hotkey(self.config_manager.hotkey)
+
+        # WebSocket 保活管理器
+        self.keepalive: Optional[WebSocketKeepAlive] = None
+        self.connection_state = ConnectionState.DISCONNECTED
 
         # 系统托盘
         self.tray_manager = TrayIconManager()
@@ -563,7 +568,7 @@ class HotkeyVoiceInputV2:
 
             # 创建临时连接来测试
             self.ws = await asyncio.wait_for(
-                websockets.connect(self.server_url, close_timeout=5),
+                websockets.connect(self.server_url, close_timeout=5, ping_interval=20, ping_timeout=10),
                 timeout=10.0
             )
 
@@ -1031,7 +1036,7 @@ class HotkeyVoiceInputV2:
             # 创建新的WebSocket连接用于此次转写
             self.log("正在连接到服务器...")
             ws = await asyncio.wait_for(
-                websockets.connect(self.server_url, close_timeout=10),
+                websockets.connect(self.server_url, close_timeout=10, ping_interval=20, ping_timeout=10),
                 timeout=15.0
             )
 
@@ -1191,7 +1196,7 @@ class HotkeyVoiceInputV2:
         try:
             self.log("建立 WebSocket 连接...")
             
-            async with websockets.connect(self.server_url, close_timeout=10) as ws:
+            async with websockets.connect(self.server_url, close_timeout=10, ping_interval=20, ping_timeout=10) as ws:
                 # 发送配置
                 language = self.config_manager.get('audio.language', 'auto')
                 await ws.send(json.dumps({
