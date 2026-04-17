@@ -282,7 +282,17 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 logger.info(f"Received message type: {msg_type}")
 
-                if msg_type == "audio":
+                if msg_type == "ping":
+                    # 响应心跳ping（保活机制）
+                    ping_timestamp = data.get("timestamp", time.time())
+                    await websocket.send_text(json.dumps({
+                        "type": "pong",
+                        "timestamp": ping_timestamp,
+                        "server_time": time.time(),
+                    }))
+                    logger.debug(f"Ping received, pong sent")
+
+                elif msg_type == "audio":
                     audio_b64 = data.get("data", "")
                     if audio_b64:
                         audio_chunk = base64.b64decode(audio_b64)
