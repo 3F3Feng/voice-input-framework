@@ -131,10 +131,12 @@ class WhisperMLXEngine(BaseSTTEngine):
             language_param = None if language == "auto" else language
 
             # 执行转录
+            # return_timestamps=True 支持超过30秒的长音频
             result = mlx_whisper.transcribe(
                 audio_array,
                 path_or_hf_repo=model_id,
                 language=language_param,
+                return_timestamps=True,
             )
 
             return result
