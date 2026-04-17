@@ -42,6 +42,8 @@ if IS_WINDOWS:
             except Exception:
                 pass
             _notifier_backend = "winotify"
+            logger.warning("⚠️ winotify 需要 Windows 通知权限")
+            logger.warning("如果通知不显示，请运行: pip install plyer")
             logger.info("使用 winotify 作为 Windows 通知后端")
         except ImportError:
             # 最后备选: win10toast
@@ -51,7 +53,7 @@ if IS_WINDOWS:
                 logger.info("使用 win10toast 作为 Windows 通知后端")
             except ImportError:
                 logger.warning("未找到 Windows 通知库，通知功能不可用")
-                logger.info("建议安装: pip install plyer 或 pip install winotify")
+                logger.info("建议安装: pip install plyer")
 
 elif IS_MACOS:
     # macOS: 使用 osascript
