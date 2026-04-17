@@ -596,11 +596,12 @@ class HotkeyVoiceInputV2:
 
                 # 解析 LLM 信息
                 llm_info = data.get("llm_info", {})
-                llm_enabled = llm_info.get("llm_enabled", True)
+                # 从本地配置读取用户偏好（优先于服务器默认值）
+                saved_llm_enabled = self.config_manager.get("llm.enabled", llm_info.get("llm_enabled", True))
                 llm_model = llm_info.get("llm_model", None)
-                self.log(f"LLM后处理: {'启用' if llm_enabled else '禁用'}, 模型: {llm_model or '未设置'}")
+                self.log(f"LLM后处理: {'启用' if saved_llm_enabled else '禁用'}, 模型: {llm_model or '未设置'}")
                 if self.window:
-                    self.window["-LLM-ENABLED-"].update(llm_enabled)
+                    self.window["-LLM-ENABLED-"].update(saved_llm_enabled)
 
                 # 更新托盘模型信息
                 if self.tray_manager:
