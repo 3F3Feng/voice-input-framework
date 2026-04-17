@@ -106,7 +106,7 @@ class WebSocketKeepAlive:
                 except Exception as e:
                     logger.error(f"State change callback error: {e}")
 
-    async def start(self, websocket_send: Callable[[str], asyncio.Coroutine]):
+    async def start(self, websocket_send: Callable[[str], Awaitable[None]]):
         """
         启动保活任务
 
