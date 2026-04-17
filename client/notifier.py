@@ -101,7 +101,8 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
             notification.notify(
                 title=title,
                 message=message,
-                app_name="Voice Input Framework",
+                app_name="Voice Input",
+                app_icon="",  # 空字符串避免显示包名
                 timeout=timeout
             )
             logger.info(f"plyer 通知已发送: {title} - {message}")
