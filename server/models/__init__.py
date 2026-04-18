@@ -9,6 +9,7 @@ from server.models.whisper import WhisperEngine
 from server.models.qwen3_asr import Qwen3ASREngine
 from server.models.whisper_mlx import WhisperMLXEngine
 from server.models.whisper_cpp import WhisperCppEngine
+from server.models.qwen3_asr_mlx import Qwen3ASRMLXEngine
 
 # 可用模型注册表
 AVAILABLE_MODELS = {
@@ -16,6 +17,10 @@ AVAILABLE_MODELS = {
     "whisper-small": WhisperEngine,
     "qwen_asr": Qwen3ASREngine,       # Qwen3-ASR-1.7B (推荐)
     "qwen_asr_small": Qwen3ASREngine, # Qwen3-ASR-0.6B (更快)
+    # MLX Qwen3-ASR 模型 (Apple Silicon 优化)
+    "qwen_asr_mlx": Qwen3ASRMLXEngine, # Qwen3-ASR-1.7B MLX
+    "qwen_asr_mlx_small": Qwen3ASRMLXEngine, # Qwen3-ASR-0.6B MLX
+
     # MLX 模型 (Apple Silicon 优化)
     "whisper_mlx": WhisperMLXEngine,      # MLX Whisper Large V3
     "whisper_mlx_medium": WhisperMLXEngine,  # MLX Whisper Medium
@@ -33,6 +38,7 @@ __all__ = [
     "STTEngineError",
     "WhisperEngine",
     "Qwen3ASREngine",
+    "Qwen3ASRMLXEngine",
     "WhisperMLXEngine",
     "WhisperCppEngine",
     "AVAILABLE_MODELS",
