@@ -3,8 +3,6 @@ Tests for STT Server - Model Classes (no external dependencies)
 这些测试不依赖 uvicorn 等外部库，可以独立运行。
 """
 import pytest
-import sys
-from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional
 

@@ -1,25 +1,40 @@
-# Voice Input Framework - Client Dependencies
-# 客户端依赖：GUI、录音、系统托盘、快捷键监听
+# Voice Input Framework - Server Dependencies (单体架构)
+# 安装: python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 
-# ============== 核心依赖 ==============
-# WebSocket 客户端通信
+# ============== Web 框架 ==============
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
 websockets>=12.0
 httpx>=0.26.0
+python-multipart>=0.0.6
+pydantic>=2.5.0
 
-# ============== 音频录制 ==============
-sounddevice>=0.4.6
+# ============== 音频处理 ==============
 numpy>=1.26.0
+scipy>=1.12.0
+noisereduce>=3.0.0
 
-# ============== GUI 和系统托盘 ==============
-PySimpleGUI>=4.60.0
-pystray>=0.19.0
-Pillow>=10.0.0
+# ============== STT 模型依赖 ==============
+# --- Whisper (transformers) ---
+transformers>=4.37.0
+torch>=2.1.0
+torchaudio>=2.1.0
 
-# ============== 输入模拟 ==============
-pynput>=1.7.6
-pyautogui>=0.9.54
-pyperclip>=1.8.2
+# --- Qwen3-ASR ---
+qwen_asr>=0.0.6
 
-# ============== 可选：Windows 通知 ==============
-# 仅在 Windows 上安装
-# winotify>=1.1.0; platform_system=='Windows'
+# --- MLX 加速 (Apple Silicon) ---
+mlx>=0.31.0
+mlx-lm>=0.31.0
+mlx-audio>=0.1.0
+
+# --- whisper.cpp (可选，需要编译) ---
+# 无 Python 依赖，使用 subprocess 调用
+
+# ============== 日志和工具 ==============
+rich>=13.7.0
+
+# ============== 开发/测试 ==============
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+ruff>=0.1.0

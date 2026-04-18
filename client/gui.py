@@ -41,13 +41,13 @@ except ImportError:
     WINAPI_AVAILABLE = False
 
 # 导入新模块
-from .hotkey_manager import HotkeyManager, HotkeyParser, HotkeyPresets
+from .hotkey_manager import HotkeyManager, HotkeyPresets
 from .tray_manager import TrayIconManager, TrayStatus
 from .floating_indicator import FloatingIndicator, ProcessingIndicator
 from .config_manager import ConfigManager
 from .update_checker import check_for_updates, format_version_message
 from .auto_start import AutoStartManager
-from .websocket_keepalive import WebSocketKeepAlive, ConnectionState, ConnectionIndicator
+from .websocket_keepalive import WebSocketKeepAlive, ConnectionState
 
 # 日志配置
 logging.basicConfig(
@@ -791,7 +791,7 @@ class HotkeyVoiceInputV2:
 
                         return True
                     elif resp.status_code == 408:  # Timeout
-                        self.log(f"✗ 切换模型超时: 模型加载时间过长")
+                        self.log("✗ 切换模型超时: 模型加载时间过长")
                         self.show_error(f"切换模型超时\n{model_name} 模型太大，加载时间超过 5 分钟")
                         return False
                     else:
@@ -1347,12 +1347,12 @@ class HotkeyVoiceInputV2:
             result = await self.send_audio_to_server()
 
             if result:
-                self.log(f"更新结果显示...")
+                self.log("更新结果显示...")
                 self.update_result(result)
-                self.log(f"开始自动输入...")
+                self.log("开始自动输入...")
                 # 自动输入文本
                 await self._auto_input_text(result)
-                self.log(f"自动输入完成")
+                self.log("自动输入完成")
 
                 # 更新托盘状态为就绪
                 if self.tray_manager:

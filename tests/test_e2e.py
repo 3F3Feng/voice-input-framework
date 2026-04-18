@@ -8,10 +8,11 @@ Voice Input Framework - 端到端测试
 import asyncio
 import json
 import base64
+
 import httpx
-import websockets
 import numpy as np
-import time
+import pytest
+import websockets
 
 # 配置
 STT_HOST = "localhost"
@@ -29,6 +30,7 @@ def generate_test_audio():
     audio = np.zeros(samples, dtype=np.int16)
     return audio.tobytes()
 
+@pytest.mark.asyncio
 async def test_llm_server():
     """测试 LLM 服务器"""
     print("\n=== 测试 LLM 服务器 ===")
@@ -52,6 +54,7 @@ async def test_llm_server():
         
     return True
 
+@pytest.mark.asyncio
 async def test_stt_server():
     """测试 STT 服务器"""
     print("\n=== 测试 STT 服务器 ===")
@@ -71,6 +74,7 @@ async def test_stt_server():
     
     return True
 
+@pytest.mark.asyncio
 async def test_websocket_flow():
     """测试 WebSocket 完整流程"""
     print("\n=== 测试 WebSocket 流程 ===")
@@ -126,7 +130,7 @@ async def test_websocket_flow():
                         print(f"STT 结果: {data.get('text', '')[:50]}...")
                         print(f"  STT 延迟: {data.get('stt_latency_ms', 0):.1f}ms")
                     elif msg_type == "llm_start":
-                        print(f"LLM 开始处理...")
+                        print("LLM 开始处理...")
                     elif msg_type == "result":
                         print(f"最终结果: {data.get('text', '')}")
                         print(f"  STT 延迟: {data.get('stt_latency_ms', 0):.1f}ms")

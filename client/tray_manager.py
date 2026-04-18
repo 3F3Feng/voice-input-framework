@@ -11,9 +11,7 @@ Voice Input Framework - 系统托盘模块
 """
 
 import logging
-import threading
-import time
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict
 from enum import Enum
 
 # 导入通知模块
@@ -381,7 +379,7 @@ class TrayIconManager:
             try:
                 new_menu = self.create_menu()
                 self.icon.menu = new_menu
-                logger.debug(f"托盘菜单已更新")
+                logger.debug("托盘菜单已更新")
             except Exception as e:
                 logger.warning(f"更新托盘菜单失败: {e}")
 

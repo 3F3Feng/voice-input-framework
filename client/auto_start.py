@@ -9,7 +9,6 @@ Voice Input Framework - 开机自启动管理模块
 """
 
 import logging
-import os
 import platform
 import sys
 from pathlib import Path

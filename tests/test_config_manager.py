@@ -4,16 +4,13 @@ Voice Input Framework - 配置管理器测试
 """
 
 import json
-import tempfile
 from pathlib import Path
 import pytest
-import shutil
-import os
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from client.config_manager import ConfigManager, DEFAULT_CONFIG
+from client.config_manager import ConfigManager
 
 
 class TestConfigManager:
@@ -25,8 +22,8 @@ class TestConfigManager:
         manager = ConfigManager(config_path=str(config_path))
         
         assert manager.config is not None
-        assert manager.config["server"]["host"] == "100.124.8.85"
-        assert manager.config["server"]["port"] == 6543
+        assert manager.config["server"]["host"] == "localhost"
+        assert manager.config["server"]["port"] == 6544
         assert manager.config["hotkey"]["key"] == "left_ctrl+left_alt"
         assert manager.config["hotkey"]["distinguish_left_right"] is True
     
@@ -51,7 +48,7 @@ class TestConfigManager:
         config_path = tmp_path / "test_nested.json"
         manager = ConfigManager(config_path=str(config_path))
         
-        assert manager.get("server.host") == "100.124.8.85"
+        assert manager.get("server.host") == "localhost"
         assert manager.get("hotkey.distinguish_left_right") is True
         assert manager.get("audio.language") == "auto"
     
@@ -82,8 +79,8 @@ class TestConfigManager:
         manager = ConfigManager(config_path=str(config_path))
         
         # 应该回退到默认配置
-        assert manager.config["server"]["host"] == "100.124.8.85"
-        assert manager.config["server"]["port"] == 6543
+        assert manager.config["server"]["host"] == "localhost"
+        assert manager.config["server"]["port"] == 6544
     
     def test_load_from_existing_config(self, tmp_path):
         """测试从已存在的配置文件加载"""
@@ -111,7 +108,7 @@ class TestConfigManager:
         manager = ConfigManager(config_path=str(config_path))
         
         # server_host 属性
-        assert manager.server_host == "100.124.8.85"
+        assert manager.server_host == "localhost"
         manager.server_host = "new.host.com"
         assert manager.server_host == "new.host.com"
         
@@ -138,7 +135,7 @@ class TestConfigManager:
         # 自定义值
         assert manager.get("server.host") == "partial.host.com"
         # 默认值
-        assert manager.get("server.port") == 6543
+        assert manager.get("server.port") == 6544
         assert manager.get("hotkey.key") == "left_ctrl+left_alt"
     
     def test_config_manager_equality(self, tmp_path):

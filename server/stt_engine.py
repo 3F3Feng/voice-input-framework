@@ -7,7 +7,7 @@ Voice Input Framework - STT 引擎管理器
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional
 
 from server.config import ServerConfig
 from server.models import AVAILABLE_MODELS, BaseSTTEngine

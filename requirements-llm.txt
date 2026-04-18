@@ -1,0 +1,14 @@
+# Voice Input Framework - LLM Service Dependencies
+# 运行在 mlx-test conda 环境中
+
+# Web 框架
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# MLX LLM (Apple Silicon)
+mlx>=0.31.0
+mlx-lm>=0.31.0
+
+# 日志
+rich>=13.7.0

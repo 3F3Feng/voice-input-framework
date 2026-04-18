@@ -5,7 +5,7 @@ Voice Input Framework - STT 引擎基类
 """
 
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator
 import asyncio
 import logging
 

@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from typing import Optional
 import subprocess
 import json
-import re
 
 logger = logging.getLogger(__name__)
 

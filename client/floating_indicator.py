@@ -15,8 +15,6 @@ Voice Input Framework - 悬浮录音指示器
 import logging
 import threading
 import time
-import sys
-from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)

@@ -45,7 +45,7 @@ class TestProcessResult:
             text="Processed text",
             original_text="Original text",
             llm_latency_ms=100.0,
-            model="Qwen3.5-0.8B-OptiQ"
+            model="Qwen3.5-4B-OptiQ"
         )
         assert result.text == "Processed text"
         assert result.original_text == "Original text"
@@ -73,12 +73,12 @@ class TestModelInfo:
         from services.llm_server import ModelInfo
 
         info = ModelInfo(
-            name="Qwen3.5-0.8B-OptiQ",
+            name="Qwen3.5-4B-OptiQ",
             description="Fast optimization model",
             is_loaded=True,
             is_current=True
         )
-        assert info.name == "Qwen3.5-0.8B-OptiQ"
+        assert info.name == "Qwen3.5-4B-OptiQ"
         assert info.is_loaded is True
 
 
@@ -92,8 +92,8 @@ class TestHealthStatus:
         health = HealthStatus(
             status="ok",
             uptime_seconds=3600.0,
-            current_model="Qwen3.5-0.8B-OptiQ",
-            loaded_models=["Qwen3.5-0.8B-OptiQ"],
+            current_model="Qwen3.5-4B-OptiQ",
+            loaded_models=["Qwen3.5-4B-OptiQ"],
             active_connections=5,
             is_processing=False
         )
@@ -110,7 +110,7 @@ class TestLLMEngine:
         from services.llm_server import LLMEngine
 
         engine = LLMEngine()
-        assert engine.default_model == "Qwen3.5-0.8B-OptiQ"
+        assert engine.default_model == "Qwen3.5-4B-OptiQ"
         assert not engine._is_loaded
         assert not engine._loading
 
@@ -118,16 +118,16 @@ class TestLLMEngine:
         """Test available models list"""
         from services.llm_server import LLMEngine
 
-        assert "Qwen3.5-0.8B-OptiQ" in LLMEngine.AVAILABLE_MODELS
+        assert "Qwen3.5-4B-OptiQ" in LLMEngine.AVAILABLE_MODELS
         assert "Qwen3.5-2B-OptiQ" in LLMEngine.AVAILABLE_MODELS
-        assert "Qwen3-0.6B" in LLMEngine.AVAILABLE_MODELS
+        assert "Qwen3.5-4B-OptiQ" in LLMEngine.AVAILABLE_MODELS
 
     def test_model_ids_mapping(self):
         """Test model IDs mapping"""
         from services.llm_server import LLMEngine
 
-        assert LLMEngine.MODEL_IDS["Qwen3.5-0.8B-OptiQ"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
-        assert LLMEngine.MODEL_IDS["Qwen3-1.7B"] == "mlx-community/Qwen3-1.7B-4bit"
+        assert LLMEngine.MODEL_IDS["Qwen3.5-4B-OptiQ"] == "mlx-community/Qwen3.5-4B-OptiQ-4bit"
+        assert LLMEngine.MODEL_IDS["Qwen3.5-2B-OptiQ"] == "mlx-community/Qwen3.5-2B-OptiQ-4bit"
 
     def test_is_loading(self):
         """Test loading state"""
@@ -182,8 +182,9 @@ class TestPromptTemplates:
 
     def test_prompt_with_context(self):
         """Test prompt with context"""
+        default_prompt = "请优化以下语音识别结果，使其更加通顺自然，但不要改变原意："
         text = "你好世界"
-        prompt = f"{default_prompt}\n\n{text}" if 'default_prompt' in dir() else f"请优化：{text}"
+        prompt = f"{default_prompt}\n\n{text}"
         assert text in prompt
 
 

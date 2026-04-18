@@ -1,0 +1,26 @@
+# Voice Input Framework - STT Service Dependencies
+# 运行在 vif-stt conda 环境中
+
+# Web 框架
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+pydantic>=2.5.0
+
+# HTTP 客户端 (调用 LLM 服务)
+httpx>=0.26.0
+
+# 音频处理
+numpy>=1.26.0
+
+# STT 模型 - Qwen3-ASR (需要 transformers<5.0)
+qwen_asr>=0.0.6
+transformers>=4.37.0,<5.0
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# 日志
+rich>=13.7.0
+
+# WebSocket
+websockets>=12.0

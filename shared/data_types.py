@@ -6,7 +6,6 @@ Voice Input Framework - 共享类型定义
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from typing import Optional
 
 

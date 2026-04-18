@@ -27,12 +27,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from server.config import get_default_config, LLMConfig
 from server.stt_engine import STTEngineManager
 from server.llm_engine import LLMManager
-from shared.protocol import (
-    ErrorCode,
-    MessageType,
-    StreamRequest,
-    StreamResponse,
-)
 from shared.data_types import HealthStatus, ModelInfo
 
 # 配置日志
@@ -293,7 +287,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "timestamp": ping_timestamp,
                         "server_time": time.time(),
                     }))
-                    logger.debug(f"Ping received, pong sent")
+                    logger.debug("Ping received, pong sent")
 
                 elif msg_type == "audio":
                     audio_b64 = data.get("data", "")

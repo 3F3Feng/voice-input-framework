@@ -7,7 +7,6 @@ Voice Input Framework - Whisper STT 引擎实现
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from typing import Optional
 
 import numpy as np
 import torch

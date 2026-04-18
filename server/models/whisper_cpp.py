@@ -11,9 +11,7 @@ import subprocess
 import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Optional
 
-import numpy as np
 
 from server.models.base import BaseSTTEngine, STTEngineError
 from shared.data_types import TranscriptionResult

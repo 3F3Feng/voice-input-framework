@@ -3,7 +3,6 @@
 Voice Input Framework - Pytest 配置
 """
 import sys
-import os
 from pathlib import Path
 
 # 确保项目根目录在 Python 路径中
