@@ -16,7 +16,7 @@
         <key>VIF_LOG_LEVEL</key>
         <string>INFO</string>
         <key>VIF_STT_HOST</key>
-        <string>127.0.0.1</string>
+        <string>0.0.0.0</string>
         <key>VIF_STT_PORT</key>
         <string>6544</string>
     </dict>
