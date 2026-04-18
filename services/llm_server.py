@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """
 Voice Input Framework - LLM Service
-
 独立的 LLM 后处理服务器,使用 mlx-lm 进行文本优化。
 运行在现有的 mlx-test conda 环境 (transformers 5.x)
-
 Port: 6545
 """
 
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -17,15 +14,15 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-# 添加项目路径
-project_dir = Path(__file__).parent.parent
-if str(project_dir) not in sys.path:
-    sys.path.insert(0, str(project_dir))
-
 import uvicorn
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# 添加项目路径
+project_dir = Path(__file__).parent.parent
+if str(project_dir) not in sys.path:
+    sys.path.insert(0, str(project_dir))
 
 # 配置日志
 _log_level = os.getenv("VIF_LOG_LEVEL", "INFO").upper()

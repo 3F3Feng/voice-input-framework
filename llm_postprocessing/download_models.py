@@ -4,7 +4,6 @@
 下载所有候选模型的MLX量化版本
 """
 
-import os
 import sys
 import argparse
 from pathlib import Path

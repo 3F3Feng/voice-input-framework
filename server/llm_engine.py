@@ -6,7 +6,7 @@ Voice Input Framework - LLM 后处理引擎
 
 import logging
 import time
-from typing import Dict, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,6 @@ LLM后处理评估器
 使用固定测试集评估所有候选模型
 """
 
-import os
 import sys
 import json
 import time
@@ -17,13 +16,14 @@ from pathlib import Path
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from llm_postprocessing.model_registry import ALL_MODELS, get_model_by_name, ModelInfo
+from llm_postprocessing.model_registry import ALL_MODELS, get_model_by_name
 from llm_postprocessing.test_dataset import get_test_cases, get_perf_test_cases
 
 
 @dataclass
 class TestResult:
     """单个测试结果"""
+
     case_id: str
     category: str
     input_text: str
@@ -36,6 +36,7 @@ class TestResult:
 @dataclass
 class ModelBenchmark:
     """模型基准测试结果"""
+
     model_name: str
     model_size: str
     memory_usage: str
@@ -82,31 +83,40 @@ class PostProcessPrompt:
         3. Few-Shot 锚定: 通过示例收敛模型行为
         4. 极低温度: 防止过度修改，保持原意
         """
-        system_prompt = """你是一个专业的、无情感情的语音转文字（STT）后处理引擎。你的唯一任务是清洗和重构用户提供的原始语音转录文本，使其变得流畅，专业且易于阅读，同时绝对保持原意和原始语言。
+        system_prompt = """你是一个专业的语音识别后处理引擎。
+当前输入文本是由语音识别(ASR)软件机械生成的转写内容，可能存在以下问题：
 
-【核心处理规则】
-1. 去除口语杂音：删除所有无意义的填充词（如"呃"、"那个"、"就是说"、"然后"、"嗯"、"like"、"you know"等）以及口吃造成的重复词汇
-2. 修复逻辑推翻：精准识别用户在说话时的"自我纠正"（如"明天下午三点，哦不对，是两点半"），直接输出最终的真实意图（"明天下午两点半"）
-3. 智能标点与排版：根据语境添加恰当的标点符号。对于较长的复杂长句，进行符合阅读习惯的短句切分或段落划分
-4. 同音字与上下文纠错：结合代码或专业语境，修复由于口音导致的同音字识别错误
+【待修复的病理特征】
+1. 填充词: 嗯、啊、就是吧、那个啥、然后、就是说、其实等
+2. 声学混淆: 同音字替换、口音导致的错误识别
+3. 自我纠正: 用户后半句推翻了前半句的逻辑
+4. 标点缺失: 连续无标点的语句流
+5. 中英混杂: 中英文混合的连读错误
 
-【绝对禁止事项】
-1. 语言锁定协议（防翻译）：必须 100% 保持用户输入的原始语种结构。如果输入是纯中文，输出纯中文；如果输入是纯英文，输出纯英文；如果是中英夹杂（例如包含了英文专业术语或API名称），必须原样保留夹杂状态，绝对不可将其全部翻译或统一为单一语言
-2. 零废话协议（防闲聊）：你的唯一输出必须是清洗后的纯文本。严禁在开头或结尾添加任何诸如"好的"、"这是修改后的文本"、"这段话的意思是"等解释性、问候性或总结性的废话
-3. 事实保真协议（防幻觉）：不要扩写、不要总结、不要改变说话人的原始语气和情感色彩，仅做文本级的净化
+【输出约束 - 绝对禁止】
+- 禁止在输出开头或结尾添加任何问候语("好的"、 "以下是"等)
+- 禁止添加任何解释性文字
+- 禁止添加总结性语句
+- 唯一输出: 清洗重构后的纯文本
 
-【处理示例】
-输入："那个，我昨天测试了一下，嗯，发现这个 API 的 interface 还需要、还需要 refactor 一下，顺便 check 那个，不对，是 update 那个 database 的 config。"
-输出："我昨天测试了一下，发现这个 API 的 interface 还需要 refactor 一下，顺便 update 那个 database 的 config。"
-输入："so basically uh we need to fix the bug right now because the server is like completely down."
-输出："So basically, we need to fix the bug right now because the server is completely down."
-输入："今天晚上吃、吃火锅吧，或者烤肉也行，算了还是火锅吧。"
-输出："今天晚上吃火锅吧。"
+【Few-Shot 示例 - 行为锚定】
+输入: "我昨天用那个、那个Ollama跑了一下，速度实在太、太卡了"
+输出: "我昨天使用Ollama，速度实在太卡了"
+
+输入: "就是说明天三点——不对是两点半"
+输出: "明天两点半"
+
+输入: "嗯今天天气真的好啊我们出去玩吧"
+输出: "今天天气真好，我们出去玩吧"
+
+【执行标准】
+- Temperature: 极低(0.2-0.4)，防止过度发散
+- 直接输出结果，不得有误
 """
 
         return [
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': f'{text}'}
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"优化以下STT转写文本，直接输出清洗结果：{text}"},
         ]
 
     @staticmethod
@@ -127,43 +137,40 @@ class PostProcessPrompt:
 
         cleaned = response
 
-        import re
 
         # 1. 移除 <tool_call>...</tool_call> (最常见)
-        cleaned = re.sub(r'<tool_call>[\s\S]*?</tool_call>', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", cleaned, flags=re.IGNORECASE)
 
         # 2. 移除 <思考>...</思考>
-        cleaned = re.sub(r'<思考>[\s\S]*?</思考>', '', cleaned)
+        cleaned = re.sub(r"<思考>[\s\S]*?</思考>", "", cleaned)
 
         # 3. 移除 R\n...\nR 格式（旧格式）
-        cleaned = re.sub(r'R\n[\s\S]*?\nR', '', cleaned)
+        cleaned = re.sub(r"R\n[\s\S]*?\nR", "", cleaned)
 
         # 4. 移除 <thinking>...</thinking>
-        cleaned = re.sub(r'<thinking>[\s\S]*?</thinking>', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"<thinking>[\s\S]*?</thinking>", "", cleaned, flags=re.IGNORECASE)
 
         # 5. 移除开头的思考残留符号 (:, |, ->, ⇒, →, 等等)
-        cleaned = re.sub(r'^[\s:：|→⇒\-\>]+', '', cleaned)
+        cleaned = re.sub(r"^[\s:：|→⇒\-\>]+", "", cleaned)
 
         # 6. 移除开头的单独冒号或特殊字符行
-        cleaned = re.sub(r'^\s*[：:]\s*$', '', cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r"^\s*[：:]\s*$", "", cleaned, flags=re.MULTILINE)
 
         # 7. 规范化连续换行符（超过2个换行 → 最多2个）
-        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
         # 8. 移除开头和结尾的空白字符
         cleaned = cleaned.strip()
 
         # 9. 最后检查：如果开头是中文/英文/数字以外的内容，尝试修复
         # 移除开头可能残留的奇怪字符
-        if cleaned and not re.match(r'^[\u4e00-\u9fa5a-zA-Z0-9]', cleaned[0]):
+        if cleaned and not re.match(r"^[\u4e00-\u9fa5a-zA-Z0-9]", cleaned[0]):
             # 第一个字符不合法，尝试找到下一个合法字符
-            match = re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]', cleaned)
+            match = re.search(r"[\u4e00-\u9fa5a-zA-Z0-9]", cleaned)
             if match:
-                cleaned = cleaned[match.start():]
+                cleaned = cleaned[match.start() :]
 
         return cleaned
-
-
 
 
 class LLMEvaluator:
@@ -182,8 +189,8 @@ class LLMEvaluator:
 
     def _has_incomplete_thinking(self, response: str) -> bool:
         """检查响应是否包含未完成的思考内容"""
-        has_think_start = '<think>' in response or 'Thinking Process' in response
-        has_think_end = '</think>' in response
+        has_think_start = "<think>" in response or "Thinking Process" in response
+        has_think_end = "</think>" in response
         return has_think_start and not has_think_end
 
     def _extract_result_from_thinking(self, response: str, original_text: str) -> str:
@@ -192,22 +199,26 @@ class LLMEvaluator:
         如果模型在思考中给出答案，尝试提取
         """
         # 尝试提取 Final, Output, Answer 等标记后的内容
-        markers = ['Final Output:', 'Final:', 'Output:', '**Output**', 'Answer:', '**Answer**']
+        markers = ["Final Output:", "Final:", "Output:", "**Output**", "Answer:", "**Answer**"]
         for marker in markers:
             if marker in response:
                 parts = response.split(marker)
                 if len(parts) > 1:
                     result = parts[-1].strip()
                     # 清理并返回
-                    result = result.split('\n')[0].strip()
+                    result = result.split("\n")[0].strip()
                     if result:
                         return result
 
         # 尝试从 Input 字段提取原始输入（模型可能会重复输入）
-        import re
+
         # 查找 Input: 或 "输入": 后的内容
-        input_patterns = [r'Input:\s*["\'](.+?)["\']', r'输入:\s*["\'](.+?)["\']',
-                         r'Input:\s*(.+?)(?:\n|$)', r'输入:\s*(.+?)(?:\n|$)']
+        input_patterns = [
+            r'Input:\s*["\'](.+?)["\']',
+            r'输入:\s*["\'](.+?)["\']',
+            r"Input:\s*(.+?)(?:\n|$)",
+            r"输入:\s*(.+?)(?:\n|$)",
+        ]
         for pattern in input_patterns:
             match = re.search(pattern, response)
             if match:
@@ -218,7 +229,7 @@ class LLMEvaluator:
         # 尝试提取引号中的答案（排除 Input 相关）
         quotes = re.findall(r'["\']([^"\']{10,100})["\']', response)
         for q in quotes:
-            if not any(x in q.lower() for x in ['input', 'analyze', 'request', 'constraint']):
+            if not any(x in q.lower() for x in ["input", "analyze", "request", "constraint"]):
                 return q
 
         # 如果所有方法都失败，返回原始文本（不做处理）
@@ -257,16 +268,10 @@ class LLMEvaluator:
 
             print(f"📥 Downloading {self.model_name} via transformers...")
 
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                model_id,
-                trust_remote_code=True
-            )
+            self._tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
             self._model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                torch_dtype=torch.float16,
-                device_map="auto",
-                trust_remote_code=True
+                model_id, torch_dtype=torch.float16, device_map="auto", trust_remote_code=True
             )
 
             self._use_mlx = False
@@ -286,6 +291,7 @@ class LLMEvaluator:
         self._tokenizer = None
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:
@@ -304,60 +310,45 @@ class LLMEvaluator:
             if self._use_mlx:
                 import mlx_lm
 
-                                prompt_formatted = self._tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    chat_template_kwargs={"enable_thinking": False}
-                )# 移除 Qwen3.5 模板默认添加的  <think>\n 思考标签
-                # 使用 Unicode 码点明确构建字符串
-                mlx_think_end = chr(0x0a) + chr(0x3c) + 'think' + chr(0x3e) + chr(0x0a)  # \nthink\n
-                if prompt_formatted.endswith(mlx_think_end):
-                    prompt_formatted = prompt_formatted[:-len(mlx_think_end)]
+                prompt_formatted = self._tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
 
-                # 根据模型类型设置温度
-                is_gemma = 'gemma' in self.model_name.lower()
-                temp = 0.3 if is_gemma else 0.15
-                
+                # 移除 Qwen3.5 模板默认添加的  <think>\n 思考标签
+                # 使用 Unicode 码点明确构建字符串
+                mlx_think_end = chr(0x0A) + chr(0x3C) + "think" + chr(0x3E) + chr(0x0A)  # \nthink\n
+                if prompt_formatted.endswith(mlx_think_end):
+                    prompt_formatted = prompt_formatted[: -len(mlx_think_end)]
+
                 response = mlx_lm.generate(
                     model=self._model,
                     tokenizer=self._tokenizer,
                     prompt=prompt_formatted,
                     max_tokens=128,
-                    temperature=temp,
-                    repetition_penalty=1.05 if not is_gemma else 1.0,
-                    enable_thinking=False,
+                    temperature=0.3,  # 极低温度，防止过度发散
                 )
             else:
                 import torch
 
                 inputs = self._tokenizer.apply_chat_template(
-                    messages,
-                    return_tensors="pt",
-                    add_generation_prompt=True,
-                    chat_template_kwargs={"enable_thinking": False}  # 关闭思考模式
+                    messages, return_tensors="pt", add_generation_prompt=True
                 ).to(self._model.device)
 
-                # 根据模型类型设置温度
-                is_gemma = 'gemma' in self.model_name.lower()
-                temp = 0.3 if is_gemma else 0.15
-                
                 with torch.no_grad():
                     outputs = self._model.generate(
                         **inputs,
                         max_new_tokens=128,
-                        temperature=temp,
-                        repetition_penalty=1.05 if not is_gemma else 1.0,
-                        do_sample=False if not is_gemma else True,
+                        temperature=0.3,  # 极低温度，防止过度发散
+                        do_sample=False,
                     )
 
                 full_response = self._tokenizer.decode(outputs[0], skip_special_tokens=True)
 
                 # 提取 assistant 回复(跳过输入 prompt)
-                if 'assistant' in full_response:
-                    response = full_response.split('assistant')[-1].strip()
-                elif '<|im_end|>' in full_response:
-                    response = full_response.split('<|im_end|>')[-1].strip()
+                if "assistant" in full_response:
+                    response = full_response.split("assistant")[-1].strip()
+                elif "<|im_end|>" in full_response:
+                    response = full_response.split("<|im_end|>")[-1].strip()
                 else:
                     # 尝试按 token 数量估算
                     response = full_response.strip()
@@ -370,7 +361,6 @@ class LLMEvaluator:
                 if self.verbose:
                     print(f"  ⏳ 检测到未完成的思考，等待完成... (超时: {self.thinking_timeout}s)")
 
-                elapsed = time.time() - start_time
                 timeout = self.thinking_timeout
 
                 # 继续生成直到思考完成或超时
@@ -386,6 +376,7 @@ class LLMEvaluator:
                     # 继续生成更多 token
                     if self._use_mlx:
                         import mlx_lm
+
                         try:
                             continue_response = mlx_lm.generate(
                                 model=self._model,
@@ -444,20 +435,22 @@ class LLMEvaluator:
             latencies.append(latency)
             success = len(output) > 0 and latency > 0
 
-            results.append(TestResult(
-                case_id=case.get("id", f"case_{i}"),
-                category=case.get("category", "unknown"),
-                input_text=input_text,
-                output_text=output,
-                latency_ms=latency,
-                success=success,
-            ))
+            results.append(
+                TestResult(
+                    case_id=case.get("id", f"case_{i}"),
+                    category=case.get("category", "unknown"),
+                    input_text=input_text,
+                    output_text=output,
+                    latency_ms=latency,
+                    success=success,
+                )
+            )
 
             if not success:
                 print(f"  ⚠️  Case {case.get('id')} failed")
 
         # 计算统计
-        valid_latencies = [l for l in latencies if l > 0]
+        valid_latencies = [lat for lat in latencies if lat > 0]
 
         if valid_latencies:
             benchmark = ModelBenchmark(
@@ -470,7 +463,9 @@ class LLMEvaluator:
                 median_latency=statistics.median(valid_latencies),
                 std_latency=statistics.stdev(valid_latencies) if len(valid_latencies) > 1 else 0,
                 total_tokens=total_tokens,
-                tokens_per_second=total_tokens / (sum(valid_latencies) / 1000) if valid_latencies else 0,
+                tokens_per_second=total_tokens / (sum(valid_latencies) / 1000)
+                if valid_latencies
+                else 0,
                 total_cases=len(test_cases),
                 succeeded_cases=len([r for r in results if r.success]),
                 failed_cases=len([r for r in results if not r.success]),
@@ -519,9 +514,11 @@ def run_all_benchmarks(verbose: bool = False) -> List[ModelBenchmark]:
             if benchmark:
                 results.append(benchmark)
                 print(f"\n📊 {model.name} Results:")
-                print(f"   Latency: avg={benchmark.avg_latency:.1f}ms, "
-                      f"median={benchmark.median_latency:.1f}ms, "
-                      f"range=[{benchmark.min_latency:.1f}-{benchmark.max_latency:.1f}]ms")
+                print(
+                    f"   Latency: avg={benchmark.avg_latency:.1f}ms, "
+                    f"median={benchmark.median_latency:.1f}ms, "
+                    f"range=[{benchmark.min_latency:.1f}-{benchmark.max_latency:.1f}]ms"
+                )
                 print(f"   Throughput: {benchmark.tokens_per_second:.1f} tokens/s")
                 print(f"   Success: {benchmark.succeeded_cases}/{benchmark.total_cases}")
         finally:
@@ -535,15 +532,19 @@ def print_comparison_table(benchmarks: List[ModelBenchmark]):
     print("\n" + "=" * 100)
     print("📊 Model Comparison (sorted by avg latency)")
     print("=" * 100)
-    print(f"{'Model':<18} {'Size':<6} {'Memory':<10} {'Avg(ms)':<10} {'Median':<10} {'Throughput':<12} {'Success'}")
+    print(
+        f"{'Model':<18} {'Size':<6} {'Memory':<10} {'Avg(ms)':<10} {'Median':<10} {'Throughput':<12} {'Success'}"
+    )
     print("-" * 100)
 
     sorted_benchmarks = sorted(benchmarks, key=lambda x: x.avg_latency)
 
     for b in sorted_benchmarks:
-        print(f"{b.model_name:<18} {b.model_size:<6} {b.memory_usage:<10} "
-              f"{b.avg_latency:<10.1f} {b.median_latency:<10.1f} "
-              f"{b.tokens_per_second:<12.1f} {b.succeeded_cases}/{b.total_cases}")
+        print(
+            f"{b.model_name:<18} {b.model_size:<6} {b.memory_usage:<10} "
+            f"{b.avg_latency:<10.1f} {b.median_latency:<10.1f} "
+            f"{b.tokens_per_second:<12.1f} {b.succeeded_cases}/{b.total_cases}"
+        )
 
     print("=" * 100)
 
@@ -554,7 +555,7 @@ def save_results(benchmarks: List[ModelBenchmark], output_file: str = "benchmark
 
     data = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "benchmarks": [asdict(b) for b in benchmarks]
+        "benchmarks": [asdict(b) for b in benchmarks],
     }
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -570,13 +571,16 @@ def main():
     parser.add_argument("--model", "-m", type=str, help="Test specific model")
     parser.add_argument("--all", "-a", action="store_true", help="Test all models")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    parser.add_argument("--output", "-o", type=str, default="benchmark_results.json", help="Output file")
+    parser.add_argument(
+        "--output", "-o", type=str, default="benchmark_results.json", help="Output file"
+    )
     parser.add_argument("--list", "-l", action="store_true", help="List available models")
 
     args = parser.parse_args()
 
     if args.list:
         from llm_postprocessing.model_registry import print_model_table
+
         print_model_table()
         return
 
@@ -587,8 +591,10 @@ def main():
 
         if benchmark:
             print(f"\n📊 Results for {args.model}:")
-            print(f"   Latency: avg={benchmark.avg_latency:.1f}ms, "
-                  f"median={benchmark.median_latency:.1f}ms")
+            print(
+                f"   Latency: avg={benchmark.avg_latency:.1f}ms, "
+                f"median={benchmark.median_latency:.1f}ms"
+            )
             print(f"   Throughput: {benchmark.tokens_per_second:.1f} tokens/s")
             print(f"   Success: {benchmark.succeeded_cases}/{benchmark.total_cases}")
             save_results([benchmark], args.output)
