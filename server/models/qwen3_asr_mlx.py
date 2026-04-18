@@ -14,8 +14,6 @@ import asyncio
 import logging
 import sys
 from collections.abc import AsyncIterator
-from typing import Optional
-from pathlib import Path
 
 import numpy as np
 
@@ -33,23 +31,24 @@ def _patch_transformers_compatibility():
     original_check_model_inputs = generic_module.check_model_inputs
 
     # 创建兼容的装饰器函数
-    # 原始签名: check_model_inputs(func=None, *, tie_last_hidden_states=True)
-    # 必须支持三种调用方式:
-    # 1. @check_model_inputs  (无括号, func 是被装饰的函数)
-    # 2. @check_model_inputs() (有括号, func=None, 返回装饰器)
-    # 3. @check_model_inputs(tie_last_hidden_states=False) (带关键字参数)
-    def compatible_check_model_inputs(func=None, *, tie_last_hidden_states=True):
+    # 原始函数签名: check_model_inputs(func=None, *, tie_last_hidden_states=True)
+    # 
+    # 问题: qwen_asr 使用 @check_model_inputs() 调用，期望返回一个装饰器
+    # 但原始函数在 transformers 5.x 中要求 func 参数
+    #
+    # 解决方案: 
+    # - 当 func=None 时（空括号调用），返回一个装饰器
+    # - 当 func 是函数时，调用原始装饰器
+    def compatible_check_model_inputs(func=None, **kwargs):
         """兼容 qwen_asr 的 check_model_inputs 装饰器"""
-        if func is not None:
-            # 直接调用: @check_model_inputs
-            # func 是被装饰的函数，直接传给原始函数
-            return original_check_model_inputs(func, tie_last_hidden_states=tie_last_hidden_states)
-        else:
-            # 带括号调用: @check_model_inputs() 或 @check_model_inputs(tie_last_hidden_states=...)
-            # 返回一个装饰器，它会调用原始函数
+        if func is None:
+            # @check_model_inputs() 调用，返回一个装饰器
             def decorator(f):
-                return original_check_model_inputs(f, tie_last_hidden_states=tie_last_hidden_states)
+                return original_check_model_inputs(f, **kwargs)
             return decorator
+        else:
+            # @check_model_inputs 调用（无括号）
+            return original_check_model_inputs(func, **kwargs)
 
     # 替换模块中的函数
     generic_module.check_model_inputs = compatible_check_model_inputs
