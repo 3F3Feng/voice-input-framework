@@ -21,7 +21,7 @@ if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Form
 from fastapi.middleware.cors import CORSMiddleware
 
 from server.config import get_default_config, LLMConfig
@@ -132,8 +132,11 @@ async def list_llm_models():
 
 
 @app.post("/llm/models/select")
-async def select_llm_model(model_name: str = Form(...)):
+async def select_llm_model(data: dict):
     """选择当前使用的LLM模型"""
+    model_name = data.get("model_name")
+    if not model_name:
+        raise HTTPException(status_code=400, detail="model_name required")
     try:
         logger.info(f"Switching LLM model to: {model_name}")
 
