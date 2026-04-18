@@ -847,15 +847,20 @@ class HotkeyVoiceInputV2:
                     # 提取模型名称列表
                     models = data.get("models", [])
                     self.available_llm_models = [m.get("name") if isinstance(m, dict) else m for m in models]
-                    # 找到当前模型
-                    self.current_llm_model = ""
+                # 直接从响应中获取当前模型（服务端返回 current_model 字段）
+                self.current_llm_model = data.get("current_model", "")
+
+                # 兼容旧格式：如果 current_model 不存在，尝试从 models 数组中查找
+                if not self.current_llm_model and models:
                     for m in models:
                         if isinstance(m, dict) and m.get("is_current"):
                             self.current_llm_model = m.get("name", "")
                             break
                     if not self.current_llm_model and models and isinstance(models[0], dict):
                         self.current_llm_model = models[0].get("name", "")
-                    llm_enabled = data.get("enabled", True)
+                    elif not self.current_llm_model and models:
+                        self.current_llm_model = models[0] if isinstance(models[0], str) else ""
+
 
                     self.log(f"✓ 获取到LLM模型列表: {', '.join(self.available_llm_models)}")
                     self.log(f"  当前LLM模型: {self.current_llm_model}, 启用: {llm_enabled}")

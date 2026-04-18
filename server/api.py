@@ -344,6 +344,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                             # LLM 后处理
                             final_text = result.text
+                            llm_eng = None  # 初始化，防止后续引用时未定义
                             llm_latency = 0
                             if llm_config.enabled and result.text:
                                 llm_eng = llm_manager.get_engine()
