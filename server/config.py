@@ -24,7 +24,7 @@ class ModelConfig:
 class LLMConfig:
     """LLM后处理配置"""
     enabled: bool = True
-    default_model: str = "Qwen3.5-0.8B-OptiQ"
+    default_model: str = "Qwen3.5-0.8B-OptiQ"  # MLX 量化模型 (推荐)
     thinking_timeout: float = 5.0  # 思考等待超时（秒）
     max_tokens: int = 128
 
@@ -35,7 +35,7 @@ class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 6543
     debug: bool = False
-    default_model: str = "whisper"
+    default_model: str = "qwen_asr_mlx"
     models: dict[str, ModelConfig] = field(default_factory=dict)
     models_dir: str = "./models"
     auto_load_default: bool = True

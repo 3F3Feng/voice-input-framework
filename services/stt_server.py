@@ -10,6 +10,7 @@ import base64
 import json
 import logging
 import os
+import platform
 import sys
 import time
 import uuid
@@ -18,6 +19,9 @@ from typing import List, Optional, Dict, Any, Tuple
 from contextvars import ContextVar
 
 import httpx
+
+# Apple Silicon 检测
+IS_APPLE_SILICON = platform.machine() == "arm64" and platform.system() == "Darwin"
 
 # 添加项目路径
 project_dir = Path(__file__).parent.parent
@@ -32,7 +36,10 @@ from pydantic import BaseModel
 # ============== Configuration ==============
 STT_HOST = os.getenv("VIF_STT_HOST", "0.0.0.0")
 STT_PORT = int(os.getenv("VIF_STT_PORT", "6544"))
-STT_MODEL = os.getenv("VIF_STT_MODEL", "qwen_asr")
+STT_MODEL = os.getenv(
+    "VIF_STT_MODEL",
+    "qwen_asr_mlx" if IS_APPLE_SILICON else "qwen_asr",
+)
 LOG_LEVEL = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
 REQUEST_TIMEOUT = float(os.getenv("VIF_REQUEST_TIMEOUT", "300.0"))
 MAX_RETRIES = int(os.getenv("VIF_MAX_RETRIES", "3"))
@@ -178,18 +185,74 @@ async def call_llm_server(text: str, request_id: str = "") -> Tuple[str, float]:
 class STTEngine:
     """STT 引擎管理器"""
     AVAILABLE_MODELS = {
-        "qwen_asr": {
+        # ── MLX 模型 (Apple Silicon 优化，推荐) ──
+        "qwen_asr_mlx": {
             "model_id": "Qwen/Qwen3-ASR-1.7B",
+            "engine": "qwen_asr_mlx",
             "aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
             "memory_gb": 3.5,
+            "description": "Qwen3-ASR-1.7B MLX (⭐ 推荐，Apple Silicon)",
+            "requires_apple_silicon": True,
+        },
+        "qwen_asr_mlx_small": {
+            "model_id": "Qwen/Qwen3-ASR-0.6B",
+            "engine": "qwen_asr_mlx",
+            "aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
+            "memory_gb": 1.5,
+            "description": "Qwen3-ASR-0.6B MLX (更快，Apple Silicon)",
+            "requires_apple_silicon": True,
+        },
+        "whisper_mlx": {
+            "model_id": "mlx-community/whisper-large-v3-mlx",
+            "engine": "whisper_mlx",
+            "aligner_id": None,
+            "memory_gb": 3.0,
+            "description": "MLX Whisper Large V3 (Apple Silicon)",
+            "requires_apple_silicon": True,
+        },
+        "whisper_mlx_turbo": {
+            "model_id": "mlx-community/whisper-large-v3-turbo-mlx",
+            "engine": "whisper_mlx",
+            "aligner_id": None,
+            "memory_gb": 2.0,
+            "description": "MLX Whisper Large V3 Turbo (快速+准确，Apple Silicon)",
+            "requires_apple_silicon": True,
+        },
+        "whisper_mlx_medium": {
+            "model_id": "mlx-community/whisper-medium-mlx",
+            "engine": "whisper_mlx",
+            "aligner_id": None,
+            "memory_gb": 1.5,
+            "description": "MLX Whisper Medium (Apple Silicon)",
+            "requires_apple_silicon": True,
+        },
+        "whisper_mlx_small": {
+            "model_id": "mlx-community/whisper-small-mlx",
+            "engine": "whisper_mlx",
+            "aligner_id": None,
+            "memory_gb": 0.5,
+            "description": "MLX Whisper Small (最快，Apple Silicon)",
+            "requires_apple_silicon": True,
+        },
+        # ── Transformers 模型 (通用，备选) ──
+        "qwen_asr": {
+            "model_id": "Qwen/Qwen3-ASR-1.7B",
+            "engine": "qwen_asr",
+            "aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
+            "memory_gb": 3.5,
+            "description": "Qwen3-ASR-1.7B (transformers，通用)",
         },
         "qwen_asr_small": {
             "model_id": "Qwen/Qwen3-ASR-0.6B",
+            "engine": "qwen_asr",
             "aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
             "memory_gb": 1.5,
+            "description": "Qwen3-ASR-0.6B (transformers，通用)",
         },
+        # ── Whisper.cpp 模型 (C++ 实现) ──
         "whisper_cpp_base": {
             "model_id": "whisper_cpp_base",
+            "engine": "whisper_cpp",
             "whisper_model": "whisper-v3-base",
             "aligner_id": None,
             "memory_gb": 1,
@@ -197,20 +260,23 @@ class STTEngine:
         },
         "whisper_cpp_large": {
             "model_id": "whisper_cpp_large",
+            "engine": "whisper_cpp",
             "whisper_model": "whisper-v3-large",
             "aligner_id": None,
             "memory_gb": 3,
             "description": "Whisper V3 Large via whisper.cpp (Metal GPU, accurate)",
         },
+        # ── Whisper Transformers 模型 (备选) ──
         "whisper_turbo": {
             "model_id": "openai/whisper-large-v3-turbo",
+            "engine": "whisper_turbo",
             "aligner_id": None,
             "memory_gb": 3,
             "description": "Whisper Large V3 Turbo (transformers, fast)",
         },
     }
 
-    def __init__(self, default_model: str = "qwen_asr"):
+    def __init__(self, default_model: str = "qwen_asr_mlx" if IS_APPLE_SILICON else "qwen_asr"):
         self.default_model = default_model
         self.current_model_name = default_model
         self._model = None
@@ -268,9 +334,9 @@ class STTEngine:
     def _load_model_sync(self):
         """同步加载主模型"""
         import torch
-        from qwen_asr import Qwen3ASRModel
 
         model_id = self._model_info["model_id"]
+        engine_type = self._model_info.get("engine", "qwen_asr")
 
         # 检测设备
         if torch.backends.mps.is_available():
@@ -280,12 +346,50 @@ class STTEngine:
         else:
             device = "cpu"
 
-        # whisper_cpp 使用独立的 WhisperCppEngine
-        if model_id in ("whisper_cpp_base", "whisper_cpp_large"):
+        # ── Whisper MLX 引擎 ──
+        if engine_type == "whisper_mlx":
+            if not IS_APPLE_SILICON:
+                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS)")
+            import mlx_whisper
+            import numpy as np
+
+            logger.info(f"Loading MLX Whisper model: {model_id}...")
+            # 触发预加载
+            test_audio = np.zeros(16000, dtype=np.float32)
+            mlx_whisper.transcribe(test_audio, path_or_hf_repo=model_id)
+            self._model = {"model_id": model_id, "type": "whisper_mlx"}
+            self._model_type = "whisper_mlx"
+            return
+
+        # ── Qwen3-ASR MLX 引擎 ──
+        if engine_type == "qwen_asr_mlx":
+            if not IS_APPLE_SILICON:
+                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS)")
+            # 修补 transformers 兼容性
+            from server.models.qwen3_asr_mlx import _patch_transformers_compatibility
+            _patch_transformers_compatibility()
+
+            from qwen_asr import Qwen3ASRModel
+
+            dtype = torch.float32  # MPS 不完全支持 bfloat16
+            logger.info(f"Loading Qwen3-ASR MLX model on {device} with {dtype}")
+            self._model = Qwen3ASRModel.from_pretrained(
+                model_id,
+                dtype=dtype,
+                device_map=device,
+                max_new_tokens=256,
+            )
+            self._model_type = "qwen_asr_mlx"
+            return
+
+        # ── Whisper.cpp 引擎 ──
+        if engine_type == "whisper_cpp":
             from server.models.whisper_cpp import WhisperCppEngine
+
             whisper_model = self._model_info.get("whisper_model", "whisper-v3-base")
             logger.info(f"Loading Whisper.cpp model: {whisper_model}...")
             whisper_engine = WhisperCppEngine(model_name=whisper_model)
+
             # WhisperCppEngine 同步加载
             import asyncio
             asyncio.run(whisper_engine.load())
@@ -293,9 +397,10 @@ class STTEngine:
             self._model_type = "whisper_cpp"
             return
 
-        # whisper_turbo 使用 transformers Whisper
-        if model_id == "openai/whisper-large-v3-turbo":
+        # ── Whisper Turbo (transformers) ──
+        if engine_type == "whisper_turbo":
             from transformers import pipeline
+
             logger.info(f"Loading Whisper turbo on {device}...")
             self._model = pipeline(
                 "automatic-speech-recognition",
@@ -306,11 +411,13 @@ class STTEngine:
             self._model_type = "whisper_turbo"
             return
 
+        # ── Qwen3-ASR (transformers, 默认) ──
         self._model_type = "qwen_asr"
+        from qwen_asr import Qwen3ASRModel
+
         # Qwen3-ASR 使用 bfloat16 效果更好
         dtype = torch.bfloat16 if device != "cpu" else torch.float32
         logger.info(f"Loading ASR model on {device} with {dtype}")
-
         self._model = Qwen3ASRModel.from_pretrained(
             model_id,
             dtype=dtype,
@@ -318,30 +425,30 @@ class STTEngine:
             max_new_tokens=256,
         )
 
-    def _load_aligner_sync(self):
-        """同步加载 ForcedAligner 模型"""
-        import torch
-        from qwen_asr import Qwen3ForcedAligner
+        def _load_aligner_sync(self):
+            """同步加载 ForcedAligner 模型"""
+            import torch
+            from qwen_asr import Qwen3ForcedAligner
 
-        aligner_id = self._model_info.get("aligner_id", "Qwen/Qwen3-ForcedAligner-0.6B")
+            aligner_id = self._model_info.get("aligner_id", "Qwen/Qwen3-ForcedAligner-0.6B")
 
-        # 检测设备
-        if torch.backends.mps.is_available():
-            device = "mps"
-        elif torch.cuda.is_available():
-            device = "cuda"
-        else:
-            device = "cpu"
+            # 检测设备
+            if torch.backends.mps.is_available():
+                device = "mps"
+            elif torch.cuda.is_available():
+                device = "cuda"
+            else:
+                device = "cpu"
 
-        # ForcedAligner 使用 bfloat16
-        dtype = torch.bfloat16 if device != "cpu" else torch.float32
-        logger.info(f"Loading ForcedAligner on {device} with {dtype}")
+            # ForcedAligner 使用 bfloat16
+            dtype = torch.bfloat16 if device != "cpu" else torch.float32
+            logger.info(f"Loading ForcedAligner on {device} with {dtype}")
 
-        self._aligner = Qwen3ForcedAligner.from_pretrained(
-            aligner_id,
-            dtype=dtype,
-            device_map=device,
-        )
+            self._aligner = Qwen3ForcedAligner.from_pretrained(
+                aligner_id,
+                dtype=dtype,
+                device_map=device,
+            )
 
     async def switch_model(self, model_name: str) -> dict:
         """
@@ -448,8 +555,20 @@ class STTEngine:
 
             def _do_transcribe():
                 lang = None if language == "auto" else language
-                
-                # whisper_cpp 使用不同的 API
+
+                # ── Whisper MLX 引擎 ──
+                if getattr(self, '_model_type', None) == "whisper_mlx":
+                    import mlx_whisper
+                    model_id = self._model["model_id"]
+                    result = mlx_whisper.transcribe(
+                        audio_array,
+                        path_or_hf_repo=model_id,
+                        language=lang,
+                        return_timestamps=True,
+                    )
+                    return result.get("text", "").strip(), result.get("language", lang or "en")
+
+                # ── Whisper.cpp 引擎 ──
                 if getattr(self, '_model_type', None) == "whisper_cpp":
                     import numpy as np
                     # whisper.cpp 需要 bytes
@@ -460,15 +579,16 @@ class STTEngine:
                         sample_rate=sample_rate,
                     ))
                     return result.text, result.language
-                
-                # whisper_turbo 使用 transformers pipeline
+
+                # ── Whisper Turbo (transformers) ──
                 if getattr(self, '_model_type', None) == "whisper_turbo":
                     result = self._model(
                         audio_array,
                         generate_kwargs={"language": lang},
                     )
                     return result.get("text", "").strip(), lang or "en"
-                
+
+                # ── Qwen3-ASR (transformers 或 MLX 环境) ──
                 results = self._model.transcribe(
                     audio=(audio_array, sample_rate),
                     language=lang,

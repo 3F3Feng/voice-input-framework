@@ -98,14 +98,28 @@ class LLMEngine:
     """LLM 引擎管理器"""
 
     AVAILABLE_MODELS = [
-        "Qwen3.5-2B-OptiQ",
-        "Qwen3.5-4B-OptiQ",
-        "Gemma-4-E4B-DECKARD",
+        # Qwen3.5 MLX 量化模型 (推荐，中文最强)
+        "Qwen3.5-4B-OptiQ",  # 最快，~0.8GB 内存
+        "Qwen3.5-2B-OptiQ",  # 速度与质量平衡，~2GB 内存
+        "Qwen3.5-4B-MLX",  # 4B MLX，~4GB 内存
+        "Qwen3.5-4B-OptiQ",  # 4B OptiQ 量化，~3GB 内存
+        # Qwen3 MLX 量化模型 (成熟稳定)
+        "Qwen3-0.6B",  # 最小 Qwen3 模型，~0.5GB 内存
+        "Qwen3-1.7B",  # Qwen3 中等模型，~1.5GB 内存
+        # Gemma 4 MLX (Google, 中文较弱)
+        "Gemma-4-E4B-DECKARD",  # Gemma 4 4B 定制版
     ]
 
     MODEL_IDS = {
-        "Qwen3.5-2B-OptiQ": "mlx-community/Qwen3.5-2B-OptiQ-4bit",
+        # Qwen3.5 MLX 量化
         "Qwen3.5-4B-OptiQ": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        "Qwen3.5-2B-OptiQ": "mlx-community/Qwen3.5-2B-OptiQ-4bit",
+        "Qwen3.5-4B-MLX": "mlx-community/Qwen3.5-4B-MLX-4bit",
+        "Qwen3.5-4B-OptiQ": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        # Qwen3 MLX 量化
+        "Qwen3-0.6B": "mlx-community/Qwen3-0.6B-4bit",
+        "Qwen3-1.7B": "mlx-community/Qwen3-1.7B-4bit",
+        # Gemma 4
         "Gemma-4-E4B-DECKARD": "nightmedia/gemma-4-E4B-it-The-DECKARD-V2-Strong-HERETIC-UNCENSORED-Instruct-mxfp8-mlx",
     }
 

@@ -4,7 +4,7 @@ LLM模型注册表
 
 注意: Qwen3.5 需要 mlx-lm 0.31+ 版本支持 (当前 0.31.2)
 实际可用的 mlx-community 量化版本:
-- mlx-community/Qwen3.5-0.8B-OptiQ-4bit (实测可用)
+- mlx-community/Qwen3.5-4B-OptiQ-4bit (实测可用)
 - mlx-community/Qwen3.5-2B-OptiQ-4bit (实测可用)
 - mlx-community/Qwen3.5-4B-MLX-4bit (实测可用)
 - mlx-community/Qwen3.5-4B-OptiQ-4bit (实测可用)
@@ -15,8 +15,8 @@ LLM模型注册表
 from dataclasses import dataclass
 from typing import List, Optional
 
-# 默认LLM模型
-DEFAULT_LLM_MODEL = "Qwen3.5-0.8B-OptiQ"
+# 默认LLM模型 (MLX 量化版本，Apple Silicon 推荐)
+DEFAULT_LLM_MODEL = "Qwen3.5-4B-OptiQ"
 
 
 @dataclass
@@ -49,8 +49,8 @@ class ModelInfo:
 # 使用 mlx-community 量化版本，实际测试可用
 QWEN35_MODELS = [
     ModelInfo(
-        model_id="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
-        name="Qwen3.5-0.8B-OptiQ",
+        model_id="mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        name="Qwen3.5-4B-OptiQ",
         size="0.8B",
         is_quantized=True,
         memory_fp16="~1.6GB",

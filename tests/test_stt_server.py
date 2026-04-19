@@ -72,7 +72,7 @@ class TestSTTEngine:
         from services.stt_server import STTEngine
 
         engine = STTEngine()
-        assert engine.default_model == "qwen_asr"
+        assert engine.default_model == "qwen_asr_mlx"
         assert not engine._is_loaded
         assert not engine._aligner_loaded
         assert not engine._loading
