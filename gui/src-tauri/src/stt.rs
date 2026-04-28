@@ -26,9 +26,16 @@ pub struct SttClient {
 }
 
 impl SttClient {
-    pub fn new(host: &str) -> Self {
-        Self {
-            stt_url: format!("http://{}:6544", host),
+    pub fn new(host_or_url: &str) -> Self {
+        // Accept either a bare hostname or a full URL
+        if host_or_url.starts_with("http://") || host_or_url.starts_with("https://") {
+            Self {
+                stt_url: host_or_url.to_string(),
+            }
+        } else {
+            Self {
+                stt_url: format!("http://{}:6544", host_or_url),
+            }
         }
     }
 
