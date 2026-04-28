@@ -38,16 +38,21 @@
         <div class="setting-row">
           <label>服务器地址</label>
           <div class="host-input">
-            <input v-model="serverHost" placeholder="localhost" @change="updateServer" />
+            <input v-model="serverHost" @change="updateServer" @keyup.enter="updateServer" />
             <span :class="['dot', connected ? 'green' : 'red']"></span>
           </div>
         </div>
+        <div class="setting-row">
+          <label>端口</label>
+          <input class="num-input" v-model.number="serverPort" type="number" @change="updateServer" />
+        </div>
       </details>
+
       <details>
         <summary>模型设置</summary>
         <div class="setting-row">
           <label>STT 模型</label>
-          <select v-model="sttModel" @change="switchStt">
+          <select v-model="sttModel" @change="onSttModelChange">
             <option v-for="m in sttModels" :key="m.name" :value="m.name">
               {{ m.name }} {{ m.is_loaded ? '✅' : '' }}
             </option>
@@ -55,18 +60,47 @@
         </div>
         <div class="setting-row">
           <label>LLM 后处理</label>
-          <select v-model="llmModel" @change="switchLlm">
+          <label class="toggle">
+            <input type="checkbox" v-model="llmEnabled" @change="onLlmToggle" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div v-if="llmEnabled" class="setting-row">
+          <label>LLM 模型</label>
+          <select v-model="llmModel" @change="onLlmModelChange">
             <option v-for="m in llmModels" :key="m.name" :value="m.name">
               {{ m.name }} {{ m.is_loaded ? '✅' : '' }}
             </option>
           </select>
         </div>
       </details>
+
+      <details v-if="llmEnabled">
+        <summary>提示词管理</summary>
+        <div class="textarea-row">
+          <textarea v-model="promptText" rows="4"
+            placeholder="输入 LLM 后处理提示词..." />
+        </div>
+        <div class="btn-row">
+          <button class="small-btn" @click="loadPrompt">加载</button>
+          <button class="small-btn" @click="savePrompt">保存</button>
+          <span v-if="promptStatus" class="prompt-status">{{ promptStatus }}</span>
+        </div>
+      </details>
+
+      <details>
+        <summary>配置管理</summary>
+        <div class="btn-row">
+          <button class="small-btn" @click="saveConfig">💾 保存配置</button>
+          <button class="small-btn" @click="importOldConfig">📥 导入旧版配置</button>
+        </div>
+        <div v-if="configMsg" class="config-msg">{{ configMsg }}</div>
+      </details>
     </div>
 
     <div class="footer">
-      <span>快捷键: ⌥⌘R</span>
-      <span class="version">v2.0</span>
+      <span>快捷键: ⌥⌘R (macOS) / ⌃⌥R (Win/Linux)</span>
+      <span class="version">{{ version }}</span>
     </div>
   </div>
 </template>
@@ -76,20 +110,36 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-interface ModelInfo {
-  name: string;
-  is_loaded: boolean;
+// ── Types ──
+interface ModelInfo { name: string; is_loaded: boolean; }
+
+interface VoiceInputConfig {
+  server: { host: string; port: number };
+  hotkey: { key: string; distinguish_left_right: boolean };
+  ui: { start_minimized: boolean; use_floating_indicator: boolean; use_tray: boolean; opacity: number };
+  audio: { device: string | null; language: string };
+  llm: { enabled: boolean };
+  _version: string;
 }
 
-// State
+// ── State ──
 const recording = ref(false);
 const connected = ref(false);
 const result = ref("");
+const configMsg = ref("");
+const version = ref("v2.0");
+
 const sttModels = ref<ModelInfo[]>([]);
 const llmModels = ref<ModelInfo[]>([]);
 const sttModel = ref("");
 const llmModel = ref("");
+
 const serverHost = ref("localhost");
+const serverPort = ref(6544);
+const llmEnabled = ref(true);
+const promptText = ref("");
+const promptStatus = ref("");
+
 const elapsedMs = ref(0);
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let mediaRecorder: MediaRecorder | null = null;
@@ -107,7 +157,7 @@ const timerText = computed(() => {
   return `${secs}.${String(ms).padStart(3, "0").slice(0, 2)}s`;
 });
 
-// ── WAV 编码 ──
+// ── WAV Encoder ──
 function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
   const numChannels = 1;
   const bitsPerSample = 16;
@@ -117,22 +167,15 @@ function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
   const buffer = new ArrayBuffer(44 + dataSize);
   const view = new DataView(buffer);
 
-  const writeStr = (off: number, s: string) => {
+  const w = (off: number, s: string) => {
     for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
   };
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + dataSize, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);          // PCM
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, bitsPerSample, true);
-  writeStr(36, "data");
-  view.setUint32(40, dataSize, true);
+  w(0, "RIFF"); view.setUint32(4, 36 + dataSize, true); w(8, "WAVE");
+  w(12, "fmt "); view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true); view.setUint16(34, bitsPerSample, true);
+  w(36, "data"); view.setUint32(40, dataSize, true);
 
   let offset = 44;
   for (let i = 0; i < samples.length; i++) {
@@ -143,54 +186,33 @@ function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
   return new Uint8Array(buffer);
 }
 
-// ── 录音 ──
+// ── Recording ──
 async function startRecord() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioChunks = [];
-    mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=pcm" });
-    
-    // Fallback: use default codec if PCM not supported
-    if (!MediaRecorder.isTypeSupported("audio/webm;codecs=pcm")) {
-      mediaRecorder = new MediaRecorder(stream);
-    }
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
-    };
-
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
     mediaRecorder.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop());
-
-      // Decode audio to PCM via AudioContext
+      stream.getTracks().forEach(t => t.stop());
       const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType });
-      const arrayBuf = await blob.arrayBuffer();
-      
       try {
+        const arrayBuf = await blob.arrayBuffer();
         const audioCtx = new OfflineAudioContext(1, 16000, 16000);
         const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
-        
-        // Resample to 16kHz mono
         const original = audioBuf.getChannelData(0);
         const ratio = original.length / 16000;
         const resampled = new Float32Array(16000);
         for (let i = 0; i < 16000; i++) {
-          const srcIdx = Math.floor(i * ratio);
-          resampled[i] = original[Math.min(srcIdx, original.length - 1)];
+          resampled[i] = original[Math.min(Math.floor(i * ratio), original.length - 1)];
         }
-
-        // Encode to WAV and send to STT
         const wav = encodeWav(resampled, 16000);
         if (wav.length > 44 + 320) {
-          const audioArray = Array.from(wav);
-          const text = await invoke<string>("transcribe", { audioData: audioArray, language: "auto" });
+          const text = await invoke<string>("transcribe", { audioData: Array.from(wav) });
           if (text) result.value = text;
         }
-      } catch (e) {
-        console.error("Audio decode error:", e);
-      }
+      } catch (e) { console.error("Audio decode error:", e); }
     };
-
     recording.value = true;
     elapsedMs.value = 0;
     timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
@@ -205,57 +227,121 @@ async function stopRecord() {
   if (!recording.value || !mediaRecorder) return;
   recording.value = false;
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-  if (mediaRecorder.state !== "inactive") {
-    mediaRecorder.stop();
+  if (mediaRecorder.state !== "inactive") mediaRecorder.stop();
+}
+
+// ── Config ──
+async function loadConfig() {
+  try {
+    const cfg = await invoke<VoiceInputConfig>("get_config");
+    serverHost.value = cfg.server.host;
+    serverPort.value = cfg.server.port;
+    llmEnabled.value = cfg.llm.enabled;
+    version.value = `v${cfg._version}`;
+  } catch (e) {
+    console.error("Failed to load config:", e);
   }
 }
 
-// ── 服务器连接 ──
+async function saveConfig() {
+  try {
+    const cfg = await invoke<VoiceInputConfig>("get_config");
+    cfg.server.host = serverHost.value;
+    cfg.server.port = serverPort.value;
+    cfg.llm.enabled = llmEnabled.value;
+    await invoke("update_config", { newConfig: cfg });
+    configMsg.value = "✅ 配置已保存";
+    setTimeout(() => { configMsg.value = ""; }, 3000);
+  } catch (e) {
+    configMsg.value = `❌ 保存失败: ${e}`;
+  }
+}
+
+async function importOldConfig() {
+  try {
+    const cfg = await invoke<VoiceInputConfig>("import_old_config");
+    serverHost.value = cfg.server.host;
+    serverPort.value = cfg.server.port;
+    llmEnabled.value = cfg.llm.enabled;
+    configMsg.value = "✅ 旧版配置已导入";
+    // Reconnect with new settings
+    await updateServer();
+    setTimeout(() => { configMsg.value = ""; }, 3000);
+  } catch (e) {
+    configMsg.value = `❌ 导入失败: ${e}`;
+  }
+}
+
+// ── Connection ──
 async function updateServer() {
   connected.value = false;
   const host = serverHost.value.trim() || "localhost";
   try {
     await invoke("set_server_host", { host });
     await loadModels();
-  } catch { /* will retry below */ }
+  } catch { /* retry */ }
 }
 
-// ── 模型管理 ──
+// ── Models ──
 async function loadModels() {
   try {
     sttModels.value = await invoke<ModelInfo[]>("get_models");
-    if (sttModels.value.length > 0) sttModel.value = sttModels.value[0].name;
+    if (sttModels.value.length > 0 && !sttModel.value) {
+      sttModel.value = sttModels.value[0].name;
+    }
     connected.value = true;
-  } catch {
-    connected.value = false;
-  }
+  } catch { connected.value = false; }
   try {
     llmModels.value = await invoke<ModelInfo[]>("get_llm_models");
-    if (llmModels.value.length > 0) llmModel.value = llmModels.value[0].name;
+    if (llmModels.value.length > 0 && !llmModel.value) {
+      llmModel.value = llmModels.value[0].name;
+    }
   } catch { /* optional */ }
 }
 
-async function switchStt() {
-  if (sttModel.value) await invoke("switch_model", { name: sttModel.value });
+function onSttModelChange() {
+  if (sttModel.value) invoke("switch_model", { name: sttModel.value });
 }
 
-async function switchLlm() {
-  if (llmModel.value) await invoke("switch_llm_model", { name: llmModel.value });
+function onLlmModelChange() {
+  if (llmModel.value) invoke("switch_llm_model", { name: llmModel.value });
 }
 
-function copyResult() {
-  if (result.value) navigator.clipboard.writeText(result.value);
+async function onLlmToggle() {
+  saveConfig();
 }
 
-function clearResult() {
-  result.value = "";
+// ── LLM Prompt ──
+async function loadPrompt() {
+  try {
+    promptText.value = await invoke<string>("get_llm_prompt");
+    promptStatus.value = "✅ 已加载";
+    setTimeout(() => { promptStatus.value = ""; }, 2000);
+  } catch (e) {
+    promptStatus.value = `❌ ${e}`;
+  }
 }
 
-onMounted(() => {
-  loadModels();
+async function savePrompt() {
+  try {
+    await invoke("save_llm_prompt", { text: promptText.value });
+    promptStatus.value = "✅ 已保存";
+    setTimeout(() => { promptStatus.value = ""; }, 2000);
+  } catch (e) {
+    promptStatus.value = `❌ ${e}`;
+  }
+}
+
+// ── Result ──
+function copyResult() { if (result.value) navigator.clipboard.writeText(result.value); }
+function clearResult() { result.value = ""; }
+
+// ── Lifecycle ──
+onMounted(async () => {
+  await loadConfig();
+  await updateServer();
   listen("toggle-recording", () => {
-    if (recording.value) stopRecord();
-    else startRecord();
+    if (recording.value) stopRecord(); else startRecord();
   });
 });
 
@@ -324,15 +410,61 @@ h1 { font-size: 1.3rem; }
 .icon-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.9rem; padding: 2px; }
 .icon-btn:hover { color: var(--text); }
 
-.settings details { background: var(--card); border-radius: 12px; padding: 12px; border: 1px solid #0f3460; }
+.settings details {
+  background: var(--card); border-radius: 12px; padding: 12px;
+  border: 1px solid #0f3460;
+}
 .settings summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; margin-bottom: 8px; }
-.setting-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.8rem; }
-.setting-row select { background: var(--bg); color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 4px 8px; max-width: 200px; }
-.host-input { display: flex; align-items: center; gap: 6px; }
-.host-input input { background: var(--bg); color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 4px 8px; width: 160px; }
+.setting-row {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px; font-size: 0.8rem;
+}
+.setting-row select {
+  background: var(--bg); color: var(--text); border: 1px solid #333;
+  border-radius: 6px; padding: 4px 8px; max-width: 200px;
+}
+.host-input { display: flex; align-items: center; gap: 6px; flex: 1; }
+.host-input input {
+  background: var(--bg); color: var(--text); border: 1px solid #333;
+  border-radius: 6px; padding: 4px 8px; width: 100%;
+}
+.num-input {
+  background: var(--bg); color: var(--text); border: 1px solid #333;
+  border-radius: 6px; padding: 4px 8px; width: 80px;
+}
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot.green { background: var(--green); }
 .dot.red { background: var(--red); }
 
-.footer { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--muted); margin-top: auto; }
+/* Toggle switch */
+.toggle { position: relative; display: inline-block; width: 36px; height: 20px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer; inset: 0;
+  background: #555; border-radius: 20px; transition: 0.3s;
+}
+.slider::before {
+  content: ""; position: absolute; width: 16px; height: 16px;
+  left: 2px; bottom: 2px; background: white; border-radius: 50%; transition: 0.3s;
+}
+.toggle input:checked + .slider { background: var(--green); }
+.toggle input:checked + .slider::before { transform: translateX(16px); }
+
+.textarea-row { margin-bottom: 8px; }
+.textarea-row textarea {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid #333; border-radius: 6px; padding: 6px;
+  font-size: 0.8rem; resize: vertical;
+}
+
+.btn-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.small-btn {
+  background: var(--accent); color: var(--text); border: none;
+  border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; cursor: pointer;
+}
+.small-btn:hover { filter: brightness(1.2); }
+.prompt-status { font-size: 0.7rem; color: var(--green); }
+.config-msg { font-size: 0.75rem; color: var(--green); margin-top: 6px; }
+
+.footer { display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--muted); margin-top: auto; }
 </style>

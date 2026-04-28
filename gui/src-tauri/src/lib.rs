@@ -1,13 +1,15 @@
 mod audio;
+mod config;
 mod hotkey;
 mod stt;
 
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 
 pub struct AppState {
     pub stt: Mutex<stt::SttClient>,
     pub recorder: Mutex<audio::AudioRecorder>,
+    pub config: Mutex<config::VoiceInputConfig>,
 }
 
 #[tauri::command]
@@ -84,19 +86,85 @@ async fn switch_llm_model(state: State<'_, AppState>, name: String) -> Result<St
     client.switch_llm_model(&name).await
 }
 
+// ── Config commands ──
+
+#[tauri::command]
+async fn get_config(state: State<'_, AppState>) -> Result<config::VoiceInputConfig, String> {
+    let cfg = state.config.lock().map_err(|e| e.to_string())?;
+    Ok(cfg.clone())
+}
+
+#[tauri::command]
+async fn update_config(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    new_config: config::VoiceInputConfig,
+) -> Result<(), String> {
+    // Save to file
+    new_config.save(&app)?;
+    // Update state
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    *cfg = new_config;
+    Ok(())
+}
+
+#[tauri::command]
+async fn import_old_config(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<config::VoiceInputConfig, String> {
+    let app_handle = app.clone();
+    let cfg = config::VoiceInputConfig::load(&app_handle);
+    let mut state_cfg = state.config.lock().map_err(|e| e.to_string())?;
+    *state_cfg = cfg.clone();
+    Ok(cfg)
+}
+
+// ── LLM prompt commands ──
+
+#[tauri::command]
+async fn get_llm_prompt(state: State<'_, AppState>) -> Result<String, String> {
+    let llm_url = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.llm_url.clone()
+    };
+    let url = format!("{}/prompt", llm_url);
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).send().await.map_err(|e| format!("HTTP error: {}", e))?;
+    let data: serde_json::Value = resp.json().await.map_err(|e| format!("JSON error: {}", e))?;
+    Ok(data["prompt"].as_str().unwrap_or("").to_string())
+}
+
+#[tauri::command]
+async fn save_llm_prompt(
+    state: State<'_, AppState>,
+    text: String,
+) -> Result<(), String> {
+    let llm_url = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.llm_url.clone()
+    };
+    let url = format!("{}/prompt", llm_url);
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({"prompt": text});
+    client.post(&url).json(&body).send().await.map_err(|e| format!("HTTP error: {}", e))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let default_host = std::env::var("VIF_SERVER_HOST").unwrap_or_else(|_| "localhost".into());
-
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState {
-            stt: Mutex::new(stt::SttClient::new(&default_host)),
-            recorder: Mutex::new(audio::AudioRecorder::new()),
-        })
         .setup(|app| {
+            let cfg = config::VoiceInputConfig::load(app.handle());
+            let default_host = cfg.server.host.clone();
+            app.manage(AppState {
+                stt: Mutex::new(stt::SttClient::new(&default_host)),
+                recorder: Mutex::new(audio::AudioRecorder::new()),
+                config: Mutex::new(cfg),
+            });
             let _ = hotkey::setup(app);
             Ok(())
         })
@@ -109,6 +177,11 @@ pub fn run() {
             switch_model,
             get_llm_models,
             switch_llm_model,
+            get_config,
+            update_config,
+            import_old_config,
+            get_llm_prompt,
+            save_llm_prompt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
