@@ -125,13 +125,13 @@ class TestTranscriptionResult:
             language="zh",
             is_final=True,
             stt_latency_ms=150.5,
-            model="qwen_asr",
+            model="qwen_asr_mlx_native_small",
             timestamps=[WordTimestamp(word="test", start=0.0, end=0.5)]
         )
         assert result.confidence == 0.95
         assert result.language == "zh"
         assert result.stt_latency_ms == 150.5
-        assert result.model == "qwen_asr"
+        assert result.model == "qwen_asr_mlx_native_small"
 
     def test_json_export(self):
         """Test JSON export"""
@@ -169,12 +169,12 @@ class TestModelInfo:
     def test_model_info(self):
         """Test ModelInfo creation"""
         info = ModelInfo(
-            name="qwen_asr",
+            name="qwen_asr_mlx_native_small",
             description="Test model",
             is_loaded=True,
             is_default=True,
         )
-        assert info.name == "qwen_asr"
+        assert info.name == "qwen_asr_mlx_native_small"
         assert info.description == "Test model"
         assert info.is_loaded is True
         assert info.is_default is True
@@ -196,8 +196,8 @@ class TestHealthStatus:
         health = HealthStatus(
             status="ok",
             uptime_seconds=100.0,
-            current_model="qwen_asr",
-            loaded_models=["qwen_asr"],
+            current_model="qwen_asr_mlx_native_small",
+            loaded_models=["qwen_asr_mlx_native_small"],
             active_connections=2,
             total_requests=10,
             failed_requests=1,
@@ -262,23 +262,21 @@ class TestSTTEngineConstants:
     def test_available_models_structure(self):
         """Test AVAILABLE_MODELS structure"""
         AVAILABLE_MODELS = {
-            "qwen_asr": {
-                "model_id": "Qwen/Qwen3-ASR-1.7B",
-                "aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
-                "memory_gb": 3.5,
+            "qwen_asr_mlx_native_small": {
+                "model_id": "mlx-community/Qwen3-ASR-0.6B-4bit",
+                "engine": "qwen_asr_mlx_native",
+                "memory_gb": 0.5,
             },
-            "qwen_asr_small": {
-                "model_id": "Qwen/Qwen3-ASR-0.6B",
-                "aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
-                "memory_gb": 1.5,
+            "whisper_mlx_turbo": {
+                "model_id": "mlx-community/whisper-large-v3-turbo-mlx",
+                "engine": "whisper_mlx",
+                "memory_gb": 2.0,
             },
         }
 
-        assert "qwen_asr" in AVAILABLE_MODELS
-        assert "qwen_asr_small" in AVAILABLE_MODELS
-        assert "model_id" in AVAILABLE_MODELS["qwen_asr"]
-        assert "aligner_id" in AVAILABLE_MODELS["qwen_asr"]
-        assert AVAILABLE_MODELS["qwen_asr"]["memory_gb"] == 3.5
+        assert "qwen_asr_mlx_native_small" in AVAILABLE_MODELS
+        assert "model_id" in AVAILABLE_MODELS["qwen_asr_mlx_native_small"]
+        assert "engine" in AVAILABLE_MODELS["qwen_asr_mlx_native_small"]
 
 
 class TestStructuredLogging:
