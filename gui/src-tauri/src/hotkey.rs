@@ -1,13 +1,13 @@
-//! Custom global hotkey listener using rdev.
-//! Supports left/right modifier distinction and single-key hotkeys.
+//! Custom global hotkey listener.
+//! Uses rdev event-based listen() on a background thread.
+//! Falls back gracefully if rdev fails or panics.
 
 use rdev::{listen, Event, EventType, Key};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 /// Parse a hotkey string like "left_ctrl+left_alt" or "capslock" into key list.
-/// Returns None if any token is unrecognized.
 pub fn parse_hotkey(s: &str) -> Option<Vec<Key>> {
     let tokens: Vec<&str> = s.split('+').collect();
     if tokens.is_empty() {
@@ -43,7 +43,7 @@ fn parse_key(token: &str) -> Option<Key> {
         _ if t.starts_with('f') && t.len() <= 3 => {
             let n: u8 = t[1..].parse().ok()?;
             if (1..=12).contains(&n) {
-                Some(Key::F1) // generic fallback - will be handled specially
+                Some(Key::F1)
             } else {
                 None
             }
@@ -84,56 +84,58 @@ fn parse_key(token: &str) -> Option<Key> {
     }
 }
 
-/// Format keys for display
-#[allow(dead_code)]
-pub fn format_keys(keys: &[Key]) -> String {
-    keys.iter()
-        .map(|k| {
-            let s = match k {
-                Key::ControlLeft => "左Ctrl",
-                Key::ControlRight => "右Ctrl",
-                Key::Alt => "Alt",
-                Key::AltGr => "右Alt",
-                Key::ShiftLeft => "左Shift",
-                Key::ShiftRight => "右Shift",
-                Key::CapsLock => "CapsLock",
-                Key::Space => "Space",
-                Key::Return => "Enter",
-                Key::Tab => "Tab",
-                _ => "?",
-            };
-            s.to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
-/// Start background hotkey listener
+/// Start background hotkey listener using rdev.
+/// If rdev fails, the app continues without hotkey support.
 pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
-    std::thread::spawn(move || {
-        let pressed = Arc::new(AtomicBool::new(false));
-        let p = pressed.clone();
-        let a = app.clone();
+    let res = std::thread::Builder::new()
+        .name("hotkey-listener".into())
+        .spawn(move || {
+            if hotkey_keys.is_empty() {
+                return;
+            }
 
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = listen(move |event: Event| match event.event_type {
-                EventType::KeyPress(key)
-                    if hotkey_matches(&hotkey_keys, &key) && !p.swap(true, Ordering::SeqCst) =>
-                {
-                    let _ = a.emit("hotkey-press", ());
+            let pressed = Arc::new(AtomicBool::new(false));
+            let p = pressed.clone();
+            let a = app.clone();
+
+            eprintln!("[hotkey] Starting rdev listener on background thread...");
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = listen(move |event: Event| match event.event_type {
+                    EventType::KeyPress(key)
+                        if hotkey_matches(&hotkey_keys, &key)
+                            && !p.swap(true, Ordering::SeqCst) =>
+                    {
+                        let _ = a.emit("hotkey-press", ());
+                    }
+                    EventType::KeyRelease(key)
+                        if hotkey_matches(&hotkey_keys, &key)
+                            && p.swap(false, Ordering::SeqCst) =>
+                    {
+                        let _ = a.emit("hotkey-release", ());
+                    }
+                    _ => {}
+                });
+            }));
+
+            match result {
+                Ok(_) => eprintln!("[hotkey] rdev listener exited"),
+                Err(e) => {
+                    let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                        *s
+                    } else if let Some(s) = e.downcast_ref::<String>() {
+                        s.as_str()
+                    } else {
+                        "unknown error"
+                    };
+                    eprintln!("[hotkey] rdev listener failed: {}", msg);
                 }
-                EventType::KeyRelease(key)
-                    if hotkey_matches(&hotkey_keys, &key) && p.swap(false, Ordering::SeqCst) =>
-                {
-                    let _ = a.emit("hotkey-release", ());
-                }
-                _ => {}
-            });
-        })) {
-            Ok(_) => eprintln!("[hotkey] Listener stopped normally"),
-            Err(_) => eprintln!("[hotkey] Listener thread panicked (accessibility permissions?)"),
-        }
-    });
+            }
+        });
+
+    if let Err(e) = res {
+        eprintln!("[hotkey] Failed to spawn listener thread: {}", e);
+    }
 }
 
 fn hotkey_matches(hotkey: &[Key], event_key: &Key) -> bool {
@@ -143,7 +145,6 @@ fn hotkey_matches(hotkey: &[Key], event_key: &Key) -> bool {
     if hotkey.len() == 1 {
         return keys_cmp(&hotkey[0], event_key);
     }
-    // Multi-key: trigger on any match (all-keys-pressed tracking would be complex)
     hotkey.iter().any(|k| keys_cmp(k, event_key))
 }
 
