@@ -64,3 +64,35 @@ pub async fn switch_stt_model(name: &str) -> Result<String, String> {
     let data: Value = resp.json().await.map_err(|e| e.to_string())?;
     Ok(data["message"].as_str().unwrap_or("").to_string())
 }
+
+pub async fn get_llm_models() -> Result<Vec<ModelInfo>, String> {
+    let client = Client::new();
+    let resp = client
+        .get("http://localhost:6545/models")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let models: Vec<Value> = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(models
+        .iter()
+        .map(|m| ModelInfo {
+            name: m["name"].as_str().unwrap_or("").to_string(),
+            is_loaded: m["is_loaded"].as_bool().unwrap_or(false),
+        })
+        .collect())
+}
+
+pub async fn switch_llm_model(name: &str) -> Result<String, String> {
+    let client = Client::new();
+    let body = serde_json::json!({"model_name": name});
+    let resp = client
+        .post("http://localhost:6545/models/select")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let data: Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(data["message"].as_str().unwrap_or("").to_string())
+}

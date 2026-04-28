@@ -1,24 +1,22 @@
-// Audio recording module - placeholder
-// macOS audio capture via cpal will be implemented here
+// Audio recording stub
+// Audio capture is handled by the web frontend via MediaRecorder API.
+// The Rust backend receives raw PCM bytes via IPC and sends them to STT server.
+// For direct CoreAudio capture (future): use coreaudio-rs crate.
 
-/// Placeholder for audio recording functionality.
-/// Will use cpal to capture system/microphone audio on macOS.
-pub struct AudioRecorder {
-    // TODO: cpal stream
-}
+pub struct AudioRecorder;
 
 impl AudioRecorder {
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 
     pub fn start(&mut self) -> Result<(), String> {
-        // TODO: Start recording via cpal
+        // Frontend handles audio capture via MediaRecorder
         Ok(())
     }
 
-    pub fn stop(&mut self) -> Result<Vec<u8>, String> {
-        // TODO: Stop recording, return WAV bytes
-        Ok(Vec::new())
+    pub fn stop(&mut self) -> Vec<u8> {
+        // Audio data comes via IPC from frontend
+        Vec::new()
     }
 }
