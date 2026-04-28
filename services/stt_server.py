@@ -218,6 +218,23 @@ class STTEngine:
             "description": "MLX Whisper Small (最快，Apple Silicon)",
             "requires_apple_silicon": True,
         },
+        # ── MLX 原生模型 (mlx-audio，真正 MLX 原生) ──
+        "qwen_asr_mlx_native": {
+            "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+            "engine": "qwen_asr_mlx_native",
+            "aligner_id": None,
+            "memory_gb": 1.0,
+            "description": "Qwen3-ASR-1.7B MLX 8bit (MLX原生，推荐)",
+            "requires_apple_silicon": True,
+        },
+        "qwen_asr_mlx_native_small": {
+            "model_id": "mlx-community/Qwen3-ASR-0.6B-4bit",
+            "engine": "qwen_asr_mlx_native",
+            "aligner_id": None,
+            "memory_gb": 0.5,
+            "description": "Qwen3-ASR-0.6B MLX 4bit (MLX原生，更快)",
+            "requires_apple_silicon": True,
+        },
         # ── Whisper.cpp 模型 (C++ 实现) ──
         "whisper_cpp_base": {
             "model_id": "whisper_cpp_base",
