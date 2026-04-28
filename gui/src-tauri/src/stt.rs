@@ -138,7 +138,13 @@ impl SttClient {
                                 }
                             }
                         }
-                        "done" => break,
+                        "done" => {
+                            return if final_text.is_empty() {
+                                Err("No speech detected".to_string())
+                            } else {
+                                Ok(final_text)
+                            };
+                        }
                         "error" => {
                             return Err(data["message"]
                                 .as_str()

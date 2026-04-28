@@ -89,7 +89,11 @@ impl AudioRecorder {
             sample_format,
         );
 
-        let stream_config: cpal::StreamConfig = config.into();
+        let stream_config = cpal::StreamConfig {
+            channels: 1,
+            sample_rate: cpal::SampleRate(16000),
+            buffer_size: cpal::BufferSize::Default,
+        };
         let peak = self.peak_level.clone();
         let recording = self.is_recording.clone();
         let samples = self.samples.clone();
@@ -179,9 +183,15 @@ impl AudioRecorder {
         };
 
         if samples.is_empty() {
+            eprintln!("[audio] No samples recorded");
             return Ok(Vec::new());
         }
 
+        eprintln!(
+            "[audio] Recorded {} samples ({:.2}s at 16kHz)",
+            samples.len(),
+            samples.len() as f64 / 16000.0
+        );
         Ok(encode_wav(&samples, 16000))
     }
 
