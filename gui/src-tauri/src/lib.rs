@@ -21,15 +21,35 @@ async fn set_server_host(state: State<'_, AppState>, host: String) -> Result<(),
 
 #[tauri::command]
 async fn start_recording(state: State<'_, AppState>) -> Result<(), String> {
+    let device = {
+        let cfg = state.config.lock().map_err(|e| e.to_string())?;
+        cfg.audio.device.clone()
+    };
     let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
-    recorder.start()
+    recorder.start(device)
 }
 
 #[tauri::command]
 async fn stop_recording(state: State<'_, AppState>) -> Result<Vec<u8>, String> {
     let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
-    Ok(recorder.stop())
+    recorder.stop()
 }
+
+// ── Audio device commands ──
+
+#[tauri::command]
+async fn get_audio_devices(state: State<'_, AppState>) -> Result<Vec<audio::AudioDeviceInfo>, String> {
+    let recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+    Ok(recorder.list_devices())
+}
+
+#[tauri::command]
+async fn get_audio_level(state: State<'_, AppState>) -> Result<f32, String> {
+    let recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+    Ok(recorder.get_level())
+}
+
+// ── Transcription ──
 
 #[tauri::command]
 async fn transcribe(
@@ -172,6 +192,8 @@ pub fn run() {
             set_server_host,
             start_recording,
             stop_recording,
+            get_audio_devices,
+            get_audio_level,
             transcribe,
             get_models,
             switch_model,
