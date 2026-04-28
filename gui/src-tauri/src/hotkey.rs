@@ -1,8 +1,7 @@
-//! Custom global hotkey listener.
-//! Uses rdev event-based listen() on a background thread.
-//! Falls back gracefully if rdev fails or panics.
+//! Custom global hotkey listener using rdev.
+//! Supports left/right modifier distinction and multi-key chords.
 
-use rdev::{listen, Event, EventType, Key};
+use rdev::{listen, Event, Key};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
@@ -50,117 +49,116 @@ fn parse_key(token: &str) -> Option<Key> {
         }
         _ if t.len() == 1 => {
             let c = t.chars().next()?;
-            match c {
-                'a' => Some(Key::KeyA),
-                'b' => Some(Key::KeyB),
-                'c' => Some(Key::KeyC),
-                'd' => Some(Key::KeyD),
-                'e' => Some(Key::KeyE),
-                'f' => Some(Key::KeyF),
-                'g' => Some(Key::KeyG),
-                'h' => Some(Key::KeyH),
-                'i' => Some(Key::KeyI),
-                'j' => Some(Key::KeyJ),
-                'k' => Some(Key::KeyK),
-                'l' => Some(Key::KeyL),
-                'm' => Some(Key::KeyM),
-                'n' => Some(Key::KeyN),
-                'o' => Some(Key::KeyO),
-                'p' => Some(Key::KeyP),
-                'q' => Some(Key::KeyQ),
-                'r' => Some(Key::KeyR),
-                's' => Some(Key::KeyS),
-                't' => Some(Key::KeyT),
-                'u' => Some(Key::KeyU),
-                'v' => Some(Key::KeyV),
-                'w' => Some(Key::KeyW),
-                'x' => Some(Key::KeyX),
-                'y' => Some(Key::KeyY),
-                'z' => Some(Key::KeyZ),
-                _ => None,
-            }
+            // Map a-z to their Key variants
+            let keys = [
+                Key::KeyA,
+                Key::KeyB,
+                Key::KeyC,
+                Key::KeyD,
+                Key::KeyE,
+                Key::KeyF,
+                Key::KeyG,
+                Key::KeyH,
+                Key::KeyI,
+                Key::KeyJ,
+                Key::KeyK,
+                Key::KeyL,
+                Key::KeyM,
+                Key::KeyN,
+                Key::KeyO,
+                Key::KeyP,
+                Key::KeyQ,
+                Key::KeyR,
+                Key::KeyS,
+                Key::KeyT,
+                Key::KeyU,
+                Key::KeyV,
+                Key::KeyW,
+                Key::KeyX,
+                Key::KeyY,
+                Key::KeyZ,
+            ];
+            let idx = (c as u8).wrapping_sub(b'a') as usize;
+            keys.get(idx).copied()
         }
         _ => None,
     }
 }
 
 /// Start background hotkey listener using rdev.
-/// If rdev fails, the app continues without hotkey support.
 pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
-    let res = std::thread::Builder::new()
+    let _ = std::thread::Builder::new()
         .name("hotkey-listener".into())
         .spawn(move || {
             if hotkey_keys.is_empty() {
                 return;
             }
 
-            let pressed = Arc::new(AtomicBool::new(false));
-            let p = pressed.clone();
+            let is_pressed = Arc::new(AtomicBool::new(false));
+            let was_activated = Arc::new(AtomicBool::new(false));
+            let p = is_pressed.clone();
+            let act = was_activated.clone();
             let a = app.clone();
-
-            eprintln!("[hotkey] Starting rdev listener on background thread...");
+            let keys = hotkey_keys.clone();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let _ = listen(move |event: Event| match event.event_type {
-                    EventType::KeyPress(key)
-                        if hotkey_matches(&hotkey_keys, &key)
-                            && !p.swap(true, Ordering::SeqCst) =>
-                    {
-                        let _ = a.emit("hotkey-press", ());
+                    rdev::EventType::KeyPress(key) if key_match(&keys, &key) => {
+                        if keys.len() == 1 {
+                            if !p.swap(true, Ordering::SeqCst) {
+                                let _ = a.emit("hotkey-press", ());
+                            }
+                        } else if !act.swap(true, Ordering::SeqCst) {
+                            p.store(true, Ordering::SeqCst);
+                            let _ = a.emit("hotkey-press", ());
+                        }
                     }
-                    EventType::KeyRelease(key)
-                        if hotkey_matches(&hotkey_keys, &key)
-                            && p.swap(false, Ordering::SeqCst) =>
-                    {
-                        let _ = a.emit("hotkey-release", ());
+                    rdev::EventType::KeyRelease(key) if key_match(&keys, &key) => {
+                        if keys.len() == 1 {
+                            if p.swap(false, Ordering::SeqCst) {
+                                let _ = a.emit("hotkey-release", ());
+                            }
+                        } else if act.swap(false, Ordering::SeqCst) {
+                            p.store(false, Ordering::SeqCst);
+                            let _ = a.emit("hotkey-release", ());
+                        }
                     }
                     _ => {}
                 });
             }));
 
-            match result {
-                Ok(_) => eprintln!("[hotkey] rdev listener exited"),
-                Err(e) => {
-                    let msg = if let Some(s) = e.downcast_ref::<&str>() {
-                        *s
-                    } else if let Some(s) = e.downcast_ref::<String>() {
-                        s.as_str()
-                    } else {
-                        "unknown error"
-                    };
-                    eprintln!("[hotkey] rdev listener failed: {}", msg);
-                }
+            if let Err(e) = result {
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    s
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.as_str()
+                } else {
+                    "unknown error"
+                };
+                eprintln!("[hotkey] rdev listener failed: {}", msg);
             }
         });
-
-    if let Err(e) = res {
-        eprintln!("[hotkey] Failed to spawn listener thread: {}", e);
-    }
 }
 
-fn hotkey_matches(hotkey: &[Key], event_key: &Key) -> bool {
-    if hotkey.is_empty() {
-        return false;
-    }
-    if hotkey.len() == 1 {
-        return keys_cmp(&hotkey[0], event_key);
-    }
-    hotkey.iter().any(|k| keys_cmp(k, event_key))
-}
-
-fn keys_cmp(expected: &Key, actual: &Key) -> bool {
+/// Match a single key against the hotkey combo, respecting left/right modifiers.
+fn key_match(hotkey: &[Key], event_key: &Key) -> bool {
     use Key::*;
-    match (expected, actual) {
-        // If user configured a specific side (left_ctrl), only match that side
-        (ControlLeft, ControlLeft) => true,
-        (ControlRight, ControlRight) => true,
-        // If user configured generic (ctrl), match both sides
-        // (generic ctrl maps to ControlLeft in parse_key)
-        (ControlLeft, ControlRight) | (ControlRight, ControlLeft) => false,
-        (ShiftLeft, ShiftLeft) => true,
-        (ShiftRight, ShiftRight) => true,
-        (ShiftLeft, ShiftRight) | (ShiftRight, ShiftLeft) => false,
-        (Alt, AltGr) | (AltGr, Alt) => false,
-        _ => expected == actual,
+    for hk in hotkey {
+        let matched = match (hk, event_key) {
+            (ControlLeft, ControlLeft) => true,
+            (ControlRight, ControlRight) => true,
+            (ControlLeft, _) | (ControlRight, _) => false,
+            (ShiftLeft, ShiftLeft) => true,
+            (ShiftRight, ShiftRight) => true,
+            (ShiftLeft, _) | (ShiftRight, _) => false,
+            (Alt, Alt) => true,
+            (AltGr, AltGr) => true,
+            (Alt, AltGr) | (AltGr, Alt) => false,
+            _ => hk == event_key,
+        };
+        if matched {
+            return true;
+        }
     }
+    false
 }

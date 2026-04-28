@@ -256,8 +256,6 @@ const hotkeyMsg = ref("");
 const defaultHotkey = "left_ctrl+left_alt";
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let levelInterval: ReturnType<typeof setInterval> | null = null;
-let mediaRecorder: MediaRecorder | null = null;
-let audioChunks: Blob[] = [];
 let toastId = 0;
 
 // ── Computed ──
@@ -294,82 +292,18 @@ function logMsg(msg: string, type: 'info'|'ok'|'err'|'warn' = 'info') {
 }
 
 function clearLog() { log.value = []; }
-
-// ── WAV Encoder ──
-function encodeWav(samples: Float32Array, sr: number): Uint8Array {
-  const nc = 1, bps = 16;
-  const br = sr * nc * (bps/8), ba = nc * (bps/8);
-  const ds = samples.length * (bps/8);
-  const buf = new ArrayBuffer(44 + ds);
-  const v = new DataView(buf);
-  const w = (o: number, s: string) => { for (let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
-  w(0,"RIFF"); v.setUint32(4,36+ds,true); w(8,"WAVE");
-  w(12,"fmt "); v.setUint32(16,16,true);
-  v.setUint16(20,1,true); v.setUint16(22,nc,true);
-  v.setUint32(24,sr,true); v.setUint32(28,br,true);
-  v.setUint16(32,ba,true); v.setUint16(34,bps,true);
-  w(36,"data"); v.setUint32(40,ds,true);
-  let o = 44;
-  for (const s of samples) {
-    const c = Math.max(-1,Math.min(1,s));
-    v.setInt16(o,c<0?c*0x8000:c*0x7FFF,true);
-    o += 2;
-  }
-  return new Uint8Array(buf);
-}
-
 // ── Recording ──
 async function startRecord() {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioChunks = [];
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
-    mediaRecorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType });
-      try {
-        const ab = await blob.arrayBuffer();
-        const ctx = new OfflineAudioContext(1, 16000, 16000);
-        const abuf = await ctx.decodeAudioData(ab);
-        const orig = abuf.getChannelData(0);
-        const ratio = orig.length / 16000;
-        const resampled = new Float32Array(16000);
-        for (let i = 0; i < 16000; i++) resampled[i] = orig[Math.min(Math.floor(i*ratio),orig.length-1)];
-        const wav = encodeWav(resampled, 16000);
-        if (wav.length > 44 + 320) {
-          logMsg("正在识别...", "info");
-          loading.value = true;
-          const text = await invoke<string>("transcribe_ws", { audioData: Array.from(wav) });
-          loading.value = false;
-          if (text) {
-            result.value = text;
-            logMsg(`识别完成: "${text.slice(0,40)}${text.length>40?'...':''}"`, "ok");
-            toast("识别完成 ✅", "ok");
-            // Auto-input if enabled
-            if (autoInputEnabled.value) {
-              logMsg("自动输入已启用，正在输入到窗口...", "info");
-              try {
-                await invoke("auto_input", { text });
-                logMsg("自动输入完成", "ok");
-              } catch (e) {
-                logMsg(`自动输入失败: ${e}`, "err");
-              }
-            }
-          }
-        }
-      } catch (e) { logMsg(`音频解码失败: ${e}`, "err"); }
-    };
+    loading.value = false;
+    result.value = "";
+    await invoke("start_recording");
     recording.value = true;
     elapsedMs.value = 0;
     timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
-    // Poll audio level from backend
     levelInterval = setInterval(async () => {
-      try {
-        audioLevel.value = await invoke<number>("get_audio_level");
-      } catch { /* backend not available */ }
+      try { audioLevel.value = await invoke<number>("get_audio_level"); } catch {}
     }, 100);
-    mediaRecorder.start();
     logMsg("开始录音", "info");
   } catch (e) {
     logMsg(`录音启动失败: ${e}`, "err");
@@ -378,13 +312,33 @@ async function startRecord() {
 }
 
 async function stopRecord() {
-  if (!recording.value || !mediaRecorder) return;
+  if (!recording.value) return;
   recording.value = false;
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
   audioLevel.value = 0;
-  if (mediaRecorder.state !== "inactive") mediaRecorder.stop();
-  logMsg("录音结束", "info");
+
+  logMsg("正在识别...", "info");
+  loading.value = true;
+
+  try {
+    const wav = await invoke<number[]>("stop_recording");
+    const text = await invoke<string>("transcribe_ws", { audioData: wav });
+    loading.value = false;
+    if (text) {
+      result.value = text;
+      logMsg(`识别完成: "${text.slice(0,40)}${text.length>40?'...':''}"`, "ok");
+      toast("识别完成 ✅", "ok");
+      if (autoInputEnabled.value) {
+        logMsg("自动输入已启用，正在输入到窗口...", "info");
+        try { await invoke("auto_input", { text }); logMsg("自动输入完成", "ok"); }
+        catch (e) { logMsg(`自动输入失败: ${e}`, "err"); }
+      }
+    }
+  } catch (e) {
+    loading.value = false;
+    logMsg(`转录失败: ${e}`, "err");
+  }
 }
 
 // ── Config ──
@@ -693,6 +647,7 @@ function clearResult() {
 // ── Lifecycle ──
 onMounted(async () => {
   logMsg("Voice Input 客户端启动", "info");
+  toast("Voice Input 已启动 🎙️", "info");
   await loadConfig();
   await loadAutostart();
   await updateServer();
