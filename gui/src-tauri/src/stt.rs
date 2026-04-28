@@ -91,8 +91,15 @@ impl SttClient {
             .await
             .map_err(|e| format!("WebSocket send config failed: {}", e))?;
 
+        // Strip WAV header if present (WebSocket expects raw PCM)
+        let pcm_data = if audio_data.len() > 44 && &audio_data[..4] == b"RIFF" {
+            &audio_data[44..]
+        } else {
+            &audio_data[..]
+        };
+
         // Send audio data in chunks (8KB chunks)
-        for chunk in audio_data.chunks(8192) {
+        for chunk in pcm_data.chunks(8192) {
             SinkExt::send(&mut ws, Message::Binary(chunk.to_vec()))
                 .await
                 .map_err(|e| format!("WebSocket send audio failed: {}", e))?;

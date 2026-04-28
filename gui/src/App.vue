@@ -187,7 +187,7 @@
     </div>
 
     <div class="footer">
-      <span>快捷键: ⌥⌘R (mac) / ⌃⌥R (win)</span>
+      <span>快捷键: {{ displayHotkey }}</span>
       <span class="version">{{ version }}</span>
     </div>
   </div>
@@ -242,6 +242,9 @@ const startMinimized = ref(false);
 
 const elapsedMs = ref(0);
 const log = ref<LogEntry[]>([]);
+const displayHotkey = computed(() => {
+  return hotkeyStr.value || defaultHotkey;
+});
 const toasts = ref<Toast[]>([]);
 const logBox = ref<HTMLElement | null>(null);
 

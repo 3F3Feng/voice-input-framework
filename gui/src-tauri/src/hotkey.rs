@@ -58,8 +58,5 @@ pub fn update(app: &tauri::AppHandle, new_shortcut: &str) -> Result<(), String> 
 
 /// Get the default shortcut for the current platform
 pub fn default_shortcut() -> &'static str {
-    #[cfg(target_os = "macos")]
-    { "CmdOrCtrl+Option+R" }
-    #[cfg(not(target_os = "macos"))]
-    { "Alt+Ctrl+R" }
+    "left_ctrl"
 }

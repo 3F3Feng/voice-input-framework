@@ -94,8 +94,8 @@ impl Default for VoiceInputConfig {
                 port: 6544,
             },
             hotkey: HotkeyConfig {
-                key: "left_ctrl+left_alt".into(),
-                distinguish_left_right: true,
+                key: "left_ctrl".into(),
+                distinguish_left_right: false,
             },
             ui: UiConfig {
                 start_minimized: false,
@@ -197,7 +197,7 @@ impl VoiceInputConfig {
                     .hotkey
                     .as_ref()
                     .and_then(|h| h.key.clone())
-                    .unwrap_or_else(|| "left_ctrl+left_alt".into()),
+                    .unwrap_or_else(|| "left_ctrl".into()),
                 distinguish_left_right: old
                     .hotkey
                     .as_ref()
