@@ -1,6 +1,7 @@
 mod audio;
 mod config;
 mod hotkey;
+mod indicator;
 mod input;
 mod stt;
 mod tray;
@@ -22,17 +23,20 @@ async fn set_server_host(state: State<'_, AppState>, host: String) -> Result<(),
 }
 
 #[tauri::command]
-async fn start_recording(state: State<'_, AppState>) -> Result<(), String> {
+async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let device = {
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
         cfg.audio.device.clone()
     };
     let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
-    recorder.start(device)
+    recorder.start(device)?;
+    let _ = indicator::show(&app, None);
+    Ok(())
 }
 
 #[tauri::command]
-async fn stop_recording(state: State<'_, AppState>) -> Result<Vec<u8>, String> {
+async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Vec<u8>, String> {
+    let _ = indicator::hide(&app);
     let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
     recorder.stop()
 }
