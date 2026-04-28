@@ -1,6 +1,7 @@
 mod audio;
 mod config;
 mod hotkey;
+mod input;
 mod stt;
 
 use std::sync::Mutex;
@@ -185,6 +186,11 @@ async fn set_llm_enabled(state: State<'_, AppState>, enabled: bool) -> Result<()
     client.set_llm_enabled(enabled).await
 }
 
+#[tauri::command]
+async fn auto_input(text: String) -> Result<(), String> {
+    input::type_text(&text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -220,6 +226,7 @@ pub fn run() {
             save_llm_prompt,
             get_llm_enabled,
             set_llm_enabled,
+            auto_input,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

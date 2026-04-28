@@ -36,6 +36,7 @@
       <div class="result-header">
         <span>识别结果</span>
         <button class="icon-btn" @click="copyResult" title="复制">📋</button>
+        <button class="icon-btn" @click="doAutoInput" title="输入到窗口">⌨️</button>
         <button class="icon-btn" @click="clearResult" title="清空">🗑️</button>
       </div>
       <p class="result-text">{{ result }}</p>
@@ -101,6 +102,18 @@
           <span v-if="promptLoading" class="spinner"></span>
         </div>
         <div v-if="promptStatus" :class="['status-msg', promptStatusType]">{{ promptStatus }}</div>
+      </details>
+
+      <details>
+        <summary>输入设置</summary>
+        <div class="setting-row">
+          <label>自动输入到窗口</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="autoInputEnabled" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-tip">识别完成后自动将结果输入当前活跃窗口</div>
       </details>
 
       <details>
@@ -176,6 +189,7 @@ const serverPort = ref(6544);
 const llmEnabled = ref(true);
 const promptText = ref("");
 const configMsg = ref("");
+const autoInputEnabled = ref(false);
 
 const elapsedMs = ref(0);
 const log = ref<LogEntry[]>([]);
@@ -273,6 +287,16 @@ async function startRecord() {
             result.value = text;
             logMsg(`识别完成: "${text.slice(0,40)}${text.length>40?'...':''}"`, "ok");
             toast("识别完成 ✅", "ok");
+            // Auto-input if enabled
+            if (autoInputEnabled.value) {
+              logMsg("自动输入已启用，正在输入到窗口...", "info");
+              try {
+                await invoke("auto_input", { text });
+                logMsg("自动输入完成", "ok");
+              } catch (e) {
+                logMsg(`自动输入失败: ${e}`, "err");
+              }
+            }
           }
         }
       } catch (e) { logMsg(`音频解码失败: ${e}`, "err"); }
@@ -482,6 +506,20 @@ function copyResult() {
     logMsg("结果已复制到剪贴板", "ok");
   }
 }
+
+async function doAutoInput() {
+  if (!result.value) return;
+  logMsg(`正在输入: "${result.value.slice(0,40)}${result.value.length>40?'...':''}"`, "info");
+  try {
+    await invoke("auto_input", { text: result.value });
+    toast("已输入到窗口 ✅", "ok");
+    logMsg("自动输入完成", "ok");
+  } catch (e) {
+    logMsg(`自动输入失败: ${e}`, "err");
+    toast("输入失败（请确认目标窗口处于激活状态）", "err");
+  }
+}
+
 function clearResult() {
   result.value = "";
   logMsg("结果已清空", "info");
@@ -634,6 +672,7 @@ h1 { font-size: 1.3rem; }
 .status-msg { font-size: 0.7rem; padding: 4px 8px; border-radius: 6px; margin-bottom: 4px; }
 .status-msg.ok { color: var(--green); }
 .status-msg.err { color: var(--red); }
+.setting-tip { font-size: 0.65rem; color: var(--muted); padding: 4px 0; }
 
 .textarea-row { margin-bottom: 6px; }
 .textarea-row textarea {
