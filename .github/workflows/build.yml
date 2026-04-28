@@ -1,5 +1,4 @@
 name: Build Tauri Client
-
 on:
   push:
     branches: [dev/llm-postprocessing-v2]
@@ -34,17 +33,17 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             bundle: msi
-
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-
     defaults:
       run:
         working-directory: gui
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -89,12 +88,27 @@ jobs:
           includeDebug: false
           includeRelease: false
 
+      - name: List build output (Windows debug)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "=== Searching for MSI ==="
+          Get-ChildItem -Path gui\src-tauri\target -Recurse -Filter *.msi -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+          Write-Host "=== Searching for EXE (bundle) ==="
+          Get-ChildItem -Path gui\src-tauri\target -Recurse -Filter *.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'bundle' } | ForEach-Object { Write-Host $_.FullName }
+          Write-Host "=== Bundle directory listing ==="
+          Get-ChildItem -Path gui\src-tauri\target -Recurse -Directory -Filter bundle -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host $_.FullName
+            Get-ChildItem $_.FullName -Recurse | ForEach-Object { Write-Host "  $_" }
+          }
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: voice-input-${{ matrix.target }}
           path: |
-            gui/src-tauri/target/*/release/bundle/**/*
+            gui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*
             gui/src-tauri/target/release/bundle/**/*
+            gui/src-tauri/target/*/release/bundle/**/*
           if-no-files-found: warn
           retention-days: 30
