@@ -3,6 +3,7 @@ Voice Input Framework - 服务端配置
 """
 
 import os
+from shared.model_registry import get_default_model
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -35,7 +36,7 @@ class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 6543
     debug: bool = False
-    default_model: str = "qwen_asr_mlx_native_small"
+    default_model: str = get_default_model()
     models: dict[str, ModelConfig] = field(default_factory=dict)
     models_dir: str = "./models"
     auto_load_default: bool = True

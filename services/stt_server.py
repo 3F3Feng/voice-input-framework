@@ -20,13 +20,11 @@ from contextvars import ContextVar
 
 import httpx
 
-# Apple Silicon 检测
-IS_APPLE_SILICON = platform.machine() == "arm64" and platform.system() == "Darwin"
-
 # 添加项目路径
 project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
+from shared.model_registry import MODELS_CONFIG, get_default_model, get_apple_silicon_only_models, IS_APPLE_SILICON
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Request
@@ -38,7 +36,7 @@ STT_HOST = os.getenv("VIF_STT_HOST", "0.0.0.0")
 STT_PORT = int(os.getenv("VIF_STT_PORT", "6544"))
 STT_MODEL = os.getenv(
     "VIF_STT_MODEL",
-    "qwen_asr_mlx_native_small" if IS_APPLE_SILICON else "qwen_asr",
+    get_default_model(),
 )
 LOG_LEVEL = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
 REQUEST_TIMEOUT = float(os.getenv("VIF_REQUEST_TIMEOUT", "300.0"))
@@ -184,85 +182,10 @@ async def call_llm_server(text: str, request_id: str = "") -> Tuple[str, float]:
 # ============== STT Engine ==============
 class STTEngine:
     """STT 引擎管理器"""
-    AVAILABLE_MODELS = {
-        # ── MLX Whisper 模型 (Apple Silicon 优化) ──
-        "whisper_mlx": {
-            "model_id": "mlx-community/whisper-large-v3-mlx",
-            "engine": "whisper_mlx",
-            "aligner_id": None,
-            "memory_gb": 3.0,
-            "description": "MLX Whisper Large V3 (Apple Silicon)",
-            "requires_apple_silicon": True,
-        },
-        "whisper_mlx_turbo": {
-            "model_id": "mlx-community/whisper-large-v3-turbo-mlx",
-            "engine": "whisper_mlx",
-            "aligner_id": None,
-            "memory_gb": 2.0,
-            "description": "MLX Whisper Large V3 Turbo (快速+准确，Apple Silicon)",
-            "requires_apple_silicon": True,
-        },
-        "whisper_mlx_medium": {
-            "model_id": "mlx-community/whisper-medium-mlx",
-            "engine": "whisper_mlx",
-            "aligner_id": None,
-            "memory_gb": 1.5,
-            "description": "MLX Whisper Medium (Apple Silicon)",
-            "requires_apple_silicon": True,
-        },
-        "whisper_mlx_small": {
-            "model_id": "mlx-community/whisper-small-mlx",
-            "engine": "whisper_mlx",
-            "aligner_id": None,
-            "memory_gb": 0.5,
-            "description": "MLX Whisper Small (最快，Apple Silicon)",
-            "requires_apple_silicon": True,
-        },
-        # ── MLX 原生模型 (mlx-audio，真正 MLX 原生) ──
-        "qwen_asr_mlx_native": {
-            "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
-            "engine": "qwen_asr_mlx_native",
-            "aligner_id": None,
-            "memory_gb": 1.0,
-            "description": "Qwen3-ASR-1.7B MLX 8bit (MLX原生，推荐)",
-            "requires_apple_silicon": True,
-        },
-        "qwen_asr_mlx_native_small": {
-            "model_id": "mlx-community/Qwen3-ASR-0.6B-4bit",
-            "engine": "qwen_asr_mlx_native",
-            "aligner_id": None,
-            "memory_gb": 0.5,
-            "description": "Qwen3-ASR-0.6B MLX 4bit (MLX原生，更快)",
-            "requires_apple_silicon": True,
-        },
-        # ── Whisper.cpp 模型 (C++ 实现) ──
-        "whisper_cpp_base": {
-            "model_id": "whisper_cpp_base",
-            "engine": "whisper_cpp",
-            "whisper_model": "whisper-v3-base",
-            "aligner_id": None,
-            "memory_gb": 1,
-            "description": "Whisper V3 Base via whisper.cpp (Metal GPU, fast)",
-        },
-        "whisper_cpp_large": {
-            "model_id": "whisper_cpp_large",
-            "engine": "whisper_cpp",
-            "whisper_model": "whisper-v3-large",
-            "aligner_id": None,
-            "memory_gb": 3,
-            "description": "Whisper V3 Large via whisper.cpp (Metal GPU, accurate)",
-        },
-        # ── Whisper Transformers 模型 (备选) ──
-        "whisper_turbo": {
-            "model_id": "openai/whisper-large-v3-turbo",
-            "engine": "whisper_turbo",
-            "aligner_id": None,
-            "memory_gb": 3,
-            "description": "Whisper Large V3 Turbo (transformers, fast)",
-        },
-    }
+    AVAILABLE_MODELS = MODELS_CONFIG
 
-    def __init__(self, default_model: str = "qwen_asr_mlx_native_small" if IS_APPLE_SILICON else "qwen_asr"):
+
+    def __init__(self, default_model: str = get_default_model()):
         self.default_model = default_model
         self.current_model_name = default_model
         self._model = None

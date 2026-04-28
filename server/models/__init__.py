@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Voice Input Framework - 服务端模型模块
 
-包含所有 STT 模型的实现。
+STT 模型引擎实现和统一注册。
+模型元数据从 shared/model_registry.py 加载（单一来源）。
 """
 
 from server.models.base import BaseSTTEngine, STTEngineError
@@ -9,25 +10,33 @@ from server.models.whisper import WhisperEngine
 from server.models.whisper_mlx import WhisperMLXEngine
 from server.models.whisper_cpp import WhisperCppEngine
 from server.models.qwen3_asr_mlx_native import Qwen3ASRMLXNativeEngine
+from shared.model_registry import MODELS_CONFIG
 
-# 可用模型注册表 (MLX 原生优先，Apple Silicon 推荐)
-AVAILABLE_MODELS = {
-    # ── MLX 原生模型 (Apple Silicon 优化，推荐) ──
-    "qwen_asr_mlx_native": Qwen3ASRMLXNativeEngine,  # Qwen3-ASR-1.7B MLX 8bit (⭐ 推荐)
-    "qwen_asr_mlx_native_small": Qwen3ASRMLXNativeEngine,  # Qwen3-ASR-0.6B MLX 4bit
-    # ── MLX Whisper 模型 (Apple Silicon) ──
-    "whisper_mlx": WhisperMLXEngine,  # MLX Whisper Large V3
-    "whisper_mlx_turbo": WhisperMLXEngine,  # MLX Whisper Large V3 Turbo (快速+准确)
-    "whisper_mlx_medium": WhisperMLXEngine,  # MLX Whisper Medium
-    "whisper_mlx_small": WhisperMLXEngine,  # MLX Whisper Small (最快)
-    # ── Transformers 模型 (通用，备选) ──
-    "whisper": WhisperEngine,  # Whisper Large V3
-    "whisper-small": WhisperEngine,  # Whisper Small
-    "whisper_turbo": WhisperEngine,  # Whisper Large V3 Turbo
-    # ── Whisper.cpp 模型 (C++ 实现) ──
-    "whisper_cpp": WhisperCppEngine,  # Whisper.cpp V3 Large
-    "whisper_cpp_base": WhisperCppEngine,  # Whisper.cpp V3 Base
+# 引擎类映射：engine_type → EngineClass
+# 与 MODELS_CONFIG 中的 engine 字段对应
+_ENGINE_CLASSES = {
+    "qwen_asr_mlx_native": Qwen3ASRMLXNativeEngine,
+    "whisper_mlx": WhisperMLXEngine,
+    "whisper_cpp": WhisperCppEngine,
+    "whisper_turbo": WhisperEngine,
+    "whisper": WhisperEngine,
+    "whisper-small": WhisperEngine,
 }
+
+# 可用模型注册表：名称 → EngineClass
+# 从 shared/model_registry.py 自动构建
+AVAILABLE_MODELS: dict = {}
+model_names = list(MODELS_CONFIG.keys())
+
+for name, config in MODELS_CONFIG.items():
+    engine_type = config.get("engine")
+    if engine_type in _ENGINE_CLASSES:
+        AVAILABLE_MODELS[name] = _ENGINE_CLASSES[engine_type]
+    else:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"No engine class registered for engine_type '{engine_type}' (model '{name}')"
+        )
 
 __all__ = [
     "BaseSTTEngine",
@@ -37,4 +46,5 @@ __all__ = [
     "WhisperCppEngine",
     "Qwen3ASRMLXNativeEngine",
     "AVAILABLE_MODELS",
+    "MODELS_CONFIG",
 ]
