@@ -1,0 +1,22 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.0
+    hooks:
+      - id: ruff
+        name: ruff (Python lint)
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^(client/|server/|services/)
+      - id: ruff-format
+        name: ruff format (Python fmt)
+        files: ^(client/|server/|services/)
+
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: clippy
+        name: clippy (Rust lint)
+        args: [--all-targets, --all-features, --, -D, warnings]
+        files: ^gui/src-tauri/
+      - id: fmt
+        name: rustfmt (Rust fmt)
+        files: ^gui/src-tauri/

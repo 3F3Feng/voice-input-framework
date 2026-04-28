@@ -1,0 +1,5 @@
+#!/bin/bash
+# Git pre-commit hook — runs local checks
+# Installed via: git config core.hooksPath .githooks
+
+exec "$(git rev-parse --show-toplevel)/scripts/pre-commit.sh"
