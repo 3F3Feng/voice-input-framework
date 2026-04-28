@@ -46,10 +46,24 @@ async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> R
 async fn stop_recording(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
+) -> Result<String, String> {
     let _ = indicator::hide(&app);
-    let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
-    recorder.stop()
+    let wav = {
+        let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+        recorder.stop()?
+    };
+
+    if wav.is_empty() {
+        return Err("No audio captured".to_string());
+    }
+
+    // Transcribe directly in Rust - no IPC round-trip
+    let host = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.stt_url.clone()
+    };
+    let client = stt::SttClient::new(&host);
+    client.transcribe_ws(wav, "auto").await
 }
 
 // ── Audio device commands ──

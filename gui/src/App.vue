@@ -322,8 +322,8 @@ async function stopRecord() {
   loading.value = true;
 
   try {
-    const wav = await invoke<number[]>("stop_recording");
-    const text = await invoke<string>("transcribe_ws", { audioData: wav });
+    // stop_recording now returns text directly (transcribes in Rust)
+    const text = await invoke<string>("stop_recording");
     loading.value = false;
     if (text) {
       result.value = text;
