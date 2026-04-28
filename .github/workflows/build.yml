@@ -19,18 +19,13 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            bundle: deb,AppImage
           - os: macos-latest
             target: aarch64-apple-darwin
-            bundle: dmg
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            bundle: msi
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: gui
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,6 +41,7 @@ jobs:
           cache-dependency-path: gui/package-lock.json
 
       - name: Install npm dependencies
+        working-directory: gui
         run: npm ci
 
       - name: Setup Rust
@@ -78,30 +74,29 @@ jobs:
           bundleIdentifier: com.voiceinput.app
           tauriScript: npm run tauri
           args: --target ${{ matrix.target }}
-          includeDebug: false
-          includeRelease: false
 
-      - name: List build output (Windows debug)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: List build output (all platforms)
+        shell: bash
         run: |
-          Write-Host "=== Searching for MSI ==="
-          Get-ChildItem -Path gui\src-tauri\target -Recurse -Filter *.msi -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
-          Write-Host "=== Searching for EXE (bundle) ==="
-          Get-ChildItem -Path gui\src-tauri\target -Recurse -Filter *.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'bundle' } | ForEach-Object { Write-Host $_.FullName }
-          Write-Host "=== Bundle directory listing ==="
-          Get-ChildItem -Path gui\src-tauri\target -Recurse -Directory -Filter bundle -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host $_.FullName
-            Get-ChildItem $_.FullName -Recurse | ForEach-Object { Write-Host "  $_" }
-          }
+          echo "=== Searching for bundle artifacts ==="
+          find gui/src-tauri/target -type d -name bundle 2>/dev/null | while read dir; do
+            echo "--- Bundle dir: $dir ---"
+            find "$dir" -type f 2>/dev/null | head -50
+          done
+          echo ""
+          echo "=== Platform-specific target ==="
+          find "gui/src-tauri/target/${{ matrix.target }}" -type f -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" 2>/dev/null || true
+          echo ""
+          echo "=== Default target ==="
+          find "gui/src-tauri/target/release/bundle" -type f 2>/dev/null || true
+          find "gui/src-tauri/target/debug/bundle" -type f 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: voice-input-${{ matrix.target }}
           path: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*
-            src-tauri/target/release/bundle/**/*
-            src-tauri/target/*/release/bundle/**/*
-          if-no-files-found: warn
+            gui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*
+            gui/src-tauri/target/release/bundle/**/*
+          if-no-files-found: error
           retention-days: 30
