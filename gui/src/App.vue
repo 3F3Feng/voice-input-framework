@@ -468,10 +468,14 @@ async function updateServer() {
   logMsg(`正在连接服务器 ${host}:${serverPort.value}...`, "info");
   try {
     await invoke("set_server_host", { host });
-    await loadModels();
-    connected.value = true;
-    toast("服务器已连接 ✅", "ok");
-    logMsg("服务器已连接", "ok");
+    const sttOk = await loadModels();
+    if (sttOk) {
+      connected.value = true;
+      toast("服务器已连接 ✅", "ok");
+      logMsg("服务器已连接", "ok");
+    } else {
+      logMsg("服务器无响应（检查 STT 服务是否运行）", "warn");
+    }
   } catch (e) {
     logMsg(`连接服务器失败: ${e}`, "err");
     toast("连接服务器失败 ❌", "err");
@@ -480,13 +484,15 @@ async function updateServer() {
 }
 
 // ── Models ──
-async function loadModels() {
+async function loadModels(): Promise<boolean> {
+  let sttOk = false;
   try {
     const sttList = await invoke<ModelInfo[]>("get_models");
     sttModels.value = sttList;
     if (sttList.length > 0 && !sttModel.value) sttModel.value = sttList[0].name;
     logMsg(`获取到 ${sttList.length} 个 STT 模型`, "info");
-  } catch { connected.value = false; logMsg("获取 STT 模型失败", "err"); }
+    sttOk = true;
+  } catch { logMsg("获取 STT 模型失败", "err"); }
 
   try {
     const llmList = await invoke<ModelInfo[]>("get_llm_models");
@@ -499,6 +505,7 @@ async function loadModels() {
     llmEnabled.value = await invoke<boolean>("get_llm_enabled");
     logMsg(`LLM 后处理: ${llmEnabled.value ? '已启用' : '已禁用'}`, "info");
   } catch { /* optional */ }
+  return sttOk;
 }
 
 async function switchStt() {
