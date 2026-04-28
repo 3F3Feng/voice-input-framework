@@ -191,6 +191,21 @@ async fn auto_input(text: String) -> Result<(), String> {
     input::type_text(&text)
 }
 
+#[tauri::command]
+async fn transcribe_ws(
+    state: State<'_, AppState>,
+    audio_data: Vec<u8>,
+    language: Option<String>,
+) -> Result<String, String> {
+    let host = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.stt_url.clone()
+    };
+    let client = stt::SttClient::new(&host);
+    let lang = language.unwrap_or_else(|| "auto".into());
+    client.transcribe_ws(audio_data, &lang).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -215,6 +230,7 @@ pub fn run() {
             get_audio_devices,
             get_audio_level,
             transcribe,
+            transcribe_ws,
             get_models,
             switch_model,
             get_llm_models,

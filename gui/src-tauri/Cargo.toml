@@ -23,3 +23,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cpal = "0.15"
 enigo = { version = "0.2", default-features = false, features = ["default"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"

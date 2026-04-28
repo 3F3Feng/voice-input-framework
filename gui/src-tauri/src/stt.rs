@@ -1,6 +1,9 @@
+use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModelInfo {
@@ -29,6 +32,8 @@ impl SttClient {
         }
     }
 
+    // ── HTTP transcription (legacy) ──
+
     pub async fn transcribe(&self, audio_data: Vec<u8>, language: &str) -> Result<String, String> {
         let client = Client::new();
         let part = reqwest::multipart::Part::bytes(audio_data)
@@ -50,6 +55,72 @@ impl SttClient {
         let data: Value = resp.json().await.map_err(|e| format!("JSON error: {}", e))?;
         Ok(data["text"].as_str().unwrap_or("").to_string())
     }
+
+    // ── WebSocket transcription (streaming) ──
+
+    pub async fn transcribe_ws(&self, audio_data: Vec<u8>, language: &str) -> Result<String, String> {
+        let ws_url = self.stt_url.replace("http://", "ws://");
+        let url = format!("{}/ws/stream", ws_url);
+
+        let (mut ws, _) = connect_async(&url)
+            .await
+            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+
+        // Wait for "ready" message from server
+        match ws.next().await {
+            Some(Ok(Message::Text(json))) => {
+                let data: Value = serde_json::from_str(&json)
+                    .map_err(|e| format!("JSON parse: {}", e))?;
+                if data["type"] != "ready" {
+                    return Err(format!("Unexpected server message: {}", json));
+                }
+            }
+            _ => return Err("Expected text ready message".to_string()),
+        }
+
+        // Send language config
+        let lang_msg = serde_json::json!({"type": "config", "language": language});
+        SinkExt::send(&mut ws, Message::Text(lang_msg.to_string()))
+            .await
+            .map_err(|e| format!("WebSocket send config failed: {}", e))?;
+
+        // Send audio data in chunks (8KB chunks)
+        for chunk in audio_data.chunks(8192) {
+            SinkExt::send(&mut ws, Message::Binary(chunk.to_vec()))
+                .await
+                .map_err(|e| format!("WebSocket send audio failed: {}", e))?;
+        }
+
+        // Signal done
+        SinkExt::send(&mut ws, Message::Text(r#"{"type":"done"}"#.into()))
+            .await
+            .map_err(|e| format!("WebSocket send done failed: {}", e))?;
+
+        // Receive result
+        while let Some(msg) = ws.next().await {
+            let msg = msg.map_err(|e| format!("WebSocket read failed: {}", e))?;
+            match msg {
+                Message::Text(json) => {
+                    let data: Value = serde_json::from_str(&json)
+                        .map_err(|e| format!("JSON parse: {}", e))?;
+
+                    let msg_type = data["type"].as_str().unwrap_or("");
+                    if msg_type == "result" {
+                        return Ok(data["text"].as_str().unwrap_or("").to_string());
+                    } else if msg_type == "error" {
+                        return Err(data["message"].as_str().unwrap_or("Unknown error").to_string());
+                    }
+                    // Ignore other message types (partial, status, etc.)
+                }
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+
+        Err("Connection closed without result".to_string())
+    }
+
+    // ── STT model endpoints ──
 
     pub async fn get_stt_models(&self) -> Result<Vec<ModelInfo>, String> {
         let client = Client::new();
