@@ -221,7 +221,12 @@ class STTEngine:
 
                 # 加载主模型
                 if not self._is_loaded:
-                    await loop.run_in_executor(None, self._load_model_sync)
+                    engine_type = self._model_info.get("engine", "")
+                    if engine_type == "qwen_asr_mlx_native":
+                        # MLX 原生引擎：Metal stream 是 thread-local，必须在主线程加载
+                        self._load_model_sync()
+                    else:
+                        await loop.run_in_executor(None, self._load_model_sync)
                     self._is_loaded = True
                     logger.info("STT model loaded successfully")
 
@@ -477,7 +482,7 @@ class STTEngine:
                     return results[0].text, results[0].language
                 return "", language
 
-            text, detected_lang = await loop.run_in_executor(None, _do_transcribe)
+                text, detected_lang = await loop.run_in_executor(None, _do_transcribe)
             text = text.strip()
 
             # 生成时间戳（如果需要）
