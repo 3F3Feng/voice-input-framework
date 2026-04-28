@@ -18,3 +18,6 @@ logs/*.log
 logs/*.log.*
 
 *.pycgui/src-tauri/icons/icon.iconset/
+__pycache__/
+client/gui_v1_backup.py
+server/models/__pycache__/
