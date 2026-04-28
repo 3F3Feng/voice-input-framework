@@ -58,5 +58,5 @@ pub fn update(app: &tauri::AppHandle, new_shortcut: &str) -> Result<(), String> 
 
 /// Get the default shortcut for the current platform
 pub fn default_shortcut() -> &'static str {
-    "left_ctrl"
+    "Ctrl+Alt+R"
 }
