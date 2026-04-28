@@ -22,6 +22,19 @@
       <span v-if="recording" class="timer">{{ timerText }}</span>
     </div>
 
+    <!-- Audio level meter -->
+    <div v-if="recording" class="level-meter">
+      <div class="level-bar">
+        <div class="level-fill" :style="{ width: audioLevel * 100 + '%' }"></div>
+      </div>
+    </div>
+
+    <!-- Processing indicator -->
+    <div v-if="loading" class="processing-indicator">
+      <div class="processing-spinner"></div>
+      <span>处理中...</span>
+    </div>
+
     <button
       @mousedown="startRecord"
       @mouseup="stopRecord"
@@ -196,7 +209,9 @@ const log = ref<LogEntry[]>([]);
 const toasts = ref<Toast[]>([]);
 const logBox = ref<HTMLElement | null>(null);
 
+const audioLevel = ref(0);
 let timerInterval: ReturnType<typeof setInterval> | null = null;
+let levelInterval: ReturnType<typeof setInterval> | null = null;
 let mediaRecorder: MediaRecorder | null = null;
 let audioChunks: Blob[] = [];
 let toastId = 0;
@@ -304,6 +319,12 @@ async function startRecord() {
     recording.value = true;
     elapsedMs.value = 0;
     timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
+    // Poll audio level from backend
+    levelInterval = setInterval(async () => {
+      try {
+        audioLevel.value = await invoke<number>("get_audio_level");
+      } catch { /* backend not available */ }
+    }, 100);
     mediaRecorder.start();
     logMsg("开始录音", "info");
   } catch (e) {
@@ -316,6 +337,8 @@ async function stopRecord() {
   if (!recording.value || !mediaRecorder) return;
   recording.value = false;
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
+  audioLevel.value = 0;
   if (mediaRecorder.state !== "inactive") mediaRecorder.stop();
   logMsg("录音结束", "info");
 }
@@ -537,6 +560,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (timerInterval) clearInterval(timerInterval);
+  if (levelInterval) clearInterval(levelInterval);
 });
 </script>
 
@@ -591,6 +615,22 @@ h1 { font-size: 1.3rem; }
 .status-dot.loading { background: var(--yellow); animation: pulse 1.2s infinite; }
 .status-text { font-size: 0.9rem; }
 .timer { font-size: 0.8rem; color: var(--red); font-variant-numeric: tabular-nums; }
+
+/* Audio level meter */
+.level-meter { display: flex; justify-content: center; }
+.level-bar { width: 60%; height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
+.level-fill { height: 100%; background: linear-gradient(90deg, var(--green), #ffcc00, var(--red)); border-radius: 3px; transition: width 0.1s ease; }
+
+/* Processing indicator */
+.processing-indicator {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 6px; font-size: 0.8rem; color: var(--yellow);
+}
+.processing-spinner {
+  width: 18px; height: 18px; border: 2px solid var(--muted);
+  border-top-color: var(--yellow); border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 @keyframes spin { to { transform: rotate(360deg); } }
