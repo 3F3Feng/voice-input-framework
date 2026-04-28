@@ -253,7 +253,7 @@ const hotkeyStr = ref("");
 const hotkeyRecording = ref(false);
 const hotkeyChanged = ref(false);
 const hotkeyMsg = ref("");
-const defaultHotkey = "Ctrl+Alt+R";
+const defaultHotkey = "left_ctrl+left_alt";
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let levelInterval: ReturnType<typeof setInterval> | null = null;
 let mediaRecorder: MediaRecorder | null = null;
@@ -556,12 +556,19 @@ function startHotkeyRecording() {
       e.preventDefault();
       e.stopPropagation();
       const parts: string[] = [];
-      if (e.ctrlKey || e.metaKey) parts.push(e.metaKey ? 'Cmd' : 'Ctrl');
-      if (e.altKey) parts.push('Alt');
-      if (e.shiftKey) parts.push('Shift');
+      // Detect left vs right modifiers
+      if (e.code?.startsWith('ControlLeft')) parts.push('left_ctrl');
+      else if (e.code?.startsWith('ControlRight')) parts.push('right_ctrl');
+      else if (e.code?.startsWith('AltLeft')) parts.push('left_alt');
+      else if (e.code?.startsWith('AltRight')) parts.push('right_alt');
+      else if (e.code?.startsWith('ShiftLeft')) parts.push('left_shift');
+      else if (e.code?.startsWith('ShiftRight')) parts.push('right_shift');
+      // Regular key
       if (e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Shift' && e.key !== 'Meta') {
-        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
         parts.push(key);
+      }
+      if (parts.length > 0) {
         const joined = parts.join('+');
         hotkeyStr.value = joined;
         hotkeyChanged.value = true;
@@ -682,8 +689,12 @@ onMounted(async () => {
   await loadConfig();
   await loadAutostart();
   await updateServer();
-  listen("toggle-recording", () => {
-    if (recording.value) stopRecord(); else startRecord();
+  // Listen for custom hotkey events from rdev listener
+  listen("hotkey-press", () => {
+    if (!recording.value) startRecord();
+  });
+  listen("hotkey-release", () => {
+    if (recording.value) stopRecord();
   });
 });
 

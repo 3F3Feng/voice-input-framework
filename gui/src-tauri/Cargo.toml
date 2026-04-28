@@ -14,7 +14,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-autostart = "2"
@@ -26,3 +25,4 @@ cpal = "0.15"
 enigo = { version = "0.2", default-features = false, features = ["default"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
+rdev = "0.5"

@@ -194,7 +194,13 @@ async fn set_llm_enabled(state: State<'_, AppState>, enabled: bool) -> Result<()
 
 #[tauri::command]
 async fn register_hotkey(app: tauri::AppHandle, shortcut: String) -> Result<(), String> {
-    hotkey::update(&app, &shortcut)
+    if let Some(keys) = hotkey::parse_hotkey(&shortcut) {
+        hotkey::start_listener(app.clone(), keys);
+        eprintln!("[hotkey] Re-registered: {}", shortcut);
+        Ok(())
+    } else {
+        Err(format!("Invalid hotkey format: {}", shortcut))
+    }
 }
 
 #[tauri::command]
@@ -234,7 +240,6 @@ async fn transcribe_ws(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
@@ -251,7 +256,11 @@ pub fn run() {
                 recorder: Mutex::new(audio::AudioRecorder::new()),
                 config: Mutex::new(cfg),
             });
-            let _ = hotkey::setup(app, shortcut.as_str());
+            // Start custom hotkey listener (supports left/right modifier + single key)
+            if let Some(keys) = hotkey::parse_hotkey(&shortcut) {
+                hotkey::start_listener(app.handle().clone(), keys);
+                eprintln!("[hotkey] Started listener for: {}", shortcut);
+            }
             let _ = tray::setup(app);
 
             // Start minimized if configured
