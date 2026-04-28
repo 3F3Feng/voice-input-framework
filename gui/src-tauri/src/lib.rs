@@ -61,7 +61,7 @@ async fn transcribe(
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
         stt_client.stt_url.clone()
     };
-    let client = stt::SttClient::new_from_url(&host);
+    let client = stt::SttClient::new(&host);
     let lang = language.unwrap_or_else(|| "auto".into());
     client.transcribe(audio_data, &lang).await
 }
@@ -72,7 +72,7 @@ async fn get_models(state: State<'_, AppState>) -> Result<Vec<stt::ModelInfo>, S
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
         stt_client.stt_url.clone()
     };
-    let client = stt::SttClient::new_from_url(&host);
+    let client = stt::SttClient::new(&host);
     client.get_stt_models().await
 }
 
@@ -82,17 +82,17 @@ async fn switch_model(state: State<'_, AppState>, name: String) -> Result<String
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
         stt_client.stt_url.clone()
     };
-    let client = stt::SttClient::new_from_url(&host);
+    let client = stt::SttClient::new(&host);
     client.switch_stt_model(&name).await
 }
 
 #[tauri::command]
 async fn get_llm_models(state: State<'_, AppState>) -> Result<Vec<stt::ModelInfo>, String> {
-    let (stt_url, llm_url) = {
+    let host = {
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
-        (stt_client.stt_url.clone(), stt_client.llm_url.clone())
+        stt_client.stt_url.clone()
     };
-    let client = stt::SttClient { stt_url, llm_url };
+    let client = stt::SttClient::new(&host);
     client.get_llm_models().await
 }
 
@@ -102,7 +102,7 @@ async fn switch_llm_model(state: State<'_, AppState>, name: String) -> Result<St
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
         stt_client.stt_url.clone()
     };
-    let client = stt::SttClient::new_from_url(&host);
+    let client = stt::SttClient::new(&host);
     client.switch_llm_model(&name).await
 }
 
@@ -144,15 +144,12 @@ async fn import_old_config(
 
 #[tauri::command]
 async fn get_llm_prompt(state: State<'_, AppState>) -> Result<String, String> {
-    let llm_url = {
+    let host = {
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
-        stt_client.llm_url.clone()
+        stt_client.stt_url.clone()
     };
-    let url = format!("{}/prompt", llm_url);
-    let client = reqwest::Client::new();
-    let resp = client.get(&url).send().await.map_err(|e| format!("HTTP error: {}", e))?;
-    let data: serde_json::Value = resp.json().await.map_err(|e| format!("JSON error: {}", e))?;
-    Ok(data["prompt"].as_str().unwrap_or("").to_string())
+    let client = stt::SttClient::new(&host);
+    client.get_llm_prompt().await
 }
 
 #[tauri::command]
@@ -160,15 +157,32 @@ async fn save_llm_prompt(
     state: State<'_, AppState>,
     text: String,
 ) -> Result<(), String> {
-    let llm_url = {
+    let host = {
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
-        stt_client.llm_url.clone()
+        stt_client.stt_url.clone()
     };
-    let url = format!("{}/prompt", llm_url);
-    let client = reqwest::Client::new();
-    let body = serde_json::json!({"prompt": text});
-    client.post(&url).json(&body).send().await.map_err(|e| format!("HTTP error: {}", e))?;
-    Ok(())
+    let client = stt::SttClient::new(&host);
+    client.save_llm_prompt(&text).await
+}
+
+#[tauri::command]
+async fn get_llm_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+    let host = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.stt_url.clone()
+    };
+    let client = stt::SttClient::new(&host);
+    client.get_llm_enabled().await
+}
+
+#[tauri::command]
+async fn set_llm_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    let host = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.stt_url.clone()
+    };
+    let client = stt::SttClient::new(&host);
+    client.set_llm_enabled(enabled).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -204,6 +218,8 @@ pub fn run() {
             import_old_config,
             get_llm_prompt,
             save_llm_prompt,
+            get_llm_enabled,
+            set_llm_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

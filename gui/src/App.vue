@@ -236,7 +236,6 @@ async function loadConfig() {
     const cfg = await invoke<VoiceInputConfig>("get_config");
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
-    llmEnabled.value = cfg.llm.enabled;
     version.value = `v${cfg._version}`;
   } catch (e) {
     console.error("Failed to load config:", e);
@@ -248,7 +247,6 @@ async function saveConfig() {
     const cfg = await invoke<VoiceInputConfig>("get_config");
     cfg.server.host = serverHost.value;
     cfg.server.port = serverPort.value;
-    cfg.llm.enabled = llmEnabled.value;
     await invoke("update_config", { newConfig: cfg });
     configMsg.value = "✅ 配置已保存";
     setTimeout(() => { configMsg.value = ""; }, 3000);
@@ -262,7 +260,6 @@ async function importOldConfig() {
     const cfg = await invoke<VoiceInputConfig>("import_old_config");
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
-    llmEnabled.value = cfg.llm.enabled;
     configMsg.value = "✅ 旧版配置已导入";
     // Reconnect with new settings
     await updateServer();
@@ -297,6 +294,9 @@ async function loadModels() {
       llmModel.value = llmModels.value[0].name;
     }
   } catch { /* optional */ }
+  try {
+    llmEnabled.value = await invoke<boolean>("get_llm_enabled");
+  } catch { /* optional */ }
 }
 
 function onSttModelChange() {
@@ -308,7 +308,12 @@ function onLlmModelChange() {
 }
 
 async function onLlmToggle() {
-  saveConfig();
+  try {
+    await invoke("set_llm_enabled", { enabled: llmEnabled.value });
+  } catch (e) {
+    console.error("Failed to toggle LLM:", e);
+    llmEnabled.value = !llmEnabled.value; // revert
+  }
 }
 
 // ── LLM Prompt ──
