@@ -49,7 +49,7 @@ class TestSTTModels:
         resp = httpx.get(f"{STT_URL}/models", timeout=5)
         models = resp.json()
         names = [m["name"] for m in models]
-        assert "qwen_asr" in names
+        assert "qwen_asr_mlx_native_small" in names
 
     def test_model_info_fields(self):
         resp = httpx.get(f"{STT_URL}/models", timeout=5)
@@ -167,7 +167,7 @@ class TestMainModels:
         resp = httpx.get(f"{MAIN_URL}/models", timeout=5)
         models = resp.json()
         names = [m["name"] for m in models]
-        assert "qwen_asr_mlx" in names
+        assert "qwen_asr_mlx_native_small" in names
         assert "whisper_mlx" in names
 
     def test_model_info_fields(self):

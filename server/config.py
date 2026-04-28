@@ -35,7 +35,7 @@ class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 6543
     debug: bool = False
-    default_model: str = "qwen_asr_mlx"
+    default_model: str = "qwen_asr_mlx_native_small"
     models: dict[str, ModelConfig] = field(default_factory=dict)
     models_dir: str = "./models"
     auto_load_default: bool = True

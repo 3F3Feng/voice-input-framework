@@ -6,23 +6,21 @@
 
 from server.models.base import BaseSTTEngine, STTEngineError
 from server.models.whisper import WhisperEngine
-from server.models.qwen3_asr import Qwen3ASREngine
 from server.models.whisper_mlx import WhisperMLXEngine
 from server.models.whisper_cpp import WhisperCppEngine
-from server.models.qwen3_asr_mlx import Qwen3ASRMLXEngine
+from server.models.qwen3_asr_mlx_native import Qwen3ASRMLXNativeEngine
 
-# 可用模型注册表 (MLX 优先，Apple Silicon 推荐)
+# 可用模型注册表 (MLX 原生优先，Apple Silicon 推荐)
 AVAILABLE_MODELS = {
-    # ── MLX 模型 (Apple Silicon 优化，推荐) ──
-    "qwen_asr_mlx": Qwen3ASRMLXEngine,  # Qwen3-ASR-1.7B MLX (⭐ 推荐)
-    "qwen_asr_mlx_small": Qwen3ASRMLXEngine,  # Qwen3-ASR-0.6B MLX
+    # ── MLX 原生模型 (Apple Silicon 优化，推荐) ──
+    "qwen_asr_mlx_native": Qwen3ASRMLXNativeEngine,  # Qwen3-ASR-1.7B MLX 8bit (⭐ 推荐)
+    "qwen_asr_mlx_native_small": Qwen3ASRMLXNativeEngine,  # Qwen3-ASR-0.6B MLX 4bit
+    # ── MLX Whisper 模型 (Apple Silicon) ──
     "whisper_mlx": WhisperMLXEngine,  # MLX Whisper Large V3
     "whisper_mlx_turbo": WhisperMLXEngine,  # MLX Whisper Large V3 Turbo (快速+准确)
     "whisper_mlx_medium": WhisperMLXEngine,  # MLX Whisper Medium
     "whisper_mlx_small": WhisperMLXEngine,  # MLX Whisper Small (最快)
     # ── Transformers 模型 (通用，备选) ──
-    "qwen_asr": Qwen3ASREngine,  # Qwen3-ASR-1.7B (transformers)
-    "qwen_asr_small": Qwen3ASREngine,  # Qwen3-ASR-0.6B (transformers)
     "whisper": WhisperEngine,  # Whisper Large V3
     "whisper-small": WhisperEngine,  # Whisper Small
     "whisper_turbo": WhisperEngine,  # Whisper Large V3 Turbo
@@ -35,9 +33,8 @@ __all__ = [
     "BaseSTTEngine",
     "STTEngineError",
     "WhisperEngine",
-    "Qwen3ASREngine",
-    "Qwen3ASRMLXEngine",
     "WhisperMLXEngine",
     "WhisperCppEngine",
+    "Qwen3ASRMLXNativeEngine",
     "AVAILABLE_MODELS",
 ]

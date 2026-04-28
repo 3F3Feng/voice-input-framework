@@ -72,7 +72,7 @@ class TestSTTEngine:
         from services.stt_server import STTEngine
 
         engine = STTEngine()
-        assert engine.default_model == "qwen_asr_mlx"
+        assert engine.default_model == "qwen_asr_mlx_native_small"
         assert not engine._is_loaded
         assert not engine._aligner_loaded
         assert not engine._loading
@@ -81,10 +81,8 @@ class TestSTTEngine:
         """Test available models configuration"""
         from services.stt_server import STTEngine
 
-        assert "qwen_asr" in STTEngine.AVAILABLE_MODELS
-        assert "qwen_asr_small" in STTEngine.AVAILABLE_MODELS
-        assert "model_id" in STTEngine.AVAILABLE_MODELS["qwen_asr"]
-        assert "aligner_id" in STTEngine.AVAILABLE_MODELS["qwen_asr"]
+        assert "qwen_asr_mlx_native_small" in STTEngine.AVAILABLE_MODELS
+        assert "model_id" in STTEngine.AVAILABLE_MODELS["qwen_asr_mlx_native_small"]
 
     def test_is_loading(self):
         """Test loading state"""
@@ -208,12 +206,12 @@ class TestModels:
         from services.stt_server import ModelInfo
 
         info = ModelInfo(
-            name="qwen_asr",
+            name="qwen_asr_mlx_native_small",
             description="Test model",
             is_loaded=True,
             is_default=True,
         )
-        assert info.name == "qwen_asr"
+        assert info.name == "qwen_asr_mlx_native_small"
         assert info.is_loaded is True
 
     def test_health_status(self):
@@ -223,8 +221,8 @@ class TestModels:
         health = HealthStatus(
             status="ok",
             uptime_seconds=100.0,
-            current_model="qwen_asr",
-            loaded_models=["qwen_asr"],
+            current_model="qwen_asr_mlx_native_small",
+            loaded_models=["qwen_asr_mlx_native_small"],
             active_connections=2,
             total_requests=10,
             failed_requests=1,
