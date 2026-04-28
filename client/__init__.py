@@ -9,12 +9,18 @@ __version__ = "1.2.0"
 __author__ = "Voice Input Framework"
 
 # 重构后的应用控制器（推荐）
-from .app import VoiceInputApp
+try:
+    from .app import VoiceInputApp
+except ImportError:
+    # UI 依赖（PySimpleGUI）可能未安装
+    VoiceInputApp = None
 
-# 旧版 GUI 类（兼容性保留）
-from .gui import HotkeyVoiceInputV2
-
-# 别名
-HotkeyVoiceInput = HotkeyVoiceInputV2
+# 旧版 GUI 类（兼容性保留，需要 PySimpleGUI）
+try:
+    from .gui import HotkeyVoiceInputV2
+    HotkeyVoiceInput = HotkeyVoiceInputV2
+except ImportError:
+    HotkeyVoiceInputV2 = None
+    HotkeyVoiceInput = None
 
 __all__ = ["VoiceInputApp", "HotkeyVoiceInput", "HotkeyVoiceInputV2"]

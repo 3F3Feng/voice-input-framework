@@ -8,6 +8,7 @@ Requires servers running:
   - Main: localhost:6543
 """
 
+import pytest
 import httpx
 
 STT_URL = "http://localhost:6544"
@@ -138,6 +139,7 @@ class TestLLMProcess:
 # ── Main Server (6543) ─────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="Main API server deleted")
 class TestMainHealth:
     """Main /health endpoint"""
 
@@ -153,6 +155,7 @@ class TestMainHealth:
         assert "llm_enabled" in data
 
 
+@pytest.mark.skip(reason="Main API server deleted")
 class TestMainModels:
     """Main /models endpoint"""
 
@@ -179,6 +182,7 @@ class TestMainModels:
             assert "supported_languages" in m
 
 
+@pytest.mark.skip(reason="Main API server deleted")
 class TestMainLLM:
     """Main /llm/* endpoints"""
 
