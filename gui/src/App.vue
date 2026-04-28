@@ -340,7 +340,7 @@ async function startRecord() {
         if (wav.length > 44 + 320) {
           logMsg("正在识别...", "info");
           loading.value = true;
-          const text = await invoke<string>("transcribe_ws", { audioData: Array.from(wav) });
+          const text = await invoke<string>("transcribe", { audioData: Array.from(wav) });
           loading.value = false;
           if (text) {
             result.value = text;
@@ -492,7 +492,11 @@ async function loadModels(): Promise<boolean> {
   try {
     const sttList = await invoke<ModelInfo[]>("get_models");
     sttModels.value = sttList;
-    if (sttList.length > 0 && !sttModel.value) sttModel.value = sttList[0].name;
+    // Select the currently loaded model, not just the first
+    if (sttList.length > 0) {
+      const loaded = sttList.find(m => m.is_loaded);
+      sttModel.value = loaded?.name || sttList[0].name;
+    }
     logMsg(`获取到 ${sttList.length} 个 STT 模型`, "info");
     sttOk = true;
   } catch { logMsg("获取 STT 模型失败", "err"); }
@@ -500,7 +504,10 @@ async function loadModels(): Promise<boolean> {
   try {
     const llmList = await invoke<ModelInfo[]>("get_llm_models");
     llmModels.value = llmList;
-    if (llmList.length > 0 && !llmModel.value) llmModel.value = llmList[0].name;
+    if (llmList.length > 0) {
+      const loaded = llmList.find(m => m.is_loaded);
+      llmModel.value = loaded?.name || llmList[0].name;
+    }
     logMsg(`获取到 ${llmList.length} 个 LLM 模型`, "info");
   } catch { logMsg("获取 LLM 模型失败（未配置后端）", "warn"); }
 

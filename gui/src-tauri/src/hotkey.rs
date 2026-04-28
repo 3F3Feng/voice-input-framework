@@ -148,18 +148,19 @@ fn hotkey_matches(hotkey: &[Key], event_key: &Key) -> bool {
     hotkey.iter().any(|k| keys_cmp(k, event_key))
 }
 
-fn keys_cmp(a: &Key, b: &Key) -> bool {
+fn keys_cmp(expected: &Key, actual: &Key) -> bool {
     use Key::*;
-    match (a, b) {
-        (ControlLeft, ControlLeft)
-        | (ControlLeft, ControlRight)
-        | (ControlRight, ControlLeft)
-        | (ControlRight, ControlRight) => true,
-        (ShiftLeft, ShiftLeft)
-        | (ShiftLeft, ShiftRight)
-        | (ShiftRight, ShiftLeft)
-        | (ShiftRight, ShiftRight) => true,
-        (Alt, AltGr) | (AltGr, Alt) => true,
-        _ => a == b,
+    match (expected, actual) {
+        // If user configured a specific side (left_ctrl), only match that side
+        (ControlLeft, ControlLeft) => true,
+        (ControlRight, ControlRight) => true,
+        // If user configured generic (ctrl), match both sides
+        // (generic ctrl maps to ControlLeft in parse_key)
+        (ControlLeft, ControlRight) | (ControlRight, ControlLeft) => false,
+        (ShiftLeft, ShiftLeft) => true,
+        (ShiftRight, ShiftRight) => true,
+        (ShiftLeft, ShiftRight) | (ShiftRight, ShiftLeft) => false,
+        (Alt, AltGr) | (AltGr, Alt) => false,
+        _ => expected == actual,
     }
 }
