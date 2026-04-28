@@ -1,3 +1,4 @@
+use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -85,12 +86,6 @@ impl SttClient {
             _ => return Err("Expected text ready message".to_string()),
         }
 
-        // Send language config
-        let lang_msg = serde_json::json!({"type": "config", "language": language});
-        SinkExt::send(&mut ws, Message::Text(lang_msg.to_string()))
-            .await
-            .map_err(|e| format!("WebSocket send config failed: {}", e))?;
-
         // Strip WAV header if present (WebSocket expects raw PCM)
         let pcm_data = if audio_data.len() > 44 && &audio_data[..4] == b"RIFF" {
             &audio_data[44..]
@@ -98,19 +93,22 @@ impl SttClient {
             &audio_data[..]
         };
 
-        // Send audio data in chunks (8KB chunks)
-        for chunk in pcm_data.chunks(8192) {
-            SinkExt::send(&mut ws, Message::Binary(chunk.to_vec()))
+        // Send audio data in chunks, base64-encoded in JSON messages
+        for chunk in pcm_data.chunks(4096) {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(chunk);
+            let msg = serde_json::json!({"type": "audio", "data": b64});
+            SinkExt::send(&mut ws, Message::Text(msg.to_string()))
                 .await
                 .map_err(|e| format!("WebSocket send audio failed: {}", e))?;
         }
 
-        // Signal done
-        SinkExt::send(&mut ws, Message::Text(r#"{"type":"done"}"#.into()))
+        // Signal end of audio
+        SinkExt::send(&mut ws, Message::Text(r#"{"type":"end"}"#.into()))
             .await
-            .map_err(|e| format!("WebSocket send done failed: {}", e))?;
+            .map_err(|e| format!("WebSocket send end failed: {}", e))?;
 
-        // Receive result
+        // Receive result(s)
+        let mut final_text = String::new();
         while let Some(msg) = ws.next().await {
             let msg = msg.map_err(|e| format!("WebSocket read failed: {}", e))?;
             match msg {
@@ -119,19 +117,36 @@ impl SttClient {
                         .map_err(|e| format!("JSON parse: {}", e))?;
 
                     let msg_type = data["type"].as_str().unwrap_or("");
-                    if msg_type == "result" {
-                        return Ok(data["text"].as_str().unwrap_or("").to_string());
-                    } else if msg_type == "error" {
-                        return Err(data["message"].as_str().unwrap_or("Unknown error").to_string());
+                    match msg_type {
+                        "result" | "stt_result" => {
+                            let text = data["text"].as_str().unwrap_or("");
+                            if !text.is_empty() {
+                                final_text = text.to_string();
+                                // For "result", this is the final LLM-processed text
+                                if msg_type == "result" {
+                                    return Ok(final_text);
+                                }
+                            }
+                        }
+                        "error" => {
+                            return Err(data["message"].as_str().unwrap_or("Unknown error").to_string());
+                        }
+                        "llm_start" | "llm_progress" => {
+                            // LLM is processing, wait for "result"
+                        }
+                        _ => {}
                     }
-                    // Ignore other message types (partial, status, etc.)
                 }
                 Message::Close(_) => break,
                 _ => {}
             }
         }
 
-        Err("Connection closed without result".to_string())
+        if final_text.is_empty() {
+            Err("Connection closed without result".to_string())
+        } else {
+            Ok(final_text)
+        }
     }
 
     // ── STT model endpoints ──

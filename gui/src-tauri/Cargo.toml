@@ -26,3 +26,4 @@ enigo = { version = "0.2", default-features = false, features = ["default"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
 rdev = "0.5"
+base64 = "0.22"
