@@ -94,7 +94,7 @@ jobs:
         with:
           name: voice-input-${{ matrix.target }}
           path: |
-            gui/src-tauri/target/${{ matrix.target }}/release/bundle/
-            gui/src-tauri/target/release/bundle/
+            gui/src-tauri/target/*/release/bundle/**/*
+            gui/src-tauri/target/release/bundle/**/*
           if-no-files-found: warn
           retention-days: 30
