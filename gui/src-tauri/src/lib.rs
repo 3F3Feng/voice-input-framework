@@ -3,6 +3,7 @@ mod config;
 mod hotkey;
 mod input;
 mod stt;
+mod tray;
 
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -221,6 +222,18 @@ pub fn run() {
                 config: Mutex::new(cfg),
             });
             let _ = hotkey::setup(app);
+            let _ = tray::setup(app);
+
+            // Minimize to tray on close
+            if let Some(window) = app.get_webview_window("main") {
+                let win = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { .. } = event {
+                        let _ = win.hide();
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
