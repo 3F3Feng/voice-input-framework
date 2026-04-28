@@ -76,22 +76,6 @@ jobs:
           tauriScript: npm run tauri
           args: --target ${{ matrix.target }}
 
-      - name: List build output (all platforms)
-        shell: bash
-        run: |
-          echo "=== Searching for bundle artifacts ==="
-          find gui/src-tauri/target -type d -name bundle 2>/dev/null | while read dir; do
-            echo "--- Bundle dir: $dir ---"
-            find "$dir" -type f 2>/dev/null | head -50
-          done
-          echo ""
-          echo "=== Platform-specific target ==="
-          find "gui/src-tauri/target/${{ matrix.target }}" -type f -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" 2>/dev/null || true
-          echo ""
-          echo "=== Default target ==="
-          find "gui/src-tauri/target/release/bundle" -type f 2>/dev/null || true
-          find "gui/src-tauri/target/debug/bundle" -type f 2>/dev/null || true
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
