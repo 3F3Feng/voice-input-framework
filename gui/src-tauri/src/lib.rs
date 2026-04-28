@@ -8,6 +8,7 @@ mod tray;
 
 use std::sync::Mutex;
 use tauri::{Manager, State};
+use tauri_plugin_autostart::ManagerExt;
 
 pub struct AppState {
     pub stt: Mutex<stt::SttClient>,
@@ -197,6 +198,20 @@ async fn register_hotkey(app: tauri::AppHandle, shortcut: String) -> Result<(), 
 }
 
 #[tauri::command]
+async fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled {
+        app.autolaunch().enable().map_err(|e| e.to_string())
+    } else {
+        app.autolaunch().disable().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
 async fn auto_input(text: String) -> Result<(), String> {
     input::type_text(&text)
 }
@@ -222,10 +237,15 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         .setup(|app| {
             let cfg = config::VoiceInputConfig::load(app.handle());
             let default_host = cfg.server.host.clone();
             let shortcut = cfg.hotkey.key.clone();
+            let start_minimized = cfg.ui.start_minimized;
             app.manage(AppState {
                 stt: Mutex::new(stt::SttClient::new(&default_host)),
                 recorder: Mutex::new(audio::AudioRecorder::new()),
@@ -233,6 +253,13 @@ pub fn run() {
             });
             let _ = hotkey::setup(app, shortcut.as_str());
             let _ = tray::setup(app);
+
+            // Start minimized if configured
+            if start_minimized {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
 
             // Minimize to tray on close
             if let Some(window) = app.get_webview_window("main") {
@@ -267,6 +294,8 @@ pub fn run() {
             set_llm_enabled,
             auto_input,
             register_hotkey,
+            get_autostart,
+            set_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -127,6 +127,20 @@
           </label>
         </div>
         <div class="setting-tip">识别完成后自动将结果输入当前活跃窗口</div>
+        <div class="setting-row">
+          <label>开机自启动</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="autoStart" @change="toggleAutoStart" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label>启动时最小化</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="startMinimized" @change="toggleStartMinimized" />
+            <span class="slider"></span>
+          </label>
+        </div>
       </details>
 
       <details>
@@ -223,6 +237,8 @@ const llmEnabled = ref(true);
 const promptText = ref("");
 const configMsg = ref("");
 const autoInputEnabled = ref(false);
+const autoStart = ref(false);
+const startMinimized = ref(false);
 
 const elapsedMs = ref(0);
 const log = ref<LogEntry[]>([]);
@@ -376,9 +392,40 @@ async function loadConfig() {
     serverPort.value = cfg.server.port;
     version.value = `v${cfg._version}`;
     hotkeyStr.value = cfg.hotkey.key;
+    startMinimized.value = cfg.ui.start_minimized;
     logMsg("配置已加载", "info");
   } catch (e) {
     logMsg(`加载配置失败: ${e}`, "warn");
+  }
+}
+
+// ── Auto-start & Start mode ──
+async function loadAutostart() {
+  try {
+    autoStart.value = await invoke<boolean>("get_autostart");
+  } catch { /* plugin not available */ }
+}
+
+async function toggleAutoStart() {
+  try {
+    await invoke("set_autostart", { enabled: autoStart.value });
+    logMsg(`开机自启动已${autoStart.value ? '启用' : '禁用'}`, "ok");
+    toast(`开机自启动已${autoStart.value ? '启用' : '禁用'}`, "ok");
+  } catch (e) {
+    autoStart.value = !autoStart.value;
+    logMsg(`切换自启动失败: ${e}`, "err");
+  }
+}
+
+async function toggleStartMinimized() {
+  try {
+    const cfg = await invoke<VoiceInputConfig>("get_config");
+    cfg.ui.start_minimized = startMinimized.value;
+    await invoke("update_config", { newConfig: cfg });
+    logMsg(`启动最小化已${startMinimized.value ? '启用' : '禁用'}`, "ok");
+  } catch (e) {
+    startMinimized.value = !startMinimized.value;
+    logMsg(`切换失败: ${e}`, "err");
   }
 }
 
@@ -623,6 +670,7 @@ function clearResult() {
 onMounted(async () => {
   logMsg("Voice Input 客户端启动", "info");
   await loadConfig();
+  await loadAutostart();
   await updateServer();
   listen("toggle-recording", () => {
     if (recording.value) stopRecord(); else startRecord();
