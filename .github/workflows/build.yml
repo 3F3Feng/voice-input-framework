@@ -64,7 +64,8 @@ jobs:
             patchelf \
             libssl-dev \
             libgtk-3-dev \
-            libayatana-appindicator3-dev
+            libayatana-appindicator3-dev \
+            libasound2-dev
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0

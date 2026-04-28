@@ -17,4 +17,4 @@ voice_input_framework.pid
 logs/*.log
 logs/*.log.*
 
-*.pyc
+*.pycgui/src-tauri/icons/icon.iconset/
