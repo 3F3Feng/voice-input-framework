@@ -115,19 +115,24 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
         let p = pressed.clone();
         let a = app.clone();
 
-        let _result = listen(move |event: Event| match event.event_type {
-            EventType::KeyPress(key)
-                if hotkey_matches(&hotkey_keys, &key) && !p.swap(true, Ordering::SeqCst) =>
-            {
-                let _ = a.emit("hotkey-press", ());
-            }
-            EventType::KeyRelease(key)
-                if hotkey_matches(&hotkey_keys, &key) && p.swap(false, Ordering::SeqCst) =>
-            {
-                let _ = a.emit("hotkey-release", ());
-            }
-            _ => {}
-        });
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = listen(move |event: Event| match event.event_type {
+                EventType::KeyPress(key)
+                    if hotkey_matches(&hotkey_keys, &key) && !p.swap(true, Ordering::SeqCst) =>
+                {
+                    let _ = a.emit("hotkey-press", ());
+                }
+                EventType::KeyRelease(key)
+                    if hotkey_matches(&hotkey_keys, &key) && p.swap(false, Ordering::SeqCst) =>
+                {
+                    let _ = a.emit("hotkey-release", ());
+                }
+                _ => {}
+            });
+        })) {
+            Ok(_) => eprintln!("[hotkey] Listener stopped normally"),
+            Err(_) => eprintln!("[hotkey] Listener thread panicked (accessibility permissions?)"),
+        }
     });
 }
 
