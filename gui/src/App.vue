@@ -34,6 +34,16 @@
 
     <div class="settings">
       <details open>
+        <summary>连接设置</summary>
+        <div class="setting-row">
+          <label>服务器地址</label>
+          <div class="host-input">
+            <input v-model="serverHost" placeholder="localhost" @change="updateServer" />
+            <span :class="['dot', connected ? 'green' : 'red']"></span>
+          </div>
+        </div>
+      </details>
+      <details>
         <summary>模型设置</summary>
         <div class="setting-row">
           <label>STT 模型</label>
@@ -79,6 +89,7 @@ const sttModels = ref<ModelInfo[]>([]);
 const llmModels = ref<ModelInfo[]>([]);
 const sttModel = ref("");
 const llmModel = ref("");
+const serverHost = ref("localhost");
 const elapsedMs = ref(0);
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let mediaRecorder: MediaRecorder | null = null;
@@ -199,6 +210,16 @@ async function stopRecord() {
   }
 }
 
+// ── 服务器连接 ──
+async function updateServer() {
+  connected.value = false;
+  const host = serverHost.value.trim() || "localhost";
+  try {
+    await invoke("set_server_host", { host });
+    await loadModels();
+  } catch { /* will retry below */ }
+}
+
 // ── 模型管理 ──
 async function loadModels() {
   try {
@@ -307,6 +328,11 @@ h1 { font-size: 1.3rem; }
 .settings summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; margin-bottom: 8px; }
 .setting-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.8rem; }
 .setting-row select { background: var(--bg); color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 4px 8px; max-width: 200px; }
+.host-input { display: flex; align-items: center; gap: 6px; }
+.host-input input { background: var(--bg); color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 4px 8px; width: 160px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot.green { background: var(--green); }
+.dot.red { background: var(--red); }
 
 .footer { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--muted); margin-top: auto; }
 </style>

@@ -6,7 +6,15 @@ use std::sync::Mutex;
 use tauri::State;
 
 pub struct AppState {
+    pub stt: Mutex<stt::SttClient>,
     pub recorder: Mutex<audio::AudioRecorder>,
+}
+
+#[tauri::command]
+async fn set_server_host(state: State<'_, AppState>, host: String) -> Result<(), String> {
+    let mut stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+    *stt_client = stt::SttClient::new(&host);
+    Ok(())
 }
 
 #[tauri::command]
@@ -22,38 +30,70 @@ async fn stop_recording(state: State<'_, AppState>) -> Result<Vec<u8>, String> {
 }
 
 #[tauri::command]
-async fn transcribe(audio_data: Vec<u8>, language: Option<String>) -> Result<String, String> {
+async fn transcribe(
+    state: State<'_, AppState>,
+    audio_data: Vec<u8>,
+    language: Option<String>,
+) -> Result<String, String> {
+    let host = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.stt_url.clone()
+    };
+    let client = stt::SttClient::new_from_url(&host);
     let lang = language.unwrap_or_else(|| "auto".into());
-    stt::transcribe(audio_data, &lang).await
+    client.transcribe(audio_data, &lang).await
 }
 
 #[tauri::command]
-async fn get_models() -> Result<Vec<stt::ModelInfo>, String> {
-    stt::get_stt_models().await
+async fn get_models(state: State<'_, AppState>) -> Result<Vec<stt::ModelInfo>, String> {
+    let host = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.stt_url.clone()
+    };
+    let client = stt::SttClient::new_from_url(&host);
+    client.get_stt_models().await
 }
 
 #[tauri::command]
-async fn switch_model(name: String) -> Result<String, String> {
-    stt::switch_stt_model(&name).await
+async fn switch_model(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    let host = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.stt_url.clone()
+    };
+    let client = stt::SttClient::new_from_url(&host);
+    client.switch_stt_model(&name).await
 }
 
 #[tauri::command]
-async fn get_llm_models() -> Result<Vec<stt::ModelInfo>, String> {
-    stt::get_llm_models().await
+async fn get_llm_models(state: State<'_, AppState>) -> Result<Vec<stt::ModelInfo>, String> {
+    let (stt_url, llm_url) = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        (stt_client.stt_url.clone(), stt_client.llm_url.clone())
+    };
+    let client = stt::SttClient { stt_url, llm_url };
+    client.get_llm_models().await
 }
 
 #[tauri::command]
-async fn switch_llm_model(name: String) -> Result<String, String> {
-    stt::switch_llm_model(&name).await
+async fn switch_llm_model(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    let host = {
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        stt_client.stt_url.clone()
+    };
+    let client = stt::SttClient::new_from_url(&host);
+    client.switch_llm_model(&name).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let default_host = std::env::var("VIF_SERVER_HOST").unwrap_or_else(|_| "localhost".into());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
+            stt: Mutex::new(stt::SttClient::new(&default_host)),
             recorder: Mutex::new(audio::AudioRecorder::new()),
         })
         .setup(|app| {
@@ -61,6 +101,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_server_host,
             start_recording,
             stop_recording,
             transcribe,
