@@ -30,11 +30,7 @@
       "csp": null
     }
   },
-  "plugins": {
-    "global-shortcut": {
-      "shortcuts": ["Alt+Super+R", "Alt+Ctrl+R"]
-    }
-  },
+  "plugins": {},
   "bundle": {
     "active": true,
     "targets": "all",
