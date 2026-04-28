@@ -5,47 +5,48 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "voice-input-framework"
 version = "1.1.5"
-description = "基于大模型的语音输入法开发框架"
+description = "Voice Input Framework - MLX 原生语音识别"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     {name = "OpenClaw", email = "openclaw@example.com"}
 ]
-keywords = ["voice", "stt", "speech-to-text", "whisper", "qwen"]
+keywords = ["voice", "stt", "speech-to-text", "whisper", "mlx"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
-
 dependencies = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
     "websockets>=12.0",
     "httpx>=0.26.0",
+    "python-multipart>=0.0.6",
     "pydantic>=2.5.0",
-    "sounddevice>=0.4.6",
     "numpy>=1.26.0",
     "scipy>=1.12.0",
     "noisereduce>=3.0.0",
-    "webrtcvad>=2.0.10",
-    "transformers>=4.37.0",
-    "torch>=2.1.0",
-    "torchaudio>=2.1.0",
-    "modelscope>=1.12.0",
     "rich>=13.7.0",
     "click>=8.1.0",
-    "winotify>=1.1.0; platform_system=='Windows'",
-    "uiautomation>=2.0.29; platform_system=='Windows'",
 ]
 
 [project.optional-dependencies]
+stt = [
+    "transformers>=4.37.0",
+    "torch>=2.1.0",
+    "torchaudio>=2.1.0",
+]
+mlx = [
+    "mlx>=0.31.0",
+    "mlx-lm>=0.31.0",
+    "mlx-audio>=0.4.2",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.23.0",
@@ -65,14 +66,14 @@ include = ["voice_input_framework*"]
 
 [tool.black]
 line-length = 100
-target-version = ["py310", "py311", "py312"]
+target-version = ["py311", "py312"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

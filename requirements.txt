@@ -20,13 +20,11 @@ transformers>=4.37.0
 torch>=2.1.0
 torchaudio>=2.1.0
 
-# --- Qwen3-ASR ---
-qwen_asr>=0.0.6
 
 # --- MLX 加速 (Apple Silicon) ---
 mlx>=0.31.0
 mlx-lm>=0.31.0
-mlx-audio>=0.1.0
+mlx-audio>=0.4.2
 
 # --- whisper.cpp (可选，需要编译) ---
 # 无 Python 依赖，使用 subprocess 调用
