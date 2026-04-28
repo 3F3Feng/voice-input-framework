@@ -122,7 +122,7 @@
         <div class="setting-row">
           <label>自动输入到窗口</label>
           <label class="toggle">
-            <input type="checkbox" v-model="autoInputEnabled" />
+            <input type="checkbox" v-model="autoInputEnabled" @change="onAutoInputToggle" />
             <span class="slider"></span>
           </label>
         </div>
@@ -203,7 +203,7 @@ interface ModelInfo { name: string; is_loaded: boolean; }
 interface VoiceInputConfig {
   server: { host: string; port: number };
   hotkey: { key: string; distinguish_left_right: boolean };
-  ui: { start_minimized: boolean; use_floating_indicator: boolean; use_tray: boolean; opacity: number };
+  ui: { start_minimized: boolean; use_floating_indicator: boolean; use_tray: boolean; opacity: number; auto_input?: boolean };
   audio: { device: string | null; language: string };
   llm: { enabled: boolean };
   _version: string;
@@ -350,6 +350,7 @@ async function loadConfig() {
     version.value = `v${cfg._version}`;
     hotkeyStr.value = cfg.hotkey.key;
     startMinimized.value = cfg.ui.start_minimized;
+    autoInputEnabled.value = cfg.ui.auto_input ?? false;
     logMsg("配置已加载", "info");
   } catch (e) {
     logMsg(`加载配置失败: ${e}`, "warn");
@@ -560,6 +561,16 @@ async function applyHotkey() {
   }
 }
 
+async function onAutoInputToggle() {
+  try {
+    const cfg = await invoke<VoiceInputConfig>("get_config");
+    cfg.ui.auto_input = autoInputEnabled.value;
+    await invoke("update_config", { newConfig: cfg });
+  } catch (e) {
+    console.error("Failed to save auto-input:", e);
+  }
+}
+
 async function toggleLlm() {
   logMsg(`LLM 后处理: ${llmEnabled.value ? '启用' : '禁用'}中...`, "info");
   try {
@@ -648,6 +659,13 @@ function clearResult() {
 onMounted(async () => {
   logMsg("Voice Input 客户端启动", "info");
   toast("Voice Input 已启动 🎙️", "info");
+  // System notification
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission();
+  }
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification("Voice Input", { body: "客户端已启动 🎙️" });
+  }
   await loadConfig();
   await loadAutostart();
   await updateServer();

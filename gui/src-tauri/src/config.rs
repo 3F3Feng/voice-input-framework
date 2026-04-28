@@ -32,6 +32,7 @@ pub struct UiConfig {
     pub use_floating_indicator: bool,
     pub use_tray: bool,
     pub opacity: f64,
+    pub auto_input: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +103,7 @@ impl Default for VoiceInputConfig {
                 use_floating_indicator: true,
                 use_tray: true,
                 opacity: 0.8,
+                auto_input: false,
             },
             audio: AudioConfig {
                 device: None,
@@ -215,6 +217,7 @@ impl VoiceInputConfig {
                     .unwrap_or(true),
                 use_tray: old.ui.as_ref().and_then(|u| u.use_tray).unwrap_or(true),
                 opacity: old.ui.as_ref().and_then(|u| u.opacity).unwrap_or(0.8),
+                auto_input: false,
             },
             audio: AudioConfig {
                 device: old.audio.as_ref().and_then(|a| {

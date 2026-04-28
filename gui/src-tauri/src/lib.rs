@@ -17,9 +17,16 @@ pub struct AppState {
 }
 
 #[tauri::command]
-async fn set_server_host(state: State<'_, AppState>, host: String) -> Result<(), String> {
+async fn set_server_host(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    host: String,
+) -> Result<(), String> {
     let mut stt_client = state.stt.lock().map_err(|e| e.to_string())?;
     *stt_client = stt::SttClient::new(&host);
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    cfg.server.host = host;
+    cfg.save(&app).ok();
     Ok(())
 }
 
@@ -31,7 +38,7 @@ async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> R
     };
     let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
     recorder.start(device)?;
-    let _ = indicator::show(&app, None);
+    let _ = indicator::show(&app);
     Ok(())
 }
 
