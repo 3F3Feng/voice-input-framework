@@ -14,7 +14,8 @@ pub fn type_text(text: &str) -> Result<(), String> {
 
     // Type the text character by character using enigo's text() method.
     // This simulates real keyboard input to the active window.
-    enigo.text(text)
+    enigo
+        .text(text)
         .map_err(|e| format!("Failed to type text: {}", e))?;
 
     Ok(())

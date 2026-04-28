@@ -107,9 +107,7 @@ impl Default for VoiceInputConfig {
                 device: None,
                 language: "auto".into(),
             },
-            llm: LlmConfig {
-                enabled: true,
-            },
+            llm: LlmConfig { enabled: true },
             _version: "2.0".into(),
         }
     }
@@ -176,8 +174,8 @@ impl VoiceInputConfig {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
         }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("序列化配置失败: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| format!("序列化配置失败: {}", e))?;
         fs::write(&path, json).map_err(|e| format!("写入配置失败: {}", e))?;
         Ok(())
     }

@@ -16,9 +16,9 @@ pub struct ModelInfo {
 #[derive(Debug, Deserialize)]
 struct LlmModelsResponse {
     models: Vec<ModelInfo>,
-    #[serde(default)]
+    #[allow(dead_code)]
     current_model: Option<String>,
-    #[serde(default)]
+    #[allow(dead_code)]
     enabled: Option<bool>,
 }
 
@@ -60,13 +60,20 @@ impl SttClient {
             .await
             .map_err(|e| format!("HTTP error: {}", e))?;
 
-        let data: Value = resp.json().await.map_err(|e| format!("JSON error: {}", e))?;
+        let data: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("JSON error: {}", e))?;
         Ok(data["text"].as_str().unwrap_or("").to_string())
     }
 
     // ── WebSocket transcription (streaming) ──
 
-    pub async fn transcribe_ws(&self, audio_data: Vec<u8>, language: &str) -> Result<String, String> {
+    pub async fn transcribe_ws(
+        &self,
+        audio_data: Vec<u8>,
+        language: &str,
+    ) -> Result<String, String> {
         let ws_url = self.stt_url.replace("http://", "ws://");
         let url = format!("{}/ws/stream", ws_url);
 
@@ -77,14 +84,20 @@ impl SttClient {
         // Wait for "ready" message from server
         match ws.next().await {
             Some(Ok(Message::Text(json))) => {
-                let data: Value = serde_json::from_str(&json)
-                    .map_err(|e| format!("JSON parse: {}", e))?;
+                let data: Value =
+                    serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
                 if data["type"] != "ready" {
                     return Err(format!("Unexpected server message: {}", json));
                 }
             }
             _ => return Err("Expected text ready message".to_string()),
         }
+
+        // Send language config
+        let lang_msg = serde_json::json!({"type": "config", "language": language});
+        SinkExt::send(&mut ws, Message::Text(lang_msg.to_string()))
+            .await
+            .map_err(|e| format!("WebSocket send config failed: {}", e))?;
 
         // Strip WAV header if present (WebSocket expects raw PCM)
         let pcm_data = if audio_data.len() > 44 && &audio_data[..4] == b"RIFF" {
@@ -113,8 +126,8 @@ impl SttClient {
             let msg = msg.map_err(|e| format!("WebSocket read failed: {}", e))?;
             match msg {
                 Message::Text(json) => {
-                    let data: Value = serde_json::from_str(&json)
-                        .map_err(|e| format!("JSON parse: {}", e))?;
+                    let data: Value =
+                        serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
 
                     let msg_type = data["type"].as_str().unwrap_or("");
                     match msg_type {
@@ -129,7 +142,10 @@ impl SttClient {
                             }
                         }
                         "error" => {
-                            return Err(data["message"].as_str().unwrap_or("Unknown error").to_string());
+                            return Err(data["message"]
+                                .as_str()
+                                .unwrap_or("Unknown error")
+                                .to_string());
                         }
                         "llm_start" | "llm_progress" => {
                             // LLM is processing, wait for "result"
@@ -219,7 +235,10 @@ impl SttClient {
             .await
             .map_err(|e| format!("HTTP error: {}", e))?;
 
-        let data: Value = resp.json().await.map_err(|e| format!("JSON error: {}", e))?;
+        let data: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("JSON error: {}", e))?;
         Ok(data["prompt"].as_str().unwrap_or("").to_string())
     }
 

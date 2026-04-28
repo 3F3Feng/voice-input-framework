@@ -14,7 +14,11 @@ pub fn parse_hotkey(s: &str) -> Option<Vec<Key>> {
         return None;
     }
     let keys: Vec<Key> = tokens.iter().filter_map(|t| parse_key(t.trim())).collect();
-    if keys.len() == tokens.len() { Some(keys) } else { None }
+    if keys.len() == tokens.len() {
+        Some(keys)
+    } else {
+        None
+    }
 }
 
 fn parse_key(token: &str) -> Option<Key> {
@@ -81,6 +85,7 @@ fn parse_key(token: &str) -> Option<Key> {
 }
 
 /// Format keys for display
+#[allow(dead_code)]
 pub fn format_keys(keys: &[Key]) -> String {
     keys.iter()
         .map(|k| {
@@ -110,24 +115,18 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
         let p = pressed.clone();
         let a = app.clone();
 
-        let _result = listen(move |event: Event| {
-            match event.event_type {
-                EventType::KeyPress(key) => {
-                    if hotkey_matches(&hotkey_keys, &key) {
-                        if !p.swap(true, Ordering::SeqCst) {
-                            let _ = a.emit("hotkey-press", ());
-                        }
-                    }
-                }
-                EventType::KeyRelease(key) => {
-                    if hotkey_matches(&hotkey_keys, &key) {
-                        if p.swap(false, Ordering::SeqCst) {
-                            let _ = a.emit("hotkey-release", ());
-                        }
-                    }
-                }
-                _ => {}
+        let _result = listen(move |event: Event| match event.event_type {
+            EventType::KeyPress(key)
+                if hotkey_matches(&hotkey_keys, &key) && !p.swap(true, Ordering::SeqCst) =>
+            {
+                let _ = a.emit("hotkey-press", ());
             }
+            EventType::KeyRelease(key)
+                if hotkey_matches(&hotkey_keys, &key) && p.swap(false, Ordering::SeqCst) =>
+            {
+                let _ = a.emit("hotkey-release", ());
+            }
+            _ => {}
         });
     });
 }
@@ -146,10 +145,14 @@ fn hotkey_matches(hotkey: &[Key], event_key: &Key) -> bool {
 fn keys_cmp(a: &Key, b: &Key) -> bool {
     use Key::*;
     match (a, b) {
-        (ControlLeft, ControlLeft) | (ControlLeft, ControlRight)
-        | (ControlRight, ControlLeft) | (ControlRight, ControlRight) => true,
-        (ShiftLeft, ShiftLeft) | (ShiftLeft, ShiftRight)
-        | (ShiftRight, ShiftLeft) | (ShiftRight, ShiftRight) => true,
+        (ControlLeft, ControlLeft)
+        | (ControlLeft, ControlRight)
+        | (ControlRight, ControlLeft)
+        | (ControlRight, ControlRight) => true,
+        (ShiftLeft, ShiftLeft)
+        | (ShiftLeft, ShiftRight)
+        | (ShiftRight, ShiftLeft)
+        | (ShiftRight, ShiftRight) => true,
         (Alt, AltGr) | (AltGr, Alt) => true,
         _ => a == b,
     }

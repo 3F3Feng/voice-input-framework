@@ -36,7 +36,10 @@ async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> R
 }
 
 #[tauri::command]
-async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Vec<u8>, String> {
+async fn stop_recording(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
     let _ = indicator::hide(&app);
     let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
     recorder.stop()
@@ -45,7 +48,9 @@ async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
 // ── Audio device commands ──
 
 #[tauri::command]
-async fn get_audio_devices(state: State<'_, AppState>) -> Result<Vec<audio::AudioDeviceInfo>, String> {
+async fn get_audio_devices(
+    state: State<'_, AppState>,
+) -> Result<Vec<audio::AudioDeviceInfo>, String> {
     let recorder = state.recorder.lock().map_err(|e| e.to_string())?;
     Ok(recorder.list_devices())
 }
@@ -160,10 +165,7 @@ async fn get_llm_prompt(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn save_llm_prompt(
-    state: State<'_, AppState>,
-    text: String,
-) -> Result<(), String> {
+async fn save_llm_prompt(state: State<'_, AppState>, text: String) -> Result<(), String> {
     let host = {
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
         stt_client.stt_url.clone()
