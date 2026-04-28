@@ -62,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -81,6 +81,8 @@ const sttModel = ref("");
 const llmModel = ref("");
 const elapsedMs = ref(0);
 let timerInterval: ReturnType<typeof setInterval> | null = null;
+let mediaRecorder: MediaRecorder | null = null;
+let audioChunks: Blob[] = [];
 
 const statusText = computed(() => {
   if (recording.value) return "录音中...";
@@ -94,13 +96,94 @@ const timerText = computed(() => {
   return `${secs}.${String(ms).padStart(3, "0").slice(0, 2)}s`;
 });
 
-// Audio recording + transcription
+// ── WAV 编码 ──
+function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const dataSize = samples.length * (bitsPerSample / 8);
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);          // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    offset += 2;
+  }
+  return new Uint8Array(buffer);
+}
+
+// ── 录音 ──
 async function startRecord() {
-  recording.value = true;
-  elapsedMs.value = 0;
-  timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
   try {
-    await invoke("start_recording");
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=pcm" });
+    
+    // Fallback: use default codec if PCM not supported
+    if (!MediaRecorder.isTypeSupported("audio/webm;codecs=pcm")) {
+      mediaRecorder = new MediaRecorder(stream);
+    }
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+
+      // Decode audio to PCM via AudioContext
+      const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType });
+      const arrayBuf = await blob.arrayBuffer();
+      
+      try {
+        const audioCtx = new OfflineAudioContext(1, 16000, 16000);
+        const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+        
+        // Resample to 16kHz mono
+        const original = audioBuf.getChannelData(0);
+        const ratio = original.length / 16000;
+        const resampled = new Float32Array(16000);
+        for (let i = 0; i < 16000; i++) {
+          const srcIdx = Math.floor(i * ratio);
+          resampled[i] = original[Math.min(srcIdx, original.length - 1)];
+        }
+
+        // Encode to WAV and send to STT
+        const wav = encodeWav(resampled, 16000);
+        if (wav.length > 44 + 320) {
+          const audioArray = Array.from(wav);
+          const text = await invoke<string>("transcribe", { audioData: audioArray, language: "auto" });
+          if (text) result.value = text;
+        }
+      } catch (e) {
+        console.error("Audio decode error:", e);
+      }
+    };
+
+    recording.value = true;
+    elapsedMs.value = 0;
+    timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
+    mediaRecorder.start();
   } catch (e) {
     console.error("Failed to start recording:", e);
     recording.value = false;
@@ -108,23 +191,15 @@ async function startRecord() {
 }
 
 async function stopRecord() {
-  if (!recording.value) return;
+  if (!recording.value || !mediaRecorder) return;
   recording.value = false;
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-
-  try {
-    const audioData = await invoke<number[]>("stop_recording");
-    const bytes = new Uint8Array(audioData);
-    if (bytes.length > 320) {
-      const text = await invoke<string>("transcribe", { audioData: bytes, language: "auto" });
-      if (text) result.value = text;
-    }
-  } catch (e) {
-    console.error("Transcription error:", e);
+  if (mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
   }
 }
 
-// Model management
+// ── 模型管理 ──
 async function loadModels() {
   try {
     sttModels.value = await invoke<ModelInfo[]>("get_models");
@@ -136,7 +211,7 @@ async function loadModels() {
   try {
     llmModels.value = await invoke<ModelInfo[]>("get_llm_models");
     if (llmModels.value.length > 0) llmModel.value = llmModels.value[0].name;
-  } catch { /* LLM optional */ }
+  } catch { /* optional */ }
 }
 
 async function switchStt() {
@@ -161,6 +236,10 @@ onMounted(() => {
     if (recording.value) stopRecord();
     else startRecord();
   });
+});
+
+onUnmounted(() => {
+  if (timerInterval) clearInterval(timerInterval);
 });
 </script>
 
