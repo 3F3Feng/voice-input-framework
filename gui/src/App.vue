@@ -130,6 +130,26 @@
       </details>
 
       <details>
+        <summary>快捷键设置</summary>
+        <div class="setting-row">
+          <label>全局快捷键</label>
+          <div class="hotkey-input">
+            <input v-model="hotkeyStr" readonly :placeholder="defaultHotkey"
+              :class="['hotkey-field', { recording: hotkeyRecording }]"
+              @click="startHotkeyRecording" />
+            <button class="tiny-btn" @click="startHotkeyRecording">
+              {{ hotkeyRecording ? '取消' : '录制' }}
+            </button>
+          </div>
+        </div>
+        <div v-if="hotkeyRecording" class="setting-tip">请按下新的快捷键组合...</div>
+        <div class="btn-row" style="margin-top:4px">
+          <button class="tiny-btn" @click="applyHotkey" :disabled="!hotkeyChanged">应用</button>
+          <span v-if="hotkeyMsg" class="status-msg ok">{{ hotkeyMsg }}</span>
+        </div>
+      </details>
+
+      <details>
         <summary>配置管理</summary>
         <div class="btn-row">
           <button class="tiny-btn" @click="saveConfig">💾 保存配置</button>
@@ -210,6 +230,11 @@ const toasts = ref<Toast[]>([]);
 const logBox = ref<HTMLElement | null>(null);
 
 const audioLevel = ref(0);
+const hotkeyStr = ref("");
+const hotkeyRecording = ref(false);
+const hotkeyChanged = ref(false);
+const hotkeyMsg = ref("");
+const defaultHotkey = "Alt+Ctrl+R";
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let levelInterval: ReturnType<typeof setInterval> | null = null;
 let mediaRecorder: MediaRecorder | null = null;
@@ -350,6 +375,7 @@ async function loadConfig() {
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
     version.value = `v${cfg._version}`;
+    hotkeyStr.value = cfg.hotkey.key;
     logMsg("配置已加载", "info");
   } catch (e) {
     logMsg(`加载配置失败: ${e}`, "warn");
@@ -462,6 +488,51 @@ async function switchLlm() {
     toast(`LLM 模型切换失败`, "err");
   }
   llmLoading.value = false;
+}
+
+// ── Hotkey ──
+function startHotkeyRecording() {
+  hotkeyRecording.value = !hotkeyRecording.value;
+  hotkeyMsg.value = "";
+  if (hotkeyRecording.value) {
+    const handler = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const parts: string[] = [];
+      if (e.ctrlKey || e.metaKey) parts.push(e.metaKey ? 'Cmd' : 'Ctrl');
+      if (e.altKey) parts.push('Alt');
+      if (e.shiftKey) parts.push('Shift');
+      if (e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Shift' && e.key !== 'Meta') {
+        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        parts.push(key);
+        const joined = parts.join('+');
+        hotkeyStr.value = joined;
+        hotkeyChanged.value = true;
+        hotkeyRecording.value = false;
+        document.removeEventListener('keydown', handler);
+        logMsg(`快捷键已录制: ${joined}`, "info");
+      }
+    };
+    document.addEventListener('keydown', handler);
+  }
+}
+
+async function applyHotkey() {
+  if (!hotkeyStr.value) return;
+  try {
+    await invoke("register_hotkey", { shortcut: hotkeyStr.value });
+    hotkeyMsg.value = `✅ 快捷键已更新: ${hotkeyStr.value}`;
+    hotkeyChanged.value = false;
+    toast("快捷键已更新 ✅", "ok");
+    logMsg(`快捷键已更新: ${hotkeyStr.value}`, "ok");
+    // Save to config
+    const cfg = await invoke<VoiceInputConfig>("get_config");
+    cfg.hotkey.key = hotkeyStr.value;
+    await invoke("update_config", { newConfig: cfg });
+  } catch (e) {
+    hotkeyMsg.value = `❌ 更新失败: ${e}`;
+    logMsg(`快捷键更新失败: ${e}`, "err");
+  }
 }
 
 async function toggleLlm() {
@@ -713,6 +784,10 @@ h1 { font-size: 1.3rem; }
 .status-msg.ok { color: var(--green); }
 .status-msg.err { color: var(--red); }
 .setting-tip { font-size: 0.65rem; color: var(--muted); padding: 4px 0; }
+.hotkey-input { display: flex; gap: 4px; flex: 1; }
+.hotkey-field { background: var(--bg); color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 4px 8px; width: 100%; cursor: pointer; text-align: center; font-family: monospace; }
+.hotkey-field.recording { border-color: var(--yellow); animation: pulse-border 1s infinite; }
+@keyframes pulse-border { 0%,100% { border-color: var(--yellow); } 50% { border-color: transparent; } }
 
 .textarea-row { margin-bottom: 6px; }
 .textarea-row textarea {

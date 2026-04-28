@@ -192,6 +192,11 @@ async fn set_llm_enabled(state: State<'_, AppState>, enabled: bool) -> Result<()
 }
 
 #[tauri::command]
+async fn register_hotkey(app: tauri::AppHandle, shortcut: String) -> Result<(), String> {
+    hotkey::update(&app, &shortcut)
+}
+
+#[tauri::command]
 async fn auto_input(text: String) -> Result<(), String> {
     input::type_text(&text)
 }
@@ -220,12 +225,13 @@ pub fn run() {
         .setup(|app| {
             let cfg = config::VoiceInputConfig::load(app.handle());
             let default_host = cfg.server.host.clone();
+            let shortcut = cfg.hotkey.key.clone();
             app.manage(AppState {
                 stt: Mutex::new(stt::SttClient::new(&default_host)),
                 recorder: Mutex::new(audio::AudioRecorder::new()),
                 config: Mutex::new(cfg),
             });
-            let _ = hotkey::setup(app);
+            let _ = hotkey::setup(app, shortcut.as_str());
             let _ = tray::setup(app);
 
             // Minimize to tray on close
@@ -260,6 +266,7 @@ pub fn run() {
             get_llm_enabled,
             set_llm_enabled,
             auto_input,
+            register_hotkey,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
