@@ -340,7 +340,7 @@ async function startRecord() {
         if (wav.length > 44 + 320) {
           logMsg("正在识别...", "info");
           loading.value = true;
-          const text = await invoke<string>("transcribe", { audioData: Array.from(wav) });
+          const text = await invoke<string>("transcribe_ws", { audioData: Array.from(wav) });
           loading.value = false;
           if (text) {
             result.value = text;

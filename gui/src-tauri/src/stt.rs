@@ -106,21 +106,19 @@ impl SttClient {
             &audio_data[..]
         };
 
-        // Send audio data in chunks, base64-encoded in JSON messages
-        for chunk in pcm_data.chunks(4096) {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(chunk);
-            let msg = serde_json::json!({"type": "audio", "data": b64});
-            SinkExt::send(&mut ws, Message::Text(msg.to_string()))
-                .await
-                .map_err(|e| format!("WebSocket send audio failed: {}", e))?;
-        }
+        // Python client: send entire audio as single base64 message
+        let b64 = base64::engine::general_purpose::STANDARD.encode(pcm_data);
+        let audio_msg = serde_json::json!({"type": "audio", "data": b64});
+        SinkExt::send(&mut ws, Message::Text(audio_msg.to_string()))
+            .await
+            .map_err(|e| format!("WebSocket send audio failed: {}", e))?;
 
         // Signal end of audio
         SinkExt::send(&mut ws, Message::Text(r#"{"type":"end"}"#.into()))
             .await
             .map_err(|e| format!("WebSocket send end failed: {}", e))?;
 
-        // Receive result(s)
+        // Receive result(s) - Python uses 300s timeout for results
         let mut final_text = String::new();
         while let Some(msg) = ws.next().await {
             let msg = msg.map_err(|e| format!("WebSocket read failed: {}", e))?;
@@ -135,21 +133,19 @@ impl SttClient {
                             let text = data["text"].as_str().unwrap_or("");
                             if !text.is_empty() {
                                 final_text = text.to_string();
-                                // For "result", this is the final LLM-processed text
                                 if msg_type == "result" {
                                     return Ok(final_text);
                                 }
                             }
                         }
+                        "done" => break,
                         "error" => {
                             return Err(data["message"]
                                 .as_str()
                                 .unwrap_or("Unknown error")
                                 .to_string());
                         }
-                        "llm_start" | "llm_progress" => {
-                            // LLM is processing, wait for "result"
-                        }
+                        "llm_start" | "llm_progress" => {}
                         _ => {}
                     }
                 }
