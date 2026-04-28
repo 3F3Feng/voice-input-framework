@@ -65,7 +65,9 @@ jobs:
             libssl-dev \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
-            libasound2-dev
+            libasound2-dev \
+            libxdo-dev \
+            libxtst-dev
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
