@@ -22,6 +22,7 @@ unsafe impl Send for SendStream {}
 /// cpal-based audio capture
 pub struct AudioRecorder {
     selected_device: Option<String>,
+    input_sample_rate: u32,
     peak_level: Arc<AtomicU32>,
     is_recording: Arc<AtomicBool>,
     stream: Option<SendStream>,
@@ -32,6 +33,7 @@ impl AudioRecorder {
     pub fn new() -> Self {
         Self {
             selected_device: None,
+            input_sample_rate: 16000,
             peak_level: Arc::new(AtomicU32::new(0)),
             is_recording: Arc::new(AtomicBool::new(false)),
             stream: None,
@@ -89,65 +91,71 @@ impl AudioRecorder {
             sample_format,
         );
 
-        let stream_config = cpal::StreamConfig {
-            channels: 1,
-            sample_rate: cpal::SampleRate(16000),
-            buffer_size: cpal::BufferSize::Default,
-        };
+        let stream_config: cpal::StreamConfig = config.into();
+
         let peak = self.peak_level.clone();
         let recording = self.is_recording.clone();
         let samples = self.samples.clone();
 
         peak.store(0, Ordering::SeqCst);
-        recording.store(true, Ordering::SeqCst);
         *samples.lock().unwrap() = Vec::new();
 
         let err_fn = move |err| eprintln!("[audio] Stream error: {}", err);
 
         let stream = match sample_format {
-            cpal::SampleFormat::F32 => device.build_input_stream(
-                &stream_config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    if !recording.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    let mut buf = samples.lock().unwrap();
-                    let mut local_peak = 0.0f32;
-                    for chunk in data.chunks(channels) {
-                        let mono: f32 = chunk.iter().sum::<f32>() / channels as f32;
-                        buf.push(mono);
-                        let abs = mono.abs();
-                        if abs > local_peak {
-                            local_peak = abs;
+            cpal::SampleFormat::F32 => {
+                let r = recording.clone();
+                let p = peak.clone();
+                let s = samples.clone();
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        if !r.load(Ordering::SeqCst) {
+                            return;
                         }
-                    }
-                    peak.store((local_peak * 1000.0) as u32, Ordering::SeqCst);
-                },
-                err_fn,
-                None,
-            ),
-            cpal::SampleFormat::I16 => device.build_input_stream(
-                &stream_config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    if !recording.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    let mut buf = samples.lock().unwrap();
-                    let mut local_peak = 0.0f32;
-                    for chunk in data.chunks(channels) {
-                        let mono: f32 = chunk.iter().map(|&v| v as f32 / 32768.0).sum::<f32>()
-                            / channels as f32;
-                        buf.push(mono);
-                        let abs = mono.abs();
-                        if abs > local_peak {
-                            local_peak = abs;
+                        let mut buf = s.lock().unwrap();
+                        let mut local_peak = 0.0f32;
+                        for chunk in data.chunks(channels) {
+                            let mono: f32 = chunk.iter().sum::<f32>() / channels as f32;
+                            buf.push(mono);
+                            let abs = mono.abs();
+                            if abs > local_peak {
+                                local_peak = abs;
+                            }
                         }
-                    }
-                    peak.store((local_peak * 1000.0) as u32, Ordering::SeqCst);
-                },
-                err_fn,
-                None,
-            ),
+                        p.store((local_peak * 1000.0) as u32, Ordering::SeqCst);
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            cpal::SampleFormat::I16 => {
+                let r = recording.clone();
+                let p = peak.clone();
+                let s = samples.clone();
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        if !r.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let mut buf = s.lock().unwrap();
+                        let mut local_peak = 0.0f32;
+                        for chunk in data.chunks(channels) {
+                            let mono: f32 = chunk.iter().map(|&v| v as f32 / 32768.0).sum::<f32>()
+                                / channels as f32;
+                            buf.push(mono);
+                            let abs = mono.abs();
+                            if abs > local_peak {
+                                local_peak = abs;
+                            }
+                        }
+                        p.store((local_peak * 1000.0) as u32, Ordering::SeqCst);
+                    },
+                    err_fn,
+                    None,
+                )
+            }
             _ => return Err("Unsupported sample format".to_string()),
         }
         .map_err(|e| format!("Failed to create audio stream: {}", e))?;
@@ -156,13 +164,15 @@ impl AudioRecorder {
             .play()
             .map_err(|e| format!("Failed to start stream: {}", e))?;
 
+        self.input_sample_rate = sample_rate;
+        recording.store(true, Ordering::SeqCst);
         self.stream = Some(SendStream(Some(stream)));
         self.selected_device = device_name;
 
         Ok(())
     }
 
-    /// Stop recording and return WAV bytes
+    /// Stop recording and return WAV bytes (resampled to 16kHz)
     pub fn stop(&mut self) -> Result<Vec<u8>, String> {
         self.is_recording.store(false, Ordering::SeqCst);
         self.peak_level.store(0, Ordering::SeqCst);
@@ -187,12 +197,37 @@ impl AudioRecorder {
             return Ok(Vec::new());
         }
 
+        let rate = self.input_sample_rate;
         eprintln!(
-            "[audio] Recorded {} samples ({:.2}s at 16kHz)",
+            "[audio] Recorded {} samples ({:.2}s at {}Hz → 16kHz)",
             samples.len(),
-            samples.len() as f64 / 16000.0
+            samples.len() as f64 / rate as f64,
+            rate
         );
-        Ok(encode_wav(&samples, 16000))
+
+        // Resample to 16kHz if device used a different rate
+        let resampled = if rate != 16000 {
+            let ratio = rate as f64 / 16000.0;
+            let len = (samples.len() as f64 / ratio).round() as usize;
+            let mut out = Vec::with_capacity(len);
+            for i in 0..len {
+                let src_idx = ((i as f64) * ratio).round() as usize;
+                out.push(samples[src_idx.min(samples.len() - 1)]);
+            }
+            out
+        } else {
+            samples
+        };
+
+        Ok(encode_wav(&resampled, 16000))
+    }
+
+    /// Reset recording state (called on start failure)
+    pub fn reset(&mut self) {
+        self.is_recording.store(false, Ordering::SeqCst);
+        self.peak_level.store(0, Ordering::SeqCst);
+        self.stream = None;
+        *self.samples.lock().unwrap() = Vec::new();
     }
 
     /// Get current peak audio level (0.0 – 1.0)

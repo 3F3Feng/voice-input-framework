@@ -37,9 +37,17 @@ async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> R
         cfg.audio.device.clone()
     };
     let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
-    recorder.start(device)?;
-    let _ = indicator::show(&app);
-    Ok(())
+    match recorder.start(device) {
+        Ok(()) => {
+            let _ = indicator::show(&app);
+            Ok(())
+        }
+        Err(e) => {
+            // Reset recording state on failure
+            recorder.reset();
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
