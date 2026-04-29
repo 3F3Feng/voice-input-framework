@@ -177,13 +177,17 @@ impl AudioRecorder {
         self.is_recording.store(false, Ordering::SeqCst);
         self.peak_level.store(0, Ordering::SeqCst);
 
-        // Drop the stream (stops audio capture)
+        // Drop the stream (stops audio capture) - this waits for the stream to stop
         if let Some(s) = self.stream.take() {
             drop(s);
         }
 
-        // Small delay for any remaining audio callbacks to finish
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Spin-wait briefly for any in-flight callbacks (~1-2ms)
+        // Use a timeout instead of fixed sleep to minimize latency
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(10);
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_micros(100));
+        }
 
         let samples = {
             let mut buf = self.samples.lock().map_err(|e| e.to_string())?;
