@@ -1,20 +1,17 @@
-//! Floating recording indicator - a small transparent overlay at bottom center of screen.
+//! Floating recording indicator overlay at bottom center of screen.
 
-use tauri::{window::Color, WebviewWindowBuilder};
+use tauri::{window::Color, Manager, WebviewWindowBuilder};
 
 const INDICATOR_LABEL: &str = "indicator";
 
 pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
-    // Close any existing indicator first
     let _ = hide(app);
 
-    // Calculate center-bottom position from the main window's monitor
-    let (x, y) = {
-        let (sw, sh) = get_screen_center_bottom(app);
-        (sw - 110, sh - 100)
-    };
+    let (sw, sh) = screen_center_bottom(app);
+    let x = sw - 110;
+    let y = sh - 100;
 
-    let _window = WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         app,
         INDICATOR_LABEL,
         tauri::WebviewUrl::App("indicator.html".into()),
@@ -27,30 +24,27 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
     .resizable(false)
     .title("")
     .build()
-    .map_err(|e| format!("Failed to create indicator: {}", e))?;
+    .map_err(|e| format!("Indicator failed: {}", e))?;
 
-    // Make the window background transparent (removes white rectangle)
-    _window.set_background_color(Some(Color(0, 0, 0, 0))).ok();
+    // Set webview background to dark to avoid white rectangle on Windows
+    let _ = window.set_background_color(Some(Color(20, 22, 36, 217)));
 
     Ok(())
 }
 
 pub fn hide(app: &tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
     if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
-        // Don't error if already closed
         let _ = window.close();
     }
     Ok(())
 }
 
-fn get_screen_center_bottom(app: &tauri::AppHandle) -> (i32, i32) {
-    use tauri::Manager;
+fn screen_center_bottom(app: &tauri::AppHandle) -> (i32, i32) {
     if let Some(main) = app.get_webview_window("main") {
         if let Ok(Some(mon)) = main.current_monitor() {
             let size = mon.size();
-            return ((size.width / 2) as i32, size.height as i32);
+            return (size.width as i32 / 2, size.height as i32);
         }
     }
-    (960, 1400) // fallback for common screen resolutions
+    (960, 1400)
 }
