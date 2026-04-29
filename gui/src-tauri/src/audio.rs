@@ -207,12 +207,18 @@ impl AudioRecorder {
 
         // Resample to 16kHz if device used a different rate
         let resampled = if rate != 16000 {
+            // Linear interpolation resampling — much better than nearest-neighbor
             let ratio = rate as f64 / 16000.0;
-            let len = (samples.len() as f64 / ratio).round() as usize;
-            let mut out = Vec::with_capacity(len);
-            for i in 0..len {
-                let src_idx = ((i as f64) * ratio).round() as usize;
-                out.push(samples[src_idx.min(samples.len() - 1)]);
+            let src_len = samples.len();
+            let dst_len = (src_len as f64 / ratio).round() as usize;
+            let mut out = Vec::with_capacity(dst_len);
+            for i in 0..dst_len {
+                let src_pos = i as f64 * ratio;
+                let idx = src_pos as usize;
+                let frac = src_pos - idx as f64;
+                let s0 = samples[idx.min(src_len - 1)];
+                let s1 = samples[(idx + 1).min(src_len - 1)];
+                out.push(s0 + (s1 - s0) * frac as f32);
             }
             out
         } else {
