@@ -1,0 +1,21 @@
+# Voice Input Framework - LLM Service Dependencies (Windows CUDA)
+# 运行在 vif-llm conda 环境中 (4090 优化)
+
+# ============== Web 框架 ==============
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# ============== LLM 推理 ==============
+transformers>=4.37.0
+accelerate>=0.28.0
+
+# ============== CUDA (PyTorch via index-url) ==============
+# pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+# ============== CUDA 优化 (可选) ==============
+# flash-attn>=2.6.0      # Flash Attention 2
+# bitsandbytes>=0.43.0   # int8 量化
+
+# ============== 日志 ==============
+rich>=13.7.0
