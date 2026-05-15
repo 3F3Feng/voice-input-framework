@@ -25,18 +25,17 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
     let update = updater.check().await
         .map_err(|e| format!("检查更新失败: {}", e))?;
 
-    let cur = current.clone();
     match update {
         Some(update) => {
             let latest = update.version.clone();
-            let available = latest != cur;
+            let available = latest != current;
             let body = update.body.clone().unwrap_or_default();
-            eprintln!("[update] Current: {}, Latest: {}, available: {}", cur, latest, available);
-            Ok(UpdateInfo { available, current_version: cur, latest_version: latest, body, download_size: 0 })
+            eprintln!("[update] Current: {}, Latest: {}, available: {}", current, latest, available);
+            Ok(UpdateInfo { available, current_version: current, latest_version: latest, body, download_size: 0 })
         }
         None => {
             eprintln!("[update] No update available (None)");
-            Ok(UpdateInfo { available: false, current_version: current, latest_version: current, body: String::new(), download_size: 0 })
+            Ok(UpdateInfo { available: false, current_version: current.clone(), latest_version: current, body: String::new(), download_size: 0 })
         }
     }
 }
