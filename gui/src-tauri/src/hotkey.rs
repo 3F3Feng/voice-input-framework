@@ -3,8 +3,17 @@
 
 use rdev::{listen, Event, Key};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tauri::Emitter;
+
+static IS_PRESSED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+static WAS_ACTIVATED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+/// Reset hotkey listener state. Call when window is restored from tray.
+pub fn reset_state() {
+    if let Some(p) = IS_PRESSED.get() { p.store(false, Ordering::SeqCst); }
+    if let Some(act) = WAS_ACTIVATED.get() { act.store(false, Ordering::SeqCst); }
+}
 
 /// Parse a hotkey string like "left_ctrl+left_alt" or "capslock" into key list.
 pub fn parse_hotkey(s: &str) -> Option<Vec<Key>> {
@@ -96,6 +105,8 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
 
             let is_pressed = Arc::new(AtomicBool::new(false));
             let was_activated = Arc::new(AtomicBool::new(false));
+            let _ = IS_PRESSED.set(is_pressed.clone());
+            let _ = WAS_ACTIVATED.set(was_activated.clone());
             let p = is_pressed.clone();
             let act = was_activated.clone();
             let a = app.clone();
