@@ -19,10 +19,17 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
     let current = app.package_info().version.to_string();
     eprintln!("[update] Checking for updates (current: {})...", current);
 
-    let updater = app.updater()
-        .map_err(|e| format!("Updater plugin error: {}", e))?;
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(_) => {
+            eprintln!("[update] Updater plugin not available");
+            return Err("更新插件未启用，请检查配置".to_string());
+        }
+    };
 
-    let update = updater.check().await
+    let maybe_update = updater
+        .check()
+        .await
         .map_err(|e| format!("检查更新失败: {}", e))?;
 
     match update {
@@ -42,10 +49,14 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
 
 /// Download and install the update.
 pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, String> {
-    let updater = app.updater()
-        .map_err(|e| format!("Updater plugin error: {}", e))?;
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(_) => return Err("更新插件未启用".to_string()),
+    };
 
-    let update = updater.check().await
+    let maybe_update = updater
+        .check()
+        .await
         .map_err(|e| format!("检查更新失败: {}", e))?;
 
     let update = match update {
