@@ -32,7 +32,7 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
         .await
         .map_err(|e| format!("检查更新失败: {}", e))?;
 
-    match update {
+    match maybe_update {
         Some(update) => {
             let latest = update.version.clone();
             let available = latest != current;
@@ -59,7 +59,7 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
         .await
         .map_err(|e| format!("检查更新失败: {}", e))?;
 
-    let update = match update {
+    let update = match maybe_update {
         Some(u) if u.version != u.current_version => u,
         Some(_) => return Ok("已是最新版本".to_string()),
         None => return Ok("没有可用更新".to_string()),
