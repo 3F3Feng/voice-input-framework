@@ -91,6 +91,8 @@ async fn stop_recording(
         (chunk_rx, samples, rate)
     };
 
+    let has_window = app.get_webview_window(indicator::INDICATOR_LABEL).is_some();
+    eprintln!("[stop] indicator window exists: {}", has_window);
     indicator::update_status(&app, "识别中...");
     indicator::update_timer(&app, "0.0s");
 
@@ -104,6 +106,7 @@ async fn stop_recording(
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
+        eprintln!("[transcribe] Background task started");
         let result = run_transcription(&app_handle, &host, &language, chunk_rx, fallback_samples, src_rate).await;
         let _ = indicator::hide(&app_handle);
 
@@ -135,7 +138,7 @@ async fn run_transcription(
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<stt::StreamEvent>();
 
     let app_fwd = app_handle.clone();
-    let event_forwarder = tauri::async_runtime::spawn(async move {
+    let event_forwarder = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             match &event {
                 stt::StreamEvent::LlmStart { .. } | stt::StreamEvent::LlmProgress { .. } => {
