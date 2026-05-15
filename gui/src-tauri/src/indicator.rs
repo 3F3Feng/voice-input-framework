@@ -11,12 +11,13 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
     let y = sh - 100;
 
     let builder = WebviewWindowBuilder::new(app, INDICATOR_LABEL, tauri::WebviewUrl::App("indicator.html".into()))
-        .inner_size(220.0, 52.0)
+        .inner_size(210.0, 44.0)
         .position(x as f64, y as f64)
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
+        .shadow(false)
         .title("");
 
     #[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]
