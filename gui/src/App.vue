@@ -164,6 +164,25 @@
       </details>
 
       <details>
+        <summary>软件更新</summary>
+        <div v-if="updateInfo" class="setting-row">
+          <span :class="updateInfo.available ? 'update-new' : 'update-ok'">
+            {{ updateInfo.available ? `新版本: ${updateInfo.latest_version}` : '已是最新版本' }}
+          </span>
+          <span class="setting-tip">当前: v{{ updateInfo.current_version }}</span>
+        </div>
+        <div v-if="updateStatus" :class="['setting-tip', { ok: updateStatusType === 'ok' }]">{{ updateStatus }}</div>
+        <div class="btn-row" style="margin-top:4px">
+          <button class="tiny-btn" @click="doCheckUpdate" :disabled="updateChecking">
+            {{ updateChecking ? '检查中...' : '检查更新' }}
+          </button>
+          <button v-if="updateInfo?.available" class="tiny-btn" @click="doInstallUpdate" :disabled="updateInstalling" style="background:var(--accent);color:var(--bg)">
+            {{ updateInstalling ? '下载中...' : '下载安装' }}
+          </button>
+        </div>
+      </details>
+
+      <details>
         <summary>配置管理</summary>
         <div class="btn-row">
           <button class="tiny-btn" @click="saveConfig">💾 保存配置</button>
@@ -199,6 +218,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 // ── Types ──
+interface UpdateInfo { available: boolean; current_version: string; latest_version: string; body: string; download_size: number; }
 interface ModelInfo { name: string; is_loaded: boolean; }
 interface VoiceInputConfig {
   server: { host: string; port: number };
@@ -242,6 +262,11 @@ const startMinimized = ref(false);
 
 const elapsedMs = ref(0);
 const log = ref<LogEntry[]>([]);
+const updateInfo = ref<UpdateInfo | null>(null);
+const updateStatus = ref("");
+const updateStatusType = ref<"info" | "ok">("info");
+const updateChecking = ref(false);
+const updateInstalling = ref(false);
 const displayHotkey = computed(() => {
   return hotkeyStr.value || defaultHotkey;
 });
@@ -292,6 +317,44 @@ function logMsg(msg: string, type: 'info'|'ok'|'err'|'warn' = 'info') {
 }
 
 function clearLog() { log.value = []; }
+
+// ── Update functions ──
+async function doCheckUpdate() {
+  updateChecking.value = true;
+  updateStatus.value = "检查中...";
+  updateStatusType.value = "info";
+  try {
+    const info = await invoke<UpdateInfo>("check_update");
+    updateInfo.value = info;
+    if (info.available) {
+      updateStatus.value = `发现新版本 ${info.latest_version}`;
+      logMsg(`新版本 ${info.latest_version} 可用`, "ok");
+    } else {
+      updateStatus.value = "已是最新版本";
+      updateStatusType.value = "ok";
+    }
+  } catch (e) {
+    updateStatus.value = `检查失败: ${e}`;
+    logMsg(`更新检查失败: ${e}`, "err");
+  }
+  updateChecking.value = false;
+}
+
+async function doInstallUpdate() {
+  updateInstalling.value = true;
+  updateStatus.value = "正在下载...";
+  updateStatusType.value = "info";
+  try {
+    const msg = await invoke<string>("install_update");
+    updateStatus.value = msg;
+    updateStatusType.value = "ok";
+    logMsg("更新已安装，重启后生效", "ok");
+  } catch (e) {
+    updateStatus.value = `安装失败: ${e}`;
+    logMsg(`更新安装失败: ${e}`, "err");
+  }
+  updateInstalling.value = false;
+}
 // ── Recording ──
 async function startRecord() {
   try {
@@ -676,6 +739,20 @@ onMounted(async () => {
   listen("hotkey-release", () => {
     if (recording.value) stopRecord();
   });
+
+  // Auto-check for updates (silent)
+  try {
+    const info = await invoke<UpdateInfo>("check_update");
+    if (info.available) {
+      updateInfo.value = info;
+      toast(`新版本 ${info.latest_version} 可用`, "ok");
+    }
+  } catch {}
+
+  // Tray menu "检查更新" triggers check
+  listen("tray-check-update", () => {
+    doCheckUpdate();
+  });
 });
 
 onUnmounted(() => {
@@ -852,7 +929,9 @@ h1 { font-size: 1.3rem; }
   max-height: 180px; overflow-y: auto; font-size: 0.7rem;
   font-family: monospace; line-height: 1.6;
 }
-.log-entry { display: flex; gap: 6px; }
+.log-entry { display: flex; gap: 6px; user-select: text; -webkit-user-select: text; }
+.update-new { color: var(--accent); font-weight: 600; font-size: 0.85rem; }
+.update-ok { color: var(--muted); font-size: 0.8rem; }
 .log-time { color: var(--muted); flex-shrink: 0; }
 .log-msg { word-break: break-all; }
 .log-entry.ok .log-msg { color: var(--green); }

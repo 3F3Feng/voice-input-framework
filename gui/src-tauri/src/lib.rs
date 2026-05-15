@@ -5,9 +5,10 @@ mod indicator;
 mod input;
 mod stt;
 mod tray;
+mod update;
 
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 pub struct AppState {
@@ -254,6 +255,28 @@ async fn auto_input(text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<update::UpdateInfo, String> {
+    eprintln!("[update] Checking for updates...");
+    let info = update::check(&app).await;
+    match &info {
+        Ok(i) => eprintln!("[update] Current: {}, Latest: {}, available: {}", i.current_version, i.latest_version, i.available),
+        Err(e) => eprintln!("[update] Check failed: {}", e),
+    }
+    info
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
+    eprintln!("[update] Starting download and install...");
+    let result = update::download_and_install(&app).await;
+    match &result {
+        Ok(msg) => eprintln!("[update] {}", msg),
+        Err(e) => eprintln!("[update] Install failed: {}", e),
+    }
+    result
+}
+
+#[tauri::command]
 async fn transcribe_ws(
     state: State<'_, AppState>,
     audio_data: Vec<u8>,
@@ -273,6 +296,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
@@ -333,6 +357,8 @@ pub fn run() {
             get_llm_enabled,
             set_llm_enabled,
             auto_input,
+            check_update,
+            install_update,
             register_hotkey,
             get_autostart,
             set_autostart,

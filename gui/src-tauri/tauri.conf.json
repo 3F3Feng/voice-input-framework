@@ -30,7 +30,13 @@
       "csp": null
     }
   },
-  "plugins": {},
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/3F3Feng/voice-input-framework/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
