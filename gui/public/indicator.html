@@ -29,43 +29,51 @@ const levelEl = document.getElementById('level');
 const levelBar = document.getElementById('level-bar');
 const dotEl = document.getElementById('dot');
 const labelEl = document.getElementById('label');
+const { invoke } = window.__TAURI__?.core || {};
 
-let mode = 'recording';
+let mode = 'recording'; // 'recording' | 'processing'
 let processingStart = null;
 
 setInterval(() => {
   if (mode === 'recording') {
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
     if (timerEl) timerEl.textContent = elapsed + 's';
-    try {
-      window.__TAURI__?.core?.invoke('get_audio_level').then(level => {
+    if (invoke) {
+      invoke('get_audio_level').then(level => {
         if (levelEl && level != null) {
           let pct = Math.min(1.0, (level || 0) * 10);
           levelEl.style.width = Math.round(pct * 100) + '%';
         }
       }).catch(() => {});
-    } catch(e) {}
+    }
   } else if (mode === 'processing') {
     const elapsed = ((Date.now() - processingStart) / 1000).toFixed(1);
     if (timerEl) timerEl.textContent = elapsed + 's';
+    // Poll for status updates
+    if (invoke) {
+      invoke('get_indicator_status').then(status => {
+        if (status && labelEl) labelEl.textContent = status;
+      }).catch(() => {});
+    }
   }
 }, 100);
 
-function setupListeners() {
-  const listen = window.__TAURI__?.event?.listen;
-  if (!listen) { setTimeout(setupListeners, 50); return; }
-  listen('update-status', (e) => {
-    const status = e.payload?.status || '';
-    mode = 'processing';
-    processingStart = Date.now();
-    if (labelEl) labelEl.textContent = status;
-    if (timerEl) timerEl.textContent = '0.0s';
-    if (levelEl) levelEl.style.width = '0%';
-    if (levelBar) levelBar.style.display = 'none';
-    if (dotEl) { dotEl.classList.remove('recording'); dotEl.classList.add('processing'); }
-  });
-}
-setupListeners();
+// Check for processing status every 100ms
+setInterval(() => {
+  if (mode === 'recording' && invoke) {
+    invoke('get_indicator_status').then(status => {
+      if (status && status.length > 0) {
+        mode = 'processing';
+        processingStart = Date.now();
+        if (labelEl) labelEl.textContent = status;
+        if (timerEl) timerEl.textContent = '0.0s';
+        if (levelEl) levelEl.style.width = '0%';
+        if (levelBar) levelBar.style.display = 'none';
+        if (dotEl) { dotEl.classList.remove('recording'); dotEl.classList.add('processing'); }
+      }
+    }).catch(() => {});
+  }
+}, 100);
 </script>
 </body>
 </html>

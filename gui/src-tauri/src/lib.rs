@@ -32,6 +32,7 @@ pub struct AppState {
     pub stt: Mutex<stt::SttClient>,
     pub recorder: Mutex<audio::AudioRecorder>,
     pub config: Mutex<config::VoiceInputConfig>,
+    pub indicator_status: std::sync::Arc<Mutex<String>>,
 }
 
 #[tauri::command]
@@ -93,8 +94,12 @@ async fn stop_recording(
 
     let has_window = app.get_webview_window(indicator::INDICATOR_LABEL).is_some();
     eprintln!("[stop] indicator window exists: {}", has_window);
-    indicator::update_status(&app, "识别中...");
-    indicator::update_timer(&app, "0.0s");
+
+    // Set processing status for the indicator to poll
+    {
+        let mut status = state.indicator_status.lock().map_err(|e| e.to_string())?;
+        *status = "识别中...".to_string();
+    }
 
     log_info!("[stop] chunks={}, fallback_samples={}, src_rate={}", chunk_rx.is_some(), fallback_samples.len(), src_rate);
 
@@ -104,10 +109,15 @@ async fn stop_recording(
         (stt_client.stt_url.clone(), cfg.audio.language.clone())
     };
 
+    let indicator_status = state.indicator_status.clone();
+
     let app_handle = app.clone();
     tokio::spawn(async move {
-        eprintln!("[transcribe] Background task started");
-        let result = run_transcription(&app_handle, &host, &language, chunk_rx, fallback_samples, src_rate).await;
+        eprintln!("[transcribe] Background task started, host={}", host);
+        let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
+
+        // Clear indicator status
+        if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
         let _ = indicator::hide(&app_handle);
 
         match result {
@@ -127,6 +137,7 @@ async fn stop_recording(
 
 async fn run_transcription(
     app_handle: &tauri::AppHandle,
+    indicator_status: &std::sync::Arc<Mutex<String>>,
     host: &str,
     language: &str,
     chunk_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
@@ -134,15 +145,19 @@ async fn run_transcription(
     src_rate: u32,
 ) -> Result<String, String> {
     let client = stt::SttClient::new(host);
+    eprintln!("[transcribe] Starting transcription, host={}, lang={}", host, language);
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<stt::StreamEvent>();
 
+    let indicator_status_fwd = indicator_status.clone();
     let app_fwd = app_handle.clone();
     let event_forwarder = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             match &event {
                 stt::StreamEvent::LlmStart { .. } | stt::StreamEvent::LlmProgress { .. } => {
-                    indicator::update_status(&app_fwd, "LLM 处理中...");
+                    if let Ok(mut status) = indicator_status_fwd.lock() {
+                        *status = "LLM 处理中...".to_string();
+                    }
                 }
                 _ => {}
             }
@@ -180,6 +195,12 @@ async fn get_audio_devices(state: State<'_, AppState>) -> Result<Vec<audio::Audi
 async fn get_audio_level(state: State<'_, AppState>) -> Result<f32, String> {
     let recorder = state.recorder.lock().map_err(|e| e.to_string())?;
     Ok(recorder.get_level())
+}
+
+#[tauri::command]
+async fn get_indicator_status(state: State<'_, AppState>) -> Result<String, String> {
+    let status = state.indicator_status.lock().map_err(|e| e.to_string())?;
+    Ok(status.clone())
 }
 
 // ── Transcription ──
@@ -325,6 +346,7 @@ pub fn run() {
                 stt: Mutex::new(stt::SttClient::new(&default_host)),
                 recorder: Mutex::new(audio::AudioRecorder::new()),
                 config: Mutex::new(cfg),
+                indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
             });
 
             log::init(app.handle());
@@ -354,7 +376,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             set_server_host, start_recording, stop_recording,
-            get_audio_devices, get_audio_level,
+            get_audio_devices, get_audio_level, get_indicator_status,
             transcribe_ws, get_models, switch_model,
             get_llm_models, switch_llm_model,
             get_config, update_config, import_old_config,
