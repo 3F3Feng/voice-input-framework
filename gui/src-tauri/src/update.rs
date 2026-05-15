@@ -27,9 +27,9 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
 
     match update {
         Some(update) => {
-            let latest = update.latest_version().to_string();
-            let available = update.is_update_available();
-            let body = update.body().unwrap_or_default().to_string();
+            let latest = update.version.clone();
+            let available = latest != current;
+            let body = update.body.clone().unwrap_or_default();
             eprintln!("[update] Current: {}, Latest: {}, available: {}", current, latest, available);
             Ok(UpdateInfo { available, current_version: current, latest_version: latest, body, download_size: 0 })
         }
@@ -49,15 +49,18 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
         .map_err(|e| format!("检查更新失败: {}", e))?;
 
     let update = match update {
-        Some(u) if u.is_update_available() => u,
+        Some(u) if u.version != u.current_version => u,
         Some(_) => return Ok("已是最新版本".to_string()),
         None => return Ok("没有可用更新".to_string()),
     };
 
-    eprintln!("[update] Downloading {}...", update.latest_version());
+    eprintln!("[update] Downloading {}...", update.version);
     let _ = app.emit("update-progress", "正在下载更新...");
 
-    match update.download_and_install(|_chunk_length, _total| {}).await {
+    match update.download_and_install(
+        |_chunk_length, _total| {},
+        || {},
+    ).await {
         Ok(()) => {
             eprintln!("[update] Update installed successfully");
             let _ = app.emit("update-progress", "更新已安装，重启后生效");
