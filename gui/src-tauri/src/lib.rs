@@ -105,7 +105,7 @@ async fn stop_recording(
     };
 
     let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         eprintln!("[transcribe] Background task started");
         let result = run_transcription(&app_handle, &host, &language, chunk_rx, fallback_samples, src_rate).await;
         let _ = indicator::hide(&app_handle);
