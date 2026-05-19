@@ -226,6 +226,40 @@ jobs:
       - name: List all files
         run: find release-assets -type f | sort
 
+      - name: Rename assets for clarity
+        run: |
+          cd release-assets
+          # Rename Tauri GUI assets with "GUI-" prefix
+          for f in tauri-linux/* tauri-macos/* tauri-windows/*; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            if [[ "$base" == *".deb" ]]; then
+              mv "$f" "GUI-Linux-${{ steps.version.outputs.VERSION }}-x64.deb"
+            elif [[ "$base" == *".AppImage" ]]; then
+              mv "$f" "GUI-Linux-${{ steps.version.outputs.VERSION }}-x64.AppImage"
+            elif [[ "$base" == *".dmg" ]]; then
+              mv "$f" "GUI-macOS-${{ steps.version.outputs.VERSION }}-aarch64.dmg"
+            elif [[ "$base" == *"setup.exe" ]]; then
+              mv "$f" "GUI-Windows-${{ steps.version.outputs.VERSION }}-x64.exe"
+            elif [[ "$base" == *".msi" ]]; then
+              rm "$f"  # Remove MSI, keep only exe
+            fi
+          done
+          # Rename Python CLI assets with "CLI-" prefix
+          for f in python-windows/* python-macos/*; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            if [[ "$base" == *"windows"* ]]; then
+              mv "$f" "CLI-Windows-${{ steps.version.outputs.VERSION }}-x64.exe"
+            elif [[ "$base" == *"macos"* ]]; then
+              mv "$f" "CLI-macOS-${{ steps.version.outputs.VERSION }}-x64"
+            fi
+          done
+          # Flatten to single directory
+          find . -mindepth 2 -type f -exec mv {} . \;
+          rmdir tauri-linux tauri-macos tauri-windows python-windows python-macos 2>/dev/null || true
+          ls -la
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -235,19 +269,18 @@ jobs:
           body: |
             ## Voice Input Framework v${{ steps.version.outputs.VERSION }}
 
-            ### 🎙️ Tauri GUI 客户端（推荐）
+            ### 🎙️ GUI 客户端（Tauri，推荐）
             | 平台 | 文件 |
             |------|------|
-            | Windows | `Voice Input_${{ steps.version.outputs.VERSION }}_x64-setup.exe` |
-            | macOS | `Voice Input_${{ steps.version.outputs.VERSION }}_aarch64.dmg` |
-            | Linux (deb) | `voice-input_${{ steps.version.outputs.VERSION }}_amd64.deb` |
-            | Linux (AppImage) | `Voice Input_${{ steps.version.outputs.VERSION }}_amd64.AppImage` |
+            | Windows | `GUI-Windows-${{ steps.version.outputs.VERSION }}-x64.exe` |
+            | macOS | `GUI-macOS-${{ steps.version.outputs.VERSION }}-aarch64.dmg` |
+            | Linux | `GUI-Linux-${{ steps.version.outputs.VERSION }}-x64.deb` / `.AppImage` |
 
-            ### 🐍 Python 客户端
+            ### 🐍 CLI 客户端（Python）
             | 平台 | 文件 |
             |------|------|
-            | Windows | `VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe` |
-            | macOS | `VoiceInput-v${{ steps.version.outputs.VERSION }}-macos-x64` |
+            | Windows | `CLI-Windows-${{ steps.version.outputs.VERSION }}-x64.exe` |
+            | macOS | `CLI-macOS-${{ steps.version.outputs.VERSION }}-x64` |
 
             ### ✨ 功能
             - 按住说话，支持全局快捷键
@@ -259,7 +292,6 @@ jobs:
             ### 📋 服务端要求
             - STT 服务运行在 `localhost:6544`
             - LLM 服务运行在 `localhost:6545`（可选）
-          files: |
-            release-assets/**/*
+          files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
