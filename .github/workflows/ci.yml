@@ -33,7 +33,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pynput httpx numpy pydantic
+          pip install pytest pynput httpx numpy pydantic websockets
 
       - name: Run tests (Ubuntu with Xvfb)
         if: matrix.os == 'ubuntu-latest'
