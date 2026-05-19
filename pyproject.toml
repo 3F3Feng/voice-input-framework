@@ -57,8 +57,8 @@ dev = [
 ]
 
 [project.scripts]
-voice-server = "voice_input_framework.server.api:main"
-voice-client = "voice_input_framework.client.cli:main"
+voice-server = "services.stt_server:main"
+voice-client = "run_client:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

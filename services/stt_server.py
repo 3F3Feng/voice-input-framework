@@ -438,9 +438,6 @@ class STTEngine:
                 )
                 text, detected_lang = result.text, result.language
             else:
-                def _do_transcribe():
-                    lang = None if language == "auto" else language
-
                 # ── Whisper MLX 引擎 ──
                 if getattr(self, '_model_type', None) == "whisper_mlx":
                     import mlx_whisper
@@ -481,8 +478,6 @@ class STTEngine:
                 if results and len(results) > 0:
                     return results[0].text, results[0].language
                 return "", language
-
-                text, detected_lang = await loop.run_in_executor(None, _do_transcribe)
             text = text.strip()
 
             # 生成时间戳（如果需要）

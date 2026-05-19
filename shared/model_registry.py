@@ -95,7 +95,7 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
 
 def get_default_model() -> str:
     """返回当前平台推荐的默认模型"""
-    return "qwen_asr_mlx_native_small" if IS_APPLE_SILICON else "qwen_asr"
+    return "qwen_asr_mlx_native_small" if IS_APPLE_SILICON else "whisper_turbo"
 
 
 def get_apple_silicon_only_models() -> list:

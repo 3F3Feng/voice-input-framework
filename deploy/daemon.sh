@@ -187,7 +187,7 @@ start() {
     
     log "[启动] 服务端口: $PORT, 模型: $DEFAULT_MODEL"
     
-    nohup "$PYTHON_CMD" -c "import sys; sys.path.insert(0, '$PROJECT_DIR'); from server.api import main; main()" \
+    nohup "$PYTHON_CMD" -c "import sys; sys.path.insert(0, '$PROJECT_DIR'); from services.stt_server import main; main()" \
         >> "$LOG_FILE" 2>&1 &
     
     local PID=$!
