@@ -1,3 +1,6 @@
+
+import pytest
+pytestmark = pytest.mark.integration
 #!/usr/bin/env python3
 """
 Voice Input Framework - 端到端测试

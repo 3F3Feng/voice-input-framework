@@ -31,9 +31,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Python dependencies
-        if: matrix.os == 'ubuntu-latest'
         run: |
-          pip install pytest pynput httpx
+          python -m pip install --upgrade pip
+          pip install pytest pynput httpx numpy pydantic
 
       - name: Run tests (Ubuntu with Xvfb)
         if: matrix.os == 'ubuntu-latest'
@@ -43,7 +43,7 @@ jobs:
       - name: Run tests
         if: matrix.os != 'ubuntu-latest'
         run: |
-          pytest tests/ -v --tb=short
+          pytest tests/ -v --tb=short -m "not integration"
 
       - name: Run linting
         run: |
