@@ -10,8 +10,19 @@ pytestmark = pytest.mark.integration
 
 import time
 import numpy as np
-import mlx.core as mx
-from mlx_audio.stt import load
+
+try:
+    import mlx.core as mx
+    from mlx_audio.stt import load
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX_AVAILABLE = False
+    mx = None
+    load = None
+
+# Skip all tests if mlx is not available
+if not MLX_AVAILABLE:
+    pytest.skip('mlx not available (requires Apple Silicon)', allow_module_level=True)
 
 # ──────────────────────────────────────────────
 # 1. Model Loading
