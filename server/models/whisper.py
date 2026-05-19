@@ -7,7 +7,6 @@ Voice Input Framework - Whisper STT 引擎实现
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from typing import Optional
 
 import numpy as np
 import torch
@@ -89,6 +88,7 @@ class WhisperEngine(BaseSTTEngine):
         def _do():
             return self._pipeline(
                 audio_array,
+                return_timestamps=True,  # 支持超过30秒的长音频
                 generate_kwargs={"language": language if language != "auto" else None},
             )
 

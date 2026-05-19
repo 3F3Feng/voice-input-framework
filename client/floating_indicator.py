@@ -15,8 +15,6 @@ Voice Input Framework - 悬浮录音指示器
 import logging
 import threading
 import time
-import sys
-from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -700,6 +698,20 @@ class ProcessingIndicator:
                     self.window = None
 
         logger.info("处理中指示器已隐藏")
+
+    def set_status(self, status: str, color: str = "#4ecdc4"):
+        """
+        设置状态文本（用于显示LLM处理状态等）
+
+        Args:
+            status: 状态文本
+            color: 文本颜色
+        """
+        if self.window and self.is_visible:
+            try:
+                self.window["-STATUS-"].update(status, text_color=color)
+            except Exception as e:
+                logger.debug(f"状态更新失败: {e}")
 
     def _animation_loop(self):
         """动画循环"""

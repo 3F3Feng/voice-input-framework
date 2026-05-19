@@ -151,8 +151,8 @@ class TestHealthStatus:
             status="healthy",
             version="1.0.0",
             uptime_seconds=3600.0,
-            current_model="qwen_asr",
-            loaded_models=["qwen_asr", "whisper"],
+            current_model="qwen_asr_mlx_native_small",
+            loaded_models=["qwen_asr_mlx_native_small", "whisper_mlx_turbo"],
             active_connections=2,
             memory_usage_mb=512.5,
         )

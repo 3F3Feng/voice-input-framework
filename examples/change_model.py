@@ -16,7 +16,7 @@ Examples:
     
     # Switch to a specific model
     python change_model.py --model whisper
-    python change_model.py --model qwen_asr
+    python change_model.py --model qwen_asr_mlx_native_small
     
     # Connect to a remote server
     python change_model.py --server 192.168.1.100:6543 --model whisper

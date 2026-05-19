@@ -13,7 +13,6 @@ macOS: 使用 Accessibility API (ctypes 调用 ApplicationServices)
 - Windows: 需要管理员权限
 - macOS: 需要在系统设置中启用辅助功能权限
 """
-import sys
 import time
 import threading
 import logging
@@ -322,7 +321,7 @@ elif IS_MACOS:
                 try:
                     cfstring = ctypes.cast(title, ctypes.c_void_p)
                     # 简单的 CFString 提取
-                    return f"Window"  # 简化处理
+                    return "Window"  # 简化处理
                 except:
                     pass
         except:

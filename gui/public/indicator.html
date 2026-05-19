@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>.</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { background: transparent !important; overflow: hidden; border: none; outline: none; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; user-select: none; -webkit-user-select: none; display: flex; align-items: center; justify-content: center; height: 100vh; }
+.indicator { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgb(15, 15, 25); border-radius: 26px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 20px rgba(0,0,0,0.4); width: 200px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.dot.recording { background: #e63946; animation: pulse 0.8s infinite; }
+.dot.processing { background: #fbbf24; animation: spin 1s linear infinite; }
+.text { color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap; min-width: 70px; }
+.level-bar { flex: 1; height: 4px; background: rgba(255,255,255,0.15); border-radius: 2px; overflow: hidden; }
+.level-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #4ade80, #fbbf24, #f87171); border-radius: 2px; transition: width 0.08s ease; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="indicator">
+  <div class="dot recording" id="dot"></div>
+  <span class="text" id="label">🎙️ <span id="timer">0.0s</span></span>
+  <div class="level-bar" id="level-bar"><div class="level-fill" id="level"></div></div>
+</div>
+<script>
+const start = Date.now();
+const timerEl = document.getElementById('timer');
+const levelEl = document.getElementById('level');
+const levelBar = document.getElementById('level-bar');
+const dotEl = document.getElementById('dot');
+const labelEl = document.getElementById('label');
+const { invoke } = window.__TAURI__?.core || {};
+
+let mode = 'recording'; // 'recording' | 'processing'
+let processingStart = null;
+
+setInterval(() => {
+  if (mode === 'recording') {
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    if (timerEl) timerEl.textContent = elapsed + 's';
+    if (invoke) {
+      invoke('get_audio_level').then(level => {
+        if (levelEl && level != null) {
+          let pct = Math.min(1.0, (level || 0) * 10);
+          levelEl.style.width = Math.round(pct * 100) + '%';
+        }
+      }).catch(() => {});
+    }
+  } else if (mode === 'processing') {
+    const elapsed = ((Date.now() - processingStart) / 1000).toFixed(1);
+    if (timerEl) timerEl.textContent = elapsed + 's';
+    // Poll for status updates
+    if (invoke) {
+      invoke('get_indicator_status').then(status => {
+        if (status && labelEl) labelEl.textContent = status;
+      }).catch(() => {});
+    }
+  }
+}, 100);
+
+// Check for processing status every 100ms
+setInterval(() => {
+  if (mode === 'recording' && invoke) {
+    invoke('get_indicator_status').then(status => {
+      if (status && status.length > 0) {
+        mode = 'processing';
+        processingStart = Date.now();
+        if (labelEl) labelEl.textContent = status;
+        if (timerEl) timerEl.textContent = '0.0s';
+        if (levelEl) levelEl.style.width = '0%';
+        if (levelBar) levelBar.style.display = 'none';
+        if (dotEl) { dotEl.classList.remove('recording'); dotEl.classList.add('processing'); }
+      }
+    }).catch(() => {});
+  }
+}, 100);
+</script>
+</body>
+</html>

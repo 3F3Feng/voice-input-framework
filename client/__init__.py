@@ -8,11 +8,19 @@ Voice Input Framework - Client Library
 __version__ = "1.2.0"
 __author__ = "Voice Input Framework"
 
-# 延迟导入避免测试时触发 GUI 依赖
-def __getattr__(name):
-    if name == "HotkeyVoiceInput":
-        from .gui import HotkeyVoiceInputV2 as HotkeyVoiceInput
-        return HotkeyVoiceInput
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# 重构后的应用控制器（推荐）
+try:
+    from .app import VoiceInputApp
+except ImportError:
+    # UI 依赖（PySimpleGUI）可能未安装
+    VoiceInputApp = None
 
-__all__ = ["HotkeyVoiceInput"]
+# 旧版 GUI 类（兼容性保留，需要 PySimpleGUI）
+try:
+    from .gui import HotkeyVoiceInputV2
+    HotkeyVoiceInput = HotkeyVoiceInputV2
+except ImportError:
+    HotkeyVoiceInputV2 = None
+    HotkeyVoiceInput = None
+
+__all__ = ["VoiceInputApp", "HotkeyVoiceInput", "HotkeyVoiceInputV2"]

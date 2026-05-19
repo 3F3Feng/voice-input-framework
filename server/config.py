@@ -3,6 +3,7 @@ Voice Input Framework - 服务端配置
 """
 
 import os
+from shared.model_registry import get_default_model
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -21,12 +22,21 @@ class ModelConfig:
 
 
 @dataclass
+class LLMConfig:
+    """LLM后处理配置"""
+    enabled: bool = True
+    default_model: str = "Qwen3.5-0.8B-OptiQ"  # MLX 量化模型 (推荐)
+    thinking_timeout: float = 5.0  # 思考等待超时（秒）
+    max_tokens: int = 128
+
+
+@dataclass
 class ServerConfig:
     """服务端配置"""
     host: str = "0.0.0.0"
-    port: int = 6543
+    port: int = 6544
     debug: bool = False
-    default_model: str = "qwen_asr"
+    default_model: str = get_default_model()
     models: dict[str, ModelConfig] = field(default_factory=dict)
     models_dir: str = "./models"
     auto_load_default: bool = True
@@ -43,6 +53,7 @@ class ServerConfig:
     log_file: Optional[str] = None
     api_key: Optional[str] = None
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
+    llm: LLMConfig = field(default_factory=LLMConfig)  # LLM后处理配置
 
     @classmethod
     def from_env(cls) -> "ServerConfig":

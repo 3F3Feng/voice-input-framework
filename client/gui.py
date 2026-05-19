@@ -41,12 +41,13 @@ except ImportError:
     WINAPI_AVAILABLE = False
 
 # 导入新模块
-from .hotkey_manager import HotkeyManager, HotkeyParser, HotkeyPresets
+from .hotkey_manager import HotkeyManager, HotkeyPresets
 from .tray_manager import TrayIconManager, TrayStatus
 from .floating_indicator import FloatingIndicator, ProcessingIndicator
 from .config_manager import ConfigManager
 from .update_checker import check_for_updates, format_version_message
 from .auto_start import AutoStartManager
+from .websocket_keepalive import WebSocketKeepAlive, ConnectionState
 
 # 日志配置
 logging.basicConfig(
@@ -145,6 +146,8 @@ class HotkeyVoiceInputV2:
         self.last_result = ""
         self.available_models = []  # 可用的模型列表
         self.current_model = None  # 当前模型
+        self.available_llm_models = []  # 可用的LLM模型列表
+        self.current_llm_model = None  # 当前LLM模型
 
         # 资源
         self.stream = None
@@ -168,6 +171,10 @@ class HotkeyVoiceInputV2:
         # 快捷键管理器
         self.hotkey_manager = HotkeyManager(distinguish_left_right=self.config_manager.distinguish_left_right)
         self.hotkey_manager.set_hotkey(self.config_manager.hotkey)
+
+        # WebSocket 保活管理器
+        self.keepalive: Optional[WebSocketKeepAlive] = None
+        self.connection_state = ConnectionState.DISCONNECTED
 
         # 系统托盘
         self.tray_manager = TrayIconManager()
@@ -277,11 +284,26 @@ class HotkeyVoiceInputV2:
 
             # 模型选择
             [sg.Frame("模型设置", [
-                [sg.Text("选择模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-                 sg.Combo([], default_value="", key="-MODEL-SELECT-", size=(30, 1), readonly=True),
+                [sg.Text("STT模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
+                 sg.Combo([], default_value="", key="-MODEL-SELECT-", size=(25, 1), readonly=True),
                  sg.Button("刷新", key="-REFRESH-MODELS-", size=(8, 1)),
                  sg.Button("切换", key="-SWITCH-MODEL-", button_color=("white", "blue"), size=(8, 1))],
                 [sg.Text("", key="-MODEL-STATUS-", text_color="yellow", size=(70, 1), background_color=BACKGROUND_COLOR)],
+                # LLM 模型选择
+                [sg.HorizontalSeparator()],
+                [sg.Text("LLM模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
+                 sg.Combo([], default_value="", key="-LLM-MODEL-SELECT-", size=(25, 1), readonly=True),
+                 sg.Button("刷新", key="-REFRESH-LLM-MODELS-", size=(8, 1)),
+                 sg.Button("切换", key="-SWITCH-LLM-MODEL-", button_color=("white", "purple"), size=(8, 1)),
+                 sg.Text("", size=(5, 1), background_color=BACKGROUND_COLOR),
+                 sg.Checkbox("启用LLM后处理", key="-LLM-ENABLED-", enable_events=True, default=self.config_manager.llm_enabled, text_color=TEXT_COLOR, background_color=BACKGROUND_COLOR, size=(15, 1))],
+                [sg.Text("", key="-LLM-MODEL-STATUS-", text_color="cyan", size=(70, 1), background_color=BACKGROUND_COLOR)],
+            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
+            # LLM 提示词配置
+            [sg.HorizontalSeparator()],
+            [sg.Frame("LLM 提示词配置", [
+                [sg.Multiline("", key="-LLM-PROMPT-", size=(60, 5), font=("Consolas", 9))],
+                [sg.Button("加载", key="-LOAD-PROMPT-", size=(8, 1)), sg.Button("保存", key="-SAVE-PROMPT-", size=(8, 1)), sg.Text("", key="-PROMPT-STATUS-", text_color="yellow", size=(30, 1))],
             ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
 
             # ======== v1.1 新增：托盘和指示器设置 ========
@@ -546,7 +568,7 @@ class HotkeyVoiceInputV2:
 
             # 创建临时连接来测试
             self.ws = await asyncio.wait_for(
-                websockets.connect(self.server_url, close_timeout=5),
+                websockets.connect(self.server_url, close_timeout=5, ping_interval=20, ping_timeout=10),
                 timeout=10.0
             )
 
@@ -572,6 +594,15 @@ class HotkeyVoiceInputV2:
                 self.is_connected = True
                 self.current_model = model
 
+                # 解析 LLM 信息
+                llm_info = data.get("llm_info", {})
+                # 从本地配置读取用户偏好（优先于服务器默认值）
+                saved_llm_enabled = self.config_manager.get("llm.enabled", llm_info.get("llm_enabled", True))
+                llm_model = llm_info.get("llm_model", None)
+                self.log(f"LLM后处理: {'启用' if saved_llm_enabled else '禁用'}, 模型: {llm_model or '未设置'}")
+                if self.window:
+                    self.window["-LLM-ENABLED-"].update(saved_llm_enabled)
+
                 # 更新托盘模型信息
                 if self.tray_manager:
                     self.tray_manager.set_current_model(model)
@@ -585,6 +616,8 @@ class HotkeyVoiceInputV2:
 
                 # 自动获取模型列表
                 await self.fetch_models()
+                # 自动获取LLM模型列表
+                await self.fetch_llm_models()
                 return True
             else:
                 self.log(f"✗ 服务器响应错误: {data}")
@@ -758,7 +791,7 @@ class HotkeyVoiceInputV2:
 
                         return True
                     elif resp.status_code == 408:  # Timeout
-                        self.log(f"✗ 切换模型超时: 模型加载时间过长")
+                        self.log("✗ 切换模型超时: 模型加载时间过长")
                         self.show_error(f"切换模型超时\n{model_name} 模型太大，加载时间超过 5 分钟")
                         return False
                     else:
@@ -797,6 +830,152 @@ class HotkeyVoiceInputV2:
     async def async_switch_model(self, model_name: str):
         """异步切换模型（在事件循环中执行）"""
         await self.switch_model(model_name)
+
+    # ========== LLM 模型相关方法 ==========
+
+    async def fetch_llm_models(self):
+        """获取服务器上的可用LLM模型列表"""
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                url = f"{self.rest_api_url}/llm/models"
+                self.log(f"正在获取LLM模型列表 from {url}...")
+
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # 提取模型名称列表
+                    models = data.get("models", [])
+                    self.available_llm_models = [m.get("name") if isinstance(m, dict) else m for m in models]
+                    # 直接从响应中获取当前模型（服务端返回 current_model 字段）
+                    self.current_llm_model = data.get("current_model", "")
+                    llm_enabled = data.get("enabled", True)
+
+                # 兼容旧格式：如果 current_model 不存在，尝试从 models 数组中查找
+                if not self.current_llm_model and models:
+                    for m in models:
+                        if isinstance(m, dict) and m.get("is_current"):
+                            self.current_llm_model = m.get("name", "")
+                            break
+                    if not self.current_llm_model and models and isinstance(models[0], dict):
+                        self.current_llm_model = models[0].get("name", "")
+                    elif not self.current_llm_model and models:
+                        self.current_llm_model = models[0] if isinstance(models[0], str) else ""
+
+
+                    self.log(f"✓ 获取到LLM模型列表: {', '.join(self.available_llm_models)}")
+                    self.log(f"  当前LLM模型: {self.current_llm_model}, 启用: {llm_enabled}")
+
+                    if self.window:
+                        self.window["-LLM-MODEL-SELECT-"].update(
+                            values=self.available_llm_models,
+                            value=self.current_llm_model
+                        )
+                        self.window["-LLM-MODEL-STATUS-"].update(
+                            f"当前: {self.current_llm_model}",
+                            text_color="cyan" if llm_enabled else "gray"
+                        )
+                    return True
+                else:
+                    self.log(f"⚠️ 获取LLM模型失败: HTTP {resp.status_code}")
+                    return False
+        except Exception as e:
+            self.log(f"⚠️ 获取LLM模型出错: {e}")
+            return False
+
+    async def switch_llm_model(self, model_name: str):
+        """切换LLM模型"""
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                url = f"{self.rest_api_url}/llm/models/select"
+                self.log(f"正在切换LLM模型到: {model_name}...")
+
+                resp = await client.post(url, json={"model_name": model_name})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    success = data.get("status") == "success"
+                    current = data.get("current_model", "")
+
+                    if success:
+                        self.current_llm_model = current
+                        self.window["-LLM-MODEL-STATUS-"].update(
+                            f"当前: {current} (已启用)",
+                            text_color="cyan"
+                        )
+                        self.log(f"✓ LLM模型切换成功: {current}")
+                    else:
+                        self.log(f"✗ LLM模型切换失败: {data.get('message', 'Unknown error')}")
+                    return success
+                else:
+                    self.log(f"⚠️ LLM模型切换失败: HTTP {resp.status_code}")
+                    return False
+        except Exception as e:
+            self.log(f"⚠️ 切换LLM模型出错: {e}")
+            return False
+
+    async def async_fetch_llm_models(self):
+        """异步获取LLM模型列表"""
+        await self.fetch_llm_models()
+
+    async def async_switch_llm_model(self, model_name: str):
+        """异步切换LLM模型"""
+        await self.switch_llm_model(model_name)
+
+    # ======================================
+
+
+    # ========== LLM 提示词相关方法 ==========
+    async def load_llm_prompt(self):
+        """加载 LLM 提示词"""
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{self.rest_api_url}/llm/prompt")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    prompt = data.get("prompt", "")
+                    self.window["-LLM-PROMPT-"].update(prompt)
+                    self.window["-PROMPT-STATUS-"].update("已加载", text_color="green")
+                    self.log("LLM提示词已加载")
+                else:
+                    self.window["-PROMPT-STATUS-"].update("加载失败", text_color="red")
+                    self.log(f"加载LLM提示词失败: HTTP {resp.status_code}")
+        except Exception as e:
+            self.window["-PROMPT-STATUS-"].update(f"加载失败: {e}", text_color="red")
+            self.log(f"加载LLM提示词出错: {e}")
+
+    async def save_llm_prompt(self):
+        """保存 LLM 提示词"""
+        try:
+            import httpx
+            prompt = self.window["-LLM-PROMPT-"].get()
+            if not prompt.strip():
+                self.window["-PROMPT-STATUS-"].update("提示词不能为空", text_color="red")
+                return
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.put(
+                    f"{self.rest_api_url}/llm/prompt",
+                    json={"prompt": prompt}
+                )
+                if resp.status_code == 200:
+                    self.window["-PROMPT-STATUS-"].update("已保存", text_color="green")
+                    self.log("LLM提示词已保存")
+                else:
+                    self.window["-PROMPT-STATUS-"].update("保存失败", text_color="red")
+                    self.log(f"保存LLM提示词失败: HTTP {resp.status_code}")
+        except Exception as e:
+            self.window["-PROMPT-STATUS-"].update(f"保存失败: {e}", text_color="red")
+            self.log(f"保存LLM提示词出错: {e}")
+
+    async def async_load_llm_prompt(self):
+        """异步加载LLM提示词"""
+        await self.load_llm_prompt()
+
+    async def async_save_llm_prompt(self):
+        """异步保存LLM提示词"""
+        await self.save_llm_prompt()
+    # ======================================
 
     async def _poll_model_loading_status(self, model_name: str):
         """轮询检查模型加载状态"""
@@ -864,7 +1043,7 @@ class HotkeyVoiceInputV2:
             # 创建新的WebSocket连接用于此次转写
             self.log("正在连接到服务器...")
             ws = await asyncio.wait_for(
-                websockets.connect(self.server_url, close_timeout=10),
+                websockets.connect(self.server_url, close_timeout=10, ping_interval=20, ping_timeout=10),
                 timeout=15.0
             )
 
@@ -917,7 +1096,12 @@ class HotkeyVoiceInputV2:
 
                     if msg_type == "result":
                         result_text = data.get("text", "")
-                        self.log(f"识别结果: {result_text}")
+                        llm_latency = data.get("llm_latency_ms")
+                        llm_model = data.get("llm_model", "")
+                        if llm_latency is not None:
+                            self.log(f"识别结果: {result_text} (LLM: {llm_latency:.0f}ms)")
+                        else:
+                            self.log(f"识别结果: {result_text}")
                     elif msg_type == "done":
                         self.log("识别完成")
                         await ws.close()
@@ -1019,7 +1203,7 @@ class HotkeyVoiceInputV2:
         try:
             self.log("建立 WebSocket 连接...")
             
-            async with websockets.connect(self.server_url, close_timeout=10) as ws:
+            async with websockets.connect(self.server_url, close_timeout=10, ping_interval=20, ping_timeout=10) as ws:
                 # 发送配置
                 language = self.config_manager.get('audio.language', 'auto')
                 await ws.send(json.dumps({
@@ -1078,7 +1262,21 @@ class HotkeyVoiceInputV2:
                         
                         if msg_type == "result":
                             result_text = data.get("text", "")
-                            self.log(f"识别结果: {result_text}")
+                            llm_latency = data.get("llm_latency_ms")
+                            llm_model = data.get("llm_model", "")
+                            if llm_latency is not None:
+                                self.log(f"识别结果: {result_text} (LLM: {llm_latency:.0f}ms)")
+                            else:
+                                self.log(f"识别结果: {result_text}")
+                        elif msg_type == "llm_start":
+                            # LLM开始处理，更新浮标状态
+                            original_text = data.get("text", "")
+                            if self.use_floating_indicator and self.processing_indicator:
+                                try:
+                                    self.processing_indicator.set_status("LLM处理中...", "#9b59b6")
+                                except Exception as e:
+                                    logger.warning(f"更新LLM状态失败: {e}")
+                            self.log(f"LLM处理中: {original_text[:30]}...")
                         elif msg_type == "done":
                             self.log("识别完成")
                             self.stream_result = result_text
@@ -1149,12 +1347,12 @@ class HotkeyVoiceInputV2:
             result = await self.send_audio_to_server()
 
             if result:
-                self.log(f"更新结果显示...")
+                self.log("更新结果显示...")
                 self.update_result(result)
-                self.log(f"开始自动输入...")
+                self.log("开始自动输入...")
                 # 自动输入文本
                 await self._auto_input_text(result)
-                self.log(f"自动输入完成")
+                self.log("自动输入完成")
 
                 # 更新托盘状态为就绪
                 if self.tray_manager:
@@ -1303,6 +1501,30 @@ class HotkeyVoiceInputV2:
                     self.config_manager.save()
                     self.log(f"已{'启用' if distinguish else '禁用'}左右修饰键区分")
 
+                elif event == "-LLM-ENABLED-":
+                    # 切换 LLM 后处理开关
+                    enabled = values["-LLM-ENABLED-"]
+                    self.config_manager.llm_enabled = enabled
+                    self.config_manager.save()
+                    # 同步到服务器
+                    if self.rest_api_url:
+                        import httpx
+                        try:
+                            async def update_llm_enabled():
+                                async with httpx.AsyncClient(timeout=5.0) as client:
+                                    resp = await client.put(
+                                        f"{self.rest_api_url}/llm/enabled",
+                                        json={"enabled": enabled}
+                                    )
+                                    if resp.status_code == 200:
+                                        self.log(f"✓ LLM后处理已{'启用' if enabled else '禁用'}")
+                                    else:
+                                        self.log(f"✗ 更新失败: {resp.status_code}")
+                            asyncio.run(update_llm_enabled())
+                        except Exception as e:
+                            self.log(f"✗ 更新LLM状态失败: {e}")
+                    self.log(f"已{'启用' if enabled else '禁用'}LLM后处理")
+
                 elif event == "-HOTKEY-PRESET-":
                     # 选择预设方案
                     preset_name = values["-HOTKEY-PRESET-"]
@@ -1389,6 +1611,45 @@ class HotkeyVoiceInputV2:
                     self.config_manager.use_floating_indicator = self.use_floating_indicator
                     self.config_manager.save()
                     self.log(f"悬浮指示器: {'启用' if self.use_floating_indicator else '禁用'}")
+
+                # ======== LLM 模型切换 ========
+                elif event == "-REFRESH-LLM-MODELS-":
+                    self.log("正在获取LLM模型列表...")
+                    self.window["-LLM-MODEL-STATUS-"].update("正在获取LLM模型列表...", text_color="yellow")
+                    if self.async_loop:
+                        asyncio.run_coroutine_threadsafe(
+                            self.async_fetch_llm_models(),
+                            self.async_loop
+                        )
+
+                elif event == "-SWITCH-LLM-MODEL-":
+                    selected_model = values.get("-LLM-MODEL-SELECT-", "").strip()
+                    if not selected_model:
+                        self.log("未选择LLM模型")
+                    else:
+                        self.log(f"正在切换LLM模型: {selected_model}")
+                        self.window["-LLM-MODEL-STATUS-"].update(
+                            f"切换中: {selected_model}...", text_color="yellow"
+                        )
+                        if self.async_loop:
+                            asyncio.run_coroutine_threadsafe(
+                                self.async_switch_llm_model(selected_model),
+                                self.async_loop
+                            )
+                # ================================
+
+                # ========== LLM 提示词配置事件处理 ==========
+                elif event == "-LOAD-PROMPT-":
+                    if self.async_loop:
+                        asyncio.run_coroutine_threadsafe(
+                            self.async_load_llm_prompt(), self.async_loop
+                        )
+                elif event == "-SAVE-PROMPT-":
+                    if self.async_loop:
+                        asyncio.run_coroutine_threadsafe(
+                            self.async_save_llm_prompt(), self.async_loop
+                        )
+                # ================================
 
                 elif event == "-MINIMIZE-TRAY-":
                     self._minimize_to_tray()
