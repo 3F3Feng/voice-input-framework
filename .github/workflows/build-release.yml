@@ -35,9 +35,9 @@ jobs:
           pip install numpy pynput sounddevice websockets httpx pyautogui pyperclip PySimpleGUI pystray Pillow winotify
 
       - name: Build with PyInstaller
-        shell: pwsh
+        shell: bash
         run: |
-          $version = "${{ steps.version.outputs.VERSION }}"
+          version="${{ steps.version.outputs.VERSION }}"
           pyinstaller --name "VoiceInput-v$version" --windowed --onefile \
             --add-data "client;client" --add-data "shared;shared" \
             --hidden-import=client.hotkey_manager --hidden-import=client.tray_manager \
@@ -56,12 +56,12 @@ jobs:
             run_client.py
 
       - name: Rename output
-        shell: pwsh
+        shell: bash
         run: |
-          $version = "${{ steps.version.outputs.VERSION }}"
-          $src = "dist/VoiceInput-v$version.exe"
-          $dst = "dist/VoiceInput-v$version-windows-x64.exe"
-          if (Test-Path $src) { Move-Item $src $dst -Force }
+          version="${{ steps.version.outputs.VERSION }}"
+          src="dist/VoiceInput-v${version}.exe"
+          dst="dist/VoiceInput-v${version}-windows-x64.exe"
+          if [ -f "$src" ]; then mv "$src" "$dst"; fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -167,9 +167,16 @@ jobs:
 
       - name: Get version
         id: version
+        shell: pwsh
         run: |
-          version=$(grep -o '"version": *"[^"]*"' gui/src-tauri/tauri.conf.json | head -1 | grep -o '"[^"]*"$' | tr -d '"')
-          echo "VERSION=$version" >> $GITHUB_OUTPUT
+          $content = Get-Content "gui/src-tauri/tauri.conf.json" -Raw
+          if ($content -match '"version"\s*:\s*"([^"]+)"') {
+            $version = $matches[1]
+          } else {
+            $version = "0.0.0"
+          }
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "Version: $version"
 
       - name: Upload Linux artifacts
         if: matrix.os == 'ubuntu-latest'
