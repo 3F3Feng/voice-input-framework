@@ -1,6 +1,4 @@
 
-import pytest
-pytestmark = pytest.mark.integration
 #!/usr/bin/env python3
 """
 MLX-Audio Qwen3-ASR API test script.
@@ -103,6 +101,9 @@ def test_high_level_api(model_name, audio_path, language="English"):
     """Test the high-level generate_transcription function."""
     print(f"\n=== High-level API (generate_transcription) ===")
     from mlx_audio.stt.generate import generate_transcription
+
+import pytest
+pytestmark = pytest.mark.integration
     start = time.time()
     result = generate_transcription(
         model=model_name,

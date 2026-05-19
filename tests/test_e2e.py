@@ -1,6 +1,4 @@
 
-import pytest
-pytestmark = pytest.mark.integration
 #!/usr/bin/env python3
 """
 Voice Input Framework - 端到端测试
@@ -155,6 +153,9 @@ async def test_websocket_flow():
     except Exception as e:
         print(f"WebSocket 测试失败: {e}")
         import traceback
+
+import pytest
+pytestmark = pytest.mark.integration
         traceback.print_exc()
         return False
 
