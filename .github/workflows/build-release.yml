@@ -10,14 +10,12 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
+  # ── Python Client (Windows + macOS) ──
+  build-python-windows:
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -40,7 +38,22 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.VERSION }}"
-          pyinstaller --name "VoiceInput-v$version" --windowed --onefile --add-data "client;client" --add-data "shared;shared" --hidden-import=client.hotkey_manager --hidden-import=client.tray_manager --hidden-import=client.floating_indicator --hidden-import=client.config_manager --hidden-import=client.notifier --hidden-import=client.update_checker --hidden-import=shared.data_types --hidden-import=shared.protocol --hidden-import=numpy --hidden-import=pynput --hidden-import=pynput.keyboard --hidden-import=pynput.keyboard._win32 --hidden-import=pynput.mouse --hidden-import=sounddevice --hidden-import=websockets --hidden-import=websockets.client --hidden-import=httpx --hidden-import=httpx._client --hidden-import=httpcore --hidden-import=pyautogui --hidden-import=pyperclip --hidden-import=PySimpleGUI --hidden-import=h11 --hidden-import=certifi --hidden-import=pystray --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=winotify --collect-all=numpy --collect-all=pynput --collect-all=sounddevice --collect-all=websockets --collect-all=httpx --collect-all=PIL run_client.py
+          pyinstaller --name "VoiceInput-v$version" --windowed --onefile \
+            --add-data "client;client" --add-data "shared;shared" \
+            --hidden-import=client.hotkey_manager --hidden-import=client.tray_manager \
+            --hidden-import=client.floating_indicator --hidden-import=client.config_manager \
+            --hidden-import=client.notifier --hidden-import=client.update_checker \
+            --hidden-import=shared.data_types --hidden-import=shared.protocol \
+            --hidden-import=numpy --hidden-import=pynput --hidden-import=pynput.keyboard \
+            --hidden-import=pynput.keyboard._win32 --hidden-import=pynput.mouse \
+            --hidden-import=sounddevice --hidden-import=websockets --hidden-import=websockets.client \
+            --hidden-import=httpx --hidden-import=httpx._client --hidden-import=httpcore \
+            --hidden-import=pyautogui --hidden-import=pyperclip --hidden-import=PySimpleGUI \
+            --hidden-import=h11 --hidden-import=certifi --hidden-import=pystray \
+            --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=winotify \
+            --collect-all=numpy --collect-all=pynput --collect-all=sounddevice \
+            --collect-all=websockets --collect-all=httpx --collect-all=PIL \
+            run_client.py
 
       - name: Rename output
         shell: pwsh
@@ -48,35 +61,26 @@ jobs:
           $version = "${{ steps.version.outputs.VERSION }}"
           $src = "dist/VoiceInput-v$version.exe"
           $dst = "dist/VoiceInput-v$version-windows-x64.exe"
-          if (Test-Path $src) {
-            Move-Item $src $dst -Force
-          }
+          if (Test-Path $src) { Move-Item $src $dst -Force }
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: windows-build
+          name: python-windows
           path: dist/*.exe
-          retention-days: 30
 
-  build-macos:
+  build-python-macos:
     runs-on: macos-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Get version
         id: version
         run: |
-          # 使用 Python 解析版本号，跨平台兼容
           version=$(python3 -c "import re; content=open('client/__init__.py').read(); m=re.search(r'__version__\s*=\s*[\"]([^\"]+)[\"]', content); print(m.group(1) if m else 'unknown')")
           echo "VERSION=$version" >> $GITHUB_OUTPUT
-          echo "Version: $version"
 
       - name: Install dependencies
         run: |
@@ -87,67 +91,168 @@ jobs:
       - name: Build with PyInstaller
         run: |
           version="${{ steps.version.outputs.VERSION }}"
-          pyinstaller --name "VoiceInput-v$version" --windowed --onefile --add-data "client:client" --add-data "shared:shared" --hidden-import=client.hotkey_manager --hidden-import=client.tray_manager --hidden-import=client.floating_indicator --hidden-import=client.config_manager --hidden-import=client.notifier --hidden-import=client.update_checker --hidden-import=shared.data_types --hidden-import=shared.protocol --hidden-import=numpy --hidden-import=pynput --hidden-import=pynput.keyboard --hidden-import=sounddevice --hidden-import=websockets --hidden-import=websockets.client --hidden-import=httpx --hidden-import=httpx._client --hidden-import=httpcore --hidden-import=pyautogui --hidden-import=pyperclip --hidden-import=PySimpleGUI --hidden-import=h11 --hidden-import=certifi --hidden-import=pystray --hidden-import=PIL --hidden-import=PIL.Image --collect-all=numpy --collect-all=pynput --collect-all=sounddevice --collect-all=websockets --collect-all=httpx --collect-all=PIL run_client.py
+          pyinstaller --name "VoiceInput-v$version" --windowed --onefile \
+            --add-data "client:client" --add-data "shared:shared" \
+            --hidden-import=client.hotkey_manager --hidden-import=client.tray_manager \
+            --hidden-import=client.floating_indicator --hidden-import=client.config_manager \
+            --hidden-import=client.notifier --hidden-import=client.update_checker \
+            --hidden-import=shared.data_types --hidden-import=shared.protocol \
+            --hidden-import=numpy --hidden-import=pynput --hidden-import=pynput.keyboard \
+            --hidden-import=sounddevice --hidden-import=websockets --hidden-import=websockets.client \
+            --hidden-import=httpx --hidden-import=httpx._client --hidden-import=httpcore \
+            --hidden-import=pyautogui --hidden-import=pyperclip --hidden-import=PySimpleGUI \
+            --hidden-import=h11 --hidden-import=certifi --hidden-import=pystray \
+            --hidden-import=PIL --hidden-import=PIL.Image \
+            --collect-all=numpy --collect-all=pynput --collect-all=sounddevice \
+            --collect-all=websockets --collect-all=httpx --collect-all=PIL \
+            run_client.py
 
       - name: Rename output
         run: |
           version="${{ steps.version.outputs.VERSION }}"
           src="dist/VoiceInput-v$version"
           dst="dist/VoiceInput-v$version-macos-x64"
-          if [ -f "$src" ]; then
-            mv "$src" "$dst"
-          fi
+          if [ -f "$src" ]; then mv "$src" "$dst"; fi
 
-      - name: Upload artifact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-macos
+          path: dist/*
+
+  # ── Tauri GUI Client (Windows + macOS + Linux) ──
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Install npm dependencies
+        working-directory: gui
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri -> target
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev libasound2-dev libxdo-dev libxtst-dev
+
+      - name: Build Tauri app
+        working-directory: gui
+        run: npx tauri build --target ${{ matrix.target }}
+
+      - name: Get version
+        id: version
+        run: |
+          version=$(grep -o '"version": *"[^"]*"' gui/src-tauri/tauri.conf.json | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+          echo "VERSION=$version" >> $GITHUB_OUTPUT
+
+      - name: Upload Linux artifacts
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: macos-build
-          path: dist/*
-          retention-days: 30
+          name: tauri-linux
+          path: |
+            gui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/**/*.deb
+            gui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/**/*.AppImage
 
+      - name: Upload macOS artifacts
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-macos
+          path: |
+            gui/src-tauri/target/aarch64-apple-darwin/release/bundle/**/*.dmg
+
+      - name: Upload Windows artifacts
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-windows
+          path: |
+            gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.msi
+            gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.exe
+
+  # ── Create Release ──
   release:
-    needs: [build-windows, build-macos]
+    needs: [build-python-windows, build-python-macos, build-tauri]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-build
-          path: dist
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-build
-          path: dist
-
-      - name: Get version from tag
+      - name: Get version
         id: version
         run: |
           version="${GITHUB_REF#refs/tags/v}"
           echo "VERSION=$version" >> $GITHUB_OUTPUT
 
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: List all files
+        run: find release-assets -type f | sort
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          tag_name: ${{ github.ref_name }}
+          name: v${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
           body: |
-            ## Voice Input Framework
+            ## Voice Input Framework v${{ steps.version.outputs.VERSION }}
 
-            ### 下载
+            ### 🎙️ Tauri GUI 客户端（推荐）
+            | 平台 | 文件 |
+            |------|------|
+            | Windows | `Voice Input_${{ steps.version.outputs.VERSION }}_x64-setup.exe` |
+            | macOS | `Voice Input_${{ steps.version.outputs.VERSION }}_aarch64.dmg` |
+            | Linux (deb) | `voice-input_${{ steps.version.outputs.VERSION }}_amd64.deb` |
+            | Linux (AppImage) | `Voice Input_${{ steps.version.outputs.VERSION }}_amd64.AppImage` |
+
+            ### 🐍 Python 客户端
             | 平台 | 文件 |
             |------|------|
             | Windows | `VoiceInput-v${{ steps.version.outputs.VERSION }}-windows-x64.exe` |
             | macOS | `VoiceInput-v${{ steps.version.outputs.VERSION }}-macos-x64` |
 
-            ### 使用方法
-            1. 下载对应平台的可执行文件
-            2. 运行程序
-            3. 按住快捷键说话，松开后自动输入
+            ### ✨ 功能
+            - 按住说话，支持全局快捷键
+            - 实时流式音频传输
+            - LLM 后处理（可选）
+            - 多模型支持：Qwen3-ASR、Whisper
+            - 跨平台：Windows、macOS、Linux
+
+            ### 📋 服务端要求
+            - STT 服务运行在 `localhost:6544`
+            - LLM 服务运行在 `localhost:6545`（可选）
+          files: |
+            release-assets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
