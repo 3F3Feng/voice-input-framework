@@ -15,6 +15,8 @@ STT_URL = "http://localhost:6544"
 LLM_URL = "http://localhost:6545"
 MAIN_URL = "http://localhost:6544"
 
+pytestmark = pytest.mark.integration
+
 
 # ── STT Server (6544) ──────────────────────────────────────────────
 
