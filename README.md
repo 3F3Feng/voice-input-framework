@@ -150,13 +150,11 @@ npm run tauri build
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `VIF_PORT` | 6543 | 主服务端口 |
-| `VIF_HOST` | 0.0.0.0 | 主服务监听地址 |
-| `VIF_DEFAULT_MODEL` | qwen_asr | 默认 STT 模型 |
 | `VIF_STT_PORT` | 6544 | STT 服务端口 |
 | `VIF_STT_HOST` | 0.0.0.0 | STT 服务监听地址 |
 | `VIF_LLM_PORT` | 6545 | LLM 服务端口 |
 | `VIF_LLM_HOST` | 127.0.0.1 | LLM 服务监听地址 (仅本地) |
+| `VIF_DEFAULT_MODEL` | qwen_asr | 默认 STT 模型 |
 
 ### 客户端配置
 
