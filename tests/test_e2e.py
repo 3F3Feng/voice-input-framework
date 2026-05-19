@@ -6,6 +6,9 @@ Voice Input Framework - 端到端测试
 测试 STT + LLM 分离架构的完整流程。
 """
 
+import pytest
+pytestmark = pytest.mark.integration
+
 import asyncio
 import json
 import base64
@@ -154,8 +157,6 @@ async def test_websocket_flow():
         print(f"WebSocket 测试失败: {e}")
         import traceback
 
-import pytest
-pytestmark = pytest.mark.integration
         traceback.print_exc()
         return False
 

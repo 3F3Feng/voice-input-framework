@@ -5,6 +5,9 @@ MLX-Audio Qwen3-ASR API test script.
 Tests loading, transcription, streaming, and various input formats.
 """
 
+import pytest
+pytestmark = pytest.mark.integration
+
 import time
 import numpy as np
 import mlx.core as mx
@@ -102,8 +105,6 @@ def test_high_level_api(model_name, audio_path, language="English"):
     print(f"\n=== High-level API (generate_transcription) ===")
     from mlx_audio.stt.generate import generate_transcription
 
-import pytest
-pytestmark = pytest.mark.integration
     start = time.time()
     result = generate_transcription(
         model=model_name,
