@@ -241,9 +241,9 @@ jobs:
             elif [[ "$base" == *".msi" ]]; then
               rm "$f"
             elif [[ "$base" == *"windows"* ]]; then
-              mv "$f" "CLI-Windows-${version}-x64.exe"
+              mv "$f" "GUI-Python-Windows-${version}-x64.exe"
             elif [[ "$base" == *"macos"* ]]; then
-              mv "$f" "CLI-macOS-${version}-x64"
+              mv "$f" "GUI-Python-macOS-${version}-x64"
             fi
           done
           # Remove extra files
@@ -262,18 +262,18 @@ jobs:
           body: |
             ## Voice Input Framework v${{ steps.version.outputs.VERSION }}
 
-            ### 🎙️ GUI 客户端（Tauri，推荐）
+            ### 🖥️ Tauri GUI 客户端（推荐，原生跨平台）
             | 平台 | 文件 |
             |------|------|
             | Windows | `GUI-Windows-${{ steps.version.outputs.VERSION }}-x64.exe` |
             | macOS | `GUI-macOS-${{ steps.version.outputs.VERSION }}-aarch64.dmg` |
             | Linux | `GUI-Linux-${{ steps.version.outputs.VERSION }}-x64.deb` / `.AppImage` |
 
-            ### 🐍 CLI 客户端（Python）
+            ### 🐍 Python GUI 客户端（PySimpleGUI）
             | 平台 | 文件 |
             |------|------|
-            | Windows | `CLI-Windows-${{ steps.version.outputs.VERSION }}-x64.exe` |
-            | macOS | `CLI-macOS-${{ steps.version.outputs.VERSION }}-x64` |
+            | Windows | `GUI-Python-Windows-${{ steps.version.outputs.VERSION }}-x64.exe` |
+            | macOS | `GUI-Python-macOS-${{ steps.version.outputs.VERSION }}-x64` |
 
             ### ✨ 功能
             - 按住说话，支持全局快捷键
