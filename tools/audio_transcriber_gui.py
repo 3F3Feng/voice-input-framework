@@ -173,6 +173,8 @@ class AudioTranscriberGUI:
                   bg="#a6e3a1", width=8).pack(side=tk.LEFT, padx=5)
         self._btn(bf, "🗑 清空", self._clear,
                   bg="#f38ba8", width=8).pack(side=tk.RIGHT, padx=5)
+        self._btn(bf, "💾 保存", self._save_result,
+                  bg="#fab387", width=8).pack(side=tk.RIGHT, padx=5)
 
         # 进度
         self.progress = ttk.Progressbar(self.window, mode="determinate", length=710)
@@ -478,6 +480,21 @@ class AudioTranscriberGUI:
             self.status_text.set("📋 已复制到剪贴板")
         else:
             self.status_text.set("没有内容可复制")
+
+    def _save_result(self):
+        text = self.result_text.get("1.0", tk.END).strip()
+        if not text:
+            self.status_text.set("没有内容可保存")
+            return
+        from tkinter import filedialog as _fd
+        import os as _os
+        default_name = _os.path.splitext(_os.path.basename(self.file_path.get() or "untitled"))[0] + "_transcribed.txt"
+        path = _fd.asksaveasfilename(defaultextension=".txt", initialfile=default_name,
+                                       filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")])
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            self.status_text.set(f"💾 已保存: {_os.path.basename(path)}")
 
     def _clear(self):
         self.result_text.delete("1.0", tk.END)
