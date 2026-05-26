@@ -295,10 +295,13 @@ class AudioTranscriberGUI:
         sample_rate = 16000
         total_samples = len(audio)
         total_seconds = total_samples / sample_rate
-        # 每段 3 分钟 = 180 秒（避开模型输入长度限制）
+        # 每段 3 分钟，重叠 5 秒（避免句子被截断）
         chunk_seconds = 180
+        overlap_seconds = 5
         chunk_samples = chunk_seconds * sample_rate
-        total_chunks = max(1, math.ceil(total_samples / chunk_samples))
+        overlap_samples = overlap_seconds * sample_rate
+        stride = chunk_samples - overlap_samples
+        total_chunks = max(1, math.ceil((total_samples - overlap_samples) / stride))
 
         self.window.after(0, lambda: self.progress.configure(maximum=total_chunks))
         self.window.after(0, lambda: self.status_text.set(
@@ -310,8 +313,8 @@ class AudioTranscriberGUI:
             if self._stop_flag:
                 break
 
-            start = i * chunk_samples
-            end = min((i + 1) * chunk_samples, total_samples)
+            start = i * stride
+            end = min(start + chunk_samples, total_samples)
             chunk = audio[start:end]
             secs = len(chunk) / sample_rate
 
@@ -324,8 +327,21 @@ class AudioTranscriberGUI:
             try:
                 text = self._transcribe_one_chunk(ws_url, chunk, idx, total_chunks)
                 if text:
-                    full_text.append(text)
-                    self.window.after(0, lambda t=text: self._append_stream(t + "\n"))
+                    # 重叠去重：如果上一段末尾与本段开头重复，去掉本段重复部分
+                    if full_text and full_text[-1]:
+                        prev = full_text[-1]
+                        # 取上一段最后 30 字和本段前 30 字，找最大公共重叠
+                        tail = prev[-30:]
+                        for overlap_len in range(min(30, len(text)), 0, -1):
+                            if tail[-overlap_len:] == text[:overlap_len]:
+                                text = text[overlap_len:]
+                                break
+                        # 如果完全重复则跳过整段
+                        if text.strip() in prev.strip() and len(text) < 20:
+                            text = ""
+                    if text:
+                        full_text.append(text)
+                        self.window.after(0, lambda t=text: self._append_stream(t + "\n"))
             except Exception as e:
                 self.window.after(0, lambda i=idx, e=e: self._append_stream(
                     f"\n[第 {i} 段出错: {e}]\n"))
