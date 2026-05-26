@@ -15,7 +15,7 @@ import numpy as np
 
 # ── 配置 ──
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audiogui_config.json")
-DEFAULT_SERVER = os.environ.get("STT_SERVER", "http://localhost:9100")
+DEFAULT_SERVER = os.environ.get("STT_SERVER", "http://shifengmacbook-pro:6544")
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
