@@ -83,6 +83,7 @@ class AudioTranscriberGUI:
 
         self.file_path = tk.StringVar()
         self.server_url = tk.StringVar(value=load_config())
+        self.chunk_seconds = tk.IntVar(value=45)
         self.status_text = tk.StringVar(value="就绪")
         self.model_name = tk.StringVar(value="检测中...")
         self.lang = tk.StringVar(value="auto")
@@ -138,6 +139,12 @@ class AudioTranscriberGUI:
         # 流式信息提示
         self._c(tk.Label, master=sf2, text="  Qwen3 原生流式", font=("", 9),
                 fg="#a6adc8").pack(side=tk.LEFT, padx=(10, 2))
+        self._c(tk.Label, master=sf2, text="  每段:", font=("", 9),
+                fg="#a6adc8").pack(side=tk.LEFT, padx=(5, 2))
+        tk.Spinbox(sf2, from_=15, to=180, textvariable=self.chunk_seconds,
+                   width=4, bg=self.input_bg, fg=self.fg, relief=tk.FLAT, bd=2).pack(side=tk.LEFT)
+        self._c(tk.Label, master=sf2, text="秒", font=("", 9),
+                fg="#a6adc8").pack(side=tk.LEFT)
 
         # 文件
         ff = tk.Frame(self.window, bg=self.bg)
@@ -295,9 +302,8 @@ class AudioTranscriberGUI:
         sample_rate = 16000
         total_samples = len(audio)
         total_seconds = total_samples / sample_rate
-        # 每段 3 分钟，重叠 5 秒（避免句子被截断）
-        chunk_seconds = 180
-        overlap_seconds = 5
+        # 每段重叠 1/10 的时长（避免句子截断）
+        overlap_seconds = max(1, chunk_seconds // 10)
         chunk_samples = chunk_seconds * sample_rate
         overlap_samples = overlap_seconds * sample_rate
         stride = chunk_samples - overlap_samples
