@@ -1697,11 +1697,10 @@ class HotkeyVoiceInputV2:
                     try:
                         # 防抖：如果录音时长小于 80ms，可能是鼠标侧键的噪声释放
                         press_duration = (time.time() - self._last_hotkey_press_time) * 1000
-                        if press_duration < 80:
-                            self.log(f"⚠️ 防抖: 忽略 {press_duration:.0f}ms 的短触释放（疑似噪声）")
-                            self._hotkey_pressed = False
-                            self._stop_recording()
-                            self._last_hotkey_release_time = self._last_hotkey_press_time
+                        if press_duration < 50:
+                            self.log(f"⚠️ 防抖: {press_duration:.0f}ms 短触释放（疑似噪声），继续录音中")
+                            # 不停止录音！仅更新防抖时间，等待真正的释放
+                            self._last_hotkey_release_time = time.time()
                             continue
                         self.log("⏹️ 快捷键释放 - 停止录音!")
                         self._hotkey_pressed = False
