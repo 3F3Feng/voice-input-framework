@@ -308,10 +308,11 @@ class AudioTranscriberGUI:
         chunk_seconds = self.chunk_seconds.get()
         chunk_samples = chunk_seconds * sample_rate
 
-        # ── 静音检测分段 ──
-        # 检测低于阈值（-35dBFS ≈ abs 0.018）的静音段
+        # ── 静音检测分段（自适应阈值）──
+        # 取音频 RMS 的 15% 作为静音阈值（自适应不同录音音量）
         import struct as _struct
-        silence_thresh = 0.018
+        rms = np.sqrt(np.mean(audio**2))
+        silence_thresh = max(rms * 0.15, 0.005)  # 不低于 -46dB
         min_silence_ms = 300  # 至少 300ms 静音才算断点
         min_silence_samples = int(min_silence_ms / 1000 * sample_rate)
 
