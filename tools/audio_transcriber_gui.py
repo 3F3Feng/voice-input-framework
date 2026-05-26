@@ -84,7 +84,6 @@ class AudioTranscriberGUI:
         self.file_path = tk.StringVar()
         self.server_url = tk.StringVar(value=load_config())
         self.chunk_seconds = tk.IntVar(value=45)
-        self.overlap_seconds = tk.IntVar(value=2)
         self.status_text = tk.StringVar(value="就绪")
         self.model_name = tk.StringVar(value="检测中...")
         self.lang = tk.StringVar(value="auto")
@@ -147,11 +146,7 @@ class AudioTranscriberGUI:
         self._c(tk.Label, master=sf2, text="秒", font=("", 9),
                 fg="#a6adc8").pack(side=tk.LEFT)
 
-        self._c(tk.Label, master=sf2, text="  重叠:", font=("", 9),
-                fg="#a6adc8").pack(side=tk.LEFT, padx=(5, 2))
-        tk.Spinbox(sf2, from_=0, to=30, textvariable=self.overlap_seconds,
-                   width=4, bg=self.input_bg, fg=self.fg, relief=tk.FLAT, bd=2).pack(side=tk.LEFT)
-        self._c(tk.Label, master=sf2, text="秒", font=("", 9),
+        self._c(tk.Label, master=sf2, text="", font=("", 9),
                 fg="#a6adc8").pack(side=tk.LEFT)
 
         # 文件
@@ -311,12 +306,57 @@ class AudioTranscriberGUI:
         total_samples = len(audio)
         total_seconds = total_samples / sample_rate
         chunk_seconds = self.chunk_seconds.get()
-        # 每段重叠 1/10 的时长（避免句子截断）
-        overlap_seconds = self.overlap_seconds.get()
         chunk_samples = chunk_seconds * sample_rate
-        overlap_samples = overlap_seconds * sample_rate
-        stride = chunk_samples - overlap_samples
-        total_chunks = max(1, math.ceil((total_samples - overlap_samples) / stride))
+
+        # ── 静音检测分段 ──
+        # 检测低于阈值（-35dBFS ≈ abs 0.018）的静音段
+        import struct as _struct
+        silence_thresh = 0.018
+        min_silence_ms = 300  # 至少 300ms 静音才算断点
+        min_silence_samples = int(min_silence_ms / 1000 * sample_rate)
+
+        # 找静音区域
+        is_silence = np.abs(audio) < silence_thresh
+        # 延长静音段：连续静音 < min_silence_samples 的忽略
+        silences = []
+        in_silence = False
+        start_sil = 0
+        for i, s in enumerate(is_silence):
+            if s and not in_silence:
+                in_silence = True; start_sil = i
+            elif not s and in_silence:
+                in_silence = False
+                if i - start_sil >= min_silence_samples:
+                    silences.append((start_sil, i))
+        if in_silence and len(audio) - start_sil >= min_silence_samples:
+            silences.append((start_sil, len(audio)))
+
+        # 在静音点切分，确保每段不超过 chunk_samples
+        segments = []
+        seg_start = 0
+        for sil_start, sil_end in silences:
+            seg_end = sil_end
+            seg_len = seg_end - seg_start
+            if seg_len >= chunk_samples:
+                # 超过最大长度，在靠近 chunk_samples 的静音点切
+                cut = min(seg_len, chunk_samples)
+                segments.append((seg_start, seg_start + cut))
+                seg_start = seg_start + cut
+            elif seg_len >= min_silence_samples and seg_start > 0:
+                # 有足够静音，切分
+                segments.append((seg_start, seg_start + (seg_len)))
+                seg_start = seg_end
+
+        # 最后一段
+        if seg_start < len(audio):
+            segments.append((seg_start, len(audio)))
+
+        # 如果没找到静音或分段失败，回退到时间切分
+        if len(segments) <= 1:
+            segments = [(i, min(i + chunk_samples, total_samples))
+                       for i in range(0, total_samples, chunk_samples)]
+
+        total_chunks = len(segments)
 
         self.window.after(0, lambda: self.progress.configure(maximum=total_chunks))
         self.window.after(0, lambda: self.status_text.set(
@@ -324,12 +364,10 @@ class AudioTranscriberGUI:
         ))
 
         full_text = []
-        for i in range(total_chunks):
+        for i, (start, end) in enumerate(segments):
             if self._stop_flag:
                 break
 
-            start = i * stride
-            end = min(start + chunk_samples, total_samples)
             chunk = audio[start:end]
             secs = len(chunk) / sample_rate
 
