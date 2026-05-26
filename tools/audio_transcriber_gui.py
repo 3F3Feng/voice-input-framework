@@ -489,7 +489,7 @@ class AudioTranscriberGUI:
     def _append_stream(self, text):
         # 每句一换行
         import re as _re
-        text = re.sub(chr(40)+chr(63)+chr(58)+chr(91)+chr(12850)+chr(65281)+chr(65311)+chr(33)+chr(63)+chr(93)+chr(91)+chr(34)+chr(8217)+chr(8221)+chr(12303)+chr(12301)+chr(93)+chr(63)+chr(41), lambda m: m.group(0)+chr(10), text)
+        text = _re.sub(chr(40)+chr(63)+chr(58)+chr(91)+chr(12850)+chr(65281)+chr(65311)+chr(33)+chr(63)+chr(93)+chr(91)+chr(34)+chr(8217)+chr(8221)+chr(12303)+chr(12301)+chr(93)+chr(63)+chr(41), lambda m: m.group(0)+chr(10), text)
         self.result_text.insert(tk.END, text)
         self.result_text.see(tk.END)
         self.result_text.update_idletasks()
