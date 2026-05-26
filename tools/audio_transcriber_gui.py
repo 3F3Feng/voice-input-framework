@@ -355,7 +355,7 @@ class AudioTranscriberGUI:
         import struct as _struct
         rms = np.sqrt(np.mean(audio**2))
         silence_thresh = max(rms * 0.15, 0.005)  # 不低于 -46dB
-        min_silence_ms = 300  # 至少 300ms 静音才算断点
+        min_silence_ms = 500  # 至少 500ms 静音才算断点
         min_silence_samples = int(min_silence_ms / 1000 * sample_rate)
 
         # 找静音区域
