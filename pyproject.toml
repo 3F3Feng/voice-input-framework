@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voice-input-framework"
-version = "2.0.0"
+version = "2.0.1"
 description = "Voice Input Framework - MLX 原生语音识别"
 readme = "README.md"
 license = {text = "MIT"}

@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1] - 2026-05-26
+
+### Fixed
+
+- **Hotkey debounce**: prevent double-trigger when mouse side button is mapped to modifier key
+  - State guard, time debounce (150ms), min press duration (50ms, keep recording)
+  - Fixes stuck recording state with mouse button bounce
+
 ## [1.1.6] - 2026-05-26
 
 ### Fixed
