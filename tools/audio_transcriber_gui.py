@@ -86,6 +86,8 @@ class AudioTranscriberGUI:
         self.chunk_seconds = tk.IntVar(value=45)
         self.status_text = tk.StringVar(value="就绪")
         self.model_name = tk.StringVar(value="检测中...")
+        self.model_list = []
+        self.current_model_id = tk.StringVar()
         self.lang = tk.StringVar(value="auto")
 
         self._running = False
@@ -134,7 +136,12 @@ class AudioTranscriberGUI:
         self.model_label = self._c(tk.Label, master=sf2,
                                     textvariable=self.model_name,
                                     fg="#a6adc8", font=("", 9), anchor=tk.W)
-        self.model_label.pack(side=tk.LEFT)
+        self.model_label.pack(side=tk.LEFT, padx=(0, 5))
+        self.model_combo = tk.ttk.Combobox(sf2, textvariable=self.current_model_id,
+                                            state="readonly", width=30,
+                                            font=("", 9))
+        self.model_combo.pack(side=tk.LEFT)
+        self.model_combo.bind("<<ComboboxSelected>>", self._on_model_selected)
 
         # 流式信息提示
         self._c(tk.Label, master=sf2, text="  Qwen3 原生流式", font=("", 9),
