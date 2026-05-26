@@ -890,40 +890,76 @@ async def websocket_stream(websocket: WebSocket):
     # ── 启动接收循环 ──
     receive_task = asyncio.create_task(receive_loop())
 
-    # ── 流式转写：边收边处理 ──
-    try:
-        partial_count = 0
-        async for partial in engine.transcribe_stream(audio_stream_generator()):
-            partial_count += 1
-            # 发送部分结果
+    # ── 等待音频接收完成，一次性转写 ──
+    await receive_task
+
+    # 收集所有音频数据
+    all_audio = bytearray()
+    while not audio_queue.empty():
+        chunk = audio_queue.get_nowait()
+        if chunk is not None:
+            all_audio.extend(chunk)
+
+    if all_audio:
+        try:
+            result = await asyncio.wait_for(
+                engine.transcribe(
+                    bytes(all_audio),
+                    language=language,
+                ),
+                timeout=600.0
+            )
+
+            # 发送 STT 结果
             await websocket.send_text(json.dumps({
                 "type": "stt_result",
-                "text": partial.text,
-                "stt_latency_ms": partial.stt_latency_ms,
-                "is_final": partial.is_final,
+                "text": result.text,
+                "stt_latency_ms": result.stt_latency_ms,
+                "confidence": result.confidence,
+                "language": result.language,
+                "model": result.model,
             }))
 
-        # 全部处理完成
-        await websocket.send_text(json.dumps({"type": "done", "segments": partial_count}))
+            # LLM 后处理
+            if result.text.strip() and LLM_ENABLED:
+                await websocket.send_text(json.dumps({
+                    "type": "llm_start", "text": result.text[:50],
+                }))
+                processed_text, llm_latency = await call_llm_server(result.text)
+            else:
+                processed_text = result.text
+                llm_latency = 0
 
-    except Exception as e:
-        logger.error(f"Stream transcription error: {e}")
-        await websocket.send_text(json.dumps({
-            "type": "error",
-            "error_code": "E5001",
-            "error_message": str(e),
-        }))
-    finally:
-        receive_task.cancel()
-        try:
-            await receive_task
-        except asyncio.CancelledError:
-            pass
-        engine.decrement_connections()
-        try:
-            await websocket.close()
-        except:
-            pass
+            await websocket.send_text(json.dumps({
+                "type": "result",
+                "text": processed_text,
+                "confidence": result.confidence,
+                "language": result.language,
+                "is_final": True,
+                "stt_latency_ms": result.stt_latency_ms,
+                "llm_latency_ms": llm_latency,
+                "model": result.model,
+            }))
+
+        except asyncio.TimeoutError:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "error_code": "E5002", "error_message": "转写超时",
+            }))
+        except Exception as e:
+            logger.error(f"Transcription error: {e}")
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "error_code": "E5001", "error_message": str(e),
+            }))
+
+    await websocket.send_text(json.dumps({"type": "done"}))
+
+    try:
+        await websocket.close()
+    except:
+        pass
+    engine.decrement_connections()
 
 def main():
     """主函数"""
