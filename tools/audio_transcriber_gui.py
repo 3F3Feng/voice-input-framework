@@ -84,6 +84,7 @@ class AudioTranscriberGUI:
         self.file_path = tk.StringVar()
         self.server_url = tk.StringVar(value=load_config())
         self.chunk_seconds = tk.IntVar(value=45)
+        self.overlap_seconds = tk.IntVar(value=2)
         self.status_text = tk.StringVar(value="就绪")
         self.model_name = tk.StringVar(value="检测中...")
         self.lang = tk.StringVar(value="auto")
@@ -142,6 +143,13 @@ class AudioTranscriberGUI:
         self._c(tk.Label, master=sf2, text="  每段:", font=("", 9),
                 fg="#a6adc8").pack(side=tk.LEFT, padx=(5, 2))
         tk.Spinbox(sf2, from_=15, to=180, textvariable=self.chunk_seconds,
+                   width=4, bg=self.input_bg, fg=self.fg, relief=tk.FLAT, bd=2).pack(side=tk.LEFT)
+        self._c(tk.Label, master=sf2, text="秒", font=("", 9),
+                fg="#a6adc8").pack(side=tk.LEFT)
+
+        self._c(tk.Label, master=sf2, text="  重叠:", font=("", 9),
+                fg="#a6adc8").pack(side=tk.LEFT, padx=(5, 2))
+        tk.Spinbox(sf2, from_=0, to=30, textvariable=self.overlap_seconds,
                    width=4, bg=self.input_bg, fg=self.fg, relief=tk.FLAT, bd=2).pack(side=tk.LEFT)
         self._c(tk.Label, master=sf2, text="秒", font=("", 9),
                 fg="#a6adc8").pack(side=tk.LEFT)
@@ -304,7 +312,7 @@ class AudioTranscriberGUI:
         total_seconds = total_samples / sample_rate
         chunk_seconds = self.chunk_seconds.get()
         # 每段重叠 1/10 的时长（避免句子截断）
-        overlap_seconds = max(1, chunk_seconds // 30)
+        overlap_seconds = self.overlap_seconds.get()
         chunk_samples = chunk_seconds * sample_rate
         overlap_samples = overlap_seconds * sample_rate
         stride = chunk_samples - overlap_samples
@@ -338,10 +346,16 @@ class AudioTranscriberGUI:
                     if full_text and full_text[-1]:
                         prev = full_text[-1]
                         # 取上一段最后 30 字和本段前 30 字，找最大公共重叠
-                        tail = prev[-30:]
-                        for overlap_len in range(min(30, len(text)), 0, -1):
-                            if tail[-overlap_len:] == text[:overlap_len]:
-                                text = text[overlap_len:]
+                        # 去除非中文字符（标点符号影响匹配）
+                        import re as _re
+                        def _clean(s): return _re.sub(r'[^\u4e00-\u9fff\w]', '', s)
+                        tail = _clean(prev[-40:])
+                        for overlap_len in range(min(40, len(text)), 0, -1):
+                            head = _clean(text[:overlap_len])
+                            if head and tail[-len(head):] == head:
+                                # 找到匹配后，从原始文本中删除对应长度的字符
+                                raw_overlap = len(text[:overlap_len])
+                                text = text[raw_overlap:]
                                 break
                         # 如果完全重复则跳过整段
                         if text.strip() in prev.strip() and len(text) < 20:
