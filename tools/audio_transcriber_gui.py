@@ -16,8 +16,6 @@ import numpy as np
 # ── 配置 ──
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audiogui_config.json")
 DEFAULT_SERVER = os.environ.get("STT_SERVER", "http://localhost:9100")
-CHUNK_SECONDS = 30  # 每段秒数（约 30s 出一段文字）
-
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -88,7 +86,6 @@ class AudioTranscriberGUI:
         self.status_text = tk.StringVar(value="就绪")
         self.model_name = tk.StringVar(value="检测中...")
         self.lang = tk.StringVar(value="auto")
-        self.chunk_seconds = tk.IntVar(value=CHUNK_SECONDS)
 
         self._running = False
         self._stop_flag = False
@@ -138,12 +135,9 @@ class AudioTranscriberGUI:
                                     fg="#a6adc8", font=("", 9), anchor=tk.W)
         self.model_label.pack(side=tk.LEFT)
 
-        self._c(tk.Label, master=sf2, text="  每段:", font=("", 9),
+        # 流式信息提示
+        self._c(tk.Label, master=sf2, text="  Qwen3 原生流式", font=("", 9),
                 fg="#a6adc8").pack(side=tk.LEFT, padx=(10, 2))
-        tk.Spinbox(sf2, from_=10, to=120, textvariable=self.chunk_seconds,
-                   width=4, bg=self.input_bg, fg=self.fg, relief=tk.FLAT, bd=2).pack(side=tk.LEFT)
-        self._c(tk.Label, master=sf2, text="秒", font=("", 9),
-                fg="#a6adc8").pack(side=tk.LEFT)
 
         # 文件
         ff = tk.Frame(self.window, bg=self.bg)
@@ -269,7 +263,7 @@ class AudioTranscriberGUI:
         total_samples = len(audio)
         sample_rate = 16000
         total_seconds = total_samples / sample_rate
-        segment_seconds = self.chunk_seconds.get()
+        segment_seconds = 30  # 发送块大小（不影响流式断句）
         self.window.after(0, lambda: self.status_text.set(
             f"⏳ 音频 {total_seconds/60:.0f}分, 连接服务器..."
         ))
