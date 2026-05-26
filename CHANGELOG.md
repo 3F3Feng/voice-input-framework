@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.6] - 2026-05-26
+
+### Fixed
+
+- **Hotkey debounce**: prevent double-trigger when mouse side button is mapped to modifier key
+  - State guard: skip PRESS if already recording, skip RELEASE if not recording
+  - Time debounce: ignore PRESS events within 150ms of last RELEASE
+  - Min duration guard: ignore RELEASE events within 50ms of PRESS (noise spike),
+    keeps recording active until the real release
+  - Fixes issue where mouse button bounce caused stuck recording state and
+    "already recording" popup with persistent floating indicator
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
