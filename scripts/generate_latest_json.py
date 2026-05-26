@@ -31,8 +31,11 @@ manifest = {
     "platforms": {}
 }
 
-for f in glob.glob(f"{ASSETS_DIR}/GUI-*"):
+for f in sorted(glob.glob(f"{ASSETS_DIR}/GUI-*")):
     name = os.path.basename(f)
+    # Skip Python GUI files (GUI-Python-*), prefer Tauri native GUI
+    if "-Python-" in name:
+        continue
     for pattern, key in platform_map.items():
         import re
         if re.search(pattern, name):
