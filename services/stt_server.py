@@ -834,107 +834,91 @@ async def websocket_stream(websocket: WebSocket):
         "llm_model": llm_info["llm_model"],
     }))
 
-    audio_buffer = bytearray()
     return_timestamps = False
+    audio_queue = asyncio.Queue()
+    stream_finished = asyncio.Event()
+    stream_error = None
 
-    try:
-        while True:
-            message = await asyncio.wait_for(websocket.receive_text(), timeout=120.0)
-            data = json.loads(message)
-            msg_type = data.get("type")
-
-            if msg_type == "audio":
-                audio_b64 = data.get("data", "")
-                if audio_b64:
-                    audio_chunk = base64.b64decode(audio_b64)
-                    audio_buffer.extend(audio_chunk)
-
-            elif msg_type == "config":
-                # 处理配置消息
-                return_timestamps = data.get("return_timestamps", False)
-                language = data.get("language", "auto")
-                await websocket.send_text(json.dumps({
-                    "type": "config_ack",
-                    "return_timestamps": return_timestamps,
-                    "language": language,
-                }))
-
-            elif msg_type in ("end", "stop"):
-                if audio_buffer:
-                    try:
-                        result = await asyncio.wait_for(
-                            engine.transcribe(
-                                bytes(audio_buffer),
-                                return_timestamps=return_timestamps
-                            ),
-                            timeout=300.0
-                        )
-                        # 发送 STT 结果
-                        await websocket.send_text(json.dumps({
-                            "type": "stt_result",
-                            "text": result.text,
-                            "stt_latency_ms": result.stt_latency_ms,
-                        }))
-                        # 调用 LLM 服务器进行后处理
-                        req_id = request_id_ctx.get()
-                        if result.text.strip() and LLM_ENABLED:
-                            # 发送 LLM 开始消息
-                            await websocket.send_text(json.dumps({
-                                "type": "llm_start",
-                                "text": result.text[:50],
-                            }))
-                            logger.info(f"Calling LLM server for text ({len(result.text)} chars)")
-                            # 调用 LLM 服务器
-                            processed_text, llm_latency = await call_llm_server(result.text, req_id)
-                            logger.info(f"LLM processing complete: {llm_latency:.1f}ms")
-                        else:
-                            processed_text = result.text
-                            llm_latency = 0
-                            if not LLM_ENABLED:
-                                logger.info("LLM processing disabled, skipping")
-                        # 发送最终结果
-                        await websocket.send_text(json.dumps({
-                            "type": "result",
-                            "text": processed_text,
-                            "confidence": result.confidence,
-                            "language": result.language,
-                            "is_final": True,
-                            "stt_latency_ms": result.stt_latency_ms,
-                            "llm_latency_ms": llm_latency,
-                            "model": result.model,
-                        }))
-                        if result.timestamps:
-                            timestamps_response = {
-                                "type": "timestamps",
-                                "timestamps": [
-                                    {"word": ts.word, "start": ts.start, "end": ts.end}
-                                    for ts in result.timestamps
-                                ]
-                            }
-                            await websocket.send_text(json.dumps(timestamps_response))
-                    except asyncio.TimeoutError:
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "error_code": "E5002",
-                            "error_message": "Transcription timeout",
-                        }))
-
-                await websocket.send_text(json.dumps({"type": "done"}))
-                break
-
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+    # ── 异步生成器：从 queue 读取音频块供 transcribe_stream ──
+    async def audio_stream_generator():
+        nonlocal stream_error
         try:
+            while True:
+                chunk = await asyncio.wait_for(audio_queue.get(), timeout=300.0)
+                if chunk is None:  # 结束标记
+                    break
+                yield chunk
+        except asyncio.TimeoutError:
+            stream_error = "Audio receive timeout"
+        except Exception as e:
+            stream_error = str(e)
+
+    # ── 接收循环（投递到 queue）──
+    async def receive_loop():
+        nonlocal stream_error
+        try:
+            while True:
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=120.0)
+                data = json.loads(message)
+                msg_type = data.get("type")
+
+                if msg_type == "audio":
+                    audio_b64 = data.get("data", "")
+                    if audio_b64:
+                        await audio_queue.put(base64.b64decode(audio_b64))
+
+                elif msg_type == "config":
+                    return_timestamps = data.get("return_timestamps", False)
+                    language = data.get("language", "auto")
+                    await websocket.send_text(json.dumps({
+                        "type": "config_ack",
+                        "return_timestamps": return_timestamps,
+                        "language": language,
+                    }))
+
+                elif msg_type in ("end", "stop"):
+                    await audio_queue.put(None)  # 通知 stream 结束
+                    break
+        except asyncio.TimeoutError:
+            stream_error = "WebSocket receive timeout"
+        except WebSocketDisconnect:
+            await audio_queue.put(None)
+        except Exception as e:
+            stream_error = str(e)
+            await audio_queue.put(None)
+
+    # ── 启动接收循环 ──
+    receive_task = asyncio.create_task(receive_loop())
+
+    # ── 流式转写：边收边处理 ──
+    try:
+        partial_count = 0
+        async for partial in engine.transcribe_stream(audio_stream_generator()):
+            partial_count += 1
+            # 发送部分结果
             await websocket.send_text(json.dumps({
-                "type": "error",
-                "error_code": "E5001",
-                "error_message": str(e),
+                "type": "stt_result",
+                "text": partial.text,
+                "stt_latency_ms": partial.stt_latency_ms,
+                "is_final": partial.is_final,
             }))
-        except:
-            pass
+
+        # 全部处理完成
+        await websocket.send_text(json.dumps({"type": "done", "segments": partial_count}))
+
+    except Exception as e:
+        logger.error(f"Stream transcription error: {e}")
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "error_code": "E5001",
+            "error_message": str(e),
+        }))
     finally:
+        receive_task.cancel()
+        try:
+            await receive_task
+        except asyncio.CancelledError:
+            pass
         engine.decrement_connections()
         try:
             await websocket.close()
