@@ -447,7 +447,7 @@ class AudioTranscriberGUI:
     def _append_stream(self, text):
         # 每句一换行
         import re as _re
-        text = _re.sub(r"(?<=[。！？][”’」』]?)", "\n", text)
+        text = _re.sub(r"(?<=[。！？.!?][”’」』]?)", "\n", text)
         self.result_text.insert(tk.END, text)
         self.result_text.see(tk.END)
         self.result_text.update_idletasks()
