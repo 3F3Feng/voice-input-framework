@@ -304,7 +304,7 @@ class AudioTranscriberGUI:
         total_seconds = total_samples / sample_rate
         chunk_seconds = self.chunk_seconds.get()
         # 每段重叠 1/10 的时长（避免句子截断）
-        overlap_seconds = max(1, chunk_seconds // 10)
+        overlap_seconds = max(1, chunk_seconds // 30)
         chunk_samples = chunk_seconds * sample_rate
         overlap_samples = overlap_seconds * sample_rate
         stride = chunk_samples - overlap_samples
