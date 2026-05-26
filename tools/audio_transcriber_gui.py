@@ -332,30 +332,60 @@ class AudioTranscriberGUI:
         if in_silence and len(audio) - start_sil >= min_silence_samples:
             silences.append((start_sil, len(audio)))
 
-        # 在静音点切分，确保每段不超过 chunk_samples
+        # 在静音点切分，每段不超过 chunk_samples
         segments = []
         seg_start = 0
-        for sil_start, sil_end in silences:
-            seg_end = sil_end
-            seg_len = seg_end - seg_start
-            if seg_len >= chunk_samples:
-                # 超过最大长度，在靠近 chunk_samples 的静音点切
-                cut = min(seg_len, chunk_samples)
-                segments.append((seg_start, seg_start + cut))
-                seg_start = seg_start + cut
-            elif seg_len >= min_silence_samples and seg_start > 0:
-                # 有足够静音，切分
-                segments.append((seg_start, seg_start + (seg_len)))
-                seg_start = seg_end
+        sil_idx = 0
+        while seg_start < len(audio):
+            seg_end = min(seg_start + chunk_samples, len(audio))
 
-        # 最后一段
-        if seg_start < len(audio):
-            segments.append((seg_start, len(audio)))
+            # 找 seg_end 附近最近的静音起点
+            best_cut = seg_end
+            search_start = max(seg_start + chunk_samples // 2, seg_start)
+            for sil_s, sil_e in silences:
+                if sil_idx > 0 and (sil_s, sil_e) == silences[sil_idx - 1]:
+                    continue
+                if search_start <= sil_s <= seg_end:
+                    # 在边界附近找到静音起点，在这里切
+                    best_cut = sil_s
+                    break
+                # 也考虑静音终点（句尾）
+                if search_start <= sil_e <= seg_end:
+                    best_cut = sil_e
+                    break
 
-        # 如果没找到静音或分段失败，回退到时间切分
+            # 检查切分后下一段是否太短（<5s），如果是则合并到本段
+            next_len = len(audio) - best_cut
+            if len(segments) > 0 and next_len < min(chunk_samples // 3, sample_rate * 10):
+                # 把剩余音频合并到最后一段
+                prev_s, prev_e = segments.pop()
+                segments.append((prev_s, len(audio)))
+                break
+
+            segments.append((seg_start, best_cut))
+            seg_start = best_cut
+            sil_idx += 1
+
+        # 如果分段失败（无静音），回退到时间切分并在边界附近找最佳切断点
         if len(segments) <= 1:
-            segments = [(i, min(i + chunk_samples, total_samples))
-                       for i in range(0, total_samples, chunk_samples)]
+            segments = []
+            for i in range(0, total_samples, chunk_samples):
+                cut = min(i + chunk_samples, total_samples)
+                # 在 cut 附近 ±10% 范围内找最近静音点
+                search_start_cut = max(i, cut - int(chunk_samples * 0.15))
+                for sil_s, _ in silences:
+                    if search_start_cut <= sil_s <= cut + int(chunk_samples * 0.1):
+                        cut = sil_s
+                        break
+                segments.append((i, cut))
+            # 去重重叠段
+            cleaned = [segments[0]]
+            for s, e in segments[1:]:
+                if s < cleaned[-1][1]:
+                    s = cleaned[-1][1]
+                if e > s:
+                    cleaned.append((s, e))
+            segments = cleaned
 
         total_chunks = len(segments)
 
