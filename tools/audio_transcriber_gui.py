@@ -459,7 +459,7 @@ class AudioTranscriberGUI:
                         # 取上一段最后 30 字和本段前 30 字，找最大公共重叠
                         # 去除非中文字符（标点符号影响匹配）
                         import re as _re
-                        def _clean(s): return _re.sub(r'[^\u4e00-\u9fff\w]', '', s)
+                        def _clean(s): return _re.sub(r"[^一-鿿\w]", "", s)
                         tail = _clean(prev[-40:])
                         for overlap_len in range(min(40, len(text)), 0, -1):
                             head = _clean(text[:overlap_len])
@@ -489,7 +489,7 @@ class AudioTranscriberGUI:
     def _append_stream(self, text):
         # 每句一换行
         import re as _re
-        text = _re.sub(r"(?<=[。！？.!?][”’」』]?)", "\n", text)
+        text = re.sub(chr(40)+chr(63)+chr(58)+chr(91)+chr(12850)+chr(65281)+chr(65311)+chr(33)+chr(63)+chr(93)+chr(91)+chr(34)+chr(8217)+chr(8221)+chr(12303)+chr(12301)+chr(93)+chr(63)+chr(41), lambda m: m.group(0)+chr(10), text)
         self.result_text.insert(tk.END, text)
         self.result_text.see(tk.END)
         self.result_text.update_idletasks()
