@@ -3,7 +3,7 @@
 Voice Input Framework - 离线音频转写 GUI (流式输出)
 
 上传音频文件，分段转写，文字逐步显示在界面上。
-依赖: pip install httpx numpy
+依赖: pip install httpx numpy websocket-client
        (音频解码) pip install pydub 或 soundfile
 """
 import os, sys, json, threading, time, base64, math
@@ -269,78 +269,84 @@ class AudioTranscriberGUI:
         ))
 
         try:
-            with httpx.Client(timeout=900) as client:
-                with client.ws(url) as ws:
-                    ready = ws.receive_text()
-                    ready_data = json.loads(ready)
-                    if ready_data.get("model"):
-                        self.window.after(0, lambda m=ready_data.get("model"):
-                            self.model_name.set(f"✅ {m}"))
+            import websocket as ws_lib
+            ws = ws_lib.create_connection(url, timeout=30)
 
-                    # 发送语言配置
-                    ws.send_text(json.dumps({
-                        "type": "config",
-                        "language": self.lang.get(),
-                        "return_timestamps": False,
-                    }))
-                    ws.receive_text()  # config_ack
+            ready = ws.recv()
+            ready_data = json.loads(ready)
+            if ready_data.get("model"):
+                self.window.after(0, lambda m=ready_data.get("model"):
+                    self.model_name.set(f"✅ {m}"))
 
-                    # 按 segment 发送音频块
-                    samples_per_segment = segment_seconds * sample_rate
-                    total_segments = math.ceil(total_samples / samples_per_segment)
-                    self.window.after(0, lambda: self.progress.configure(maximum=total_segments))
-                    self.window.after(0, lambda: self.status_text.set(
-                        f"⏳ 发送音频 ({total_segments} 段)..."
+            # 发送语言配置
+            ws.send(json.dumps({
+                "type": "config",
+                "language": self.lang.get(),
+                "return_timestamps": False,
+            }))
+            ws.recv()  # config_ack
+
+            # 按 segment 发送音频块
+            samples_per_segment = segment_seconds * sample_rate
+            total_segments = math.ceil(total_samples / samples_per_segment)
+            self.window.after(0, lambda: self.progress.configure(maximum=total_segments))
+            self.window.after(0, lambda: self.status_text.set(
+                f"⏳ 发送音频 ({total_segments} 段)..."
+            ))
+
+            seg_count = 0
+            for start in range(0, total_samples, samples_per_segment):
+                if self._stop_flag:
+                    break
+                end = min(start + samples_per_segment, total_samples)
+                chunk = audio[start:end]
+                b64 = audio_to_base64(chunk)
+                ws.send(json.dumps({"type": "audio", "data": b64}))
+                seg_count += 1
+                if seg_count % 5 == 0:
+                    self.window.after(0, lambda sc=seg_count, ts=total_segments: self.status_text.set(
+                        f"⏳ 已发送 {sc}/{ts} 段..."
                     ))
 
-                    seg_count = 0
-                    for start in range(0, total_samples, samples_per_segment):
-                        if self._stop_flag:
-                            break
-                        end = min(start + samples_per_segment, total_samples)
-                        chunk = audio[start:end]
-                        b64 = audio_to_base64(chunk)
-                        ws.send_text(json.dumps({"type": "audio", "data": b64}))
-                        seg_count += 1
-                        if seg_count % 5 == 0:
-                            self.window.after(0, lambda: self.status_text.set(
-                                f"⏳ 已发送 {seg_count}/{total_segments} 段..."
-                            ))
+            # 结束发送，开始读取流式结果
+            ws.send(json.dumps({"type": "end"}))
+            self.window.after(0, lambda: self.status_text.set("📝 接收转写结果..."))
 
-                    # 结束发送，开始读取流式结果
-                    ws.send_text(json.dumps({"type": "end"}))
-                    self.window.after(0, lambda: self.status_text.set("📝 接收转写结果..."))
+            # 读取流式结果
+            result_parts = []
+            ws.settimeout(60)
+            while True:
+                try:
+                    msg = ws.recv()
+                    if not msg:
+                        break
+                    data = json.loads(msg)
+                    t = data.get("type", "")
 
-                    # 读取流式结果
-                    result_parts = []
-                    while True:
-                        try:
-                            msg = ws.receive_text()
-                            data = json.loads(msg)
-                            t = data.get("type", "")
+                    if t == "stt_result":
+                        text = data.get("text", "")
+                        if text:
+                            result_parts.append(text)
+                            self.window.after(0, lambda t=text: self._append_stream(t))
 
-                            if t == "stt_result":
-                                text = data.get("text", "")
-                                if text:
-                                    result_parts.append(text)
-                                    self.window.after(0, lambda t=text: self._append_stream(t))
+                    elif t == "done":
+                        segments = data.get("segments", 0)
+                        total_len = sum(len(p) for p in result_parts)
+                        self.window.after(0, lambda: self.status_text.set(
+                            f"✅ 完成! {segments} segments, {total_len} 字"
+                        ))
+                        break
 
-                            elif t == "done":
-                                segments = data.get("segments", 0)
-                                total_len = sum(len(p) for p in result_parts)
-                                self.window.after(0, lambda: self.status_text.set(
-                                    f"✅ 完成! {segments} segments, {total_len} 字"
-                                ))
-                                break
+                    elif t == "error":
+                        err = data.get("error_message", "")
+                        self.window.after(0, lambda err=err: self.result_text.insert(
+                            tk.END, f"\n❌ 服务器错误: {err}\n"))
+                        break
 
-                            elif t == "error":
-                                err = data.get("error_message", "")
-                                self.window.after(0, lambda: self.result_text.insert(
-                                    tk.END, f"\n❌ 服务器错误: {err}\n"))
-                                break
+                except Exception:
+                    break
 
-                        except Exception:
-                            break
+            ws.close()
 
         except Exception as e:
             self.window.after(0, lambda e=e: self.status_text.set(f"❌ 连接失败: {e}"))
