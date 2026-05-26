@@ -84,6 +84,7 @@ class AudioTranscriberGUI:
         self.file_path = tk.StringVar()
         self.server_url = tk.StringVar(value=load_config())
         self.chunk_seconds = tk.IntVar(value=45)
+        self.silence_ms = tk.IntVar(value=500)
         self.status_text = tk.StringVar(value="就绪")
         self.model_name = tk.StringVar(value="检测中...")
         self.model_list = []
@@ -153,6 +154,13 @@ class AudioTranscriberGUI:
         tk.Spinbox(sf2, from_=15, to=180, textvariable=self.chunk_seconds,
                    width=4, bg=self.input_bg, fg=self.fg, relief=tk.FLAT, bd=2).pack(side=tk.LEFT)
         self._c(tk.Label, master=sf2, text="秒", font=("", 9),
+                fg="#a6adc8").pack(side=tk.LEFT)
+        self._c(tk.Label, master=sf2, text="  静音:", font=("", 9),
+                fg="#a6adc8").pack(side=tk.LEFT, padx=(5, 2))
+        tk.Spinbox(sf2, from_=100, to=3000, increment=100,
+                   textvariable=self.silence_ms, width=5,
+                   bg=self.input_bg, fg=self.fg, relief=tk.FLAT, bd=2).pack(side=tk.LEFT)
+        self._c(tk.Label, master=sf2, text="ms", font=("", 9),
                 fg="#a6adc8").pack(side=tk.LEFT)
 
         self._c(tk.Label, master=sf2, text="", font=("", 9),
@@ -355,7 +363,7 @@ class AudioTranscriberGUI:
         import struct as _struct
         rms = np.sqrt(np.mean(audio**2))
         silence_thresh = max(rms * 0.15, 0.005)  # 不低于 -46dB
-        min_silence_ms = 500  # 至少 500ms 静音才算断点
+        min_silence_ms = self.silence_ms.get()
         min_silence_samples = int(min_silence_ms / 1000 * sample_rate)
 
         # 找静音区域
