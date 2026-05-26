@@ -162,6 +162,7 @@ class HotkeyVoiceInputV2:
         # 快捷键状态追踪
         self._hotkey_pressed = False
         self._pressed_keys = set()
+        self._last_hotkey_press_time = 0.0   # 防抖：上次快捷键按下时间
         self._last_hotkey_release_time = 0.0  # 防抖：上次快捷键释放时间
         self.HOTKEY_DEBOUNCE_MS = 150  # 防抖窗口（毫秒）
 
@@ -1673,6 +1674,7 @@ class HotkeyVoiceInputV2:
                     try:
                         self.log("🎙️ 快捷键激活 - 开始录音!")
                         self._hotkey_pressed = True
+                        self._last_hotkey_press_time = time.time()
                         self._start_recording()
                         # 更新托盘状态
                         if self.tray_manager:
@@ -1693,6 +1695,14 @@ class HotkeyVoiceInputV2:
                         self.log("⚠️ 防抖: 忽略重复的快捷键释放事件")
                         continue
                     try:
+                        # 防抖：如果录音时长小于 80ms，可能是鼠标侧键的噪声释放
+                        press_duration = (time.time() - self._last_hotkey_press_time) * 1000
+                        if press_duration < 80:
+                            self.log(f"⚠️ 防抖: 忽略 {press_duration:.0f}ms 的短触释放（疑似噪声）")
+                            self._hotkey_pressed = False
+                            self._stop_recording()
+                            self._last_hotkey_release_time = self._last_hotkey_press_time
+                            continue
                         self.log("⏹️ 快捷键释放 - 停止录音!")
                         self._hotkey_pressed = False
                         self._stop_recording()
