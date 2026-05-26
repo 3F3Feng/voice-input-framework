@@ -525,8 +525,13 @@ async function doCheckUpdate() {
   updateChecking.value = true;
   updateStatus.value = "检查中...";
   updateStatusType.value = "info";
+  // 10秒超时，防止卡死在"检查中..."
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("超时")), 10000));
   try {
-    const info = await invoke<UpdateInfo>("check_update");
+    const info = await Promise.race([
+      invoke<UpdateInfo>("check_update"),
+      timeout
+    ]) as UpdateInfo;
     updateInfo.value = info;
     if (info.available) { updateStatus.value = `发现新版本 ${info.latest_version}`; toast(`新版本 ${info.latest_version} 可用`, "ok"); }
     else { updateStatus.value = "已是最新版本"; updateStatusType.value = "ok"; }
@@ -537,8 +542,12 @@ async function doInstallUpdate() {
   updateInstalling.value = true;
   updateStatus.value = "正在下载...";
   updateStatusType.value = "info";
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("下载超时")), 120000));
   try {
-    const msg = await invoke<string>("install_update");
+    const msg = await Promise.race([
+      invoke<string>("install_update"),
+      timeout
+    ]) as string;
     updateStatus.value = msg;
     updateStatusType.value = "ok";
     toast("更新已安装，重启后生效", "ok");
@@ -573,6 +582,10 @@ onMounted(async () => {
   listen("hotkey-press", () => { if (!recording.value && !loading.value) startRecord(); });
   listen("hotkey-release", () => { if (recording.value) stopRecord(); });
   listen("tray-check-update", () => { showSettings.value = true; doCheckUpdate(); });
+
+  // 后台定时检查更新（启动后延迟30秒，之后每6小时自动检查一次）
+  setTimeout(() => doCheckUpdate(), 30000);
+  setInterval(() => doCheckUpdate(), 6 * 60 * 60 * 1000);
 
   listen("transcribe-progress", (event) => {
     const data = event.payload as any;

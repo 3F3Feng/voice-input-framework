@@ -253,6 +253,11 @@ jobs:
           rm -rf tauri-* python-* 2>/dev/null || true
           ls -la
 
+      - name: Generate latest.json for Tauri updater
+        run: |
+          python3 scripts/generate_latest_json.py
+          ls -la dist/latest.json
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
