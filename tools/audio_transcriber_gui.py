@@ -385,57 +385,36 @@ class AudioTranscriberGUI:
         # 在静音点切分，每段不超过 chunk_samples
         segments = []
         seg_start = 0
-        sil_idx = 0
         while seg_start < len(audio):
             seg_end = min(seg_start + chunk_samples, len(audio))
 
-            # 找 seg_end 附近最近的静音起点
-            best_cut = seg_end
+            # 在 seg_end 附近找最近的静音点
             search_start = max(seg_start + chunk_samples // 2, seg_start)
+            best_cut = seg_end
             for sil_s, sil_e in silences:
-                if sil_idx > 0 and (sil_s, sil_e) == silences[sil_idx - 1]:
-                    continue
+                if sil_s < seg_start:
+                    continue  # 跳过已经用过的静音段
                 if search_start <= sil_s <= seg_end:
-                    # 在边界附近找到静音起点，在这里切
-                    best_cut = sil_s
+                    best_cut = sil_s  # 在静音起点切
                     break
-                # 也考虑静音终点（句尾）
                 if search_start <= sil_e <= seg_end:
-                    best_cut = sil_e
+                    best_cut = sil_e  # 在静音终点切
                     break
 
-            # 检查切分后下一段是否太短（<5s），如果是则合并到本段
+            # 最后一段太短则合并到前一段
             next_len = len(audio) - best_cut
-            if len(segments) > 0 and next_len < min(chunk_samples // 3, sample_rate * 10):
-                # 把剩余音频合并到最后一段
+            if segments and next_len < min(chunk_samples // 4, sample_rate * 8):
                 prev_s, prev_e = segments.pop()
                 segments.append((prev_s, len(audio)))
                 break
 
             segments.append((seg_start, best_cut))
             seg_start = best_cut
-            sil_idx += 1
 
-        # 如果分段失败（无静音），回退到时间切分并在边界附近找最佳切断点
+        # 回退方案：无静音 / 分段失败，按时间切
         if len(segments) <= 1:
-            segments = []
-            for i in range(0, total_samples, chunk_samples):
-                cut = min(i + chunk_samples, total_samples)
-                # 在 cut 附近 ±10% 范围内找最近静音点
-                search_start_cut = max(i, cut - int(chunk_samples * 0.15))
-                for sil_s, _ in silences:
-                    if search_start_cut <= sil_s <= cut + int(chunk_samples * 0.1):
-                        cut = sil_s
-                        break
-                segments.append((i, cut))
-            # 去重重叠段
-            cleaned = [segments[0]]
-            for s, e in segments[1:]:
-                if s < cleaned[-1][1]:
-                    s = cleaned[-1][1]
-                if e > s:
-                    cleaned.append((s, e))
-            segments = cleaned
+            segments = [(i, min(i + chunk_samples, total_samples))
+                       for i in range(0, total_samples, chunk_samples)]
 
         total_chunks = len(segments)
 
