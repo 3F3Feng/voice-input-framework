@@ -270,7 +270,9 @@ class AudioTranscriberGUI:
 
         try:
             import websocket as ws_lib
-            ws = ws_lib.create_connection(url, timeout=30)
+            # 转换 http:// → ws:// (websocket 库需要 ws 协议)
+            ws_url = url.replace("http://", "ws://").replace("https://", "wss://")
+            ws = ws_lib.create_connection(ws_url, timeout=30)
 
             ready = ws.recv()
             ready_data = json.loads(ready)
