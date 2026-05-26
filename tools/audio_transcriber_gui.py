@@ -88,6 +88,8 @@ class AudioTranscriberGUI:
         self.model_name = tk.StringVar(value="检测中...")
         self.model_list = []
         self.current_model_id = tk.StringVar()
+        self.model_list = []
+        self.current_model_id = tk.StringVar()
         self.lang = tk.StringVar(value="auto")
 
         self._running = False
@@ -203,7 +205,7 @@ class AudioTranscriberGUI:
         self.result_text.pack(fill=tk.BOTH, expand=True)
 
     def _check_server(self):
-        self.model_name.set("正在检测...")
+        self.model_name.set("正在检测服务器...")
         self.model_label.config(fg="#f9e2af")
 
         def check():
@@ -215,13 +217,25 @@ class AudioTranscriberGUI:
                         mr = httpx.get(f"{url}/models", timeout=5)
                         if mr.status_code == 200:
                             models = mr.json()
-                            if models:
-                                active = next((m for m in models if m.get("is_active")), models[0])
-                                self.window.after(0, lambda: self.model_name.set(
-                                    f"✅ {active.get('model_name', '?')}"
-                                ))
-                                self.window.after(0, lambda: self.model_label.config(fg="#a6e3a1"))
-                                return
+                            self.model_list = models
+                            names = [m.get("name", "?") for m in models]
+                            active = next((m for m in models if m.get("is_loaded")), models[0] if models else None)
+
+                            def update_ui():
+                                self.model_combo["values"] = names
+                                if active:
+                                    self.current_model_id.set(active.get("name", ""))
+                                    desc = active.get("description", "")[:40]
+                                    self.model_name.set(f"✅ {active.get('name', '?')}")
+                                elif names:
+                                    self.current_model_id.set(names[0])
+                                    self.model_name.set(f"✅ {names[0]}")
+                                else:
+                                    self.model_name.set("✅ 服务器正常")
+                                self.model_label.config(fg="#a6e3a1")
+
+                            self.window.after(0, update_ui)
+                            return
                     except Exception:
                         pass
                     self.window.after(0, lambda: self.model_name.set("✅ 服务器正常"))
@@ -235,6 +249,25 @@ class AudioTranscriberGUI:
 
         threading.Thread(target=check, daemon=True).start()
 
+    def _on_model_selected(self, event=None):
+        model_name = self.current_model_id.get()
+        if not model_name:
+            return
+        self.model_name.set(f"切换到 {model_name}...")
+        self.model_label.config(fg="#f9e2af")
+        def switch():
+            url = f"{self.server_url.get().rstrip('/')}/models/select"
+            try:
+                r = httpx.post(url, data={"model_name": model_name}, timeout=30)
+                if r.status_code == 200:
+                    self.window.after(0, lambda: self.model_name.set(f"✅ {model_name}"))
+                    self.window.after(0, lambda: self.model_label.config(fg="#a6e3a1"))
+                else:
+                    self.window.after(0, lambda: self.model_name.set(f"❌ {r.text[:40]}"))
+            except Exception as e:
+                self.window.after(0, lambda: self.model_name.set(f"❌ {str(e)[:40]}"))
+                self.window.after(0, lambda: self.model_label.config(fg="#f38ba8"))
+        threading.Thread(target=switch, daemon=True).start()
     def _choose_file(self):
         path = filedialog.askopenfilename(
             title="选择音频文件",
