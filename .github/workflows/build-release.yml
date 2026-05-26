@@ -254,9 +254,12 @@ jobs:
           ls -la
 
       - name: Generate latest.json for Tauri updater
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          ls -la release-assets/
           python3 scripts/generate_latest_json.py
-          ls -la dist/latest.json
+          ls -la release-assets/latest.json
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

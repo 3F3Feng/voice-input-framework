@@ -2,42 +2,52 @@
 """
 Generate latest.json for Tauri updater plugin.
 
-Run during release build to create the update manifest.
-Format: https://tauri.app/plugin/updater/
+Run during release build after assets are renamed.
+Reads version from RELEASE_TAG env var, finds assets in release-assets/ dir.
 """
-import json, os, hashlib, sys
+import json, os, glob
 
 RELEASE_TAG = os.environ.get("RELEASE_TAG", "")
 REPO = "3F3Feng/voice-input-framework"
 BASE = f"https://github.com/{REPO}/releases/download/{RELEASE_TAG}"
-
-def file_hash(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-platforms = {
-    "windows-x86_64": {"url": f"{BASE}/GUI-Windows-2.0.1-x64.exe", "ext": ".exe"},
-    "darwin-aarch64": {"url": f"{BASE}/GUI-macOS-2.0.1-aarch64.dmg", "ext": ".dmg"},
-    "linux-x86_64":   {"url": f"{BASE}/GUI-Linux-2.0.1-x64.AppImage", "ext": ".AppImage"},
-}
+ASSETS_DIR = "release-assets"
 
 version = RELEASE_TAG.lstrip("v")
-manifest = {"version": version, "notes": "Hotkey debounce fix for mouse button bounce", "pub_date": "", "platforms": {}}
+if not version:
+    print("ERROR: RELEASE_TAG not set")
+    exit(1)
 
-for key, info in platforms.items():
-    path = f"dist/{os.path.basename(info['url'])}"
-    if os.path.exists(path):
-        manifest["platforms"][key] = {
-            "signature": "",
-            "url": info["url"]
-        }
-    else:
-        print(f"  ⚠️ {path} not found, skipping")
-        manifest["platforms"][key] = {"signature": "", "url": info["url"]}
+# Map platform patterns → Tauri platform key
+platform_map = {
+    "Windows-": "windows-x86_64",
+    "macOS-": "darwin-aarch64",
+    "Linux-.*AppImage": "linux-x86_64",
+}
 
-with open("dist/latest.json", "w") as f:
+manifest = {
+    "version": version,
+    "notes": f"Voice Input Framework v{version}",
+    "pub_date": "",
+    "platforms": {}
+}
+
+for f in glob.glob(f"{ASSETS_DIR}/GUI-*"):
+    name = os.path.basename(f)
+    for pattern, key in platform_map.items():
+        import re
+        if re.search(pattern, name):
+            manifest["platforms"][key] = {
+                "signature": "",
+                "url": f"{BASE}/{name}"
+            }
+            break
+
+if not manifest["platforms"]:
+    print("WARNING: no GUI assets found, listing files:")
+    for f in glob.glob(f"{ASSETS_DIR}/*"):
+        print(f"  {f}")
+
+out_dir = "release-assets"
+with open(f"{out_dir}/latest.json", "w") as f:
     json.dump(manifest, f, indent=2)
-print(f"✅ dist/latest.json generated for v{version}")
+print(f"✅ {out_dir}/latest.json generated (v{version}, {len(manifest['platforms'])} platforms)")
