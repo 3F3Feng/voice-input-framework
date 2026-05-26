@@ -343,7 +343,7 @@ class AudioTranscriberGUI:
                             break
 
         except Exception as e:
-            self.window.after(0, lambda: self.status_text.set(f"❌ 连接失败: {e}"))
+            self.window.after(0, lambda e=e: self.status_text.set(f"❌ 连接失败: {e}"))
         finally:
             self.window.after(0, self._finish)
 
