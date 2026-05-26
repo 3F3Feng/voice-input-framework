@@ -431,7 +431,7 @@ class AudioTranscriberGUI:
                             text = ""
                     if text:
                         full_text.append(text)
-                        self.window.after(0, lambda t=text: self._append_stream(t + "\n"))
+                        self.window.after(0, lambda t=text: self._append_stream(t))
             except Exception as e:
                 self.window.after(0, lambda i=idx, e=e: self._append_stream(
                     f"\n[第 {i} 段出错: {e}]\n"))
@@ -445,6 +445,9 @@ class AudioTranscriberGUI:
         self.window.after(0, self._finish)
 
     def _append_stream(self, text):
+        # 每句一换行
+        import re as _re
+        text = _re.sub(r"(?<=[。！？])", "\n", text)
         self.result_text.insert(tk.END, text)
         self.result_text.see(tk.END)
         self.result_text.update_idletasks()
