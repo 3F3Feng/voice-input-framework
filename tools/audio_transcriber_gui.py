@@ -6,12 +6,13 @@ Voice Input Framework - 离线音频转写 GUI (流式输出)
 依赖: pip install httpx numpy websocket-client
        (音频解码) pip install pydub 或 soundfile
 """
-import os, sys, json, threading, time, base64, math
+import os, sys, json, threading, time, base64, math, tempfile
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, messagebox, ttk
 
 import httpx
 import numpy as np
+import tempfile, os.path
 
 # ── 配置 ──
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audiogui_config.json")
@@ -85,6 +86,7 @@ class AudioTranscriberGUI:
         self.server_url = tk.StringVar(value=load_config())
         self.chunk_seconds = tk.IntVar(value=45)
         self.silence_ms = tk.IntVar(value=500)
+        self.use_diarize = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value="就绪")
         self.model_name = tk.StringVar(value="检测中...")
         self.model_list = []
@@ -192,6 +194,21 @@ class AudioTranscriberGUI:
                   bg="#f38ba8", width=8).pack(side=tk.RIGHT, padx=5)
         self._btn(bf, "💾 保存", self._save_result,
                   bg="#fab387", width=8).pack(side=tk.RIGHT, padx=5)
+
+        # 说话人分离 + 进度
+        df = tk.Frame(self.window, bg=self.bg)
+        df.pack(fill=tk.X, padx=20, pady=(0, 2))
+        self.diarize_cb = tk.Checkbutton(
+            df, text="使用说话人分离", variable=self.use_diarize,
+            bg=self.bg, fg=self.fg, selectcolor=self.input_bg,
+            activebackground=self.bg, activeforeground=self.fg,
+            font=("", 9), cursor="hand2"
+        )
+        self.diarize_cb.pack(side=tk.LEFT)
+        self.diarize_status = self._c(tk.Label, master=df,
+                                      textvariable=tk.StringVar(value=""),
+                                      fg="#a6adc8", font=("", 9), anchor=tk.W)
+        self.diarize_status.pack(side=tk.LEFT, padx=(10, 0))
 
         # 进度
         self.progress = ttk.Progressbar(self.window, mode="determinate", length=710)
@@ -358,62 +375,103 @@ class AudioTranscriberGUI:
         chunk_seconds = self.chunk_seconds.get()
         chunk_samples = chunk_seconds * sample_rate
 
-        # ── 静音检测分段（自适应阈值）──
-        # 取音频 RMS 的 15% 作为静音阈值（自适应不同录音音量）
-        import struct as _struct
-        rms = np.sqrt(np.mean(audio**2))
-        silence_thresh = max(rms * 0.15, 0.005)  # 不低于 -46dB
-        min_silence_ms = self.silence_ms.get()
-        min_silence_samples = int(min_silence_ms / 1000 * sample_rate)
+        # ── 分段策略 ──
+        # 1) 说话人分离 (pyannote) → 2) 静音检测 → 3) 按时间切分（三级 fallback）
+        segments = []  # list of (start_sample, end_sample, speaker_label_or_None)
 
-        # 找静音区域
-        is_silence = np.abs(audio) < silence_thresh
-        # 延长静音段：连续静音 < min_silence_samples 的忽略
-        silences = []
-        in_silence = False
-        start_sil = 0
-        for i, s in enumerate(is_silence):
-            if s and not in_silence:
-                in_silence = True; start_sil = i
-            elif not s and in_silence:
-                in_silence = False
-                if i - start_sil >= min_silence_samples:
-                    silences.append((start_sil, i))
-        if in_silence and len(audio) - start_sil >= min_silence_samples:
-            silences.append((start_sil, len(audio)))
+        if self.use_diarize.get():
+            self.window.after(0, lambda: self.diarize_status.config(
+                text="正在说话人分离...", fg="#f9e2af"))
+            # 将音频写入临时文件
+            tmp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp_path = tmp_wav.name
+            tmp_wav.close()
+            import soundfile as _sf
+            _sf.write(tmp_path, audio, sample_rate)
 
-        # 在静音点切分，每段不超过 chunk_samples
-        segments = []
-        seg_start = 0
-        while seg_start < len(audio):
-            seg_end = min(seg_start + chunk_samples, len(audio))
+            try:
+                server = self.server_url.get().rstrip("/")
+                with open(tmp_path, "rb") as _f:
+                    files = {"file": (os.path.basename(path), _f, "audio/wav")}
+                    dr = httpx.post(f"{server}/diarize", files=files, timeout=600)
+                if dr.status_code == 200:
+                    diar_data = dr.json()
+                    segs = diar_data.get("segments", [])
+                    n_speakers = diar_data.get("num_speakers", 0)
+                    if segs:
+                        # 转换 segments 为样本索引，标注说话人
+                        for s in segs:
+                            s_start = int(s["start"] * sample_rate)
+                            s_end = int(s["end"] * sample_rate)
+                            # 每段不超过 chunk_samples
+                            seg_start = s_start
+                            while seg_start < s_end:
+                                seg_end = min(seg_start + chunk_samples, s_end)
+                                spk = s["speaker"]
+                                segments.append((seg_start, seg_end, spk))
+                                seg_start = seg_end
+                        self.window.after(0, lambda n=n_speakers, c=len(segs): self.diarize_status.config(
+                            text=f"分离完成: {n}人 {c}段", fg="#a6e3a1"))
+                else:
+                    self.window.after(0, lambda: self.diarize_status.config(
+                        text=f"分离失败 HTTP {dr.status_code}, 回退静音", fg="#f38ba8"))
+            except Exception as e:
+                self.window.after(0, lambda e=e: self.diarize_status.config(
+                    text=f"分离失败: {str(e)[:30]}, 回退静音", fg="#f38ba8"))
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
 
-            # 在 seg_end 附近找最近的静音点
-            search_start = max(seg_start + chunk_samples // 2, seg_start)
-            best_cut = seg_end
-            for sil_s, sil_e in silences:
-                if sil_s < seg_start:
-                    continue  # 跳过已经用过的静音段
-                if search_start <= sil_s <= seg_end:
-                    best_cut = sil_s  # 在静音起点切
+        # ── 回退：静音检测分段（自适应阈值）──
+        if not segments:
+            self.window.after(0, lambda: self.diarize_status.config(text="使用静音分段", fg="#a6adc8"))
+            import struct as _struct
+            rms = np.sqrt(np.mean(audio**2))
+            silence_thresh = max(rms * 0.15, 0.005)
+            min_silence_ms = self.silence_ms.get()
+            min_silence_samples = int(min_silence_ms / 1000 * sample_rate)
+
+            is_silence = np.abs(audio) < silence_thresh
+            silences = []
+            in_silence = False
+            start_sil = 0
+            for i, s in enumerate(is_silence):
+                if s and not in_silence:
+                    in_silence = True; start_sil = i
+                elif not s and in_silence:
+                    in_silence = False
+                    if i - start_sil >= min_silence_samples:
+                        silences.append((start_sil, i))
+            if in_silence and len(audio) - start_sil >= min_silence_samples:
+                silences.append((start_sil, len(audio)))
+
+            seg_start = 0
+            while seg_start < len(audio):
+                seg_end = min(seg_start + chunk_samples, len(audio))
+                search_start = max(seg_start + chunk_samples // 2, seg_start)
+                best_cut = seg_end
+                for sil_s, sil_e in silences:
+                    if sil_s < seg_start:
+                        continue
+                    if search_start <= sil_s <= seg_end:
+                        best_cut = sil_s
+                        break
+                    if search_start <= sil_e <= seg_end:
+                        best_cut = sil_e
+                        break
+                next_len = len(audio) - best_cut
+                if segments and next_len < min(chunk_samples // 4, sample_rate * 8):
+                    prev = segments.pop()
+                    segments.append((prev[0], len(audio), None))
                     break
-                if search_start <= sil_e <= seg_end:
-                    best_cut = sil_e  # 在静音终点切
-                    break
+                segments.append((seg_start, best_cut, None))
+                seg_start = best_cut
 
-            # 最后一段太短则合并到前一段
-            next_len = len(audio) - best_cut
-            if segments and next_len < min(chunk_samples // 4, sample_rate * 8):
-                prev_s, prev_e = segments.pop()
-                segments.append((prev_s, len(audio)))
-                break
-
-            segments.append((seg_start, best_cut))
-            seg_start = best_cut
-
-        # 回退方案：无静音 / 分段失败，按时间切
-        if len(segments) <= 1:
-            segments = [(i, min(i + chunk_samples, total_samples))
+        # 终极回退：按时间切
+        if len([s for s in segments if s[1] - s[0] > 0]) <= 1:
+            segments = [(i, min(i + chunk_samples, total_samples), None)
                        for i in range(0, total_samples, chunk_samples)]
 
         total_chunks = len(segments)
@@ -424,14 +482,15 @@ class AudioTranscriberGUI:
         ))
 
         full_text = []
-        for i, (start, end) in enumerate(segments):
+        current_speaker = None
+        for i, seg in enumerate(segments):
             if self._stop_flag:
                 break
 
+            start, end, speaker = seg
             chunk = audio[start:end]
             secs = len(chunk) / sample_rate
 
-            # 更新状态
             idx = i + 1
             self.window.after(0, lambda i=idx, t=total_chunks, s=secs: self.status_text.set(
                 f"⏳ 第 {i}/{t} 段 ({s:.0f}s) 转写中..."
@@ -440,25 +499,27 @@ class AudioTranscriberGUI:
             try:
                 text = self._transcribe_one_chunk(ws_url, chunk, idx, total_chunks)
                 if text:
-                    # 重叠去重：如果上一段末尾与本段开头重复，去掉本段重复部分
+                    # 重叠去重
                     if full_text and full_text[-1]:
                         prev = full_text[-1]
-                        # 取上一段最后 30 字和本段前 30 字，找最大公共重叠
-                        # 去除非中文字符（标点符号影响匹配）
                         import re as _re
                         def _clean(s): return _re.sub(r"[^一-鿿\w]", "", s)
                         tail = _clean(prev[-40:])
                         for overlap_len in range(min(40, len(text)), 0, -1):
                             head = _clean(text[:overlap_len])
                             if head and tail[-len(head):] == head:
-                                # 找到匹配后，从原始文本中删除对应长度的字符
                                 raw_overlap = len(text[:overlap_len])
                                 text = text[raw_overlap:]
                                 break
-                        # 如果完全重复则跳过整段
                         if text.strip() in prev.strip() and len(text) < 20:
                             text = ""
                     if text:
+                        # 说话人标签
+                        if self.use_diarize.get() and speaker and speaker != current_speaker:
+                            spk_num = speaker.replace("SPEAKER_", "")
+                            tag = f"[{chr(65+int(spk_num))}]" if spk_num.isdigit() else f"[{speaker}]"
+                            text = tag + text
+                            current_speaker = speaker
                         full_text.append(text)
                         self.window.after(0, lambda t=text: self._append_stream(t))
             except Exception as e:

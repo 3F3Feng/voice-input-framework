@@ -25,8 +25,10 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 from shared.model_registry import MODELS_CONFIG, get_default_model, get_apple_silicon_only_models, IS_APPLE_SILICON
+from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
 
 import uvicorn
+import aiofiles
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -125,6 +127,7 @@ class HealthStatus(BaseModel):
     active_connections: int = 0
     total_requests: int = 0
     failed_requests: int = 0
+    diarize: Optional[Dict[str, Any]] = None
 
 class ErrorResponse(BaseModel):
     """错误响应"""
@@ -578,6 +581,9 @@ class STTEngine:
     def decrement_connections(self):
         self._active_connections = max(0, self._active_connections - 1)
 
+# ============== Diarization Engine ==============
+diarize_engine = DiarizationEngine() if DIARIZE_ENABLED else None
+
 # ============== FastAPI App ==============
 engine = STTEngine(default_model=STT_MODEL)
 
@@ -642,6 +648,7 @@ async def health_check():
         active_connections=engine._active_connections,
         total_requests=engine.total_requests,
         failed_requests=engine.failed_requests,
+        diarize=diarize_engine.get_health() if diarize_engine else {"status": "disabled"},
     )
 
 @app.get("/models", response_model=List[ModelInfo])
@@ -960,6 +967,86 @@ async def websocket_stream(websocket: WebSocket):
     except:
         pass
     engine.decrement_connections()
+
+
+# ============== Diarization API ==============
+
+@app.get("/diarize/models")
+async def list_diarize_models():
+    """获取可用说话人分离模型"""
+    if not diarize_engine:
+        return {"status": "disabled", "message": "Diarization disabled (VIF_DIARIZE_ENABLED=false)"}
+    return {
+        "models": [
+            {
+                "name": diarize_engine.model_id,
+                "description": "Pyannote Speaker Diarization 3.1",
+                "is_loaded": diarize_engine.is_loaded,
+                "is_loading": diarize_engine.is_loading,
+                "device": diarize_engine.device,
+            }
+        ],
+        "default": diarize_engine.model_id,
+    }
+
+
+@app.post("/diarize")
+async def diarize(
+    file: UploadFile = File(...),
+    num_speakers: Optional[int] = Form(None),
+    min_speakers: Optional[int] = Form(None),
+    max_speakers: Optional[int] = Form(None),
+):
+    """对上传的音频文件进行说话人分离"""
+    if not diarize_engine:
+        raise HTTPException(status_code=503, detail="Diarization disabled")
+
+    req_id = request_id_ctx.get()
+    import tempfile
+    import aiofiles
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+
+    try:
+        content = await file.read()
+        async with aiofiles.open(tmp_path, "wb") as f:
+            await f.write(content)
+
+        logger.info(f"Starting diarization: {file.filename} ({len(content)} bytes)",
+                    extra={"request_id": req_id})
+
+        result = await diarize_engine.diarize(
+            audio_path=tmp_path,
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+        )
+
+        result["filename"] = file.filename
+        result["file_size"] = len(content)
+
+        logger.info(f"Diarization complete: {result['num_speakers']} speakers, "
+                    f"{result['duration']:.0f}s, {result['inference_latency_ms']:.0f}ms",
+                    extra={"request_id": req_id})
+
+        return result
+
+    except ImportError as e:
+        raise HTTPException(
+            status_code=501,
+            detail=f"pyannote.audio not installed: {e}. Run: pip install pyannote.audio==3.3.3"
+        )
+    except Exception as e:
+        logger.error(f"Diarization error: {e}", exc_info=True, extra={"request_id": req_id})
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
 
 def main():
     """主函数"""
