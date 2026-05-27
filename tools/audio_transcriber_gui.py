@@ -85,7 +85,7 @@ class AudioTranscriberGUI:
         self.file_path = tk.StringVar()
         self.server_url = tk.StringVar(value=load_config())
         self.chunk_seconds = tk.IntVar(value=45)
-        self.silence_ms = tk.IntVar(value=500)
+        self.silence_ms = tk.IntVar(value=350)
         self.use_diarize = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value="就绪")
         self.model_name = tk.StringVar(value="检测中...")
