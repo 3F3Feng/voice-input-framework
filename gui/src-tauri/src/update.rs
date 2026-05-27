@@ -2,6 +2,7 @@
 //! Uses direct HTTP fetch for check (with 30s timeout), falls back to
 //! tauri-plugin-updater for download + install.
 
+use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
@@ -63,7 +64,8 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
         .map_err(|e| format!("解析更新信息失败: {}", e))?;
 
     let latest = manifest.version.trim_start_matches('v').to_string();
-    let available = latest != current && latest != current.trim_start_matches('v');
+    let current_clean = current.trim_start_matches('v').to_string();
+    let available = compare_versions(&latest, &current_clean) == Ordering::Greater;
 
     eprintln!(
         "[update] Current: {}, Latest: {}, available: {}",
@@ -77,6 +79,21 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
         body: format!("版本 {}", latest),
         download_size: 0,
     })
+}
+
+/// Compare two semver strings ("2.0.4" vs "2.0.3").
+fn compare_versions(a: &str, b: &str) -> Ordering {
+    let a_parts: Vec<u32> = a.split('.').filter_map(|s| s.parse().ok()).collect();
+    let b_parts: Vec<u32> = b.split('.').filter_map(|s| s.parse().ok()).collect();
+    for i in 0..3 {
+        let av = a_parts.get(i).copied().unwrap_or(0);
+        let bv = b_parts.get(i).copied().unwrap_or(0);
+        match av.cmp(&bv) {
+            Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    Ordering::Equal
 }
 
 /// Download and install using the tauri-plugin-updater.
