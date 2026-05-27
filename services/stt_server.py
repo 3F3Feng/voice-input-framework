@@ -51,6 +51,57 @@ LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 
 # LLM Processing Toggle
 LLM_ENABLED = os.getenv("VIF_LLM_ENABLED", "true").lower() == "true"
+LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
+
+# ============== State Persistence ==============
+"""
+持久化最后使用的 STT 模型和 LLM 开关状态，
+避免服务器重启后需要重新设置。
+"""
+STATE_DIR = Path.home() / ".config" / "voice-input-framework"
+STATE_FILE = STATE_DIR / "stt_state.json"
+
+
+def load_state() -> dict:
+    """加载持久化的服务器状态"""
+    try:
+        if STATE_FILE.exists():
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load state file: {e}")
+    return {}
+
+
+def save_state(state: dict):
+    """保存服务器状态到文件"""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save state file: {e}")
+
+
+# 从持久化状态恢复设置（仅在无环境变量覆盖时生效）
+_persisted_state = load_state()
+if "VIF_STT_MODEL" not in os.environ:
+    if saved_model := _persisted_state.get("stt_model"):
+        from shared.model_registry import MODELS_CONFIG
+        if saved_model in MODELS_CONFIG:
+            logger.info(f"Restoring STT model from saved state: {saved_model}")
+            STT_MODEL = saved_model
+        else:
+            logger.warning(f"Saved model '{saved_model}' not available, using default")
+if "VIF_LLM_ENABLED" not in os.environ:
+    if "llm_enabled" in _persisted_state:
+        LLM_ENABLED = bool(_persisted_state["llm_enabled"])
+        logger.info(f"Restoring LLM enabled from saved state: {LLM_ENABLED}")
+if "VIF_LLM_MODEL" not in os.environ:
+    if saved_llm := _persisted_state.get("llm_model"):
+        logger.info(f"Restoring LLM model from saved state: {saved_llm}")
+        LLM_MODEL = saved_llm
+        os.environ.setdefault("VIF_LLM_MODEL", saved_llm)
 
 # ============== Context Variables ==============
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
@@ -696,6 +747,11 @@ async def select_llm_model(request: Request):
                 timeout=30.0
             )
             if resp.status_code == 200:
+                # 持久化 LLM 模型选择
+                state = load_state()
+                state["llm_model"] = model_name
+                save_state(state)
+                logger.info(f"LLM model saved to state: {model_name}")
                 return resp.json()
             else:
                 return {"error": f"LLM server returned {resp.status_code}"}
@@ -725,6 +781,11 @@ async def set_llm_enabled(request: Request):
     body = await request.json()
     enabled = body.get("enabled", True)
     LLM_ENABLED = bool(enabled)
+    # 持久化
+    state = load_state()
+    state["llm_enabled"] = LLM_ENABLED
+    save_state(state)
+    logger.info(f"LLM enabled set to {LLM_ENABLED} (persisted)")
     return {"enabled": LLM_ENABLED}
 
 # ============== LLM Prompt API ==============
@@ -763,6 +824,11 @@ async def select_stt_model(model_name: str = Form(...)):
     try:
         logger.info(f"Switching STT model to: {model_name}")
         result = await engine.switch_model(model_name)
+        # 持久化 STT 模型选择
+        state = load_state()
+        state["stt_model"] = model_name
+        save_state(state)
+        logger.info(f"STT model saved to state: {model_name}")
         return result
     except ValueError as e:
         logger.error(f"ValueError switching model: {e}")

@@ -62,6 +62,15 @@
             </div>
           </div>
 
+          <!-- Diarize -->
+          <div class="s-section">
+            <div class="s-title">说话人分离</div>
+            <div class="s-row">
+              <input class="s-input s-port" v-model.number="diarizeSpeakers" type="number" min="0" max="10" placeholder="0" @change="saveConfigPatch(cfg => { cfg.diarize.num_speakers = diarizeSpeakers })" />
+              <span class="s-label" style="margin-left: 8px;">说话人数（0=自动）</span>
+            </div>
+          </div>
+
           <!-- Audio -->
           <div class="s-section">
             <div class="s-title">麦克风</div>
@@ -265,6 +274,7 @@ const promptStatus = ref("");
 const serverHost = ref("localhost");
 const serverPort = ref(6544);
 const llmEnabled = ref(true);
+const diarizeSpeakers = ref(0);
 const promptText = ref("");
 const autoInputEnabled = ref(false);
 const autoStart = ref(false);
@@ -402,6 +412,7 @@ async function loadConfig() {
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     selectedDevice.value = cfg.audio.device;
+    diarizeSpeakers.value = cfg.diarize?.num_speakers ?? 0;
   } catch {}
 }
 async function loadAutostart() {
