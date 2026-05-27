@@ -379,10 +379,30 @@ class AudioTranscriberGUI:
         # 1) 说话人分离 (pyannote) → 2) 静音检测 → 3) 按时间切分（三级 fallback）
         segments = []  # list of (start_sample, end_sample, speaker_label_or_None)
 
+        # ── 辅助函数：在音频范围 [a_start, a_end) 内找静音断点（电平截断）──
+        def _split_by_silence(a_start, a_end, min_silence_samp):
+            """在指定范围内找 >= min_silence_samp 的静音段，返回切分点列表（采样点索引）"""
+            rms = np.sqrt(np.mean(audio[a_start:a_end]**2))
+            thresh = max(rms * 0.15, 0.005)
+            is_sil = np.abs(audio[a_start:a_end]) < thresh
+            cuts = []
+            in_sil = False
+            sil_s = 0
+            for i in range(len(is_sil)):
+                if is_sil[i] and not in_sil:
+                    in_sil = True
+                    sil_s = i
+                elif not is_sil[i] and in_sil:
+                    in_sil = False
+                    if i - sil_s >= min_silence_samp:
+                        cuts.append(a_start + sil_s)
+            if in_sil and len(is_sil) - sil_s >= min_silence_samp:
+                cuts.append(a_start + sil_s)
+            return cuts
+
         if self.use_diarize.get():
             self.window.after(0, lambda: self.diarize_status.config(
                 text="正在说话人分离...", fg="#f9e2af"))
-            # 将音频写入临时文件
             tmp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             tmp_path = tmp_wav.name
             tmp_wav.close()
@@ -398,20 +418,48 @@ class AudioTranscriberGUI:
                     diar_data = dr.json()
                     segs = diar_data.get("segments", [])
                     n_speakers = diar_data.get("num_speakers", 0)
+                    diar_count = 0
                     if segs:
-                        # 转换 segments 为样本索引，标注说话人
                         for s in segs:
+                            spk = s["speaker"]
                             s_start = int(s["start"] * sample_rate)
                             s_end = int(s["end"] * sample_rate)
-                            # 每段不超过 chunk_samples
-                            seg_start = s_start
-                            while seg_start < s_end:
-                                seg_end = min(seg_start + chunk_samples, s_end)
-                                spk = s["speaker"]
-                                segments.append((seg_start, seg_end, spk))
-                                seg_start = seg_end
-                        self.window.after(0, lambda n=n_speakers, c=len(segs): self.diarize_status.config(
-                            text=f"分离完成: {n}人 {c}段", fg="#a6e3a1"))
+                            dur = s_end - s_start
+
+                            if dur <= chunk_samples:
+                                # 整段不超 chunk 限制，直接保留
+                                segments.append((s_start, s_end, spk))
+                                diar_count += 1
+                            else:
+                                # 超长：在说话人片段内用电平截断
+                                min_sil_samp = int(
+                                    self.silence_ms.get() / 1000 * sample_rate)
+                                cuts = _split_by_silence(s_start, s_end,
+                                                         min_sil_samp)
+                                if cuts:
+                                    sub_start = s_start
+                                    for c in cuts[1:]:
+                                        if c - sub_start >= min_sil_samp:
+                                            segments.append(
+                                                (sub_start, c, spk))
+                                            diar_count += 1
+                                            sub_start = c
+                                    if s_end - sub_start > sample_rate * 0.5:
+                                        segments.append(
+                                            (sub_start, s_end, spk))
+                                        diar_count += 1
+                                else:
+                                    # 没有静音断点，按 chunk 切分
+                                    sub = s_start
+                                    while sub < s_end:
+                                        end = min(sub + chunk_samples, s_end)
+                                        segments.append((sub, end, spk))
+                                        diar_count += 1
+                                        sub = end
+
+                        self.window.after(0, lambda n=n_speakers, c=diar_count:
+                            self.diarize_status.config(
+                                text=f"分离完成: {n}人→{c}段", fg="#a6e3a1"))
                 else:
                     self.window.after(0, lambda: self.diarize_status.config(
                         text=f"分离失败 HTTP {dr.status_code}, 回退静音", fg="#f38ba8"))
