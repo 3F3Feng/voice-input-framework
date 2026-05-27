@@ -28,7 +28,6 @@ from shared.model_registry import MODELS_CONFIG, get_default_model, get_apple_si
 from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
 
 import uvicorn
-import aiofiles
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
