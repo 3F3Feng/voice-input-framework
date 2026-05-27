@@ -86,7 +86,6 @@ class DiarizationEngine:
             self._loading = True
             try:
                 logger.info(f"Loading diarization model: {self._model_id}")
-                loop = asyncio.get_event_loop()
 
                 def _load_sync():
                     from pyannote.audio import Pipeline
@@ -165,7 +164,7 @@ class DiarizationEngine:
             if not success:
                 raise RuntimeError("Diarization model not loaded")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         t0 = time.time()
 
         try:
