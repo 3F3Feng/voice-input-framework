@@ -461,11 +461,15 @@ class AudioTranscriberGUI:
                             self.diarize_status.config(
                                 text=f"分离完成: {n}人→{c}段", fg="#a6e3a1"))
                 else:
+                    msg = f"⚠️ 说话人分离失败: HTTP {dr.status_code}, 回退静音分段\n"
                     self.window.after(0, lambda: self.diarize_status.config(
                         text=f"分离失败 HTTP {dr.status_code}, 回退静音", fg="#f38ba8"))
+                    self.window.after(0, lambda m=msg: self.result_text.insert(tk.END, m))
             except Exception as e:
+                msg = f"⚠️ 说话人分离失败: {e}, 回退静音分段\n"
                 self.window.after(0, lambda e=e: self.diarize_status.config(
                     text=f"分离失败: {str(e)[:30]}, 回退静音", fg="#f38ba8"))
+                self.window.after(0, lambda m=msg: self.result_text.insert(tk.END, m))
             finally:
                 try:
                     os.unlink(tmp_path)
