@@ -100,10 +100,7 @@ class DiarizationEngine:
                         self._device = "cpu"
 
                     logger.info(f"Creating pipeline (device={self._device})...")
-                    pipeline = Pipeline.from_pretrained(
-                        self._model_id,
-                        use_auth_token=os.environ.get("HUGGINGFACE_TOKEN", True),
-                    )
+                    pipeline = Pipeline.from_pretrained(self._model_id)
                     if self._device != "cpu":
                         pipeline.to(torch.device(self._device))
                     self._pipeline = pipeline
