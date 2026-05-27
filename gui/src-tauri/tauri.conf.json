@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nickel-lang/json-schema-store/main/tauri.schema.json",
   "productName": "Voice Input",
-  "version": "2.0.2",
+  "version": "2.0.4",
   "identifier": "com.voiceinput.app",
   "build": {
     "beforeDevCommand": "npm run dev",
