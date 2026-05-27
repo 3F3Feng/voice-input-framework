@@ -401,8 +401,13 @@ class AudioTranscriberGUI:
             return cuts
 
         if self.use_diarize.get():
-            self.window.after(0, lambda: self.diarize_status.config(
-                text="正在说话人分离...", fg="#f9e2af"))
+            total_mins = total_seconds / 60
+            # 粗略估计：pyannote MPS 约 1-2x 实时，CPU 约 3-5x
+            est_secs = int(total_seconds * 0.15)  # 乐观估计 0.15x
+            est_str = f"(~{est_secs//60}分{est_secs%60}秒)" if est_secs > 60 else f"(~{est_secs}秒)"
+            diar_start = time.time()
+            self.window.after(0, lambda m=f"正在说话人分离 {total_mins:.0f}分音频 {est_str}...":
+                self.diarize_status.config(text=m, fg="#f9e2af"))
             tmp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             tmp_path = tmp_wav.name
             tmp_wav.close()
@@ -414,6 +419,7 @@ class AudioTranscriberGUI:
                 with open(tmp_path, "rb") as _f:
                     files = {"file": (os.path.basename(path), _f, "audio/wav")}
                     dr = httpx.post(f"{server}/diarize", files=files, timeout=600)
+                elapsed = time.time() - diar_start
                 if dr.status_code == 200:
                     diar_data = dr.json()
                     segs = diar_data.get("segments", [])
@@ -457,16 +463,16 @@ class AudioTranscriberGUI:
                                         diar_count += 1
                                         sub = end
 
-                        self.window.after(0, lambda n=n_speakers, c=diar_count:
+                        self.window.after(0, lambda n=n_speakers, c=diar_count, e=elapsed:
                             self.diarize_status.config(
-                                text=f"分离完成: {n}人→{c}段", fg="#a6e3a1"))
+                                text=f"分离完成: {n}人→{c}段 (耗时{e:.0f}秒)", fg="#a6e3a1"))
                 else:
-                    msg = f"⚠️ 说话人分离失败: HTTP {dr.status_code}, 回退静音分段\n"
+                    msg = f"⚠️ 说话人分离失败: HTTP {dr.status_code} ({elapsed:.0f}秒), 回退静音分段\n"
                     self.window.after(0, lambda: self.diarize_status.config(
                         text=f"分离失败 HTTP {dr.status_code}, 回退静音", fg="#f38ba8"))
                     self.window.after(0, lambda m=msg: self.result_text.insert(tk.END, m))
             except Exception as e:
-                msg = f"⚠️ 说话人分离失败: {e}, 回退静音分段\n"
+                msg = f"⚠️ 说话人分离失败: {e} ({time.time()-diar_start:.0f}秒), 回退静音分段\n"
                 self.window.after(0, lambda e=e: self.diarize_status.config(
                     text=f"分离失败: {str(e)[:30]}, 回退静音", fg="#f38ba8"))
                 self.window.after(0, lambda m=msg: self.result_text.insert(tk.END, m))
