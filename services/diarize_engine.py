@@ -179,18 +179,45 @@ class DiarizationEngine:
             diarization = await loop.run_in_executor(None, _run_diarize)
             inference_time = (time.time() - t0) * 1000
 
-            # 转换为列表格式
+            # 转换为列表格式（兼容新旧 pyannote API）
             segments = []
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
-                segments.append({
-                    "speaker": speaker,
-                    "start": round(turn.start, 3),
-                    "end": round(turn.end, 3),
-                    "duration": round(turn.end - turn.start, 3),
-                })
-
-            # 获取音频时长
-            duration = diarization.get_timeline().extent().end if diarization.get_timeline() else 0.0
+            duration = 0.0
+            if hasattr(diarization, "itertracks"):
+                # 旧版 API: Annotation
+                for turn, _, speaker in diarization.itertracks(yield_label=True):
+                    segments.append({
+                        "speaker": speaker,
+                        "start": round(turn.start, 3),
+                        "end": round(turn.end, 3),
+                        "duration": round(turn.end - turn.start, 3),
+                    })
+                if diarization.get_timeline():
+                    duration = diarization.get_timeline().extent().end
+            else:
+                # 新版 API: DiarizeOutput (3.4+, 4.0+)
+                if hasattr(diarization, "speaker_diarization"):
+                    for turn, speaker in diarization.speaker_diarization:
+                        segments.append({
+                            "speaker": speaker,
+                            "start": round(turn.start, 3),
+                            "end": round(turn.end, 3),
+                            "duration": round(turn.end - turn.start, 3),
+                        })
+                    # 尝试获取总时长
+                    try:
+                        duration = diarization.end
+                    except AttributeError:
+                        pass
+                elif hasattr(diarization, "for_json"):
+                    # 其他格式兜底
+                    data = diarization.for_json()
+                    for seg in data.get("content", []):
+                        segments.append({
+                            "speaker": seg.get("label", "?"),
+                            "start": seg.get("segment", {}).get("start", 0),
+                            "end": seg.get("segment", {}).get("end", 0),
+                            "duration": seg.get("segment", {}).get("end", 0) - seg.get("segment", {}).get("start", 0),
+                        })
 
             # 获取说话人数量
             speakers = set(s["speaker"] for s in segments)
