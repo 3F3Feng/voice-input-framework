@@ -22,16 +22,17 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE) as f:
-                return json.load(f).get("server", DEFAULT_SERVER)
+                data = json.load(f)
+                return data.get("server", DEFAULT_SERVER), data.get("num_speakers", 0)
         except Exception:
             pass
-    return DEFAULT_SERVER
+    return DEFAULT_SERVER, 0
 
 
-def save_config(server_url):
+def save_config(server_url, num_speakers=0):
     try:
         with open(CONFIG_FILE, "w") as f:
-            json.dump({"server": server_url}, f)
+            json.dump({"server": server_url, "num_speakers": num_speakers}, f)
     except Exception:
         pass
 
@@ -83,7 +84,9 @@ class AudioTranscriberGUI:
         self.window.configure(bg=self.bg)
 
         self.file_path = tk.StringVar()
-        self.server_url = tk.StringVar(value=load_config())
+        _cfg_server, _cfg_speakers = load_config()
+        self.server_url = tk.StringVar(value=_cfg_server)
+        self.num_speakers = tk.IntVar(value=_cfg_speakers)
         self.chunk_seconds = tk.IntVar(value=45)
         self.silence_ms = tk.IntVar(value=350)
         self.use_diarize = tk.BooleanVar(value=False)
@@ -205,6 +208,13 @@ class AudioTranscriberGUI:
             font=("", 9), cursor="hand2"
         )
         self.diarize_cb.pack(side=tk.LEFT)
+        self._c(tk.Label, master=df, text=" 人数:", font=("", 9),
+                fg="#a6adc8").pack(side=tk.LEFT, padx=(5, 2))
+        tk.Spinbox(df, from_=0, to=10, textvariable=self.num_speakers,
+                   width=3, bg=self.input_bg, fg=self.fg,
+                   relief=tk.FLAT, bd=2, font=("", 9)).pack(side=tk.LEFT)
+        self._c(tk.Label, master=df, text="(0=自动)", font=("", 9),
+                fg="#6c7086").pack(side=tk.LEFT, padx=(3, 0))
         self.diarize_status = self._c(tk.Label, master=df,
                                       textvariable=tk.StringVar(value=""),
                                       fg="#a6adc8", font=("", 9), anchor=tk.W)
@@ -418,7 +428,8 @@ class AudioTranscriberGUI:
                 server = self.server_url.get().rstrip("/")
                 with open(tmp_path, "rb") as _f:
                     files = {"file": (os.path.basename(path), _f, "audio/wav")}
-                    dr = httpx.post(f"{server}/diarize", files=files, timeout=600)
+                    params = {"num_speakers": self.num_speakers.get()} if self.num_speakers.get() > 0 else {}
+                    dr = httpx.post(f"{server}/diarize", files=files, data=params, timeout=600)
                 elapsed = time.time() - diar_start
                 if dr.status_code == 200:
                     diar_data = dr.json()
@@ -648,7 +659,7 @@ class AudioTranscriberGUI:
 
     def _on_close(self):
         self._stop_flag = True
-        save_config(self.server_url.get())
+        save_config(self.server_url.get(), self.num_speakers.get())
         self.window.destroy()
 
     def run(self):
