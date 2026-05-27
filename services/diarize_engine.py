@@ -110,6 +110,7 @@ class DiarizationEngine:
                     self._is_loaded = True
                     logger.info(f"Diarization model loaded (device={self._device})")
 
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, _load_sync)
                 return True
             except Exception as e:
