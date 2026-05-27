@@ -844,6 +844,7 @@ async def websocket_stream(websocket: WebSocket):
     audio_queue = asyncio.Queue()
     stream_finished = asyncio.Event()
     stream_error = None
+    language = "auto"
 
     # ── 异步生成器：从 queue 读取音频块供 transcribe_stream ──
     async def audio_stream_generator():
@@ -861,7 +862,7 @@ async def websocket_stream(websocket: WebSocket):
 
     # ── 接收循环（投递到 queue）──
     async def receive_loop():
-        nonlocal stream_error
+        nonlocal stream_error, language
         try:
             while True:
                 message = await asyncio.wait_for(websocket.receive_text(), timeout=120.0)
