@@ -8,6 +8,7 @@ Voice Input Framework - Speaker Diarization Engine
 
 运行环境: Apple Silicon (MPS) 优先, 回退 CPU
 """
+import asyncio
 import json
 import logging
 import os
@@ -71,7 +72,6 @@ class DiarizationEngine:
             return True
 
         if self._load_lock is None:
-            import asyncio
             self._load_lock = asyncio.Lock()
 
         async with self._load_lock:
