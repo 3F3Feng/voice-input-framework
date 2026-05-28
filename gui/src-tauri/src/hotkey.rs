@@ -3,6 +3,7 @@
 
 use rdev::{listen, Event, Key};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 use tauri::Emitter;
 
 static PRESSED_KEYS: OnceLock<Arc<Mutex<Vec<Key>>>> = OnceLock::new();
@@ -75,9 +76,12 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
             let keys = hotkey_keys.clone();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // State lock: track whether we've emitted hotkey-press
-                // to prevent double-trigger from mouse button bounce
+                // Debounce: state lock + time guard
+                // Mouse side buttons can generate rapid press/release sequences (bounce)
+                // State lock: prevent double-trigger while already recording
+                // Time guard: ignore events within 150ms debounce window
                 let mut is_active = false;
+                let mut last_release_time = Instant::now();
 
                 let _ = listen(move |event: Event| {
                     let key = match event.event_type {
@@ -108,18 +112,23 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                         false
                     };
 
-                    // State lock: only emit press if not already active
-                    // Only emit release if currently active
+                    let now = Instant::now();
+
                     match event.event_type {
                         rdev::EventType::KeyPress(_) => {
+                            // Time debounce: ignore press within 150ms of last release
+                            if now.duration_since(last_release_time).as_millis() < 150 { return; }
+                            // State lock: ignore if already active
                             if all_pressed && !is_active {
                                 is_active = true;
                                 let _ = a.emit("hotkey-press", ());
                             }
                         }
                         rdev::EventType::KeyRelease(_) => {
+                            // State lock: only release if currently active
                             if !all_pressed && is_active {
                                 is_active = false;
+                                last_release_time = now;
                                 let _ = a.emit("hotkey-release", ());
                             }
                         }
