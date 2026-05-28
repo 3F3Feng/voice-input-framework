@@ -11,7 +11,6 @@ pub struct VoiceInputConfig {
     pub ui: UiConfig,
     pub audio: AudioConfig,
     pub llm: LlmConfig,
-    pub diarize: DiarizeConfig,
     pub _version: String,
 }
 
@@ -47,11 +46,6 @@ pub struct LlmConfig {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiarizeConfig {
-    #[serde(default)]
-    pub num_speakers: u32,  // 0 = 不限制（自动）
-}
 
 /// Old Python client config format (for migration)
 #[derive(Debug, Deserialize)]
@@ -117,7 +111,6 @@ impl Default for VoiceInputConfig {
                 language: "auto".into(),
             },
             llm: LlmConfig { enabled: true },
-            diarize: DiarizeConfig { num_speakers: 0 },
             _version: "2.0".into(),
         }
     }
@@ -244,7 +237,6 @@ impl VoiceInputConfig {
             llm: LlmConfig {
                 enabled: old.llm.as_ref().and_then(|l| l.enabled).unwrap_or(true),
             },
-            diarize: DiarizeConfig { num_speakers: 0 },
             _version: "2.0".into(),
         }
     }

@@ -299,19 +299,7 @@ async fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), Strin
 
 // ── Diarize commands ──
 
-#[tauri::command]
-async fn get_diarize_speakers(state: State<'_, AppState>) -> Result<u32, String> {
-    let cfg = state.config.lock().map_err(|e| e.to_string())?;
-    Ok(cfg.diarize.num_speakers)
-}
 
-#[tauri::command]
-async fn set_diarize_speakers(app: tauri::AppHandle, state: State<'_, AppState>, num_speakers: u32) -> Result<(), String> {
-    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
-    cfg.diarize.num_speakers = num_speakers;
-    cfg.save(&app)?;
-    Ok(())
-}
 
 #[tauri::command]
 async fn auto_input(text: String) -> Result<(), String> { input::type_text(&text) }
@@ -398,7 +386,6 @@ pub fn run() {
             get_config, update_config, import_old_config,
             get_llm_prompt, save_llm_prompt, get_llm_enabled, set_llm_enabled,
             auto_input, minimize_to_tray,
-            get_diarize_speakers, set_diarize_speakers,
             register_hotkey, get_autostart, set_autostart,
             check_update, install_update,
         ])
