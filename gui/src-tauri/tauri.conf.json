@@ -21,11 +21,6 @@
         "fullscreen": false
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": false,
-      "id": "main-tray"
-    },
     "security": {
       "csp": null
     }
@@ -34,7 +29,8 @@
     "updater": {
       "endpoints": [
         "https://github.com/3F3Feng/voice-input-framework/releases/latest/download/latest.json"
-      ]
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNGNUEwQUNEM0E5MTc1RUYKUldUdmRaRTZ6UXBhUDdmSW9WNEVKKzB3VHgyem96RllBdkhTQWh0UDJPWVp1U1RPQ2lFck9jR1oK"
     }
   },
   "bundle": {
