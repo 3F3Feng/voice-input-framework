@@ -81,7 +81,7 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                 // State lock: prevent double-trigger while already recording
                 // Time guard: ignore events within 150ms debounce window
                 let mut is_active = false;
-                let mut last_release_time = Instant::now();
+                let mut last_release_time = Instant::now() - std::time::Duration::from_secs(1);
 
                 let _ = listen(move |event: Event| {
                     let key = match event.event_type {
