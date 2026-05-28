@@ -350,11 +350,12 @@ function addToHistory(text: string) {
 // ── Recording ──
 async function startRecord() {
   if (!connected.value || loading.value) return;
+  if (recording.value) return;  // state lock: prevent double-trigger
+  recording.value = true;       // set state BEFORE await to block bounces
   try {
     loading.value = false;
     result.value = "";
     await invoke("start_recording");
-    recording.value = true;
     elapsedMs.value = 0;
     timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
     levelInterval = setInterval(async () => {
@@ -367,8 +368,8 @@ async function startRecord() {
 }
 
 async function stopRecord() {
-  if (!recording.value) return;
-  recording.value = false;
+  if (!recording.value) return;  // already stopped
+  recording.value = false;  // set state BEFORE await to block bounces
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
   loading.value = true;

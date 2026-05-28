@@ -3,7 +3,6 @@
 
 use rdev::{listen, Event, Key};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
 use tauri::Emitter;
 
 static PRESSED_KEYS: OnceLock<Arc<Mutex<Vec<Key>>>> = OnceLock::new();
@@ -76,22 +75,17 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
             let keys = hotkey_keys.clone();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // Debounce: time guard + min press duration
-                // Mouse side buttons can generate rapid press/release sequences (bounce)
-                // - Press debounce: ignore press within 150ms of last release
-                // - Release min duration: if press < 50ms (bounce noise), DON'T stop recording
-                let mut last_release_time = Instant::now() - std::time::Duration::from_secs(1);
-                let mut press_time: Option<Instant> = None;
-
                 let _ = listen(move |event: Event| {
                     let key = match event.event_type {
                         rdev::EventType::KeyPress(k) => {
+                            // Add key to pressed set
                             if let Ok(mut p) = pressed.lock() {
                                 if !p.contains(&k) { p.push(k); }
                             }
                             Some(k)
                         }
                         rdev::EventType::KeyRelease(k) => {
+                            // Remove key from pressed set
                             if let Ok(mut p) = pressed.lock() {
                                 p.retain(|&x| x != k);
                             }
@@ -112,30 +106,15 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                         false
                     };
 
-                    let now = Instant::now();
-
                     match event.event_type {
                         rdev::EventType::KeyPress(_) => {
-                            // Time debounce: ignore press within 150ms of last release
-                            if now.duration_since(last_release_time).as_millis() < 150 { return; }
                             if all_pressed {
-                                press_time = Some(now);
                                 let _ = a.emit("hotkey-press", ());
                             }
                         }
                         rdev::EventType::KeyRelease(_) => {
+                            // Emit release when ANY hotkey key is released
                             if !all_pressed {
-                                // Min press duration: if press < 50ms, it's bounce noise
-                                // DON'T emit release (keep recording), just update timer
-                                if let Some(pt) = press_time {
-                                    if now.duration_since(pt).as_millis() < 50 {
-                                        // Bounce noise: don't stop, just reset debounce window
-                                        last_release_time = now;
-                                        return;
-                                    }
-                                }
-                                last_release_time = now;
-                                press_time = None;
                                 let _ = a.emit("hotkey-release", ());
                             }
                         }
