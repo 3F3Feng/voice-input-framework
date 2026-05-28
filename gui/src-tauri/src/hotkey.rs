@@ -3,6 +3,7 @@
 
 use rdev::{listen, Event, Key};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 use tauri::Emitter;
 
 static PRESSED_KEYS: OnceLock<Arc<Mutex<Vec<Key>>>> = OnceLock::new();
@@ -75,17 +76,22 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
             let keys = hotkey_keys.clone();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // Release debounce (only): suppress hotkey-release if emitted within
+                // 100ms of hotkey-press. Mouse side buttons generate millisecond-level
+                // press/release bounce. Without this, a bounce release would stop and
+                // restart recording before the user can say anything.
+                // Press events always pass through (frontend has its own state lock).
+                let mut last_press_emit = Instant::now() - std::time::Duration::from_secs(1);
+
                 let _ = listen(move |event: Event| {
                     let key = match event.event_type {
                         rdev::EventType::KeyPress(k) => {
-                            // Add key to pressed set
                             if let Ok(mut p) = pressed.lock() {
                                 if !p.contains(&k) { p.push(k); }
                             }
                             Some(k)
                         }
                         rdev::EventType::KeyRelease(k) => {
-                            // Remove key from pressed set
                             if let Ok(mut p) = pressed.lock() {
                                 p.retain(|&x| x != k);
                             }
@@ -96,25 +102,30 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
 
                     let Some(key) = key else { return };
 
-                    // Check if this key is part of our hotkey
                     if !keys.contains(&key) { return; }
 
-                    // Check if ALL hotkey keys are currently pressed
                     let all_pressed = if let Ok(p) = pressed.lock() {
                         keys.iter().all(|k| p.contains(k))
                     } else {
                         false
                     };
 
+                    let now = Instant::now();
+
                     match event.event_type {
                         rdev::EventType::KeyPress(_) => {
                             if all_pressed {
+                                last_press_emit = now;
                                 let _ = a.emit("hotkey-press", ());
                             }
                         }
                         rdev::EventType::KeyRelease(_) => {
-                            // Emit release when ANY hotkey key is released
                             if !all_pressed {
+                                // Release debounce: ignore release within 100ms of last press emit
+                                // This catches mouse button bounce without affecting long recordings
+                                if now.duration_since(last_press_emit).as_millis() < 100 {
+                                    return;
+                                }
                                 let _ = a.emit("hotkey-release", ());
                             }
                         }
