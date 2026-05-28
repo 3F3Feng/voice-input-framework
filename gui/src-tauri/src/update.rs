@@ -96,44 +96,126 @@ fn compare_versions(a: &str, b: &str) -> Ordering {
     Ordering::Equal
 }
 
-/// Download and install using the tauri-plugin-updater.
+/// Get the download URL for the current platform from latest.json.
+fn get_platform_key() -> &'static str {
+    #[cfg(target_os = "windows")]
+    { "windows-x86_64" }
+    #[cfg(target_os = "linux")]
+    { "linux-x86_64" }
+    #[cfg(target_os = "macos")]
+    { "darwin-aarch64" }
+}
+
+/// Download update file and trigger install.
+/// Uses reqwest (like check()) instead of tauri-plugin-updater's internal client,
+/// which has timeout issues with GitHub redirects.
 pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, String> {
-    let updater = match app.updater() {
-        Ok(u) => u,
-        Err(_) => return Err("更新插件未启用".to_string()),
-    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300)) // 5min total timeout
+        .build()
+        .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
 
-    let maybe_update = updater
-        .check()
+    // Fetch latest.json to get download URL
+    eprintln!("[update] Fetching update manifest...");
+    let manifest: ReleaseManifest = client
+        .get(LATEST_JSON_URL)
+        .send()
         .await
-        .map_err(|e| format!("检查更新失败: {}", e))?;
+        .map_err(|e| format!("获取更新信息失败: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("解析更新信息失败: {}", e))?;
 
-    let update = match maybe_update {
-        Some(u) if u.version != u.current_version => u,
-        Some(_) => return Ok("已是最新版本".to_string()),
-        None => return Ok("没有可用更新".to_string()),
-    };
+    let current = app.package_info().version.to_string();
+    let latest = manifest.version.trim_start_matches('v').to_string();
+    if compare_versions(&latest, &current.trim_start_matches('v')) != Ordering::Greater {
+        return Ok("已是最新版本".to_string());
+    }
 
-    eprintln!("[update] Downloading {}...", update.version);
+    let platform_key = get_platform_key();
+    let entry = manifest.platforms.get(platform_key)
+        .ok_or_else(|| format!("当前平台({})没有可用更新", platform_key))?;
+
+    let download_url = &entry.url;
+    eprintln!("[update] Downloading {} from {}", manifest.version, download_url);
     let _ = app.emit("update-progress", "正在下载更新...");
+
+    // Download file to temp path
+    let resp = client
+        .get(download_url)
+        .send()
+        .await
+        .map_err(|e| format!("下载失败: {}", e))?;
+
+    let total_size = resp.content_length().unwrap_or(0);
     let app_clone = app.clone();
 
-    match update.download_and_install(
-        move |chunk_length, total| {
-            if let Some(total) = total {
-                if total > 0 {
-                    let pct = (chunk_length as f64 / total as f64 * 100.0) as u32;
-                    let _ = app_clone.emit("update-progress", format!("下载中 {}%", pct));
-                }
-            }
-        },
-        || {},
-    ).await {
-        Ok(()) => {
-            eprintln!("[update] Update installed successfully");
-            let _ = app.emit("update-progress", "更新已安装，重启后生效");
-            Ok("更新已安装，重启应用后生效".to_string())
+    // Stream download with progress
+    let mut downloaded: u64 = 0;
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut stream = resp.bytes_stream();
+
+    use futures_util::StreamExt;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("下载中断: {}", e))?;
+        downloaded += chunk.len() as u64;
+        bytes.extend_from_slice(&chunk);
+
+        if total_size > 0 {
+            let pct = (downloaded as f64 / total_size as f64 * 100.0) as u32;
+            let _ = app_clone.emit("update-progress", format!("下载中 {}%", pct));
         }
-        Err(e) => Err(format!("下载安装失败: {}", e)),
     }
+
+    eprintln!("[update] Downloaded {} bytes", bytes.len());
+    let _ = app.emit("update-progress", "下载完成，准备安装...");
+
+    // Write to temp file
+    let ext = if cfg!(target_os = "windows") { ".exe" } else if cfg!(target_os = "macos") { ".dmg" } else { ".AppImage" };
+    let temp_dir = std::env::temp_dir();
+    let temp_path = temp_dir.join(format!("vif-update-{}{}", manifest.version, ext));
+
+    // Remove old file if it exists
+    let _ = std::fs::remove_file(&temp_path);
+    std::fs::write(&temp_path, &bytes)
+        .map_err(|e| format!("写入临时文件失败: {}", e))?;
+
+    eprintln!("[update] Saved to {:?}", temp_path);
+
+    // Mark as executable on Linux/macOS
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("设置执行权限失败: {}", e))?;
+    }
+
+    // Launch the installer
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new(&temp_path)
+            .spawn()
+            .map_err(|e| format!("启动安装程序失败: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new(&temp_path)
+            .arg("--no-sandbox")
+            .spawn()
+            .map_err(|e| format!("启动安装程序失败: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg(&temp_path)
+            .spawn()
+            .map_err(|e| format!("启动安装程序失败: {}", e))?;
+    }
+
+    eprintln!("[update] Installer launched, exiting app");
+    let _ = app.emit("update-progress", "安装程序已启动，应用即将关闭");
+
+    // Exit app to allow installer to replace files
+    app.exit(0);
+    Ok("更新已安装".to_string())
 }
