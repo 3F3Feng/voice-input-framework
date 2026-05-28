@@ -3,7 +3,6 @@
 
 use rdev::{listen, Event, Key};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
 use tauri::Emitter;
 
 static PRESSED_KEYS: OnceLock<Arc<Mutex<Vec<Key>>>> = OnceLock::new();
@@ -75,21 +74,20 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
             let a = app.clone();
             let keys = hotkey_keys.clone();
 
-            let mut last_release: Option<Instant> = None;
-            let mut last_press: Option<Instant> = None;
-
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // State lock: track whether we've emitted hotkey-press
+                // to prevent double-trigger from mouse button bounce
+                let mut is_active = false;
+
                 let _ = listen(move |event: Event| {
                     let key = match event.event_type {
                         rdev::EventType::KeyPress(k) => {
-                            // Add key to pressed set
                             if let Ok(mut p) = pressed.lock() {
                                 if !p.contains(&k) { p.push(k); }
                             }
                             Some(k)
                         }
                         rdev::EventType::KeyRelease(k) => {
-                            // Remove key from pressed set
                             if let Ok(mut p) = pressed.lock() {
                                 p.retain(|&x| x != k);
                             }
@@ -110,25 +108,18 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                         false
                     };
 
+                    // State lock: only emit press if not already active
+                    // Only emit release if currently active
                     match event.event_type {
                         rdev::EventType::KeyPress(_) => {
-                            // Debounce: ignore rapid press within 150ms of last release
-                            if let Some(t) = last_release {
-                                if t.elapsed() < std::time::Duration::from_millis(150) { return; }
-                            }
-                            if all_pressed {
-                                last_press = Some(Instant::now());
+                            if all_pressed && !is_active {
+                                is_active = true;
                                 let _ = a.emit("hotkey-press", ());
                             }
                         }
                         rdev::EventType::KeyRelease(_) => {
-                            // Minimum press duration: ignore release within 80ms of press (noise)
-                            if let Some(t) = last_press {
-                                if t.elapsed() < std::time::Duration::from_millis(80) { return; }
-                            }
-                            // Emit release when ANY hotkey key is released
-                            if !all_pressed {
-                                last_release = Some(Instant::now());
+                            if !all_pressed && is_active {
+                                is_active = false;
                                 let _ = a.emit("hotkey-release", ());
                             }
                         }
