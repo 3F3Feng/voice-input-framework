@@ -1,8 +1,29 @@
-//! Auto-update via GitHub Releases using tauri-plugin-updater.
+//! Auto-update via GitHub Releases.
+//! Uses direct HTTP fetch for check (with 30s timeout), falls back to
+//! tauri-plugin-updater for download + install.
 
-use serde::Serialize;
+use std::cmp::Ordering;
+use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
+
+/// GitHub release asset manifest
+#[derive(Deserialize)]
+struct ReleaseManifest {
+    version: String,
+    #[allow(dead_code)]
+    notes: Option<String>,
+    #[allow(dead_code)]
+    pub_date: Option<String>,
+    platforms: std::collections::HashMap<String, PlatformEntry>,
+}
+
+#[derive(Deserialize)]
+struct PlatformEntry {
+    url: String,
+    #[allow(dead_code)]
+    signature: String,
+}
 
 /// Result of an update check
 #[derive(Serialize, Clone)]
@@ -14,40 +35,68 @@ pub struct UpdateInfo {
     pub download_size: u64,
 }
 
-/// Check for updates.
+const LATEST_JSON_URL: &str =
+    "https://github.com/3F3Feng/voice-input-framework/releases/latest/download/latest.json";
+
+/// Check for updates via direct HTTP fetch (30s timeout).
 pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
     let current = app.package_info().version.to_string();
     eprintln!("[update] Checking for updates (current: {})...", current);
 
-    let updater = match app.updater() {
-        Ok(u) => u,
-        Err(_) => {
-            eprintln!("[update] Updater plugin not available");
-            return Err("更新插件未启用，请检查配置".to_string());
-        }
-    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
 
-    let maybe_update = updater
-        .check()
+    let resp = client
+        .get(LATEST_JSON_URL)
+        .send()
         .await
-        .map_err(|e| format!("检查更新失败: {}", e))?;
+        .map_err(|e| format!("请求最新版本信息超时(30s): {}", e))?;
 
-    match maybe_update {
-        Some(update) => {
-            let latest = update.version.clone();
-            let available = latest != current;
-            let body = update.body.clone().unwrap_or_default();
-            eprintln!("[update] Current: {}, Latest: {}, available: {}", current, latest, available);
-            Ok(UpdateInfo { available, current_version: current, latest_version: latest, body, download_size: 0 })
-        }
-        None => {
-            eprintln!("[update] No update available (None)");
-            Ok(UpdateInfo { available: false, current_version: current.clone(), latest_version: current, body: String::new(), download_size: 0 })
-        }
+    if !resp.status().is_success() {
+        return Err(format!("服务器响应异常: HTTP {}", resp.status()));
     }
+
+    let manifest: ReleaseManifest = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析更新信息失败: {}", e))?;
+
+    let latest = manifest.version.trim_start_matches('v').to_string();
+    let current_clean = current.trim_start_matches('v').to_string();
+    let available = compare_versions(&latest, &current_clean) == Ordering::Greater;
+
+    eprintln!(
+        "[update] Current: {}, Latest: {}, available: {}",
+        current, latest, available
+    );
+
+    Ok(UpdateInfo {
+        available,
+        current_version: current,
+        latest_version: latest.clone(),
+        body: format!("版本 {}", latest),
+        download_size: 0,
+    })
 }
 
-/// Download and install the update.
+/// Compare two semver strings ("2.0.4" vs "2.0.3").
+fn compare_versions(a: &str, b: &str) -> Ordering {
+    let a_parts: Vec<u32> = a.split('.').filter_map(|s| s.parse().ok()).collect();
+    let b_parts: Vec<u32> = b.split('.').filter_map(|s| s.parse().ok()).collect();
+    for i in 0..3 {
+        let av = a_parts.get(i).copied().unwrap_or(0);
+        let bv = b_parts.get(i).copied().unwrap_or(0);
+        match av.cmp(&bv) {
+            Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    Ordering::Equal
+}
+
+/// Download and install using the tauri-plugin-updater.
 pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, String> {
     let updater = match app.updater() {
         Ok(u) => u,

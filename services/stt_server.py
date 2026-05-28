@@ -25,6 +25,7 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 from shared.model_registry import MODELS_CONFIG, get_default_model, get_apple_silicon_only_models, IS_APPLE_SILICON
+from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Request
@@ -50,6 +51,57 @@ LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 
 # LLM Processing Toggle
 LLM_ENABLED = os.getenv("VIF_LLM_ENABLED", "true").lower() == "true"
+LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
+
+# ============== State Persistence ==============
+"""
+持久化最后使用的 STT 模型和 LLM 开关状态，
+避免服务器重启后需要重新设置。
+"""
+STATE_DIR = Path.home() / ".config" / "voice-input-framework"
+STATE_FILE = STATE_DIR / "stt_state.json"
+
+
+def load_state() -> dict:
+    """加载持久化的服务器状态"""
+    try:
+        if STATE_FILE.exists():
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load state file: {e}")
+    return {}
+
+
+def save_state(state: dict):
+    """保存服务器状态到文件"""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save state file: {e}")
+
+
+# 从持久化状态恢复设置（仅在无环境变量覆盖时生效）
+_persisted_state = load_state()
+if "VIF_STT_MODEL" not in os.environ:
+    if saved_model := _persisted_state.get("stt_model"):
+        from shared.model_registry import MODELS_CONFIG
+        if saved_model in MODELS_CONFIG:
+            logger.info(f"Restoring STT model from saved state: {saved_model}")
+            STT_MODEL = saved_model
+        else:
+            logger.warning(f"Saved model '{saved_model}' not available, using default")
+if "VIF_LLM_ENABLED" not in os.environ:
+    if "llm_enabled" in _persisted_state:
+        LLM_ENABLED = bool(_persisted_state["llm_enabled"])
+        logger.info(f"Restoring LLM enabled from saved state: {LLM_ENABLED}")
+if "VIF_LLM_MODEL" not in os.environ:
+    if saved_llm := _persisted_state.get("llm_model"):
+        logger.info(f"Restoring LLM model from saved state: {saved_llm}")
+        LLM_MODEL = saved_llm
+        os.environ.setdefault("VIF_LLM_MODEL", saved_llm)
 
 # ============== Context Variables ==============
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
@@ -125,6 +177,7 @@ class HealthStatus(BaseModel):
     active_connections: int = 0
     total_requests: int = 0
     failed_requests: int = 0
+    diarize: Optional[Dict[str, Any]] = None
 
 class ErrorResponse(BaseModel):
     """错误响应"""
@@ -438,9 +491,6 @@ class STTEngine:
                 )
                 text, detected_lang = result.text, result.language
             else:
-                def _do_transcribe():
-                    lang = None if language == "auto" else language
-
                 # ── Whisper MLX 引擎 ──
                 if getattr(self, '_model_type', None) == "whisper_mlx":
                     import mlx_whisper
@@ -481,8 +531,6 @@ class STTEngine:
                 if results and len(results) > 0:
                     return results[0].text, results[0].language
                 return "", language
-
-                text, detected_lang = await loop.run_in_executor(None, _do_transcribe)
             text = text.strip()
 
             # 生成时间戳（如果需要）
@@ -583,6 +631,9 @@ class STTEngine:
     def decrement_connections(self):
         self._active_connections = max(0, self._active_connections - 1)
 
+# ============== Diarization Engine ==============
+diarize_engine = DiarizationEngine() if DIARIZE_ENABLED else None
+
 # ============== FastAPI App ==============
 engine = STTEngine(default_model=STT_MODEL)
 
@@ -647,6 +698,7 @@ async def health_check():
         active_connections=engine._active_connections,
         total_requests=engine.total_requests,
         failed_requests=engine.failed_requests,
+        diarize=diarize_engine.get_health() if diarize_engine else {"status": "disabled"},
     )
 
 @app.get("/models", response_model=List[ModelInfo])
@@ -695,6 +747,11 @@ async def select_llm_model(request: Request):
                 timeout=30.0
             )
             if resp.status_code == 200:
+                # 持久化 LLM 模型选择
+                state = load_state()
+                state["llm_model"] = model_name
+                save_state(state)
+                logger.info(f"LLM model saved to state: {model_name}")
                 return resp.json()
             else:
                 return {"error": f"LLM server returned {resp.status_code}"}
@@ -724,6 +781,11 @@ async def set_llm_enabled(request: Request):
     body = await request.json()
     enabled = body.get("enabled", True)
     LLM_ENABLED = bool(enabled)
+    # 持久化
+    state = load_state()
+    state["llm_enabled"] = LLM_ENABLED
+    save_state(state)
+    logger.info(f"LLM enabled set to {LLM_ENABLED} (persisted)")
     return {"enabled": LLM_ENABLED}
 
 # ============== LLM Prompt API ==============
@@ -762,6 +824,11 @@ async def select_stt_model(model_name: str = Form(...)):
     try:
         logger.info(f"Switching STT model to: {model_name}")
         result = await engine.switch_model(model_name)
+        # 持久化 STT 模型选择
+        state = load_state()
+        state["stt_model"] = model_name
+        save_state(state)
+        logger.info(f"STT model saved to state: {model_name}")
         return result
     except ValueError as e:
         logger.error(f"ValueError switching model: {e}")
@@ -839,112 +906,213 @@ async def websocket_stream(websocket: WebSocket):
         "llm_model": llm_info["llm_model"],
     }))
 
-    audio_buffer = bytearray()
     return_timestamps = False
+    audio_queue = asyncio.Queue()
+    stream_finished = asyncio.Event()
+    stream_error = None
+    language = "auto"
 
-    try:
-        while True:
-            message = await asyncio.wait_for(websocket.receive_text(), timeout=120.0)
-            data = json.loads(message)
-            msg_type = data.get("type")
-
-            if msg_type == "audio":
-                audio_b64 = data.get("data", "")
-                if audio_b64:
-                    audio_chunk = base64.b64decode(audio_b64)
-                    audio_buffer.extend(audio_chunk)
-
-            elif msg_type == "config":
-                # 处理配置消息
-                return_timestamps = data.get("return_timestamps", False)
-                language = data.get("language", "auto")
-                await websocket.send_text(json.dumps({
-                    "type": "config_ack",
-                    "return_timestamps": return_timestamps,
-                    "language": language,
-                }))
-
-            elif msg_type in ("end", "stop"):
-                if audio_buffer:
-                    try:
-                        result = await asyncio.wait_for(
-                            engine.transcribe(
-                                bytes(audio_buffer),
-                                return_timestamps=return_timestamps
-                            ),
-                            timeout=300.0
-                        )
-                        # 发送 STT 结果
-                        await websocket.send_text(json.dumps({
-                            "type": "stt_result",
-                            "text": result.text,
-                            "stt_latency_ms": result.stt_latency_ms,
-                        }))
-                        # 调用 LLM 服务器进行后处理
-                        req_id = request_id_ctx.get()
-                        if result.text.strip() and LLM_ENABLED:
-                            # 发送 LLM 开始消息
-                            await websocket.send_text(json.dumps({
-                                "type": "llm_start",
-                                "text": result.text[:50],
-                            }))
-                            logger.info(f"Calling LLM server for text ({len(result.text)} chars)")
-                            # 调用 LLM 服务器
-                            processed_text, llm_latency = await call_llm_server(result.text, req_id)
-                            logger.info(f"LLM processing complete: {llm_latency:.1f}ms")
-                        else:
-                            processed_text = result.text
-                            llm_latency = 0
-                            if not LLM_ENABLED:
-                                logger.info("LLM processing disabled, skipping")
-                        # 发送最终结果
-                        await websocket.send_text(json.dumps({
-                            "type": "result",
-                            "text": processed_text,
-                            "confidence": result.confidence,
-                            "language": result.language,
-                            "is_final": True,
-                            "stt_latency_ms": result.stt_latency_ms,
-                            "llm_latency_ms": llm_latency,
-                            "model": result.model,
-                        }))
-                        if result.timestamps:
-                            timestamps_response = {
-                                "type": "timestamps",
-                                "timestamps": [
-                                    {"word": ts.word, "start": ts.start, "end": ts.end}
-                                    for ts in result.timestamps
-                                ]
-                            }
-                            await websocket.send_text(json.dumps(timestamps_response))
-                    except asyncio.TimeoutError:
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "error_code": "E5002",
-                            "error_message": "Transcription timeout",
-                        }))
-
-                await websocket.send_text(json.dumps({"type": "done"}))
-                break
-
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+    # ── 异步生成器：从 queue 读取音频块供 transcribe_stream ──
+    async def audio_stream_generator():
+        nonlocal stream_error
         try:
+            while True:
+                chunk = await asyncio.wait_for(audio_queue.get(), timeout=300.0)
+                if chunk is None:  # 结束标记
+                    break
+                yield chunk
+        except asyncio.TimeoutError:
+            stream_error = "Audio receive timeout"
+        except Exception as e:
+            stream_error = str(e)
+
+    # ── 接收循环（投递到 queue）──
+    async def receive_loop():
+        nonlocal stream_error, language
+        try:
+            while True:
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=120.0)
+                data = json.loads(message)
+                msg_type = data.get("type")
+
+                if msg_type == "audio":
+                    audio_b64 = data.get("data", "")
+                    if audio_b64:
+                        await audio_queue.put(base64.b64decode(audio_b64))
+
+                elif msg_type == "config":
+                    return_timestamps = data.get("return_timestamps", False)
+                    language = data.get("language", "auto")
+                    await websocket.send_text(json.dumps({
+                        "type": "config_ack",
+                        "return_timestamps": return_timestamps,
+                        "language": language,
+                    }))
+
+                elif msg_type in ("end", "stop"):
+                    await audio_queue.put(None)  # 通知 stream 结束
+                    break
+        except asyncio.TimeoutError:
+            stream_error = "WebSocket receive timeout"
+        except WebSocketDisconnect:
+            await audio_queue.put(None)
+        except Exception as e:
+            stream_error = str(e)
+            await audio_queue.put(None)
+
+    # ── 启动接收循环 ──
+    receive_task = asyncio.create_task(receive_loop())
+
+    # ── 等待音频接收完成，一次性转写 ──
+    await receive_task
+
+    # 收集所有音频数据
+    all_audio = bytearray()
+    while not audio_queue.empty():
+        chunk = audio_queue.get_nowait()
+        if chunk is not None:
+            all_audio.extend(chunk)
+
+    if all_audio:
+        try:
+            result = await asyncio.wait_for(
+                engine.transcribe(
+                    bytes(all_audio),
+                    language=language,
+                ),
+                timeout=600.0
+            )
+
+            # 发送 STT 结果
+            await websocket.send_text(json.dumps({
+                "type": "stt_result",
+                "text": result.text,
+                "stt_latency_ms": result.stt_latency_ms,
+                "confidence": result.confidence,
+                "language": result.language,
+                "model": result.model,
+            }))
+
+            # LLM 后处理
+            if result.text.strip() and LLM_ENABLED:
+                await websocket.send_text(json.dumps({
+                    "type": "llm_start", "text": result.text[:50],
+                }))
+                processed_text, llm_latency = await call_llm_server(result.text)
+            else:
+                processed_text = result.text
+                llm_latency = 0
+
+            await websocket.send_text(json.dumps({
+                "type": "result",
+                "text": processed_text,
+                "confidence": result.confidence,
+                "language": result.language,
+                "is_final": True,
+                "stt_latency_ms": result.stt_latency_ms,
+                "llm_latency_ms": llm_latency,
+                "model": result.model,
+            }))
+
+        except asyncio.TimeoutError:
             await websocket.send_text(json.dumps({
                 "type": "error",
-                "error_code": "E5001",
-                "error_message": str(e),
+                "error_code": "E5002", "error_message": "转写超时",
             }))
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Transcription error: {e}")
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "error_code": "E5001", "error_message": str(e),
+            }))
+
+    await websocket.send_text(json.dumps({"type": "done"}))
+
+    try:
+        await websocket.close()
+    except:
+        pass
+    engine.decrement_connections()
+
+
+# ============== Diarization API ==============
+
+@app.get("/diarize/models")
+async def list_diarize_models():
+    """获取可用说话人分离模型"""
+    if not diarize_engine:
+        return {"status": "disabled", "message": "Diarization disabled (VIF_DIARIZE_ENABLED=false)"}
+    return {
+        "models": [
+            {
+                "name": diarize_engine.model_id,
+                "description": "Pyannote Speaker Diarization 3.1",
+                "is_loaded": diarize_engine.is_loaded,
+                "is_loading": diarize_engine.is_loading,
+                "device": diarize_engine.device,
+            }
+        ],
+        "default": diarize_engine.model_id,
+    }
+
+
+@app.post("/diarize")
+async def diarize(
+    file: UploadFile = File(...),
+    num_speakers: Optional[int] = Form(None),
+    min_speakers: Optional[int] = Form(None),
+    max_speakers: Optional[int] = Form(None),
+):
+    """对上传的音频文件进行说话人分离"""
+    if not diarize_engine:
+        raise HTTPException(status_code=503, detail="Diarization disabled")
+
+    req_id = request_id_ctx.get()
+    import tempfile
+    import aiofiles
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+
+    try:
+        content = await file.read()
+        async with aiofiles.open(tmp_path, "wb") as f:
+            await f.write(content)
+
+        logger.info(f"Starting diarization: {file.filename} ({len(content)} bytes)",
+                    extra={"request_id": req_id})
+
+        result = await diarize_engine.diarize(
+            audio_path=tmp_path,
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+        )
+
+        result["filename"] = file.filename
+        result["file_size"] = len(content)
+
+        logger.info(f"Diarization complete: {result['num_speakers']} speakers, "
+                    f"{result['duration']:.0f}s, {result['inference_latency_ms']:.0f}ms",
+                    extra={"request_id": req_id})
+
+        return result
+
+    except ImportError as e:
+        raise HTTPException(
+            status_code=501,
+            detail=f"pyannote.audio not installed: {e}. Run: pip install pyannote.audio==3.3.3"
+        )
+    except Exception as e:
+        logger.error(f"Diarization error: {e}", exc_info=True, extra={"request_id": req_id})
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        engine.decrement_connections()
         try:
-            await websocket.close()
-        except:
+            os.unlink(tmp_path)
+        except Exception:
             pass
+
 
 def main():
     """主函数"""

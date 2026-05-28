@@ -36,7 +36,7 @@ python3 client/gui.py
 from client.gui import HotkeyVoiceInput
 
 # 创建客户端
-client = HotkeyVoiceInput(server_host="100.124.8.85", server_port=6543)
+client = HotkeyVoiceInput(server_host="100.124.8.85", server_port=6544)
 
 # 运行 GUI
 client.run()
@@ -49,12 +49,12 @@ client.run()
 ```bash
 # Windows PowerShell
 $env:VIF_SERVER_HOST = "your.server.com"
-$env:VIF_SERVER_PORT = "6543"
+$env:VIF_SERVER_PORT = "6544"
 python client/gui.py
 
 # Linux / macOS
 export VIF_SERVER_HOST="your.server.com"
-export VIF_SERVER_PORT="6543"
+export VIF_SERVER_PORT="6544"
 python3 client/gui.py
 ```
 
@@ -70,7 +70,7 @@ python3 client/gui.py
 
 ### 服务器配置
 - **主机**: 服务器地址（默认 100.124.8.85）
-- **端口**: 服务器端口（默认 6543）
+- **端口**: 服务器端口（默认 6544）
 - **连接**: 点击按钮连接到服务器
 
 ### 模型设置
@@ -108,7 +108,7 @@ python3 client/gui.py
 如果看到"连接失败"错误：
 
 1. 检查服务器地址和端口是否正确
-2. 确保服务器在运行：`python server/api.py`
+2. 确保服务器在运行：`python -m services.stt_server`
 3. 检查防火墙是否允许连接
 4. 查看错误信息区域的具体错误
 
@@ -154,7 +154,7 @@ python examples/test_models.py
 
 ```python
 DEFAULT_SERVER_HOST = "100.124.8.85"
-DEFAULT_SERVER_PORT = 6543
+DEFAULT_SERVER_PORT = 6544
 DEFAULT_HOTKEY = "alt+v"
 
 # 音频参数

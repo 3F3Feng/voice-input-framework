@@ -162,6 +162,9 @@ class HotkeyVoiceInputV2:
         # 快捷键状态追踪
         self._hotkey_pressed = False
         self._pressed_keys = set()
+        self._last_hotkey_press_time = 0.0   # 防抖：上次快捷键按下时间
+        self._last_hotkey_release_time = 0.0  # 防抖：上次快捷键释放时间
+        self.HOTKEY_DEBOUNCE_MS = 150  # 防抖窗口（毫秒）
 
         # 麦克风设置
         self.audio_devices = self._get_audio_devices()
@@ -1659,9 +1662,19 @@ class HotkeyVoiceInputV2:
                 # ======== 线程安全的快捷键事件处理 ========
                 elif event == "-HOTKEY-PRESS-":
                     # 在主线程中处理快捷键按下
+                    # 防抖：如果已在录音中，忽略重复的按下事件（鼠标映射键可能产生抖动）
+                    if self.is_recording:
+                        self.log("⚠️ 防抖: 忽略重复的快捷键按下事件")
+                        continue
+                    now = time.time()
+                    since_release = (now - self._last_hotkey_release_time) * 1000
+                    if since_release < self.HOTKEY_DEBOUNCE_MS:
+                        self.log(f"⚠️ 防抖: 释放后 {since_release:.0f}ms 内忽略重复按下")
+                        continue
                     try:
                         self.log("🎙️ 快捷键激活 - 开始录音!")
                         self._hotkey_pressed = True
+                        self._last_hotkey_press_time = time.time()
                         self._start_recording()
                         # 更新托盘状态
                         if self.tray_manager:
@@ -1677,10 +1690,22 @@ class HotkeyVoiceInputV2:
                         self.log(f"❌ 快捷键处理错误: {e}")
                 elif event == "-HOTKEY-RELEASE-":
                     # 在主线程中处理快捷键释放
+                    # 防抖：如果已不在录音中，忽略重复的释放事件
+                    if not self.is_recording:
+                        self.log("⚠️ 防抖: 忽略重复的快捷键释放事件")
+                        continue
                     try:
+                        # 防抖：如果录音时长小于 80ms，可能是鼠标侧键的噪声释放
+                        press_duration = (time.time() - self._last_hotkey_press_time) * 1000
+                        if press_duration < 50:
+                            self.log(f"⚠️ 防抖: {press_duration:.0f}ms 短触释放（疑似噪声），继续录音中")
+                            # 不停止录音！仅更新防抖时间，等待真正的释放
+                            self._last_hotkey_release_time = time.time()
+                            continue
                         self.log("⏹️ 快捷键释放 - 停止录音!")
                         self._hotkey_pressed = False
                         self._stop_recording()
+                        self._last_hotkey_release_time = time.time()
                         # 隐藏悬浮指示器
                         if self.floating_indicator:
                             try:

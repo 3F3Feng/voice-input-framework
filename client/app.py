@@ -16,6 +16,7 @@ import time
 from typing import Optional
 
 import numpy as np
+import PySimpleGUI as sg
 
 from client.audio import AudioRecorder, AUDIO_SAMPLE_RATE
 from client.network import SttClient, LlmClient

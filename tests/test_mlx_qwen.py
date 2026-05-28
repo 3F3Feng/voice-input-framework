@@ -1,13 +1,28 @@
+
 #!/usr/bin/env python3
 """
 MLX-Audio Qwen3-ASR API test script.
 Tests loading, transcription, streaming, and various input formats.
 """
 
+import pytest
+pytestmark = pytest.mark.integration
+
 import time
 import numpy as np
-import mlx.core as mx
-from mlx_audio.stt import load
+
+try:
+    import mlx.core as mx
+    from mlx_audio.stt import load
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX_AVAILABLE = False
+    mx = None
+    load = None
+
+# Skip all tests if mlx is not available
+if not MLX_AVAILABLE:
+    pytest.skip('mlx not available (requires Apple Silicon)', allow_module_level=True)
 
 # ──────────────────────────────────────────────
 # 1. Model Loading
@@ -100,6 +115,7 @@ def test_high_level_api(model_name, audio_path, language="English"):
     """Test the high-level generate_transcription function."""
     print(f"\n=== High-level API (generate_transcription) ===")
     from mlx_audio.stt.generate import generate_transcription
+
     start = time.time()
     result = generate_transcription(
         model=model_name,

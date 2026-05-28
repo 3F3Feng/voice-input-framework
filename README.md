@@ -1,41 +1,30 @@
 # Voice Input Framework
 
-基于大模型的语音识别框架，支持实时流式语音识别。
-
-> **NEW**: 分离架构 - STT 和 LLM 独立服务，解决 transformers 版本冲突问题。详见 [docs/split-architecture.md](docs/split-architecture.md)
-
-## 🎯 下载 Windows 客户端 (免安装)
-
-直接从 GitHub Releases 下载 exe 文件：
-https://github.com/3F3Feng/voice-input-framework/releases
+基于大模型的语音识别框架，支持实时流式语音识别、LLM 后处理。
 
 ## ✨ 特性
 
-- 🎤 **实时音频采集**：支持麦克风实时录音
-- 🚀 **流式识别**：低延迟响应
+- 🎤 **实时音频采集**：支持麦克风实时录音，6种采样格式自动适配
+- 🚀 **流式识别**：录音期间实时传输音频，低延迟响应
 - 🤖 **多模型支持**：
   - **Qwen3-ASR-1.7B** (推荐) - 52种语言/方言，加载快 (~27秒)
   - **Qwen3-ASR-0.6B** - 更快，适合实时场景
   - **Whisper-large-v3** - OpenAI 经典模型
   - **MLX 加速** - Apple Silicon 原生优化
-- 🧠 **LLM 后处理** - 自动优化识别结果
-- 🔌 **客户端/服务端分离**：支持远程部署
-- 🖥️ **跨平台 GUI 客户端**：Windows/macOS/Linux
+- 🧠 **LLM 后处理** - 自动优化识别结果（去噪、加标点、格式化）
+- 🔌 **分离架构**：STT 和 LLM 独立服务，解决 transformers 版本冲突
+- 🖥️ **跨平台客户端**：Python + Tauri GUI（Windows/macOS/Linux）
 
 ## 📦 支持的模型
 
 ### STT 模型
 
-| 模型 | 参数量 | 加载时间 | 特点 | 架构 |
-|------|--------|----------|------|------|
-| qwen_asr_mlx | 1.7B | ~15秒 | **推荐 (Apple Silicon)** | 主服务 |
-| qwen_asr | 1.7B | ~27秒 | 推荐，52种语言/方言 | 分离架构 |
-| qwen_asr_small | 0.6B | ~10秒 | 更快，实时场景 | 两者 |
-| whisper_mlx | 1.5B | ~5秒 | MLX 加速 Whisper | 主服务 |
-| whisper_mlx_turbo | 0.8B | ~3秒 | MLX Whisper Turbo | 主服务 |
-| whisper | 1.5B | ~3秒 | OpenAI 经典 | 两者 |
-| whisper-small | 0.4B | ~1秒 | 轻量级 | 两者 |
-| whisper_cpp | - | ~1秒 | C++ 实现，低延迟 | 两者 |
+| 模型 | 参数量 | 加载时间 | 特点 |
+|------|--------|----------|------|
+| qwen_asr | 1.7B | ~27秒 | **推荐**，52种语言/方言 |
+| qwen_asr_small | 0.6B | ~10秒 | 更快，实时场景 |
+| whisper | 1.5B | ~3秒 | OpenAI 经典 |
+| whisper-small | 0.4B | ~1秒 | 轻量级 |
 
 ### LLM 后处理模型
 
@@ -47,74 +36,91 @@ https://github.com/3F3Feng/voice-input-framework/releases
 
 ## 🚀 快速开始
 
-### 方式 1: 分离架构 (推荐)
-
-解决 STT (qwen_asr) 和 LLM (mlx-lm) 的 transformers 版本冲突。
+### 服务端
 
 ```bash
-# 1. 创建 conda 环境 (首次)
-conda create -n vif-stt python=3.11 -y
-conda activate vif-stt
-pip install -r requirements-stt.txt
-
-conda create -n mlx-test python=3.11 -y
-conda activate mlx-test
-pip install -r requirements-llm.txt
-
-# 2. 配置 launchd (macOS，自动启动)
-cp config/launchd/*.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.voiceinput.stt.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.voiceinput.llm.plist
-
-# 3. 检查状态
-curl http://localhost:6544/health
-curl http://localhost:6545/health
-```
-
-服务地址:
-- STT Service: http://localhost:6544
-- LLM Service: http://localhost:6545
-
-### 方式 2: 主服务 (单体架构)
-
-包含 STT + LLM 所有功能，适合本地开发。
-
-```bash
-# 创建 venv
-python3 -m venv .venv
-source .venv/bin/activate
+git clone https://github.com/3F3Feng/voice-input-framework.git
+cd voice-input-framework
 pip install -r requirements.txt
 
-# 启动服务
-python -m server.api
+# 启动 STT 服务 (端口 6544)
+python -m services.stt_server
+
+# 启动 LLM 服务 (端口 6545，可选)
+python -m services.llm_server
 ```
 
-服务地址: http://localhost:6543
-
-### 方式 3: 传统架构
-
-适用于不需要 LLM 后处理的场景。
+### Python 客户端
 
 ```bash
-pip install -r requirements.txt
-bash deploy/daemon.sh start
-```
-
-### 客户端
-
-```bash
-# Python 客户端
 python run_client.py
+```
 
-# 或直接运行 GUI
-python -m client.gui
+### Tauri GUI 客户端
+
+```bash
+cd gui
+npm install
+npm run tauri dev
+```
+
+## 🖥️ Tauri GUI 客户端
+
+跨平台原生桌面客户端，基于 Tauri 2 + Vue 3 + TypeScript。
+
+### 功能
+
+- **按住说话**：支持鼠标按钮和全局快捷键录音
+- **实时流式传输**：录音期间音频实时发送到服务器，非录完再发
+- **LLM 后处理**：可选开启，录音后自动优化识别结果
+- **悬浮胶囊**：录音时显示计时器和音量条，处理中显示状态
+- **系统托盘**：支持最小化到托盘，快捷键全局可用
+- **自动更新**：检测 GitHub Releases 新版本，一键更新
+- **调试日志**：内置日志面板，方便排查问题
+- **音频设备选择**：支持选择系统中任意输入设备
+
+### 架构
+
+```
+┌─ Tauri GUI (Vue 3) ──────────────────────┐
+│  App.vue (UI + 事件监听)                   │
+│  indicator.html (悬浮胶囊，独立窗口)        │
+└───────────────────────────────────────────┘
+           │ invoke / emit
+┌─ Rust 后端 ───────────────────────────────┐
+│  lib.rs    (命令注册 + 应用生命周期)        │
+│  audio.rs  (cpal 音频采集 + 流式通道)       │
+│  stt.rs    (WebSocket 流式转写)            │
+│  hotkey.rs (rdev 全局快捷键)               │
+│  indicator.rs (悬浮胶囊窗口管理)           │
+│  update.rs (GitHub Releases 更新检查)      │
+│  log.rs    (全局日志，emit 到前端)          │
+└───────────────────────────────────────────┘
+           │ WebSocket
+┌─ STT Server (6544) ──────────────────────┐
+│  Qwen3-ASR / Whisper + LLM 后处理         │
+└───────────────────────────────────────────┘
+```
+
+### 构建
+
+```bash
+# 前端
+cd gui
+npm install
+npm run build
+
+# 后端
+cd gui/src-tauri
+cargo build --release
+
+# 完整打包
+npm run tauri build
 ```
 
 ## 📡 API
 
-### 分离架构 API
-
-**STT Service (Port 6544)**
+### STT Service (Port 6544)
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -124,8 +130,12 @@ python -m client.gui
 | `/models/status/{model}` | GET | 查询模型加载状态 |
 | `/transcribe` | POST | 转写音频文件 |
 | `/ws/stream` | WebSocket | 流式识别 |
+| `/llm/models` | GET | 获取 LLM 模型列表 |
+| `/llm/models/select` | POST | 切换 LLM 模型 |
+| `/llm/prompt` | GET/PUT | 获取/保存 LLM 提示词 |
+| `/llm/enabled` | GET/PUT | 获取/设置 LLM 开关 |
 
-**LLM Service (Port 6545)**
+### LLM Service (Port 6545)
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -134,31 +144,17 @@ python -m client.gui
 | `/models/select` | POST | 切换模型 |
 | `/process` | POST | 处理文本 |
 
-### 主服务 API (Port 6543)
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/health` | GET | 健康检查 |
-| `/models` | GET | 获取可用 STT 模型列表 |
-| `/models/select` | POST | 切换 STT 模型 |
-| `/models/status/{model}` | GET | 查询模型加载状态 |
-| `/llm/models` | GET | 获取 LLM 模型列表 |
-| `/llm/models/select` | POST | 切换 LLM 模型 |
-| `/ws/stream` | WebSocket | 流式识别 |
-
 ## 🔧 配置
 
 ### 服务端环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `VIF_PORT` | 6543 | 主服务端口 |
-| `VIF_HOST` | 0.0.0.0 | 主服务监听地址 |
-| `VIF_DEFAULT_MODEL` | qwen_asr_mlx | 默认 STT 模型 |
 | `VIF_STT_PORT` | 6544 | STT 服务端口 |
 | `VIF_STT_HOST` | 0.0.0.0 | STT 服务监听地址 |
 | `VIF_LLM_PORT` | 6545 | LLM 服务端口 |
 | `VIF_LLM_HOST` | 127.0.0.1 | LLM 服务监听地址 (仅本地) |
+| `VIF_DEFAULT_MODEL` | qwen_asr | 默认 STT 模型 |
 
 ### 客户端配置
 
@@ -168,21 +164,11 @@ python -m client.gui
 - LLM 启用/禁用
 - UI 设置（透明度、最小化等）
 
-## 🧪 测试
+## ⚠️ 已知问题
 
-```bash
-# 安装测试依赖
-pip install pytest pytest-asyncio
+### Tauri GUI 客户端
 
-# 运行单元测试
-.venv/bin/python -m pytest tests/ -v
-
-# 仅运行 API 端点测试 (需要服务器运行)
-.venv/bin/python -m pytest tests/test_api_endpoints.py -v
-
-# 跳过集成测试
-.venv/bin/python -m pytest tests/ -v -m "not integration"
-```
+- **最小化到托盘后快捷键首次失效**：从托盘恢复后第一次使用快捷键，松开按键后录音不会立即停止，需要等待一段时间后再次使用才正常。原因是 `rdev` 全局键盘 hook 在窗口隐藏/恢复后存在状态同步延迟。临时解决方案：恢复窗口后先用鼠标点击一次录音按钮，之后快捷键即可正常工作。
 
 ## 📄 许可证
 

@@ -33,8 +33,8 @@ python change_model.py --model qwen_asr
 python change_model.py --model whisper-small
 
 # Connect to a remote server
-python change_model.py --server 192.168.1.100:6543 --list
-python change_model.py --server 192.168.1.100:6543 --model whisper
+python change_model.py --server 192.168.1.100:6544 --list
+python change_model.py --server 192.168.1.100:6544 --model whisper
 ```
 
 **Available Models**:
@@ -64,8 +64,8 @@ python change_model.py --server 192.168.1.100:6543 --model whisper
 .\change_model.ps1 -Model qwen_asr
 
 # Connect to a remote server
-.\change_model.ps1 -Server "192.168.1.100:6543" -List
-.\change_model.ps1 -Server "192.168.1.100:6543" -Model whisper
+.\change_model.ps1 -Server "192.168.1.100:6544" -List
+.\change_model.ps1 -Server "192.168.1.100:6544" -Model whisper
 ```
 
 **First Time Setup** (if you see execution policy error):
@@ -103,9 +103,9 @@ chmod +x change_model.sh
 **With Remote Server**:
 
 ```bash
-SERVER="192.168.1.100:6543" ./change_model.sh
-SERVER="192.168.1.100:6543" ./change_model.sh list
-SERVER="192.168.1.100:6543" ./change_model.sh whisper
+SERVER="192.168.1.100:6544" ./change_model.sh
+SERVER="192.168.1.100:6544" ./change_model.sh list
+SERVER="192.168.1.100:6544" ./change_model.sh whisper
 ```
 
 ## Examples
@@ -123,7 +123,7 @@ python change_model.py --list
 python change_model.py --model qwen_asr
 
 # Connect to a server on different machine
-python change_model.py --server 10.0.0.5:6543 --model whisper
+python change_model.py --server 10.0.0.5:6544 --model whisper
 ```
 
 ### PowerShell Examples
@@ -139,7 +139,7 @@ python change_model.py --server 10.0.0.5:6543 --model whisper
 .\change_model.ps1 -Model qwen_asr
 
 # Remote server
-.\change_model.ps1 -Server "example.com:6543" -Model whisper
+.\change_model.ps1 -Server "example.com:6544" -Model whisper
 ```
 
 ### Bash Examples
@@ -155,7 +155,7 @@ python change_model.py --server 10.0.0.5:6543 --model whisper
 ./change_model.sh qwen_asr
 
 # Remote access
-SERVER="10.0.0.5:6543" ./change_model.sh list
+SERVER="10.0.0.5:6544" ./change_model.sh list
 ```
 
 ## Programmatic Usage
@@ -167,7 +167,7 @@ import asyncio
 from change_model import VoiceServerClient
 
 async def main():
-    client = VoiceServerClient(host="localhost", port=6543)
+    client = VoiceServerClient(host="localhost", port=6544)
     
     # Get current status
     health = await client.get_health()
@@ -189,21 +189,21 @@ asyncio.run(main())
 
 ```bash
 # Check server status
-curl http://localhost:6543/health | jq
+curl http://localhost:6544/health | jq
 
 # List available models  
-curl http://localhost:6543/models | jq
+curl http://localhost:6544/models | jq
 
 # Switch to a model
-curl -X POST http://localhost:6543/models/select \
+curl -X POST http://localhost:6544/models/select \
   -d "model_name=whisper" | jq
 ```
 
 ## Troubleshooting
 
 ### Connection refused
-- Make sure the server is running: `python server/api.py`
-- Check the server port matches (default: 6543)
+- Make sure the server is running: `python -m services.stt_server`
+- Check the server port matches (default: 6544)
 - For remote servers, check network connectivity and firewall rules
 
 ### Model not found
@@ -226,15 +226,15 @@ curl -X POST http://localhost:6543/models/select \
 
 The default server configuration:
 - Host: `localhost`
-- Port: `6543`
+- Port: `6544`
 - Default Model: `whisper`
 
 To connect to a different server, use the `--server` parameter in any script.
 
 Examples:
 ```bash
-python change_model.py --server voice.example.com:6543 --list
-./change_model.sh --server 192.168.1.5:6543 list
+python change_model.py --server voice.example.com:6544 --list
+./change_model.sh --server 192.168.1.5:6544 list
 ```
 
 ## Environment Variables
@@ -243,13 +243,13 @@ You can set these environment variables to avoid typing server address:
 
 **Linux/macOS (Bash)**:
 ```bash
-export SERVER="192.168.1.100:6543"
+export SERVER="192.168.1.100:6544"
 ./change_model.sh list
 ```
 
 **Windows (PowerShell)**:
 ```powershell
-$env:SERVER = "192.168.1.100:6543"
+$env:SERVER = "192.168.1.100:6544"
 .\change_model.ps1 -List
 ```
 
@@ -259,7 +259,7 @@ $env:SERVER = "192.168.1.100:6543"
 Get server status and current model
 
 ```bash
-curl http://localhost:6543/health
+curl http://localhost:6544/health
 ```
 
 Response:
@@ -278,7 +278,7 @@ Response:
 List all available models
 
 ```bash
-curl http://localhost:6543/models
+curl http://localhost:6544/models
 ```
 
 Response:
@@ -305,7 +305,7 @@ Response:
 Switch to a specific model
 
 ```bash
-curl -X POST http://localhost:6543/models/select \
+curl -X POST http://localhost:6544/models/select \
   -d "model_name=qwen_asr"
 ```
 

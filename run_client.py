@@ -7,7 +7,7 @@ Voice Input Framework - GUI Client Launcher
 Usage:
     python run_client.py              # 使用配置文件设置
     python run_client.py 10.0.0.1     # 指定服务器地址
-    python run_client.py 10.0.0.1 6543  # 指定服务器地址和端口
+    python run_client.py 10.0.0.1 6544  # 指定服务器地址和端口
 
 Environment Variables:
     VIF_SERVER_HOST - 服务器地址（优先级高于配置文件）

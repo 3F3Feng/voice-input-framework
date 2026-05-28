@@ -119,4 +119,4 @@ async def record_and_transcribe(self):
 
 - CLI 客户端：`run_cli.py`
 - 协议文档：`docs/ARCHITECTURE.md`
-- 服务端 API：`server/api.py`
+- 服务端 API：`services/stt_server.py`

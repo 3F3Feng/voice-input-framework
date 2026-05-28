@@ -5,7 +5,7 @@ Run with: .venv/bin/python -m pytest tests/test_api_endpoints.py -v
 Requires servers running:
   - STT: localhost:6544
   - LLM: localhost:6545
-  - Main: localhost:6543
+  - Main: localhost:6544
 """
 
 import pytest
@@ -13,7 +13,9 @@ import httpx
 
 STT_URL = "http://localhost:6544"
 LLM_URL = "http://localhost:6545"
-MAIN_URL = "http://localhost:6543"
+MAIN_URL = "http://localhost:6544"
+
+pytestmark = pytest.mark.integration
 
 
 # ── STT Server (6544) ──────────────────────────────────────────────
@@ -136,7 +138,7 @@ class TestLLMProcess:
         assert resp.status_code in (200, 400, 422)
 
 
-# ── Main Server (6543) ─────────────────────────────────────────────
+# ── Main Server (6544) ─────────────────────────────────────────────
 
 
 @pytest.mark.skip(reason="Main API server deleted")
