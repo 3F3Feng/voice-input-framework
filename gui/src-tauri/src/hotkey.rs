@@ -3,6 +3,7 @@
 
 use rdev::{listen, Event, Key};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 use tauri::Emitter;
 
 static PRESSED_KEYS: OnceLock<Arc<Mutex<Vec<Key>>>> = OnceLock::new();
@@ -74,6 +75,9 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
             let a = app.clone();
             let keys = hotkey_keys.clone();
 
+            let mut last_release: Option<Instant> = None;
+            let mut last_press: Option<Instant> = None;
+
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let _ = listen(move |event: Event| {
                     let key = match event.event_type {
@@ -108,13 +112,23 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
 
                     match event.event_type {
                         rdev::EventType::KeyPress(_) => {
+                            // Debounce: ignore rapid press within 150ms of last release
+                            if let Some(t) = last_release {
+                                if t.elapsed() < std::time::Duration::from_millis(150) { return; }
+                            }
                             if all_pressed {
+                                last_press = Some(Instant::now());
                                 let _ = a.emit("hotkey-press", ());
                             }
                         }
                         rdev::EventType::KeyRelease(_) => {
+                            // Minimum press duration: ignore release within 80ms of press (noise)
+                            if let Some(t) = last_press {
+                                if t.elapsed() < std::time::Duration::from_millis(80) { return; }
+                            }
                             // Emit release when ANY hotkey key is released
                             if !all_pressed {
+                                last_release = Some(Instant::now());
                                 let _ = a.emit("hotkey-release", ());
                             }
                         }
