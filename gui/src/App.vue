@@ -247,6 +247,7 @@ interface VoiceInputConfig {
   ui: { start_minimized: boolean; use_floating_indicator: boolean; use_tray: boolean; opacity: number; auto_input?: boolean };
   audio: { device: string | null; language: string };
   llm: { enabled: boolean };
+  diarize: { num_speakers: number };
   _version: string;
 }
 interface HistoryItem { text: string; time: string; }
