@@ -1,14 +1,16 @@
 name: Build Tauri Client
 on:
   push:
-    branches: [dev/llm-postprocessing-v2]
+    branches: [dev/llm-postprocessing-v2, main]
+    tags: [v*]
     paths:
       - 'gui/**'
       - '.github/workflows/build.yml'
   pull_request:
-    branches: [dev/llm-postprocessing-v2]
+    branches: [dev/llm-postprocessing-v2, main]
     paths:
       - 'gui/**'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
 
 jobs:
@@ -70,7 +72,7 @@ jobs:
             libxtst-dev
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v2
+        uses: tauri-apps/tauri-action@v0
         id: build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
