@@ -67,9 +67,15 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
 
     eprintln!("[update] Downloading {}...", update.version);
     let _ = app.emit("update-progress", "正在下载更新...");
+    let app_clone = app.clone();
 
     match update.download_and_install(
-        |_chunk_length, _total| {},
+        move |chunk_length, total| {
+            if total > 0 {
+                let pct = (chunk_length as f64 / total as f64 * 100.0) as u32;
+                let _ = app_clone.emit("update-progress", format!("下载中 {}%", pct));
+            }
+        },
         || {},
     ).await {
         Ok(()) => {
