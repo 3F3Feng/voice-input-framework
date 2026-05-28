@@ -76,12 +76,12 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
             let keys = hotkey_keys.clone();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // Debounce: state lock + time guard
+                // Debounce: time guard + min press duration
                 // Mouse side buttons can generate rapid press/release sequences (bounce)
-                // State lock: prevent double-trigger while already recording
-                // Time guard: ignore events within 150ms debounce window
-                let mut is_active = false;
+                // - Press debounce: ignore press within 150ms of last release
+                // - Release min duration: if press < 50ms (bounce noise), DON'T stop recording
                 let mut last_release_time = Instant::now() - std::time::Duration::from_secs(1);
+                let mut press_time: Option<Instant> = None;
 
                 let _ = listen(move |event: Event| {
                     let key = match event.event_type {
@@ -118,17 +118,24 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                         rdev::EventType::KeyPress(_) => {
                             // Time debounce: ignore press within 150ms of last release
                             if now.duration_since(last_release_time).as_millis() < 150 { return; }
-                            // State lock: ignore if already active
-                            if all_pressed && !is_active {
-                                is_active = true;
+                            if all_pressed {
+                                press_time = Some(now);
                                 let _ = a.emit("hotkey-press", ());
                             }
                         }
                         rdev::EventType::KeyRelease(_) => {
-                            // State lock: only release if currently active
-                            if !all_pressed && is_active {
-                                is_active = false;
+                            if !all_pressed {
+                                // Min press duration: if press < 50ms, it's bounce noise
+                                // DON'T emit release (keep recording), just update timer
+                                if let Some(pt) = press_time {
+                                    if now.duration_since(pt).as_millis() < 50 {
+                                        // Bounce noise: don't stop, just reset debounce window
+                                        last_release_time = now;
+                                        return;
+                                    }
+                                }
                                 last_release_time = now;
+                                press_time = None;
                                 let _ = a.emit("hotkey-release", ());
                             }
                         }
