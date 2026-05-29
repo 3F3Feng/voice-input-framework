@@ -8,9 +8,14 @@ mod stt;
 mod tray;
 mod update;
 
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
+
+/// Tokio runtime handle, captured at startup for the hotkey listener thread
+/// to spawn async transcription tasks (the hotkey thread is a std::thread, not
+/// tokio, so it cannot use tokio::spawn directly).
+static TOKIO_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
 #[macro_export]
 macro_rules! log_info {
@@ -56,8 +61,9 @@ async fn set_server_host(
     Ok(())
 }
 
-#[tauri::command]
-async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+/// Start recording: acquire device, create stream, begin capture, show indicator.
+/// Extracted so both Tauri commands and the hotkey thread can call the same logic.
+pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
     let device;
     {
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
@@ -66,10 +72,9 @@ async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> R
     {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
         recorder.create_stream_channel(4096);
-
         match recorder.start(device) {
             Ok(()) => {
-                let _ = indicator::show(&app);
+                let _ = indicator::show(app);
                 Ok(())
             }
             Err(e) => {
@@ -80,11 +85,9 @@ async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> R
     }
 }
 
-#[tauri::command]
-async fn stop_recording(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
+/// Stop recording: capture samples, hide indicator, spawn transcription.
+/// Extracted so both Tauri commands and the hotkey thread use the same code path.
+pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<String, String> {
     let (chunk_rx, fallback_samples, src_rate) = {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
         let chunk_rx = recorder.take_chunk_receiver();
@@ -95,7 +98,6 @@ async fn stop_recording(
     let has_window = app.get_webview_window(indicator::INDICATOR_LABEL).is_some();
     eprintln!("[stop] indicator window exists: {}", has_window);
 
-    // Set processing status for the indicator to poll
     {
         let mut status = state.indicator_status.lock().map_err(|e| e.to_string())?;
         *status = "识别中...".to_string();
@@ -110,29 +112,43 @@ async fn stop_recording(
     };
 
     let indicator_status = state.indicator_status.clone();
-
     let app_handle = app.clone();
-    tokio::spawn(async move {
-        eprintln!("[transcribe] Background task started, host={}", host);
-        let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
 
-        // Clear indicator status
-        if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
-        let _ = indicator::hide(&app_handle);
+    // Use the stored tokio handle to spawn the transcription task from any thread
+    if let Some(handle) = TOKIO_HANDLE.get() {
+        handle.spawn(async move {
+            eprintln!("[transcribe] Background task started, host={}", host);
+            let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
 
-        match result {
-            Ok(text) => {
-                eprintln!("[transcribe] Done: {} chars", text.len());
-                let _ = app_handle.emit("transcribe-done", text);
+            if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
+            let _ = indicator::hide(&app_handle);
+
+            match result {
+                Ok(text) => {
+                    eprintln!("[transcribe] Done: {} chars", text.len());
+                    let _ = app_handle.emit("transcribe-done", text);
+                }
+                Err(e) => {
+                    eprintln!("[transcribe] Error: {}", e);
+                    let _ = app_handle.emit("transcribe-error", e);
+                }
             }
-            Err(e) => {
-                eprintln!("[transcribe] Error: {}", e);
-                let _ = app_handle.emit("transcribe-error", e);
-            }
-        }
-    });
+        });
+    } else {
+        eprintln!("[stop] WARNING: no tokio handle available, losing audio");
+    }
 
     Ok(String::new())
+}
+
+#[tauri::command]
+async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    start_recording_internal(&app, &state)
+}
+
+#[tauri::command]
+async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    stop_recording_internal(&app, &state)
 }
 
 async fn run_transcription(
@@ -352,6 +368,10 @@ pub fn run() {
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
             });
+
+            // Capture tokio runtime handle so the hotkey listener thread (std::thread)
+            // can spawn async transcription tasks.
+            let _ = TOKIO_HANDLE.set(tokio::runtime::Handle::current());
 
             log::init(app.handle());
 

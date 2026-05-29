@@ -1,12 +1,13 @@
 //! Custom global hotkey listener using rdev.
 //! Supports left/right modifier distinction and multi-key chords.
+//!
+//! Recording lifecycle is handled directly in Rust (not via frontend events)
+//! so hotkey operations work even when the webview is minimized/hidden.
 
 use rdev::{listen, Event, Key};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{Emitter, Manager};
-
-use crate::AppState;
 
 static PRESSED_KEYS: OnceLock<Arc<Mutex<Vec<Key>>>> = OnceLock::new();
 
@@ -78,11 +79,10 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
             let keys = hotkey_keys.clone();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // Release debounce (only): suppress hotkey-release if emitted within
+                // Release debounce: suppress hotkey-release if emitted within
                 // 100ms of hotkey-press. Mouse side buttons generate millisecond-level
                 // press/release bounce. Without this, a bounce release would stop and
                 // restart recording before the user can say anything.
-                // Press events always pass through (frontend has its own state lock).
                 let mut last_press_emit = Instant::now() - std::time::Duration::from_secs(1);
 
                 let _ = listen(move |event: Event| {
@@ -103,7 +103,6 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                     };
 
                     let Some(key) = key else { return };
-
                     if !keys.contains(&key) { return; }
 
                     let all_pressed = if let Ok(p) = pressed.lock() {
@@ -114,36 +113,33 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
 
                     let now = Instant::now();
 
-                    match event.event_type {
-                        rdev::EventType::KeyPress(_) => {
-                            if all_pressed {
-                                last_press_emit = now;
-                                let _ = a.emit("hotkey-press", ());
+                    // ── Hotkey pressed: combo fully engaged ──
+                    // Start recording directly in Rust (bypass frontend) so it works
+                    // whether or not the webview is visible. Then emit event for UI.
+                    if let rdev::EventType::KeyPress(_) = event.event_type {
+                        if all_pressed {
+                            last_press_emit = now;
+                            if let Ok(state) = std::panic::catch_unwind(|| a.state::<crate::AppState>()) {
+                                let _ = crate::start_recording_internal(&a, &state);
                             }
+                            let _ = a.emit("hotkey-press", ());
                         }
-                        rdev::EventType::KeyRelease(_) => {
-                            if !all_pressed {
-                                // Release debounce: ignore release within 100ms of last press emit
-                                // This catches mouse button bounce without affecting long recordings
-                                if now.duration_since(last_press_emit).as_millis() < 100 {
-                                    return;
-                                }
-                                let _ = a.emit("hotkey-release", ());
+                        return;
+                    }
 
-                                // Directly stop recorder from Rust (handles minimized webview
-                                // where Tauri events may not be processed by the frontend).
-                                // reset() is idempotent — safe to call even when not recording.
-                                {
-                                    let state = a.state::<AppState>();
-                                    if let Ok(mut recorder) = state.recorder.lock() {
-                                        eprintln!("[hotkey] Force-resetting recorder (minimized webview fallback)");
-                                        recorder.reset();
-                                        let _ = a.emit("recording-reset", ());
-                                    }
-                                }
-                            }
+                    // ── Hotkey released: any key of the combo released ──
+                    if !all_pressed {
+                        // Release debounce
+                        if now.duration_since(last_press_emit).as_millis() < 100 {
+                            return;
                         }
-                        _ => {}
+                        // Stop recording directly in Rust (webview-agnostic).
+                        // Even if the frontend never receives this event, the audio
+                        // gets transcribed and results are emitted when available.
+                        if let Ok(state) = std::panic::catch_unwind(|| a.state::<crate::AppState>()) {
+                            let _ = crate::stop_recording_internal(&a, &state);
+                        }
+                        let _ = a.emit("hotkey-release", ());
                     }
                 });
             }));

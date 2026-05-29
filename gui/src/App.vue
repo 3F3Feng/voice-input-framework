@@ -580,16 +580,24 @@ onMounted(async () => {
   await refreshDevices();
   await updateServer();
 
-  listen("hotkey-press", () => { if (!recording.value && !loading.value) startRecord(); });
-  listen("hotkey-release", () => { if (recording.value) stopRecord(); });
-  // Fallback: Rust-side force-stopped recorder (e.g., window minimized, frontend missed hotkey-release)
-  listen("recording-reset", () => {
-    if (recording.value) {
-      console.log("[hotkey] Recording force-reset by Rust fallback");
-      recording.value = false;
-      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-      if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
-    }
+  // Hotkey lifecycle is handled entirely in Rust (start/stop recording + transcription).
+  // Frontend only updates UI state to reflect what Rust already did.
+  listen("hotkey-press", () => {
+    recording.value = true;
+    result.value = "";
+    elapsedMs.value = 0;
+    timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
+    levelInterval = setInterval(async () => {
+      try { audioLevel.value = await invoke<number>("get_audio_level"); } catch {}
+    }, 100);
+  });
+  listen("hotkey-release", () => {
+    recording.value = false;
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
+    loading.value = true;
+    processingMs.value = 0;
+    processingTimerInterval = setInterval(() => { processingMs.value += 100; }, 100);
   });
   listen("tray-check-update", () => { showSettings.value = true; doCheckUpdate(); });
 
