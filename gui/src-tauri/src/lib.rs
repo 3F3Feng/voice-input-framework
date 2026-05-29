@@ -118,18 +118,24 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
     if let Some(handle) = TOKIO_HANDLE.get() {
         handle.spawn(async move {
             eprintln!("[transcribe] Background task started, host={}", host);
+            let transcribe_start = std::time::Instant::now();
             let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
-
-            if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
-            let _ = indicator::hide(&app_handle);
+            let elapsed_ms = transcribe_start.elapsed().as_millis() as u64;
 
             match result {
                 Ok(text) => {
-                    eprintln!("[transcribe] Done: {} chars", text.len());
+                    eprintln!("[transcribe] Done: {} chars in {}ms", text.len(), elapsed_ms);
+                    // Show processing time on indicator for 500ms before hiding
+                    indicator::show_result(&app_handle, elapsed_ms);
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
+                    let _ = indicator::hide(&app_handle);
                     let _ = app_handle.emit("transcribe-done", text);
                 }
                 Err(e) => {
                     eprintln!("[transcribe] Error: {}", e);
+                    if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
+                    let _ = indicator::hide(&app_handle);
                     let _ = app_handle.emit("transcribe-error", e);
                 }
             }

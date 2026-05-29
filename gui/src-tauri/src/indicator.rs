@@ -56,6 +56,16 @@ pub fn update_status(app: &tauri::AppHandle, status: &str) {
     }
 }
 
+/// Show processing result time on indicator (e.g., "1234ms").
+/// The indicator JS will display it for a short duration before hiding.
+pub fn show_result(app: &tauri::AppHandle, duration_ms: u64) {
+    if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
+        let _ = window.emit("indicator-result", serde_json::json!({
+            "duration_ms": duration_ms,
+        }));
+    }
+}
+
 fn screen_center_bottom(app: &tauri::AppHandle) -> (i32, i32) {
     if let Some(main) = app.get_webview_window("main") {
         if let Ok(Some(mon)) = main.current_monitor() {
