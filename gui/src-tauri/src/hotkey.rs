@@ -119,9 +119,9 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                     if let rdev::EventType::KeyPress(_) = event.event_type {
                         if all_pressed {
                             last_press_emit = now;
-                            if let Ok(state) = std::panic::catch_unwind(|| a.state::<crate::AppState>()) {
-                                let _ = crate::start_recording_internal(&a, &state);
-                            }
+                            // AppHandle is not RefUnwindSafe, so call state() directly
+                            let state = a.state::<crate::AppState>();
+                            let _ = crate::start_recording_internal(&a, &state);
                             let _ = a.emit("hotkey-press", ());
                         }
                         return;
@@ -136,9 +136,8 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                         // Stop recording directly in Rust (webview-agnostic).
                         // Even if the frontend never receives this event, the audio
                         // gets transcribed and results are emitted when available.
-                        if let Ok(state) = std::panic::catch_unwind(|| a.state::<crate::AppState>()) {
-                            let _ = crate::stop_recording_internal(&a, &state);
-                        }
+                        let state = a.state::<crate::AppState>();
+                        let _ = crate::stop_recording_internal(&a, &state);
                         let _ = a.emit("hotkey-release", ());
                     }
                 });
