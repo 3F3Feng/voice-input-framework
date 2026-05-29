@@ -582,6 +582,15 @@ onMounted(async () => {
 
   listen("hotkey-press", () => { if (!recording.value && !loading.value) startRecord(); });
   listen("hotkey-release", () => { if (recording.value) stopRecord(); });
+  // Fallback: Rust-side force-stopped recorder (e.g., window minimized, frontend missed hotkey-release)
+  listen("recording-reset", () => {
+    if (recording.value) {
+      console.log("[hotkey] Recording force-reset by Rust fallback");
+      recording.value = false;
+      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+      if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
+    }
+  });
   listen("tray-check-update", () => { showSettings.value = true; doCheckUpdate(); });
 
   // 后台定时检查更新（启动后延迟30秒，之后每6小时自动检查一次）

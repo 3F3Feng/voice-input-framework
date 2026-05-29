@@ -4,7 +4,9 @@
 use rdev::{listen, Event, Key};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+
+use crate::AppState;
 
 static PRESSED_KEYS: OnceLock<Arc<Mutex<Vec<Key>>>> = OnceLock::new();
 
@@ -127,6 +129,18 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                                     return;
                                 }
                                 let _ = a.emit("hotkey-release", ());
+
+                                // Directly stop recorder from Rust (handles minimized webview
+                                // where Tauri events may not be processed by the frontend).
+                                // reset() is idempotent — safe to call even when not recording.
+                                {
+                                    let state = a.state::<AppState>();
+                                    if let Ok(mut recorder) = state.recorder.lock() {
+                                        eprintln!("[hotkey] Force-resetting recorder (minimized webview fallback)");
+                                        recorder.reset();
+                                        let _ = a.emit("recording-reset", ());
+                                    }
+                                }
                             }
                         }
                         _ => {}
