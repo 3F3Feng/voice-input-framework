@@ -5,7 +5,10 @@
 //! so hotkey operations work even when the webview is minimized/hidden.
 
 use rdev::{listen, Event, Key};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex, OnceLock,
+};
 use std::time::Instant;
 use tauri::{Emitter, Manager};
 
@@ -78,82 +81,106 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
             let a = app.clone();
             let keys = hotkey_keys.clone();
 
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // Release debounce: suppress hotkey-release if emitted within
-                // 100ms of hotkey-press. Mouse side buttons generate millisecond-level
-                // press/release bounce. Without this, a bounce release would stop and
-                // restart recording before the user can say anything.
-                let mut last_press_emit = Instant::now() - std::time::Duration::from_secs(1);
+            // ── Non-blocking hotkey lifecycle ──
+    // On Windows, rdev uses WH_KEYBOARD_LL which requires the hook callback
+    // to return quickly (Windows can silently remove slow hooks).
+    // start/stop_recording_internal involve audio device setup (cpal) that can
+    // take tens of ms, so we defer them to a worker thread via mpsc channel.
+    // This way the hook callback only updates key state and pushes a command.
 
-                let _ = listen(move |event: Event| {
-                    let key = match event.event_type {
-                        rdev::EventType::KeyPress(k) => {
-                            if let Ok(mut p) = pressed.lock() {
-                                if !p.contains(&k) { p.push(k); }
-                            }
-                            Some(k)
-                        }
-                        rdev::EventType::KeyRelease(k) => {
-                            if let Ok(mut p) = pressed.lock() {
-                                p.retain(|&x| x != k);
-                            }
-                            Some(k)
-                        }
-                        _ => None,
-                    };
+    enum HotkeyCmd { Press, Release }
 
-                    let Some(key) = key else { return };
-                    if !keys.contains(&key) { return; }
+    let (cmd_tx, cmd_rx) = mpsc::channel::<HotkeyCmd>();
+    let worker_app = a.clone();
 
-                    let all_pressed = if let Ok(p) = pressed.lock() {
-                        keys.iter().all(|k| p.contains(k))
-                    } else {
-                        false
-                    };
-
-                    let now = Instant::now();
-
-                    // ── Hotkey pressed: combo fully engaged ──
-                    // Start recording directly in Rust (bypass frontend) so it works
-                    // whether or not the webview is visible. Then emit event for UI.
-                    if let rdev::EventType::KeyPress(_) = event.event_type {
-                        if all_pressed {
-                            last_press_emit = now;
-                            // Wrap state access in catch_unwind — AppState is managed in
-                            // setup, so this won't normally fail, but this callback runs on
-                            // rdev's internal thread and an unchecked panic could abort.
-                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                let state = a.state::<crate::AppState>();
-                                let _ = crate::start_recording_internal(&a, &state);
-                            }));
-                            if r.is_err() {
-                                eprintln!("[hotkey] start_recording panic (AppState not ready?)");
-                            }
-                            let _ = a.emit("hotkey-press", ());
-                        }
-                        return;
-                    }
-
-                    // ── Hotkey released: any key of the combo released ──
-                    if !all_pressed {
-                        // Release debounce
-                        if now.duration_since(last_press_emit).as_millis() < 100 {
-                            return;
-                        }
-                        // Stop recording directly in Rust (webview-agnostic).
-                        // Even if the frontend never receives this event, the audio
-                        // gets transcribed and results are emitted when available.
+    // Worker thread: processes start/stop recording without holding up rdev hook
+    let recording = Arc::new(AtomicBool::new(false));
+    let worker_recording = recording.clone();
+    let _ = std::thread::Builder::new()
+        .name("hotkey-worker".into())
+        .spawn(move || {
+            while let Ok(cmd) = cmd_rx.recv() {
+                match cmd {
+                    HotkeyCmd::Press => {
+                        if worker_recording.swap(true, Ordering::SeqCst) { continue; }
                         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            let state = a.state::<crate::AppState>();
-                            let _ = crate::stop_recording_internal(&a, &state);
+                            let state = worker_app.state::<crate::AppState>();
+                            let _ = crate::start_recording_internal(&worker_app, &state);
                         }));
                         if r.is_err() {
-                            eprintln!("[hotkey] stop_recording panic (AppState not ready?)");
+                            eprintln!("[hotkey] start_recording panic");
+                            worker_recording.store(false, Ordering::SeqCst);
                         }
-                        let _ = a.emit("hotkey-release", ());
                     }
-                });
-            }));
+                    HotkeyCmd::Release => {
+                        if !worker_recording.swap(false, Ordering::SeqCst) { continue; }
+                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let state = worker_app.state::<crate::AppState>();
+                            let _ = crate::stop_recording_internal(&worker_app, &state);
+                        }));
+                        if r.is_err() {
+                            eprintln!("[hotkey] stop_recording panic");
+                        }
+                    }
+                }
+            }
+        });
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Release debounce: suppress hotkey-release if emitted within
+        // 100ms of hotkey-press. Mouse side buttons generate millisecond-level
+        // press/release bounce. Without this, a bounce release would stop and
+        // restart recording before the user can say anything.
+        let mut last_press_emit = Instant::now() - std::time::Duration::from_secs(1);
+
+        let _ = listen(move |event: Event| {
+            let key = match event.event_type {
+                rdev::EventType::KeyPress(k) => {
+                    if let Ok(mut p) = pressed.lock() {
+                        if !p.contains(&k) { p.push(k); }
+                    }
+                    Some(k)
+                }
+                rdev::EventType::KeyRelease(k) => {
+                    if let Ok(mut p) = pressed.lock() {
+                        p.retain(|&x| x != k);
+                    }
+                    Some(k)
+                }
+                _ => None,
+            };
+
+            let Some(key) = key else { return };
+            if !keys.contains(&key) { return; }
+
+            let all_pressed = if let Ok(p) = pressed.lock() {
+                keys.iter().all(|k| p.contains(k))
+            } else {
+                false
+            };
+
+            let now = Instant::now();
+
+            // ── Hotkey pressed: combo fully engaged ──
+            if let rdev::EventType::KeyPress(_) = event.event_type {
+                if all_pressed {
+                    last_press_emit = now;
+                    let _ = cmd_tx.send(HotkeyCmd::Press);
+                    let _ = a.emit("hotkey-press", ());
+                }
+                return;
+            }
+
+            // ── Hotkey released: any key of the combo released ──
+            if !all_pressed {
+                if now.duration_since(last_press_emit).as_millis() < 100 {
+                    return;
+                }
+                let _ = cmd_tx.send(HotkeyCmd::Release);
+                let _ = a.emit("hotkey-release", ());
+            }
+        });
+    }));
 
             if let Err(e) = result {
                 let msg = if let Some(s) = e.downcast_ref::<&str>() { s }
