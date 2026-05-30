@@ -266,6 +266,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: v${{ steps.version.outputs.VERSION }}
+          prerelease: true
           generate_release_notes: true
           body: |
             ## Voice Input Framework v${{ steps.version.outputs.VERSION }}
