@@ -8,14 +8,9 @@ mod stt;
 mod tray;
 mod update;
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
-
-/// Tokio runtime handle, captured at startup for the hotkey listener thread
-/// to spawn async transcription tasks (the hotkey thread is a std::thread, not
-/// tokio, so it cannot use tokio::spawn directly).
-static TOKIO_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
 #[macro_export]
 macro_rules! log_info {
@@ -114,35 +109,33 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
     let indicator_status = state.indicator_status.clone();
     let app_handle = app.clone();
 
-    // Use the stored tokio handle to spawn the transcription task from any thread
-    if let Some(handle) = TOKIO_HANDLE.get() {
-        handle.spawn(async move {
-            eprintln!("[transcribe] Background task started, host={}", host);
-            let transcribe_start = std::time::Instant::now();
-            let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
-            let elapsed_ms = transcribe_start.elapsed().as_millis() as u64;
+    // Use tauri::async_runtime::spawn to run transcription from any thread.
+    // This uses Tauri's internal global tokio runtime handle, so it works
+    // even when called from the hotkey listener (a std::thread, not tokio).
+    tauri::async_runtime::spawn(async move {
+        eprintln!("[transcribe] Background task started, host={}", host);
+        let transcribe_start = std::time::Instant::now();
+        let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
+        let elapsed_ms = transcribe_start.elapsed().as_millis() as u64;
 
-            match result {
-                Ok(text) => {
-                    eprintln!("[transcribe] Done: {} chars in {}ms", text.len(), elapsed_ms);
-                    // Show processing time on indicator for 500ms before hiding
-                    indicator::show_result(&app_handle, elapsed_ms);
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
-                    let _ = indicator::hide(&app_handle);
-                    let _ = app_handle.emit("transcribe-done", text);
-                }
-                Err(e) => {
-                    eprintln!("[transcribe] Error: {}", e);
-                    if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
-                    let _ = indicator::hide(&app_handle);
-                    let _ = app_handle.emit("transcribe-error", e);
-                }
+        match result {
+            Ok(text) => {
+                eprintln!("[transcribe] Done: {} chars in {}ms", text.len(), elapsed_ms);
+                // Show processing time on indicator for 500ms before hiding
+                indicator::show_result(&app_handle, elapsed_ms);
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
+                let _ = indicator::hide(&app_handle);
+                let _ = app_handle.emit("transcribe-done", text);
             }
-        });
-    } else {
-        eprintln!("[stop] WARNING: no tokio handle available, losing audio");
-    }
+            Err(e) => {
+                eprintln!("[transcribe] Error: {}", e);
+                if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
+                let _ = indicator::hide(&app_handle);
+                let _ = app_handle.emit("transcribe-error", e);
+            }
+        }
+    });
 
     Ok(String::new())
 }
@@ -374,14 +367,6 @@ pub fn run() {
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
             });
-
-            // Capture tokio runtime handle so the hotkey listener thread (std::thread)
-            // can spawn async transcription tasks.
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                let _ = TOKIO_HANDLE.set(handle);
-            } else {
-                eprintln!("[setup] WARNING: not inside tokio runtime; hotkey async tasks disabled");
-            }
 
             log::init(app.handle());
 
