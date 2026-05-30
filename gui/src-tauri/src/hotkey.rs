@@ -14,8 +14,8 @@ use tauri::{Emitter, Manager};
 
 static PRESSED_KEYS: OnceLock<Arc<Mutex<Vec<Key>>>> = OnceLock::new();
 
-/// Reset hotkey listener state. Call when window is restored from tray
-/// to prevent stuck keys after minimize/restore.
+/// Reset hotkey listener state. Call when window is minimized/hidden
+/// to prevent stuck key states after minimize.
 pub fn reset_state() {
     if let Some(keys) = PRESSED_KEYS.get() {
         if let Ok(mut k) = keys.lock() { k.clear(); }
@@ -90,18 +90,22 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
 
     enum HotkeyCmd { Press, Release }
 
+    let hotkey_keys_worker = hotkey_keys.clone();
     let (cmd_tx, cmd_rx) = mpsc::channel::<HotkeyCmd>();
     let worker_app = a.clone();
 
-    // Worker thread: processes start/stop recording without holding up rdev hook
+    // Worker thread: processes start/stop recording without holding up rdev hook.
+    // After starting recording, polls physical key state in a tight loop.
+    // On Windows this uses GetAsyncKeyState (independent of hook/focus).
+    // If the hook misses a KeyRelease event, the poll catches the state change.
     let recording = Arc::new(AtomicBool::new(false));
     let worker_recording = recording.clone();
     let _ = std::thread::Builder::new()
         .name("hotkey-worker".into())
         .spawn(move || {
-            while let Ok(cmd) = cmd_rx.recv() {
-                match cmd {
-                    HotkeyCmd::Press => {
+            loop {
+                match cmd_rx.recv() {
+                    Ok(HotkeyCmd::Press) => {
                         if worker_recording.swap(true, Ordering::SeqCst) { continue; }
                         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             let state = worker_app.state::<crate::AppState>();
@@ -110,18 +114,36 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                         if r.is_err() {
                             eprintln!("[hotkey] start_recording panic");
                             worker_recording.store(false, Ordering::SeqCst);
+                            continue;
                         }
-                    }
-                    HotkeyCmd::Release => {
-                        if !worker_recording.swap(false, Ordering::SeqCst) { continue; }
-                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+
+                        // Poll physical key state until release (or explicit Release cmd).
+                        // rdev::is_key_pressed uses GetAsyncKeyState on Windows — no
+                        // hook timing issues, works regardless of focus/visibility.
+                        'record: loop {
+                            match cmd_rx.try_recv() {
+                                Ok(HotkeyCmd::Release) => break 'record,
+                                Ok(HotkeyCmd::Press) => {
+                                    // Re-press while recording → force stop
+                                    break 'record;
+                                }
+                                Err(mpsc::TryRecvError::Disconnected) => break 'record,
+                                Err(mpsc::TryRecvError::Empty) => {}
+                            }
+                            // Check if any hotkey key is physically released
+                            let released = hotkey_keys_worker.iter().any(|k| !rdev::is_key_pressed(k));
+                            if released { break 'record; }
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+
+                        // Stop recording (release was detected via poll or cmd)
+                        worker_recording.store(false, Ordering::SeqCst);
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             let state = worker_app.state::<crate::AppState>();
                             let _ = crate::stop_recording_internal(&worker_app, &state);
                         }));
-                        if r.is_err() {
-                            eprintln!("[hotkey] stop_recording panic");
-                        }
                     }
+                    _ => break,
                 }
             }
         });

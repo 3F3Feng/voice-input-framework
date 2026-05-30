@@ -321,7 +321,7 @@ async fn auto_input(text: String) -> Result<(), String> { input::type_text(&text
 
 #[tauri::command]
 async fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {
-    // Don't reset hotkey state here — it interferes with ongoing recordings
+    hotkey::reset_state();
     if let Some(window) = app.get_webview_window("main") { let _ = window.hide(); }
     Ok(())
 }
