@@ -231,10 +231,12 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
                             record_start = None;
 
                             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                let state = app.state::<AppState>();
                                 // Reset the recorder directly (cleaner than partial stop)
-                                if let Ok(mut rec) = state.recorder.lock() {
-                                    rec.reset();
+                                // Bind in separate lets to ensure proper drop order
+                                let state = app.state::<AppState>();
+                                let result = state.recorder.lock();
+                                if let Ok(mut guard) = result {
+                                    guard.reset();
                                 }
                             }));
                         }
