@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.10-rc1] - 2026-05-30
+
+### Fixed
+
+- **Hotkey release detection after minimize (Windows)**: completely rewrote hotkey
+  detection to use `GetAsyncKeyState` polling instead of `rdev` `WH_KEYBOARD_LL`
+  hook. The hook stops firing KeyRelease events when the Tauri webview is minimized
+  to tray, causing recordings to never stop. Pure Win32 API polling works
+  regardless of window state.
+
 ## [2.0.1] - 2026-05-26
 
 ### Fixed
