@@ -3,6 +3,9 @@
 //!
 //! Recording lifecycle is handled directly in Rust (not via frontend events)
 //! so hotkey operations work even when the webview is minimized/hidden.
+//!
+//! Release detection: on Windows, polls GetAsyncKeyState directly via raw FFI
+//! (independent of rdev hook, immune to hook-timeout / focus issues).
 
 use rdev::{listen, Event, Key};
 use std::sync::{
@@ -130,9 +133,16 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                                 Err(mpsc::TryRecvError::Disconnected) => break 'record,
                                 Err(mpsc::TryRecvError::Empty) => {}
                             }
-                            // Check if any hotkey key is physically released
-                            let released = hotkey_keys_worker.iter().any(|k| !rdev::is_key_pressed(k));
-                            if released { break 'record; }
+                            // Check if any hotkey key is physically released.
+                            // On Windows: poll GetAsyncKeyState (no hook dependency).
+                            // On other platforms: rely on the hook callback Release cmd.
+                            #[cfg(target_os = "windows")]
+                            {
+                                let released = hotkey_keys_worker.iter().any(|k| !win_key_down(k));
+                                if released { break 'record; }
+                            }
+                            #[cfg(not(target_os = "windows"))]
+                            std::thread::sleep(std::time::Duration::from_millis(50));
                             std::thread::sleep(std::time::Duration::from_millis(10));
                         }
 
@@ -216,4 +226,74 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
 /// Match a single key against the hotkey combo, respecting left/right modifiers.
 fn key_match(hotkey: &[Key], event_key: &Key) -> bool {
     hotkey.contains(event_key)
+}
+
+/// Windows-only: check if a physical key is currently held down via GetAsyncKeyState.
+/// This bypasses the rdev hook entirely — no hook timeout / focus issues.
+#[cfg(target_os = "windows")]
+fn win_key_down(k: &Key) -> bool {
+    extern "system" {
+        fn GetAsyncKeyState(vKey: i32) -> i16;
+    }
+    let Some(vk) = key_to_vk(k) else { return true }; // unknown key = assume pressed
+    unsafe { GetAsyncKeyState(vk) & 0x8000 != 0 }
+}
+
+/// Maps rdev::Key → Windows Virtual-Key code.
+#[cfg(target_os = "windows")]
+fn key_to_vk(k: &Key) -> Option<i32> {
+    Some(match k {
+        Key::Alt         => 0x12,    // VK_MENU
+        Key::AltGr       => 0xA5,    // VK_RMENU
+        Key::ControlLeft => 0xA2,    // VK_LCONTROL
+        Key::ControlRight=> 0xA3,    // VK_RCONTROL
+        Key::ShiftLeft   => 0xA0,    // VK_LSHIFT
+        Key::ShiftRight  => 0xA1,    // VK_RSHIFT
+        Key::CapsLock    => 0x14,    // VK_CAPITAL
+        Key::Space       => 0x20,    // VK_SPACE
+        Key::Return      => 0x0D,    // VK_RETURN
+        Key::Tab         => 0x09,    // VK_TAB
+        Key::Escape      => 0x1B,    // VK_ESCAPE
+        Key::Delete      => 0x2E,    // VK_DELETE
+        Key::Backspace   => 0x08,    // VK_BACK
+        Key::F1          => 0x70,
+        Key::F2          => 0x71,
+        Key::F3          => 0x72,
+        Key::F4          => 0x73,
+        Key::F5          => 0x74,
+        Key::F6          => 0x75,
+        Key::F7          => 0x76,
+        Key::F8          => 0x77,
+        Key::F9          => 0x78,
+        Key::F10         => 0x79,
+        Key::F11         => 0x7A,
+        Key::F12         => 0x7B,
+        Key::KeyA        => 0x41,
+        Key::KeyB        => 0x42,
+        Key::KeyC        => 0x43,
+        Key::KeyD        => 0x44,
+        Key::KeyE        => 0x45,
+        Key::KeyF        => 0x46,
+        Key::KeyG        => 0x47,
+        Key::KeyH        => 0x48,
+        Key::KeyI        => 0x49,
+        Key::KeyJ        => 0x4A,
+        Key::KeyK        => 0x4B,
+        Key::KeyL        => 0x4C,
+        Key::KeyM        => 0x4D,
+        Key::KeyN        => 0x4E,
+        Key::KeyO        => 0x4F,
+        Key::KeyP        => 0x50,
+        Key::KeyQ        => 0x51,
+        Key::KeyR        => 0x52,
+        Key::KeyS        => 0x53,
+        Key::KeyT        => 0x54,
+        Key::KeyU        => 0x55,
+        Key::KeyV        => 0x56,
+        Key::KeyW        => 0x57,
+        Key::KeyX        => 0x58,
+        Key::KeyY        => 0x59,
+        Key::KeyZ        => 0x5A,
+        _ => return None,
+    })
 }
