@@ -2,6 +2,7 @@ name: Build Tauri Client
 on:
   push:
     branches: [dev/llm-postprocessing-v2, main]
+    tags-ignore: ['**']
     paths:
       - 'gui/**'
       - '.github/workflows/build.yml'
