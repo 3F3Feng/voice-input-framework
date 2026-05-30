@@ -420,5 +420,27 @@ pub fn run() {
             check_update, install_update,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            let msg = format!("Fatal startup error: {:?}", e);
+            eprintln!("{}", msg);
+            // Write to log file so user can diagnose silent startup crashes (Windows GUI app
+            // has no visible console output by default).
+            if let Ok(cwd) = std::env::current_dir() {
+                let log_path = cwd.join("vif_startup_error.log");
+                let _ = std::fs::write(&log_path, &msg);
+            }
+            // Try to show a message box on Windows so the user sees the error
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new("mshta.exe")
+                    .arg(format!(
+                        "javascript:alert('{}');close()",
+                        msg.replace('\\', "\\\\").replace('\'', "\\'")
+                    ))
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                    .spawn();
+            }
+            std::process::exit(1);
+        });
 }
