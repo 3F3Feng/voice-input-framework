@@ -377,7 +377,11 @@ pub fn run() {
 
             // Capture tokio runtime handle so the hotkey listener thread (std::thread)
             // can spawn async transcription tasks.
-            let _ = TOKIO_HANDLE.set(tokio::runtime::Handle::current());
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let _ = TOKIO_HANDLE.set(handle);
+            } else {
+                eprintln!("[setup] WARNING: not inside tokio runtime; hotkey async tasks disabled");
+            }
 
             log::init(app.handle());
 

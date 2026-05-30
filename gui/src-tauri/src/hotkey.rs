@@ -119,9 +119,16 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                     if let rdev::EventType::KeyPress(_) = event.event_type {
                         if all_pressed {
                             last_press_emit = now;
-                            // AppHandle is not RefUnwindSafe, so call state() directly
-                            let state = a.state::<crate::AppState>();
-                            let _ = crate::start_recording_internal(&a, &state);
+                            // Wrap state access in catch_unwind — AppState is managed in
+                            // setup, so this won't normally fail, but this callback runs on
+                            // rdev's internal thread and an unchecked panic could abort.
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                let state = a.state::<crate::AppState>();
+                                let _ = crate::start_recording_internal(&a, &state);
+                            }));
+                            if r.is_err() {
+                                eprintln!("[hotkey] start_recording panic (AppState not ready?)");
+                            }
                             let _ = a.emit("hotkey-press", ());
                         }
                         return;
@@ -136,8 +143,13 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<Key>) {
                         // Stop recording directly in Rust (webview-agnostic).
                         // Even if the frontend never receives this event, the audio
                         // gets transcribed and results are emitted when available.
-                        let state = a.state::<crate::AppState>();
-                        let _ = crate::stop_recording_internal(&a, &state);
+                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let state = a.state::<crate::AppState>();
+                            let _ = crate::stop_recording_internal(&a, &state);
+                        }));
+                        if r.is_err() {
+                            eprintln!("[hotkey] stop_recording panic (AppState not ready?)");
+                        }
                         let _ = a.emit("hotkey-release", ());
                     }
                 });
