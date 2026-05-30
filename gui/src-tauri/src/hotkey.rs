@@ -432,7 +432,9 @@ fn win_key_down(k: &HotkeyKey) -> bool {
         fn GetAsyncKeyState(vKey: i32) -> i16;
     }
     let Some(vk) = hotkey_to_vk(k) else { return false }; // unknown key = assume NOT pressed
-    unsafe { GetAsyncKeyState(vk) & 0x8000 != 0 }
+    // GetAsyncKeyState returns SHORT (i16). MSB=0x8000 means key is down.
+    // Cast to u16 to avoid literal out of range for i16.
+    unsafe { (GetAsyncKeyState(vk) as u16) & 0x8000u16 != 0 }
 }
 
 /// Maps HotkeyKey → Windows Virtual-Key code.
