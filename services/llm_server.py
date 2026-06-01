@@ -286,11 +286,23 @@ async def get_platform():
     return {
         "system": platform_info.system,
         "arch": platform_info.arch,
+        "python_version": platform_info.python_version,
         "backend": platform_info.best_backend,
-        "gpu": platform_info.gpu_info,
-        "has_mlx": platform_info.has_mlx,
-        "has_cuda": platform_info.has_cuda,
-        "has_mps": platform_info.has_mps,
+        "gpu": {
+            "name": platform_info.cuda_device.name if platform_info.cuda_device else None,
+            "memory_gb": platform_info.cuda_device.memory_gb if platform_info.cuda_device else 0,
+            "driver": platform_info.cuda_device.driver_version if platform_info.cuda_device else None,
+            "cuda_version": platform_info.cuda_device.cuda_version if platform_info.cuda_device else None,
+        } if platform_info.has_cuda else None,
+        "cpu": {
+            "cores": platform_info.cpu_cores,
+            "ram_gb": round(platform_info.ram_gb, 1),
+        },
+        "capabilities": {
+            "mlx": platform_info.has_mlx,
+            "cuda": platform_info.has_cuda,
+            "mps": platform_info.has_mps,
+        },
         "recommended_model": engine.get_default_model(),
         "available_models": list(engine.get_available_models().keys()),
     }

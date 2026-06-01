@@ -167,11 +167,13 @@ class ModelInfo(BaseModel):
     description: str = ""
     is_loaded: bool = False
     is_default: bool = False
+    is_available: bool = True
+    memory_gb: float = 0.0
 
 class HealthStatus(BaseModel):
     """健康状态"""
     status: str
-    version: str = "1.1.0"
+    version: str = "2.0.0"
     uptime_seconds: float
     current_model: str
     loaded_models: List[str]
@@ -179,6 +181,7 @@ class HealthStatus(BaseModel):
     total_requests: int = 0
     failed_requests: int = 0
     diarize: Optional[Dict[str, Any]] = None
+    platform: Optional[Dict[str, Any]] = None
 
 class ErrorResponse(BaseModel):
     """错误响应"""
@@ -752,12 +755,47 @@ async def shutdown_event():
     """关闭时清理"""
     logger.info("STT Service shutting down")
 
+@app.get("/platform")
+async def get_platform():
+    """获取平台信息"""
+    platform_info = detect_platform()
+    from shared.model_selector import ModelSelector
+    selector = ModelSelector(platform_info)
+    
+    return {
+        "system": platform_info.system,
+        "arch": platform_info.arch,
+        "python_version": platform_info.python_version,
+        "backend": platform_info.best_backend,
+        "gpu": {
+            "name": platform_info.cuda_device.name if platform_info.cuda_device else None,
+            "memory_gb": platform_info.cuda_device.memory_gb if platform_info.cuda_device else 0,
+            "driver": platform_info.cuda_device.driver_version if platform_info.cuda_device else None,
+            "cuda_version": platform_info.cuda_device.cuda_version if platform_info.cuda_device else None,
+        } if platform_info.has_cuda else None,
+        "cpu": {
+            "cores": platform_info.cpu_cores,
+            "ram_gb": round(platform_info.ram_gb, 1),
+        },
+        "capabilities": {
+            "mlx": platform_info.has_mlx,
+            "cuda": platform_info.has_cuda,
+            "mps": platform_info.has_mps,
+        },
+        "recommended": {
+            "stt_model": selector.get_default_model(),
+            "llm_models": platform_info.get_recommended_llm_models(),
+        },
+        "available_models": list(selector.get_available_models().keys()),
+    }
+
 @app.get("/health", response_model=HealthStatus)
 async def health_check():
     """健康检查"""
+    platform_info = detect_platform()
     return HealthStatus(
         status="ok" if engine.is_model_loaded() else "loading",
-        version="1.1.0",
+        version="2.0.0",
         uptime_seconds=time.time() - engine.start_time,
         current_model=engine.current_model_name,
         loaded_models=[engine.current_model_name] if engine.is_model_loaded() else [],
@@ -765,18 +803,34 @@ async def health_check():
         total_requests=engine.total_requests,
         failed_requests=engine.failed_requests,
         diarize=diarize_engine.get_health() if diarize_engine else {"status": "disabled"},
+        platform={
+            "system": platform_info.system,
+            "arch": platform_info.arch,
+            "backend": platform_info.best_backend,
+            "gpu": platform_info.gpu_info,
+        },
     )
 
 @app.get("/models", response_model=List[ModelInfo])
 async def list_models():
     """获取可用 STT 模型列表"""
+    platform_info = detect_platform()
+    from shared.model_selector import ModelSelector
+    selector = ModelSelector(platform_info)
+    
     models = []
     for name, info in STTEngine.AVAILABLE_MODELS.items():
+        # 检查模型是否在当前平台可用
+        available_models = selector.get_available_models()
+        is_available = name in available_models
+        
         models.append(ModelInfo(
             name=name,
-            description=f"STT model: {info['model_id']}",
+            description=info.get('description', f"STT model: {info['model_id']}"),
             is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
             is_default=(name == engine.default_model),
+            is_available=is_available,
+            memory_gb=info.get('memory_gb', 0),
         ))
     return models
 
