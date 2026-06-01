@@ -372,6 +372,107 @@ def has_mlx() -> bool:
     return detect_platform().has_mlx
 
 
+def get_startup_banner(service_name: str = "STT Service", extra_info: dict = None) -> str:
+    """
+    生成启动横幅
+    
+    Args:
+        service_name: 服务名称
+        extra_info: 额外信息字典
+    
+    Returns:
+        格式化的启动横幅字符串
+    """
+    info = detect_platform()
+    
+    lines = [
+        "=" * 60,
+        f"Voice Input Framework - {service_name}",
+        "=" * 60,
+        "",
+        "Platform:",
+        f"  System:     {info.system} {info.arch}",
+        f"  Python:     {info.python_version}",
+        f"  CPU:        {info.cpu_cores} cores",
+        f"  RAM:        {info.ram_gb:.1f} GB",
+        f"  GPU:        {info.gpu_info}",
+        f"  Backend:    {info.best_backend}",
+    ]
+    
+    if info.has_cuda and info.cuda_device:
+        lines.extend([
+            f"  CUDA:       {info.cuda_device.cuda_version}",
+            f"  Driver:     {info.cuda_device.driver_version}",
+            f"  GPU Memory: {info.cuda_device.memory_gb:.1f} GB",
+        ])
+    
+    if extra_info:
+        lines.append("")
+        for key, value in extra_info.items():
+            lines.append(f"  {key}: {value}")
+    
+    lines.extend([
+        "",
+        "=" * 60,
+    ])
+    
+    return "\n".join(lines)
+
+
+def check_resource_requirements(
+    model_name: str,
+    required_memory_gb: float,
+    platform_info: PlatformInfo = None,
+) -> dict:
+    """
+    检查资源是否满足要求
+    
+    Args:
+        model_name: 模型名称
+        required_memory_gb: 需要的内存/显存 (GB)
+        platform_info: 平台信息，如果为 None 则自动检测
+    
+    Returns:
+        dict: {
+            "passed": bool,
+            "warnings": list[str],
+            "gpu_available": float,
+            "ram_available": float,
+        }
+    """
+    if platform_info is None:
+        platform_info = detect_platform()
+    
+    warnings = []
+    gpu_available = 0.0
+    ram_available = platform_info.ram_gb
+    
+    # 检查 GPU 显存
+    if platform_info.has_cuda and platform_info.cuda_device:
+        gpu_available = platform_info.cuda_device.memory_gb
+        if required_memory_gb > gpu_available:
+            warnings.append(
+                f"Model {model_name} requires {required_memory_gb}GB VRAM, "
+                f"but only {gpu_available}GB available. May cause OOM."
+            )
+    
+    # 检查系统内存
+    if platform_info.ram_gb > 0:
+        total_required = required_memory_gb + 2.0  # 预留 2GB 给系统
+        if total_required > platform_info.ram_gb:
+            warnings.append(
+                f"May need {total_required}GB RAM, "
+                f"but only {platform_info.ram_gb:.1f}GB available"
+            )
+    
+    return {
+        "passed": len(warnings) == 0,
+        "warnings": warnings,
+        "gpu_available": gpu_available,
+        "ram_available": ram_available,
+    }
+
+
 # 向后兼容：替换 shared/model_registry.py 中的 IS_APPLE_SILICON
 IS_APPLE_SILICON = is_apple_silicon()
 
@@ -390,3 +491,12 @@ if __name__ == "__main__":
     print("\nRecommended LLM Models:")
     for model in info.get_recommended_llm_models():
         print(f"  - {model}")
+    
+    # 测试启动横幅
+    print("\n" + get_startup_banner("Test Service", {"Default Model": "whisper_turbo"}))
+    
+    # 测试资源检查
+    result = check_resource_requirements("whisper_turbo", 3.0)
+    print(f"\nResource Check: {'PASSED' if result['passed'] else 'FAILED'}")
+    for w in result['warnings']:
+        print(f"  Warning: {w}")

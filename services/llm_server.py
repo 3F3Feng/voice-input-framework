@@ -27,7 +27,7 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
-from shared.platform_detector import detect_platform
+from shared.platform_detector import detect_platform, get_startup_banner, check_resource_requirements
 from server.llm_engine import LLMEngine, LLM_MODELS_CONFIG
 
 # 配置日志
@@ -137,19 +137,41 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """启动时加载模型"""
-    logger.info("=" * 60)
-    logger.info("Voice Input Framework - LLM Service")
-    logger.info("=" * 60)
-    logger.info(f"Platform:\n{platform_info.summary()}")
-    logger.info(f"Default model: {default_model}")
-    logger.info(f"Backend: {platform_info.best_backend}")
-    logger.info("=" * 60)
+    # 显示启动横幅
+    extra_info = {
+        "Default LLM Model": default_model or "(none - no GPU)",
+        "Backend": platform_info.best_backend,
+    }
+    banner = get_startup_banner("LLM Service", extra_info)
+    logger.info(banner)
     
-    # 后台加载模型(非阻塞)
+    # 资源检查
     if default_model:
-        asyncio.create_task(engine.load_model(default_model))
+        from server.llm_engine import LLM_MODELS_CONFIG
+        model_config = LLM_MODELS_CONFIG.get(default_model, {})
+        required_memory = model_config.get("memory_gb", 0)
+        resource_result = check_resource_requirements(default_model, required_memory)
+        
+        if resource_result["passed"]:
+            logger.info("✓ Resource check passed")
+        else:
+            for warning in resource_result["warnings"]:
+                logger.warning(f"⚠️  {warning}")
+    
+    # 预加载配置
+    preload = os.getenv("VIF_PRELOAD_MODELS", "stt").lower()
+    if preload == "none" or preload == "stt":
+        logger.info(f"LLM preload skipped (VIF_PRELOAD_MODELS={preload})")
+        logger.info("LLM will load on first request")
+    elif preload == "all":
+        if default_model:
+            logger.info("Preloading LLM model...")
+            asyncio.create_task(engine.load_model(default_model))
+        else:
+            logger.warning("No default LLM model available for this platform")
     else:
-        logger.warning("No default LLM model available for this platform")
+        logger.info(f"Unknown preload option: {preload}, skipping LLM preload")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():

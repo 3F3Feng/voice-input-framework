@@ -25,7 +25,7 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 from shared.model_registry import MODELS_CONFIG, get_default_model, get_apple_silicon_only_models, IS_APPLE_SILICON
-from shared.platform_detector import detect_platform, get_platform_info
+from shared.platform_detector import detect_platform, get_platform_info, get_startup_banner, check_resource_requirements
 from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
 
 import uvicorn
@@ -709,10 +709,43 @@ async def request_id_middleware(request: Request, call_next):
 @app.on_event("startup")
 async def startup_event():
     """启动时加载模型"""
+    # 显示启动横幅
+    extra_info = {
+        "Default STT Model": STT_MODEL,
+        "LLM Enabled": LLM_ENABLED,
+        "LLM Model": LLM_MODEL,
+    }
+    banner = get_startup_banner("STT Service", extra_info)
+    logger.info(banner)
+    
+    # 资源检查
+    from shared.model_registry import MODELS_CONFIG
+    model_config = MODELS_CONFIG.get(STT_MODEL, {})
+    required_memory = model_config.get("memory_gb", 0)
+    resource_result = check_resource_requirements(STT_MODEL, required_memory)
+    
+    if resource_result["passed"]:
+        logger.info("✓ Resource check passed")
+    else:
+        for warning in resource_result["warnings"]:
+            logger.warning(f"⚠️  {warning}")
+    
+    # 预加载配置
+    preload = os.getenv("VIF_PRELOAD_MODELS", "stt").lower()
+    if preload == "none":
+        logger.info("Preload disabled (VIF_PRELOAD_MODELS=none)")
+    elif preload == "stt":
+        logger.info("Preloading STT model...")
+        asyncio.create_task(engine.load())
+    elif preload == "all":
+        logger.info("Preloading STT model...")
+        asyncio.create_task(engine.load())
+    else:
+        logger.info(f"Unknown preload option: {preload}, defaulting to STT")
+        asyncio.create_task(engine.load())
+    
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
-    logger.info(f"Default model: {STT_MODEL}")
-    # 后台加载模型（非阻塞）
-    asyncio.create_task(engine.load())
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -1149,17 +1182,6 @@ async def diarize(
 
 def main():
     """主函数"""
-    # 显示平台信息
-    platform_info = detect_platform()
-    logger.info("=" * 60)
-    logger.info("Voice Input Framework - STT Service")
-    logger.info("=" * 60)
-    logger.info(f"Platform:\n{platform_info.summary()}")
-    logger.info(f"Default STT Model: {STT_MODEL}")
-    logger.info(f"LLM Enabled: {LLM_ENABLED}")
-    logger.info(f"LLM Model: {LLM_MODEL}")
-    logger.info("=" * 60)
-    
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
     uvicorn.run(
         app,
