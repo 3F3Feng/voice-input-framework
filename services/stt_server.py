@@ -25,6 +25,7 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 from shared.model_registry import MODELS_CONFIG, get_default_model, get_apple_silicon_only_models, IS_APPLE_SILICON
+from shared.platform_detector import detect_platform, get_platform_info
 from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
 
 import uvicorn
@@ -299,24 +300,36 @@ class STTEngine:
                 self._loading = False
 
     def _load_model_sync(self):
-        """同步加载主模型"""
+        """同步加载主模型
+        
+        使用统一平台检测模块，自动选择最优设备和引擎。
+        """
         import torch
 
         model_id = self._model_info["model_id"]
         engine_type = self._model_info.get("engine", "qwen_asr_mlx_native")
 
-        # 检测设备
-        if torch.backends.mps.is_available():
-            device = "mps"
-        elif torch.cuda.is_available():
-            device = "cuda"
+        # 使用统一平台检测
+        platform_info = detect_platform()
+        device = platform_info.best_backend
+        
+        # 对于非 MLX 引擎，使用 torch 设备
+        if device == "mlx":
+            # MLX 引擎不使用 torch 设备，单独处理
+            torch_device = "cpu"  # 降级到 CPU 用于非 MLX 部分
+        elif device == "cuda":
+            torch_device = "cuda"
+        elif device == "mps":
+            torch_device = "mps"
         else:
-            device = "cpu"
+            torch_device = "cpu"
+
+        logger.info(f"Platform: {platform_info.system} {platform_info.arch}, Backend: {device}, GPU: {platform_info.gpu_info}")
 
         # ── Whisper MLX 引擎 ──
         if engine_type == "whisper_mlx":
-            if not IS_APPLE_SILICON:
-                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS)")
+            if not platform_info.has_mlx:
+                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS) with mlx installed")
             import mlx_whisper
             import numpy as np
 
@@ -330,8 +343,8 @@ class STTEngine:
 
         # ── Qwen3-ASR MLX 原生引擎 (mlx-audio) ──
         if engine_type == "qwen_asr_mlx_native":
-            if not IS_APPLE_SILICON:
-                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS)")
+            if not platform_info.has_mlx:
+                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS) with mlx installed")
             from server.models.qwen3_asr_mlx_native import Qwen3ASRMLXNativeEngine
             model_name = self.current_model_name
             logger.info(f"Loading Qwen3-ASR MLX native model: {model_name}")
@@ -343,10 +356,25 @@ class STTEngine:
             self._model_type = "qwen_asr_mlx_native"
             return
 
-
+        # ── Qwen3-ASR CUDA 引擎 ──
+        if engine_type == "qwen_asr_cuda":
+            if not platform_info.has_cuda:
+                raise RuntimeError("CUDA models require NVIDIA GPU with CUDA support")
+            from server.models.qwen3_asr_cuda import Qwen3ASRCudaEngine
+            model_name = self.current_model_name
+            logger.info(f"Loading Qwen3-ASR CUDA model: {model_name}")
+            cuda_engine = Qwen3ASRCudaEngine(model_name=model_name)
+            # CUDA 引擎同步加载
+            cuda_engine._load_sync()
+            cuda_engine._is_loaded = True
+            self._model = cuda_engine
+            self._model_type = "qwen_asr_cuda"
+            return
 
         # ── Whisper.cpp 引擎 ──
         if engine_type == "whisper_cpp":
+            if not platform_info.is_macos:
+                raise RuntimeError("Whisper.cpp requires macOS")
             from server.models.whisper_cpp import WhisperCppEngine
 
             whisper_model = self._model_info.get("whisper_model", "whisper-v3-base")
@@ -364,12 +392,12 @@ class STTEngine:
         if engine_type == "whisper_turbo":
             from transformers import pipeline
 
-            logger.info(f"Loading Whisper turbo on {device}...")
+            logger.info(f"Loading Whisper turbo on {torch_device}...")
             self._model = pipeline(
                 "automatic-speech-recognition",
                 model=model_id,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                device=device,
+                torch_dtype=torch.float16 if torch_device == "cuda" else torch.float32,
+                device=torch_device,
             )
             self._model_type = "whisper_turbo"
             return
@@ -417,8 +445,13 @@ class STTEngine:
             import torch
             del self._model
             self._model = None
-            if torch.backends.mps.is_available():
+            
+            # 使用统一平台检测清理 GPU 内存
+            platform_info = detect_platform()
+            if platform_info.has_mps:
                 torch.mps.empty_cache()
+            elif platform_info.has_cuda:
+                torch.cuda.empty_cache()
             gc.collect()
             logger.info("Old model memory released")
 
@@ -1116,6 +1149,17 @@ async def diarize(
 
 def main():
     """主函数"""
+    # 显示平台信息
+    platform_info = detect_platform()
+    logger.info("=" * 60)
+    logger.info("Voice Input Framework - STT Service")
+    logger.info("=" * 60)
+    logger.info(f"Platform:\n{platform_info.summary()}")
+    logger.info(f"Default STT Model: {STT_MODEL}")
+    logger.info(f"LLM Enabled: {LLM_ENABLED}")
+    logger.info(f"LLM Model: {LLM_MODEL}")
+    logger.info("=" * 60)
+    
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
     uvicorn.run(
         app,

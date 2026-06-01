@@ -30,6 +30,10 @@ class BaseSTTEngine(ABC):
         self._model = None
         self._is_loaded = False
         self._lock = asyncio.Lock()
+        
+        # 如果 device 是 "auto"，自动检测最优设备
+        if device == "auto":
+            self.device = self.detect_device()
     
     @property
     def is_loaded(self) -> bool:
@@ -79,17 +83,55 @@ class BaseSTTEngine(ABC):
     
     @staticmethod
     def detect_device() -> str:
-        """自动检测可用设备"""
+        """自动检测可用设备
+        
+        使用统一平台检测模块，返回最优设备:
+        - "cuda": NVIDIA GPU
+        - "mps": Apple Silicon GPU (Metal Performance Shaders)
+        - "cpu": CPU (无 GPU 加速)
+        
+        注意: MLX 引擎不使用此方法，它们有自己的加载逻辑
+        """
         try:
-            import torch
-            if torch.cuda.is_available():
+            from shared.platform_detector import detect_platform
+            platform_info = detect_platform()
+            
+            if platform_info.has_cuda:
                 return "cuda"
-            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            elif platform_info.has_mps:
                 return "mps"
             else:
                 return "cpu"
         except ImportError:
-            return "cpu"
+            # 降级到 torch 检测
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    return "cuda"
+                elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                    return "mps"
+                else:
+                    return "cpu"
+            except ImportError:
+                return "cpu"
+    
+    @staticmethod
+    def get_platform_info() -> dict:
+        """获取平台信息（用于日志和调试）"""
+        try:
+            from shared.platform_detector import detect_platform
+            platform_info = detect_platform()
+            return {
+                "system": platform_info.system,
+                "arch": platform_info.arch,
+                "backend": platform_info.best_backend,
+                "has_cuda": platform_info.has_cuda,
+                "has_mlx": platform_info.has_mlx,
+                "has_mps": platform_info.has_mps,
+                "gpu": platform_info.gpu_info,
+            }
+        except ImportError:
+            return {"error": "platform_detector not available"}
     
     def get_model_info(self) -> dict:
         """获取模型信息"""
@@ -97,6 +139,7 @@ class BaseSTTEngine(ABC):
             "name": self.model_name,
             "device": self.device,
             "is_loaded": self._is_loaded,
+            "platform": self.get_platform_info(),
         }
 
 

@@ -10,12 +10,14 @@ from server.models.whisper import WhisperEngine
 from server.models.whisper_mlx import WhisperMLXEngine
 from server.models.whisper_cpp import WhisperCppEngine
 from server.models.qwen3_asr_mlx_native import Qwen3ASRMLXNativeEngine
+from server.models.qwen3_asr_cuda import Qwen3ASRCudaEngine
 from shared.model_registry import MODELS_CONFIG
 
 # 引擎类映射：engine_type → EngineClass
 # 与 MODELS_CONFIG 中的 engine 字段对应
 _ENGINE_CLASSES = {
     "qwen_asr_mlx_native": Qwen3ASRMLXNativeEngine,
+    "qwen_asr_cuda": Qwen3ASRCudaEngine,
     "whisper_mlx": WhisperMLXEngine,
     "whisper_cpp": WhisperCppEngine,
     "whisper_turbo": WhisperEngine,
@@ -45,6 +47,7 @@ __all__ = [
     "WhisperMLXEngine",
     "WhisperCppEngine",
     "Qwen3ASRMLXNativeEngine",
+    "Qwen3ASRCudaEngine",
     "AVAILABLE_MODELS",
     "MODELS_CONFIG",
 ]
