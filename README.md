@@ -36,13 +36,47 @@
 
 ## 🚀 快速开始
 
-### 服务端
+### 自动安装（推荐）
 
 ```bash
 git clone https://github.com/3F3Feng/voice-input-framework.git
 cd voice-input-framework
-pip install -r requirements.txt
 
+# 自动检测平台并安装依赖
+./install.sh
+
+# 或指定安装选项
+./install.sh --all         # 安装所有依赖
+./install.sh --stt-only    # 只安装 STT
+./install.sh --llm-only    # 只安装 LLM
+```
+
+### 手动安装
+
+根据平台选择对应的依赖文件：
+
+```bash
+# 基础依赖（所有平台）
+pip install -r requirements/base.txt
+
+# STT 依赖（选择一个）
+pip install -r requirements/stt-mlx.txt    # Apple Silicon
+pip install -r requirements/stt-cuda.txt   # NVIDIA GPU
+pip install -r requirements/stt-cpu.txt    # CPU
+
+# LLM 依赖（可选，选择一个）
+pip install -r requirements/llm-mlx.txt    # Apple Silicon
+pip install -r requirements/llm-cuda.txt   # NVIDIA GPU
+```
+
+**NVIDIA GPU 用户**需要额外安装 CUDA PyTorch：
+```bash
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+
+### 启动服务
+
+```bash
 # 启动 STT 服务 (端口 6544)
 python -m services.stt_server
 
