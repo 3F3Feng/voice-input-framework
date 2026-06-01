@@ -176,3 +176,142 @@ def get_apple_silicon_only_models() -> list:
 def get_cuda_only_models() -> list:
     """返回需要 CUDA 的模型列表"""
     return [name for name, cfg in MODELS_CONFIG.items() if cfg.get("requires_cuda")]
+
+
+# ============== LLM 模型注册表 ==============
+
+# LLM 模型配置：名称 → 元数据
+# backend 必须与 server/llm_engines/ 中的引擎类对应
+LLM_MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
+    # ── MLX 模型 (Apple Silicon) ──
+    "Qwen3.5-4B-OptiQ": {
+        "model_id": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        "backend": "mlx",
+        "memory_gb": 0.8,
+        "description": "Qwen3.5-4B MLX 4bit (推荐，平衡速度和精度)",
+        "requires_mlx": True,
+    },
+    "Qwen3.5-2B-OptiQ": {
+        "model_id": "mlx-community/Qwen3.5-2B-OptiQ-4bit",
+        "backend": "mlx",
+        "memory_gb": 2.0,
+        "description": "Qwen3.5-2B MLX 4bit (速度更快)",
+        "requires_mlx": True,
+    },
+    "Qwen3.5-4B-MLX": {
+        "model_id": "mlx-community/Qwen3.5-4B-MLX-4bit",
+        "backend": "mlx",
+        "memory_gb": 4.0,
+        "description": "Qwen3.5-4B MLX 标准量化",
+        "requires_mlx": True,
+    },
+    "Qwen3-0.6B": {
+        "model_id": "mlx-community/Qwen3-0.6B-4bit",
+        "backend": "mlx",
+        "memory_gb": 0.5,
+        "description": "Qwen3-0.6B MLX 4bit (最小，最快)",
+        "requires_mlx": True,
+    },
+    "Qwen3-1.7B": {
+        "model_id": "mlx-community/Qwen3-1.7B-4bit",
+        "backend": "mlx",
+        "memory_gb": 1.5,
+        "description": "Qwen3-1.7B MLX 4bit (中等)",
+        "requires_mlx": True,
+    },
+    "Gemma-4-E4B-DECKARD": {
+        "model_id": "nightmedia/gemma-4-E4B-it-The-DECKARD-V2-Strong-HERETIC-UNCENSORED-Instruct-mxfp8-mlx",
+        "backend": "mlx",
+        "memory_gb": 4.0,
+        "description": "Gemma 4 4B MLX (Google, 中文较弱)",
+        "requires_mlx": True,
+    },
+    # ── CUDA 模型 (NVIDIA GPU) ──
+    "Qwen3.5-4B-CUDA": {
+        "model_id": "Qwen/Qwen3.5-4B",
+        "backend": "cuda",
+        "memory_gb": 8.0,
+        "dtype": "float16",
+        "description": "Qwen3.5-4B CUDA FP16 (推荐，8GB VRAM)",
+        "requires_cuda": True,
+    },
+    "Qwen3.5-2B-CUDA": {
+        "model_id": "Qwen/Qwen3.5-2B",
+        "backend": "cuda",
+        "memory_gb": 4.0,
+        "dtype": "float16",
+        "description": "Qwen3.5-2B CUDA FP16 (4GB VRAM)",
+        "requires_cuda": True,
+    },
+    "Qwen3.5-4B-CUDA-INT8": {
+        "model_id": "Qwen/Qwen3.5-4B",
+        "backend": "cuda",
+        "memory_gb": 4.0,
+        "dtype": "int8",
+        "description": "Qwen3.5-4B CUDA int8 量化 (4GB VRAM)",
+        "requires_cuda": True,
+    },
+    "Qwen3.5-2B-CUDA-INT8": {
+        "model_id": "Qwen/Qwen3.5-2B",
+        "backend": "cuda",
+        "memory_gb": 2.0,
+        "dtype": "int8",
+        "description": "Qwen3.5-2B CUDA int8 量化 (2GB VRAM)",
+        "requires_cuda": True,
+    },
+    "Qwen3.5-4B-CUDA-INT4": {
+        "model_id": "Qwen/Qwen3.5-4B",
+        "backend": "cuda",
+        "memory_gb": 2.5,
+        "dtype": "int4",
+        "description": "Qwen3.5-4B CUDA int4 量化 (2.5GB VRAM)",
+        "requires_cuda": True,
+    },
+}
+
+
+def get_default_llm_model() -> str:
+    """返回当前平台推荐的默认 LLM 模型
+    
+    优先级:
+    1. Apple Silicon + MLX -> Qwen3.5-4B-OptiQ
+    2. NVIDIA CUDA GPU -> Qwen3.5-4B-CUDA (显存>=8GB) 或 Qwen3.5-2B-CUDA
+    3. 其他 -> "" (不推荐在 CPU 上运行 LLM)
+    """
+    platform_info = get_platform_info()
+    
+    # Apple Silicon: 优先 MLX
+    if platform_info.is_apple_silicon and platform_info.has_mlx:
+        return "Qwen3.5-4B-OptiQ"
+    
+    # NVIDIA GPU: 优先 CUDA
+    if platform_info.has_cuda:
+        if platform_info.cuda_device and platform_info.cuda_device.memory_gb >= 8:
+            return "Qwen3.5-4B-CUDA"
+        else:
+            return "Qwen3.5-2B-CUDA"
+    
+    # 其他平台: 不推荐运行 LLM
+    return ""
+
+
+def get_available_llm_models() -> Dict[str, Dict[str, Any]]:
+    """返回当前平台可用的 LLM 模型（过滤掉不支持的模型）"""
+    platform_info = get_platform_info()
+    available = {}
+    
+    for name, config in LLM_MODELS_CONFIG.items():
+        # 检查平台要求
+        if config.get("requires_mlx") and not platform_info.has_mlx:
+            continue
+        if config.get("requires_cuda") and not platform_info.has_cuda:
+            continue
+        
+        # 检查 VRAM 要求
+        if config.get("requires_cuda") and platform_info.cuda_device:
+            if config["memory_gb"] > platform_info.cuda_device.memory_gb:
+                continue
+        
+        available[name] = config
+    
+    return available
