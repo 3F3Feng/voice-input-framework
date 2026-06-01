@@ -72,7 +72,7 @@ class TestSTTEngine:
         from services.stt_server import STTEngine
 
         engine = STTEngine()
-        assert engine.default_model == "qwen_asr_mlx_native_small"
+        import platform; expected = "qwen_asr_mlx_native_small" if (platform.machine() == "arm64" and platform.system() == "Darwin") else "whisper_turbo"; assert engine.default_model == expected
         assert not engine._is_loaded
         assert not engine._aligner_loaded
         assert not engine._loading

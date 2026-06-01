@@ -1,200 +1,232 @@
 <template>
   <div class="app">
-    <header>
-      <h1>🎙️ <span class="brand">Voice Input</span></h1>
-      <span :class="['badge', connected ? 'connected' : 'disconnected']">
-        {{ connected ? '已连接' : '未连接' }}
-      </span>
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <span class="app-icon">🎙️</span>
+        <span :class="['conn-dot', connected ? 'on' : 'off']"></span>
+        <span class="conn-text">{{ connected ? currentModelName : '未连接' }}</span>
+      </div>
+      <div class="header-right">
+        <button class="header-btn" @click="minimizeToTray" title="最小化到托盘">─</button>
+        <button class="header-btn" @click="showSettings = !showSettings" :class="{ active: showSettings }">
+          {{ showSettings ? '✕' : '⚙' }}
+        </button>
+      </div>
     </header>
 
-    <!-- Toast notifications -->
+    <!-- Toast -->
     <div class="toast-container">
       <transition-group name="toast">
-        <div v-for="t in toasts" :key="t.id" :class="['toast', t.type]">
-          {{ t.msg }}
-        </div>
+        <div v-for="t in toasts" :key="t.id" :class="['toast', t.type]">{{ t.msg }}</div>
       </transition-group>
     </div>
 
-    <div class="status-row">
-      <div :class="['status-dot', recording ? 'recording' : (loading ? 'loading' : 'idle')]" />
-      <span class="status-text">{{ statusText }}</span>
-      <span v-if="recording" class="timer">{{ timerText }}</span>
-    </div>
+    <!-- Settings Panel -->
+    <transition name="slide">
+      <div v-if="showSettings" class="settings-panel">
+        <div class="settings-scroll">
+          <!-- Connection -->
+          <div class="s-section">
+            <div class="s-title">连接</div>
+            <div class="s-row">
+              <input class="s-input" v-model="serverHost" placeholder="localhost" @keyup.enter="updateServer" @change="onServerSettingChange" />
+              <input class="s-input s-port" v-model.number="serverPort" type="number" @keyup.enter="updateServer" @change="onServerSettingChange" />
+              <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
+            </div>
+          </div>
 
-    <!-- Audio level meter -->
-    <div v-if="recording" class="level-meter">
-      <div class="level-bar">
-        <div class="level-fill" :style="{ width: audioLevel * 100 + '%' }"></div>
-      </div>
-    </div>
+          <!-- Models -->
+          <div class="s-section">
+            <div class="s-title">STT 模型</div>
+            <select class="s-select" v-model="sttModel" @change="switchStt">
+              <option v-for="m in sttModels" :key="m.name" :value="m.name">
+                {{ m.name }} {{ m.is_loaded ? '✓' : '' }}
+              </option>
+            </select>
+            <div v-if="sttLoading" class="s-loading">切换中...</div>
+          </div>
 
-    <!-- Processing indicator -->
-    <div v-if="loading" class="processing-indicator">
-      <div class="processing-spinner"></div>
-      <span>处理中...</span>
-    </div>
+          <div class="s-section">
+            <div class="s-title">LLM 后处理</div>
+            <div class="s-row">
+              <label class="toggle"><input type="checkbox" v-model="llmEnabled" @change="toggleLlm" /><span class="slider"></span></label>
+              <span class="s-label">{{ llmEnabled ? '已启用' : '已禁用' }}</span>
+            </div>
+            <div v-if="llmEnabled" style="margin-top: 8px;">
+              <select class="s-select" v-model="llmModel" @change="switchLlm">
+                <option v-for="m in llmModels" :key="m.name" :value="m.name">
+                  {{ m.name }} {{ m.is_loaded ? '✓' : '' }}
+                </option>
+              </select>
+            </div>
+          </div>
 
-    <button
-      @mousedown="startRecord"
-      @mouseup="stopRecord"
-      @mouseleave="stopRecord"
-      :class="['record-btn', { active: recording }]"
-    >
-      <span class="icon">{{ recording ? '⏹' : '🎤' }}</span>
-      <span class="label">{{ recording ? '松开停止' : '按住说话' }}</span>
-    </button>
+          <!-- Audio -->
+          <div class="s-section">
+            <div class="s-title">麦克风</div>
+            <div class="s-row">
+              <select class="s-select" v-model="selectedDevice" @change="onDeviceChange" style="flex:1">
+                <option :value="null">默认设备</option>
+                <option v-for="(name, id) in audioDevices" :key="id" :value="name">{{ name }}</option>
+              </select>
+              <button class="s-btn" @click="refreshDevices" title="刷新">🔄</button>
+            </div>
+          </div>
 
-    <div v-if="result" class="result-box">
-      <div class="result-header">
-        <span>识别结果</span>
-        <button class="icon-btn" @click="copyResult" title="复制">📋</button>
-        <button class="icon-btn" @click="doAutoInput" title="输入到窗口">⌨️</button>
-        <button class="icon-btn" @click="clearResult" title="清空">🗑️</button>
-      </div>
-      <p class="result-text">{{ result }}</p>
-    </div>
+          <!-- Hotkey -->
+          <div class="s-section">
+            <div class="s-title">快捷键</div>
+            <div class="s-row">
+              <input class="s-input hotkey-field" v-model="hotkeyStr" readonly :placeholder="defaultHotkey"
+                :class="{ recording: hotkeyRecording }" @click="startHotkeyRecording" />
+              <button class="s-btn" @click="startHotkeyRecording">{{ hotkeyRecording ? '取消' : '录制' }}</button>
+              <button class="s-btn" @click="applyHotkey" :disabled="!hotkeyChanged">应用</button>
+            </div>
+            <div v-if="hotkeyRecording" class="s-tip">请按下快捷键组合...</div>
+          </div>
 
-    <div class="settings">
-      <details open>
-        <summary>连接设置</summary>
-        <div class="setting-row">
-          <label>服务器地址</label>
-          <div class="host-input">
-            <input v-model="serverHost" @keyup.enter="updateServer" />
-            <button class="tiny-btn" @click="updateServer">连接</button>
-            <span :class="['dot', connected ? 'green' : 'red']"></span>
+          <!-- Toggles -->
+          <div class="s-section">
+            <div class="s-row">
+              <label class="toggle"><input type="checkbox" v-model="autoInputEnabled" @change="onAutoInputToggle" /><span class="slider"></span></label>
+              <span class="s-label">自动输入到窗口</span>
+            </div>
+            <div class="s-row" style="margin-top:6px">
+              <label class="toggle"><input type="checkbox" v-model="autoStart" @change="toggleAutoStart" /><span class="slider"></span></label>
+              <span class="s-label">开机自启动</span>
+            </div>
+            <div class="s-row" style="margin-top:6px">
+              <label class="toggle"><input type="checkbox" v-model="startMinimized" @change="toggleStartMinimized" /><span class="slider"></span></label>
+              <span class="s-label">启动时最小化</span>
+            </div>
+          </div>
+
+          <!-- LLM Prompt -->
+          <div v-if="llmEnabled" class="s-section">
+            <div class="s-title">提示词</div>
+            <textarea class="s-textarea" v-model="promptText" rows="3" placeholder="LLM 后处理提示词..." />
+            <div class="s-row" style="margin-top:4px">
+              <button class="s-btn" @click="loadPrompt" :disabled="promptLoading">加载</button>
+              <button class="s-btn" @click="savePrompt" :disabled="promptLoading">保存</button>
+              <span v-if="promptStatus" class="s-tip">{{ promptStatus }}</span>
+            </div>
+          </div>
+
+          <!-- Update -->
+          <div class="s-section">
+            <div class="s-title">软件更新</div>
+            <div v-if="updateInfo" class="update-info">
+              <span :class="updateInfo.available ? 'update-new' : 'update-ok'">
+                {{ updateInfo.available ? `新版本: ${updateInfo.latest_version}` : '已是最新版本' }}
+              </span>
+              <span class="s-tip">当前: v{{ updateInfo.current_version }}</span>
+              <p v-if="updateInfo.body && updateInfo.available" class="update-body">{{ updateInfo.body }}</p>
+            </div>
+            <div v-if="updateStatus" class="s-tip" :class="{ ok: updateStatusType === 'ok' }">{{ updateStatus }}</div>
+            <div class="s-row" style="margin-top:4px">
+              <button class="s-btn" @click="doCheckUpdate" :disabled="updateChecking">
+                {{ updateChecking ? '检查中...' : '检查更新' }}
+              </button>
+              <button v-if="updateInfo?.available" class="s-btn" @click="doInstallUpdate" :disabled="updateInstalling" style="background:var(--green);color:#000">
+                {{ updateInstalling ? '下载中...' : '下载安装' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Debug Log -->
+          <div class="s-section">
+            <div class="s-title" style="display:flex;justify-content:space-between">
+              <span>调试日志</span>
+              <span style="color:var(--muted);font-size:0.65rem">{{ guiLogs.length }} 条</span>
+            </div>
+            <div class="log-box" ref="logBoxRef">
+              <div v-for="(entry, i) in guiLogs" :key="i" :class="['log-entry', entry.level]">
+                {{ entry.msg }}
+              </div>
+              <div v-if="guiLogs.length === 0" class="log-empty">暂无日志</div>
+            </div>
+            <div class="s-row" style="margin-top:4px">
+              <button class="s-btn" @click="guiLogs = []">清空</button>
+            </div>
           </div>
         </div>
-        <div class="setting-row">
-          <label>端口</label>
-          <input class="num-input" v-model.number="serverPort" type="number" @keyup.enter="updateServer" />
-        </div>
-      </details>
+      </div>
+    </transition>
 
-      <details>
-        <summary>模型设置</summary>
-        <div class="setting-row">
-          <label>STT 模型</label>
-          <select v-model="sttModel" @change="switchStt">
-            <option v-for="m in sttModels" :key="m.name" :value="m.name">
-              {{ m.name }} {{ m.is_loaded ? '✅' : '' }}
-            </option>
-          </select>
-          <span v-if="sttLoading" class="spinner"></span>
+    <!-- Main Content -->
+    <div class="main" v-show="!showSettings">
+      <!-- Record Button -->
+      <div class="record-area">
+        <button
+          @mousedown="startRecord"
+          @mouseup="stopRecord"
+          @mouseleave="stopRecord"
+          :class="['record-btn', { active: recording, processing: loading }]"
+          :disabled="!connected || loading"
+        >
+          <div class="record-ring"></div>
+          <span class="record-icon">{{ recording ? '⏹' : '🎤' }}</span>
+        </button>
+        <div class="record-status">
+          <span v-if="recording" class="status-rec">录音中 {{ timerText }}</span>
+          <span v-else-if="loading" class="status-proc">{{ llmProcessing ? 'LLM 处理中' : '识别中' }} {{ processingTimerText }}</span>
+          <span v-else-if="connected" class="status-ready">按住说话 · {{ displayHotkey }}</span>
+          <span v-else class="status-off">未连接服务器</span>
         </div>
-        <div v-if="sttStatus" class="status-msg">{{ sttStatus }}</div>
-        <div class="setting-row">
-          <label>LLM 后处理</label>
-          <label class="toggle">
-            <input type="checkbox" v-model="llmEnabled" @change="toggleLlm" />
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div v-if="llmEnabled" class="setting-row">
-          <label>LLM 模型</label>
-          <select v-model="llmModel" @change="switchLlm">
-            <option v-for="m in llmModels" :key="m.name" :value="m.name">
-              {{ m.name }} {{ m.is_loaded ? '✅' : '' }}
-            </option>
-          </select>
-          <span v-if="llmLoading" class="spinner"></span>
-        </div>
-        <div v-if="llmStatus" class="status-msg">{{ llmStatus }}</div>
-      </details>
+      </div>
 
-      <details v-if="llmEnabled">
-        <summary>提示词管理</summary>
-        <div class="textarea-row">
-          <textarea v-model="promptText" rows="4"
-            placeholder="输入 LLM 后处理提示词..." />
+      <!-- Audio Level Meter -->
+      <div v-if="recording" class="main-level-meter">
+        <div class="main-level-bar">
+          <div class="main-level-fill" :style="{ width: audioLevel * 100 + '%' }"></div>
         </div>
-        <div class="btn-row">
-          <button class="tiny-btn" @click="loadPrompt" :disabled="promptLoading">📥 加载</button>
-          <button class="tiny-btn" @click="savePrompt" :disabled="promptLoading">💾 保存</button>
-          <span v-if="promptLoading" class="spinner"></span>
-        </div>
-        <div v-if="promptStatus" :class="['status-msg', promptStatusType]">{{ promptStatus }}</div>
-      </details>
+      </div>
 
-      <details>
-        <summary>输入设置</summary>
-        <div class="setting-row">
-          <label>自动输入到窗口</label>
-          <label class="toggle">
-            <input type="checkbox" v-model="autoInputEnabled" @change="onAutoInputToggle" />
-            <span class="slider"></span>
-          </label>
+      <!-- Result -->
+      <div class="result-area" v-if="result || loading">
+        <div v-if="loading && !recording" class="result-loading">
+          <div class="spinner"></div>
         </div>
-        <div class="setting-tip">识别完成后自动将结果输入当前活跃窗口</div>
-        <div class="setting-row">
-          <label>开机自启动</label>
-          <label class="toggle">
-            <input type="checkbox" v-model="autoStart" @change="toggleAutoStart" />
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="setting-row">
-          <label>启动时最小化</label>
-          <label class="toggle">
-            <input type="checkbox" v-model="startMinimized" @change="toggleStartMinimized" />
-            <span class="slider"></span>
-          </label>
-        </div>
-      </details>
-
-      <details>
-        <summary>快捷键设置</summary>
-        <div class="setting-row">
-          <label>全局快捷键</label>
-          <div class="hotkey-input">
-            <input v-model="hotkeyStr" readonly :placeholder="defaultHotkey"
-              :class="['hotkey-field', { recording: hotkeyRecording }]"
-              @click="startHotkeyRecording" />
-            <button class="tiny-btn" @click="startHotkeyRecording">
-              {{ hotkeyRecording ? '取消' : '录制' }}
+        <div v-if="result" class="result-content">
+          <p class="result-text" @click="copyResult">{{ result }}</p>
+          <div class="result-actions">
+            <button class="r-btn" @click="copyResult" :class="{ ok: copyFeedback }">
+              {{ copyFeedback ? '已复制 ✓' : '📋 复制' }}
             </button>
+            <button class="r-btn" @click="doAutoInput">⌨️ 输入</button>
+            <button class="r-btn" @click="clearResult">✕</button>
           </div>
         </div>
-        <div v-if="hotkeyRecording" class="setting-tip">请按下新的快捷键组合...</div>
-        <div class="btn-row" style="margin-top:4px">
-          <button class="tiny-btn" @click="applyHotkey" :disabled="!hotkeyChanged">应用</button>
-          <span v-if="hotkeyMsg" class="status-msg ok">{{ hotkeyMsg }}</span>
-        </div>
-      </details>
+      </div>
 
-      <details>
-        <summary>配置管理</summary>
-        <div class="btn-row">
-          <button class="tiny-btn" @click="saveConfig">💾 保存配置</button>
-          <button class="tiny-btn" @click="importOldConfig">📥 导入旧版</button>
-        </div>
-        <div v-if="configMsg" class="status-msg success">{{ configMsg }}</div>
-      </details>
-
-      <!-- Event log -->
-      <details>
-        <summary>事件日志</summary>
-        <div class="log-box" ref="logBox">
-          <div v-for="(entry, i) in log" :key="i" :class="['log-entry', entry.type]">
-            <span class="log-time">{{ entry.time }}</span>
-            <span class="log-msg">{{ entry.msg }}</span>
+      <!-- History -->
+      <div class="history-area" v-if="history.length > 0 && !result && !loading">
+        <div class="history-title">最近识别</div>
+        <div class="history-scroll">
+          <div v-for="(item, i) in history" :key="i" class="history-item" @click="result = item.text">
+            <span class="history-text">{{ item.text }}</span>
+            <span class="history-time">{{ item.time }}</span>
           </div>
-          <div v-if="log.length === 0" class="log-empty">暂无记录</div>
         </div>
-        <button class="tiny-btn" @click="clearLog" style="margin-top:4px">清空日志</button>
-      </details>
+      </div>
+
+      <!-- Empty state -->
+      <div class="empty-state" v-if="!result && !loading && !recording && history.length === 0">
+        <div class="empty-icon">🎙️</div>
+        <div class="empty-text">按住按钮或按 {{ displayHotkey }} 开始语音输入</div>
+      </div>
     </div>
 
-    <div class="footer">
-      <span>快捷键: {{ displayHotkey }}</span>
-      <span class="version">{{ version }}</span>
-    </div>
+    <!-- Footer -->
+    <footer class="footer">
+      <span class="footer-text">v{{ version }}</span>
+    </footer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -208,16 +240,18 @@ interface VoiceInputConfig {
   llm: { enabled: boolean };
   _version: string;
 }
+interface HistoryItem { text: string; time: string; }
 
-interface LogEntry { time: string; msg: string; type: 'info' | 'ok' | 'err' | 'warn'; }
-interface Toast { id: number; msg: string; type: 'info' | 'ok' | 'err'; }
-
-// ── Reactive State ──
+// ── State ──
 const recording = ref(false);
 const connected = ref(false);
+const connecting = ref(false);
 const loading = ref(false);
 const result = ref("");
-const version = ref("v2.0");
+const version = ref("2.0.2");
+const showSettings = ref(false);
+const copyFeedback = ref(false);
+const history = ref<HistoryItem[]>([]);
 
 const sttModels = ref<ModelInfo[]>([]);
 const llmModels = ref<ModelInfo[]>([]);
@@ -225,288 +259,216 @@ const sttModel = ref("");
 const llmModel = ref("");
 const sttLoading = ref(false);
 const llmLoading = ref(false);
-const sttStatus = ref("");
-const llmStatus = ref("");
 const promptLoading = ref(false);
 const promptStatus = ref("");
-const promptStatusType = ref<"info" | "ok" | "err">("info");
 
 const serverHost = ref("localhost");
 const serverPort = ref(6544);
 const llmEnabled = ref(true);
 const promptText = ref("");
-const configMsg = ref("");
 const autoInputEnabled = ref(false);
 const autoStart = ref(false);
 const startMinimized = ref(false);
 
 const elapsedMs = ref(0);
-const log = ref<LogEntry[]>([]);
-const displayHotkey = computed(() => {
-  return hotkeyStr.value || defaultHotkey;
-});
-const toasts = ref<Toast[]>([]);
-const logBox = ref<HTMLElement | null>(null);
-
+const processingMs = ref(0);
+const toasts = ref<{ id: number; msg: string; type: string }[]>([]);
 const audioLevel = ref(0);
+const llmProcessing = ref(false);
+
 const hotkeyStr = ref("");
 const hotkeyRecording = ref(false);
 const hotkeyChanged = ref(false);
 const hotkeyMsg = ref("");
 const defaultHotkey = "left_ctrl+left_alt";
+const audioDevices = ref<Record<string, string>>({});
+const selectedDevice = ref<string | null>(null);
+
+// Update
+interface UpdateInfo { available: boolean; current_version: string; latest_version: string; body: string; }
+const updateInfo = ref<UpdateInfo | null>(null);
+const updateStatus = ref("");
+const updateStatusType = ref<"info" | "ok">("info");
+const updateChecking = ref(false);
+const updateInstalling = ref(false);
+
+// Logs
+const guiLogs = ref<{ msg: string; level: string }[]>([]);
+const logBoxRef = ref<HTMLElement | null>(null);
+
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let levelInterval: ReturnType<typeof setInterval> | null = null;
+let processingTimerInterval: ReturnType<typeof setInterval> | null = null;
 let toastId = 0;
 
 // ── Computed ──
-const statusText = computed(() => {
-  if (recording.value) return "录音中...";
-  if (loading.value) return "处理中...";
-  if (result.value) return "识别完成";
-  return connected.value ? "就绪" : "连接服务器...";
+const currentModelName = computed(() => {
+  const loaded = sttModels.value.find(m => m.is_loaded);
+  return loaded?.name || sttModel.value || "";
 });
-
+const displayHotkey = computed(() => hotkeyStr.value || defaultHotkey);
 const timerText = computed(() => {
-  const secs = Math.floor(elapsedMs.value / 1000);
+  const s = Math.floor(elapsedMs.value / 1000);
   const ms = elapsedMs.value % 1000;
-  return `${secs}.${String(ms).padStart(3,"0").slice(0,2)}s`;
+  return `${s}.${String(ms).padStart(3, "0").slice(0, 1)}s`;
+});
+const processingTimerText = computed(() => {
+  const s = Math.floor(processingMs.value / 1000);
+  const ms = processingMs.value % 1000;
+  return `${s}.${String(ms).padStart(3, "0").slice(0, 1)}s`;
 });
 
-// ── Toast & Log helpers ──
-function toast(msg: string, type: 'info'|'ok'|'err' = 'info') {
+// ── Helpers ──
+function toast(msg: string, type = "info") {
   const id = ++toastId;
   toasts.value.push({ id, msg, type });
-  setTimeout(() => {
-    toasts.value = toasts.value.filter(t => t.id !== id);
-  }, 3000);
+  setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id); }, 2500);
+  const prefix = type === "err" ? "[ERROR]" : type === "ok" ? "[OK]" : "[INFO]";
+  guiLogs.value.push({ msg: `${prefix} ${msg}`, level: type });
+  if (guiLogs.value.length > 500) guiLogs.value = guiLogs.value.slice(-500);
 }
 
-function logMsg(msg: string, type: 'info'|'ok'|'err'|'warn' = 'info') {
+async function getConfig(): Promise<VoiceInputConfig> {
+  return await invoke("get_config");
+}
+
+async function saveConfigPatch(patch: (cfg: VoiceInputConfig) => void) {
+  try {
+    const cfg = await getConfig();
+    patch(cfg);
+    await invoke("update_config", { newConfig: cfg });
+  } catch (e) { console.error("Config save failed:", e); }
+}
+
+function addToHistory(text: string) {
+  if (!text) return;
   const now = new Date();
-  const time = now.toLocaleTimeString();
-  log.value.push({ time, msg, type });
-  if (log.value.length > 200) log.value = log.value.slice(-200);
-  nextTick(() => {
-    if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight;
-  });
+  history.value.unshift({ text, time: now.toLocaleTimeString() });
+  if (history.value.length > 20) history.value = history.value.slice(0, 20);
 }
 
-function clearLog() { log.value = []; }
 // ── Recording ──
 async function startRecord() {
+  if (!connected.value || loading.value) return;
+  if (recording.value) return;  // state lock: prevent double-trigger
+  recording.value = true;       // set state BEFORE await to block bounces
   try {
     loading.value = false;
     result.value = "";
     await invoke("start_recording");
-    recording.value = true;
     elapsedMs.value = 0;
     timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
     levelInterval = setInterval(async () => {
       try { audioLevel.value = await invoke<number>("get_audio_level"); } catch {}
     }, 100);
-    logMsg("开始录音", "info");
   } catch (e) {
-    logMsg(`录音启动失败: ${e}`, "err");
+    toast(`录音失败: ${e}`, "err");
     recording.value = false;
   }
 }
 
 async function stopRecord() {
-  if (!recording.value) return;
-  recording.value = false;
+  if (!recording.value) return;  // already stopped
+  recording.value = false;  // set state BEFORE await to block bounces
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
-  audioLevel.value = 0;
-
-  logMsg("正在识别...", "info");
   loading.value = true;
-
+  processingMs.value = 0;
+  processingTimerInterval = setInterval(() => { processingMs.value += 100; }, 100);
   try {
-    // stop_recording now returns text directly (transcribes in Rust)
-    const text = await invoke<string>("stop_recording");
-    loading.value = false;
-    if (text) {
-      result.value = text;
-      logMsg(`识别完成: "${text.slice(0,40)}${text.length>40?'...':''}"`, "ok");
-      toast("识别完成 ✅", "ok");
-      if (autoInputEnabled.value) {
-        logMsg("自动输入已启用，正在输入到窗口...", "info");
-        try { await invoke("auto_input", { text }); logMsg("自动输入完成", "ok"); }
-        catch (e) { logMsg(`自动输入失败: ${e}`, "err"); }
-      }
-    }
+    await invoke<string>("stop_recording");
   } catch (e) {
     loading.value = false;
-    logMsg(`转录失败: ${e}`, "err");
+    if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
+    toast(`转录失败: ${e}`, "err");
   }
+}
+
+// ── Devices ──
+async function refreshDevices() {
+  try { audioDevices.value = await invoke<Record<string, string>>("get_audio_devices"); } catch {}
+}
+function onDeviceChange() {
+  saveConfigPatch(cfg => { cfg.audio.device = selectedDevice.value; });
 }
 
 // ── Config ──
 async function loadConfig() {
   try {
-    const cfg = await invoke<VoiceInputConfig>("get_config");
+    const cfg = await getConfig();
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
-    version.value = `v${cfg._version}`;
+    version.value = cfg._version;
     hotkeyStr.value = cfg.hotkey.key;
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
-    logMsg("配置已加载", "info");
-  } catch (e) {
-    logMsg(`加载配置失败: ${e}`, "warn");
-  }
+    selectedDevice.value = cfg.audio.device;
+  } catch {}
 }
-
-// ── Auto-start & Start mode ──
 async function loadAutostart() {
-  try {
-    autoStart.value = await invoke<boolean>("get_autostart");
-  } catch { /* plugin not available */ }
+  try { autoStart.value = await invoke<boolean>("get_autostart"); } catch {}
 }
-
+function onServerSettingChange() {
+  saveConfigPatch(cfg => { cfg.server.host = serverHost.value.trim() || "localhost"; cfg.server.port = serverPort.value; });
+}
 async function toggleAutoStart() {
-  try {
-    await invoke("set_autostart", { enabled: autoStart.value });
-    logMsg(`开机自启动已${autoStart.value ? '启用' : '禁用'}`, "ok");
-    toast(`开机自启动已${autoStart.value ? '启用' : '禁用'}`, "ok");
-  } catch (e) {
-    autoStart.value = !autoStart.value;
-    logMsg(`切换自启动失败: ${e}`, "err");
-  }
+  try { await invoke("set_autostart", { enabled: autoStart.value }); } catch { autoStart.value = !autoStart.value; }
 }
-
-async function toggleStartMinimized() {
-  try {
-    const cfg = await invoke<VoiceInputConfig>("get_config");
-    cfg.ui.start_minimized = startMinimized.value;
-    await invoke("update_config", { newConfig: cfg });
-    logMsg(`启动最小化已${startMinimized.value ? '启用' : '禁用'}`, "ok");
-  } catch (e) {
-    startMinimized.value = !startMinimized.value;
-    logMsg(`切换失败: ${e}`, "err");
-  }
-}
-
-async function saveConfig() {
-  try {
-    const cfg = await invoke<VoiceInputConfig>("get_config");
-    cfg.server.host = serverHost.value;
-    cfg.server.port = serverPort.value;
-    await invoke("update_config", { newConfig: cfg });
-    configMsg.value = "✅ 配置已保存";
-    toast("配置已保存 ✅", "ok");
-    logMsg("配置已保存", "ok");
-    setTimeout(() => { configMsg.value = ""; }, 3000);
-  } catch (e) {
-    configMsg.value = `❌ 保存失败`;
-    toast(`配置保存失败`, "err");
-    logMsg(`保存配置失败: ${e}`, "err");
-  }
-}
-
-async function importOldConfig() {
-  try {
-    const cfg = await invoke<VoiceInputConfig>("import_old_config");
-    serverHost.value = cfg.server.host;
-    serverPort.value = cfg.server.port;
-    toast("旧版配置已导入 ✅", "ok");
-    logMsg("旧版配置已导入并转换", "ok");
-    await updateServer();
-  } catch (e) {
-    toast("导入旧版配置失败 ❌", "err");
-    logMsg(`导入旧版配置失败: ${e}`, "err");
-  }
-}
+function toggleStartMinimized() { saveConfigPatch(cfg => { cfg.ui.start_minimized = startMinimized.value; }); }
+function onAutoInputToggle() { saveConfigPatch(cfg => { cfg.ui.auto_input = autoInputEnabled.value; }); }
 
 // ── Connection ──
 async function updateServer() {
   connected.value = false;
-  loading.value = true;
+  connecting.value = true;
   const host = serverHost.value.trim() || "localhost";
-  logMsg(`正在连接服务器 ${host}:${serverPort.value}...`, "info");
+  const port = serverPort.value || 6544;
   try {
-    await invoke("set_server_host", { host });
-    const sttOk = await loadModels();
-    if (sttOk) {
+    await invoke("set_server_host", { host, port });
+    const ok = await loadModels();
+    if (ok) {
       connected.value = true;
-      toast("服务器已连接 ✅", "ok");
-      logMsg("服务器已连接", "ok");
+      toast("已连接", "ok");
+      saveConfigPatch(cfg => { cfg.server.host = host; cfg.server.port = port; });
     } else {
-      logMsg("服务器无响应（检查 STT 服务是否运行）", "warn");
+      toast("服务器无响应", "err");
     }
-  } catch (e) {
-    logMsg(`连接服务器失败: ${e}`, "err");
-    toast("连接服务器失败 ❌", "err");
-  }
-  loading.value = false;
+  } catch (e) { toast(`连接失败: ${e}`, "err"); }
+  connecting.value = false;
 }
 
 // ── Models ──
 async function loadModels(): Promise<boolean> {
-  let sttOk = false;
+  let ok = false;
   try {
-    const sttList = await invoke<ModelInfo[]>("get_models");
-    sttModels.value = sttList;
-    // Select the currently loaded model, not just the first
-    if (sttList.length > 0) {
-      const loaded = sttList.find(m => m.is_loaded);
-      sttModel.value = loaded?.name || sttList[0].name;
-    }
-    logMsg(`获取到 ${sttList.length} 个 STT 模型`, "info");
-    sttOk = true;
-  } catch { logMsg("获取 STT 模型失败", "err"); }
-
+    const list = await invoke<ModelInfo[]>("get_models");
+    sttModels.value = list;
+    if (list.length > 0) { const loaded = list.find(m => m.is_loaded); sttModel.value = loaded?.name || list[0].name; }
+    ok = true;
+  } catch (e) { console.error("get_models error:", e); }
   try {
     const llmList = await invoke<ModelInfo[]>("get_llm_models");
     llmModels.value = llmList;
-    if (llmList.length > 0) {
-      const loaded = llmList.find(m => m.is_loaded);
-      llmModel.value = loaded?.name || llmList[0].name;
-    }
-    logMsg(`获取到 ${llmList.length} 个 LLM 模型`, "info");
-  } catch { logMsg("获取 LLM 模型失败（未配置后端）", "warn"); }
-
-  try {
-    llmEnabled.value = await invoke<boolean>("get_llm_enabled");
-    logMsg(`LLM 后处理: ${llmEnabled.value ? '已启用' : '已禁用'}`, "info");
-  } catch { /* optional */ }
-  return sttOk;
+    if (llmList.length > 0) { const loaded = llmList.find(m => m.is_loaded); llmModel.value = loaded?.name || llmList[0].name; }
+  } catch {}
+  try { llmEnabled.value = await invoke<boolean>("get_llm_enabled"); } catch {}
+  return ok;
 }
 
 async function switchStt() {
   if (!sttModel.value) return;
   sttLoading.value = true;
-  sttStatus.value = `正在切换模型 ${sttModel.value}...`;
-  logMsg(`切换 STT 模型: ${sttModel.value}`, "info");
-  try {
-    const msg = await invoke<string>("switch_model", { name: sttModel.value });
-    sttStatus.value = `✅ ${msg}`;
-    toast(`STT 模型切换成功`, "ok");
-    logMsg(`STT 模型已切换: ${sttModel.value}`, "ok");
-  } catch (e) {
-    sttStatus.value = `❌ 切换失败: ${e}`;
-    logMsg(`STT 模型切换失败: ${e}`, "err");
-    toast(`STT 模型切换失败`, "err");
-  }
+  try { await invoke<string>("switch_model", { name: sttModel.value }); toast("模型已切换", "ok"); } catch (e) { toast("切换失败", "err"); }
   sttLoading.value = false;
 }
-
 async function switchLlm() {
   if (!llmModel.value) return;
   llmLoading.value = true;
-  llmStatus.value = `正在切换模型 ${llmModel.value}...`;
-  logMsg(`切换 LLM 模型: ${llmModel.value}`, "info");
-  try {
-    const msg = await invoke<string>("switch_llm_model", { name: llmModel.value });
-    llmStatus.value = `✅ ${msg}`;
-    toast(`LLM 模型切换成功`, "ok");
-    logMsg(`LLM 模型已切换: ${llmModel.value}`, "ok");
-  } catch (e) {
-    llmStatus.value = `❌ 切换失败: ${e}`;
-    logMsg(`LLM 模型切换失败: ${e}`, "err");
-    toast(`LLM 模型切换失败`, "err");
-  }
+  try { await invoke<string>("switch_llm_model", { name: llmModel.value }); toast("LLM 已切换", "ok"); } catch (e) { toast("切换失败", "err"); }
   llmLoading.value = false;
+}
+async function toggleLlm() {
+  try { await invoke("set_llm_enabled", { enabled: llmEnabled.value }); toast(`LLM ${llmEnabled.value ? '已启用' : '已禁用'}`, "ok"); } catch { llmEnabled.value = !llmEnabled.value; }
 }
 
 // ── Hotkey ──
@@ -515,350 +477,321 @@ function startHotkeyRecording() {
   hotkeyMsg.value = "";
   if (hotkeyRecording.value) {
     const handler = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault(); e.stopPropagation();
       const parts: string[] = [];
-      // Detect left vs right modifiers
       if (e.code?.startsWith('ControlLeft')) parts.push('left_ctrl');
       else if (e.code?.startsWith('ControlRight')) parts.push('right_ctrl');
       else if (e.code?.startsWith('AltLeft')) parts.push('left_alt');
       else if (e.code?.startsWith('AltRight')) parts.push('right_alt');
       else if (e.code?.startsWith('ShiftLeft')) parts.push('left_shift');
       else if (e.code?.startsWith('ShiftRight')) parts.push('right_shift');
-      // Regular key
       if (e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Shift' && e.key !== 'Meta') {
-        const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
-        parts.push(key);
+        parts.push(e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
       }
       if (parts.length > 0) {
-        const joined = parts.join('+');
-        hotkeyStr.value = joined;
+        hotkeyStr.value = parts.join('+');
         hotkeyChanged.value = true;
         hotkeyRecording.value = false;
         document.removeEventListener('keydown', handler);
-        logMsg(`快捷键已录制: ${joined}`, "info");
       }
     };
     document.addEventListener('keydown', handler);
   }
 }
-
 async function applyHotkey() {
   if (!hotkeyStr.value) return;
   try {
     await invoke("register_hotkey", { shortcut: hotkeyStr.value });
-    hotkeyMsg.value = `✅ 快捷键已更新: ${hotkeyStr.value}`;
     hotkeyChanged.value = false;
-    toast("快捷键已更新 ✅", "ok");
-    logMsg(`快捷键已更新: ${hotkeyStr.value}`, "ok");
-    // Save to config
-    const cfg = await invoke<VoiceInputConfig>("get_config");
-    cfg.hotkey.key = hotkeyStr.value;
-    await invoke("update_config", { newConfig: cfg });
-  } catch (e) {
-    hotkeyMsg.value = `❌ 更新失败: ${e}`;
-    logMsg(`快捷键更新失败: ${e}`, "err");
-  }
+    toast("快捷键已更新", "ok");
+    saveConfigPatch(cfg => { cfg.hotkey.key = hotkeyStr.value; });
+  } catch (e) { toast("更新失败", "err"); }
 }
 
-async function onAutoInputToggle() {
-  try {
-    const cfg = await invoke<VoiceInputConfig>("get_config");
-    cfg.ui.auto_input = autoInputEnabled.value;
-    await invoke("update_config", { newConfig: cfg });
-  } catch (e) {
-    console.error("Failed to save auto-input:", e);
-  }
-}
-
-async function toggleLlm() {
-  logMsg(`LLM 后处理: ${llmEnabled.value ? '启用' : '禁用'}中...`, "info");
-  try {
-    await invoke("set_llm_enabled", { enabled: llmEnabled.value });
-    toast(`LLM 后处理已${llmEnabled.value ? '启用' : '禁用'} ✅`, "ok");
-    logMsg(`LLM 后处理已${llmEnabled.value ? '启用' : '禁用'}`, "ok");
-  } catch (e) {
-    llmEnabled.value = !llmEnabled.value;
-    logMsg(`切换 LLM 状态失败: ${e}`, "err");
-    toast("LLM 切换失败", "err");
-  }
-}
-
-// ── LLM Prompt ──
+// ── Prompt ──
 async function loadPrompt() {
   promptLoading.value = true;
-  promptStatus.value = "加载中...";
-  promptStatusType.value = "info";
-  logMsg("正在加载 LLM 提示词...", "info");
-  try {
-    promptText.value = await invoke<string>("get_llm_prompt");
-    promptStatus.value = "✅ 已加载";
-    promptStatusType.value = "ok";
-    toast("提示词已加载 ✅", "ok");
-    logMsg("LLM 提示词已加载", "ok");
-  } catch (e) {
-    promptStatus.value = `❌ ${e}`;
-    promptStatusType.value = "err";
-    logMsg(`加载提示词失败: ${e}`, "err");
-  }
+  try { promptText.value = await invoke<string>("get_llm_prompt"); promptStatus.value = "已加载"; } catch { promptStatus.value = "加载失败"; }
+  promptLoading.value = false;
+}
+async function savePrompt() {
+  if (!promptText.value.trim()) return;
+  promptLoading.value = true;
+  try { await invoke("save_llm_prompt", { text: promptText.value }); promptStatus.value = "已保存"; toast("提示词已保存", "ok"); } catch { promptStatus.value = "保存失败"; }
   promptLoading.value = false;
 }
 
-async function savePrompt() {
-  if (!promptText.value.trim()) {
-    promptStatus.value = "⚠️ 提示词不能为空";
-    promptStatusType.value = "err";
-    return;
-  }
-  promptLoading.value = true;
-  promptStatus.value = "保存中...";
-  promptStatusType.value = "info";
-  logMsg("正在保存 LLM 提示词...", "info");
+// ── Update ──
+async function doCheckUpdate() {
+  updateChecking.value = true;
+  updateStatus.value = "检查中...";
+  updateStatusType.value = "info";
+  // 10秒超时，防止卡死在"检查中..."
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("超时")), 10000));
   try {
-    await invoke("save_llm_prompt", { text: promptText.value });
-    promptStatus.value = "✅ 已保存";
-    promptStatusType.value = "ok";
-    toast("提示词已保存 ✅", "ok");
-    logMsg("LLM 提示词已保存", "ok");
-  } catch (e) {
-    promptStatus.value = `❌ ${e}`;
-    promptStatusType.value = "err";
-    logMsg(`保存提示词失败: ${e}`, "err");
-  }
-  promptLoading.value = false;
+    const info = await Promise.race([
+      invoke<UpdateInfo>("check_update"),
+      timeout
+    ]) as UpdateInfo;
+    updateInfo.value = info;
+    if (info.available) { updateStatus.value = `发现新版本 ${info.latest_version}`; toast(`新版本 ${info.latest_version} 可用`, "ok"); }
+    else { updateStatus.value = "已是最新版本"; updateStatusType.value = "ok"; }
+  } catch (e) { updateStatus.value = `检查失败: ${e}`; }
+  updateChecking.value = false;
+}
+async function doInstallUpdate() {
+  updateInstalling.value = true;
+  updateStatus.value = "正在下载...";
+  updateStatusType.value = "info";
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("下载超时")), 120000));
+  try {
+    const msg = await Promise.race([
+      invoke<string>("install_update"),
+      timeout
+    ]) as string;
+    updateStatus.value = msg;
+    updateStatusType.value = "ok";
+    toast("更新已安装，重启后生效", "ok");
+  } catch (e) { updateStatus.value = `安装失败: ${e}`; }
+  updateInstalling.value = false;
 }
 
 // ── Result ──
 function copyResult() {
-  if (result.value) {
-    navigator.clipboard.writeText(result.value);
-    toast("已复制到剪贴板 ✅", "ok");
-    logMsg("结果已复制到剪贴板", "ok");
-  }
+  if (!result.value) return;
+  navigator.clipboard.writeText(result.value);
+  copyFeedback.value = true;
+  toast("已复制", "ok");
+  setTimeout(() => { copyFeedback.value = false; }, 2000);
 }
-
 async function doAutoInput() {
   if (!result.value) return;
-  logMsg(`正在输入: "${result.value.slice(0,40)}${result.value.length>40?'...':''}"`, "info");
-  try {
-    await invoke("auto_input", { text: result.value });
-    toast("已输入到窗口 ✅", "ok");
-    logMsg("自动输入完成", "ok");
-  } catch (e) {
-    logMsg(`自动输入失败: ${e}`, "err");
-    toast("输入失败（请确认目标窗口处于激活状态）", "err");
-  }
+  try { await invoke("auto_input", { text: result.value }); toast("已输入", "ok"); } catch { toast("输入失败", "err"); }
 }
-
-function clearResult() {
-  result.value = "";
-  logMsg("结果已清空", "info");
+function clearResult() { result.value = ""; }
+async function minimizeToTray() {
+  try { await invoke("minimize_to_tray"); } catch {}
 }
 
 // ── Lifecycle ──
 onMounted(async () => {
-  logMsg("Voice Input 客户端启动", "info");
-  toast("Voice Input 已启动 🎙️", "info");
-  // System notification
-  if ("Notification" in window && Notification.permission === "default") {
-    Notification.requestPermission();
-  }
-  if ("Notification" in window && Notification.permission === "granted") {
-    new Notification("Voice Input", { body: "客户端已启动 🎙️" });
-  }
   await loadConfig();
   await loadAutostart();
+  await refreshDevices();
   await updateServer();
-  // Listen for custom hotkey events from rdev listener
+
+  // Hotkey lifecycle is handled entirely in Rust (start/stop recording + transcription).
+  // Frontend only updates UI state to reflect what Rust already did.
   listen("hotkey-press", () => {
-    if (!recording.value) startRecord();
+    recording.value = true;
+    result.value = "";
+    elapsedMs.value = 0;
+    timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
+    levelInterval = setInterval(async () => {
+      try { audioLevel.value = await invoke<number>("get_audio_level"); } catch {}
+    }, 100);
   });
   listen("hotkey-release", () => {
-    if (recording.value) stopRecord();
+    recording.value = false;
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
+    loading.value = true;
+    processingMs.value = 0;
+    processingTimerInterval = setInterval(() => { processingMs.value += 100; }, 100);
   });
+  listen("tray-check-update", () => { showSettings.value = true; doCheckUpdate(); });
+
+  // 后台定时检查更新（启动后延迟30秒，之后每6小时自动检查一次）
+  setTimeout(() => doCheckUpdate(), 30000);
+  setInterval(() => doCheckUpdate(), 6 * 60 * 60 * 1000);
+
+  listen("transcribe-progress", (event) => {
+    const data = event.payload as any;
+    if (data?.type === "llm_start" || data?.type === "llm_progress") llmProcessing.value = true;
+  });
+
+  listen<string>("transcribe-done", (event) => {
+    loading.value = false;
+    llmProcessing.value = false;
+    if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
+    const text = event.payload;
+    if (text) {
+      result.value = text;
+      addToHistory(text);
+      toast("识别完成", "ok");
+      if (autoInputEnabled.value) invoke("auto_input", { text }).catch(() => {});
+    }
+  });
+
+  listen<string>("transcribe-error", (event) => {
+    loading.value = false;
+    llmProcessing.value = false;
+    if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
+    toast(`失败: ${event.payload}`, "err");
+  });
+
+  // Auto-check for updates (silent)
+  try {
+    const info = await invoke<UpdateInfo>("check_update");
+    if (info.available) { updateInfo.value = info; toast(`新版本 ${info.latest_version} 可用`, "ok"); }
+  } catch {}
 });
 
 onUnmounted(() => {
   if (timerInterval) clearInterval(timerInterval);
   if (levelInterval) clearInterval(levelInterval);
+  if (processingTimerInterval) clearInterval(processingTimerInterval);
 });
 </script>
 
 <style>
 :root {
-  --bg: #1a1a2e;
-  --card: #16213e;
-  --accent: #0f3460;
-  --green: #4ecca3;
-  --red: #e63946;
-  --yellow: #f0a500;
-  --text: #e8e8e8;
-  --muted: #888;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --bg: #0f0f14;
+  --card: #1a1a24;
+  --surface: #22222e;
+  --border: #2a2a38;
+  --green: #4ade80;
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --blue: #60a5fa;
+  --text: #e4e4e7;
+  --muted: #71717a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif;
   color: var(--text);
   background: var(--bg);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #app { height: 100%; }
 
 .app {
-  max-width: 380px; margin: 0 auto; padding: 16px;
-  display: flex; flex-direction: column; gap: 12px;
-  min-height: 100vh;
+  display: flex; flex-direction: column; height: 100vh;
+  overflow: hidden; user-select: none;
 }
 
-header { display: flex; justify-content: space-between; align-items: center; }
-h1 { font-size: 1.3rem; }
-.brand { color: var(--green); }
-.badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; }
-.badge.connected { background: #1b4332; color: var(--green); }
-.badge.disconnected { background: #3d1515; color: var(--red); }
+/* ── Header ── */
+.header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.header-left { display: flex; align-items: center; gap: 8px; }
+.app-icon { font-size: 1.1rem; }
+.conn-dot { width: 7px; height: 7px; border-radius: 50%; }
+.conn-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.conn-dot.off { background: var(--red); }
+.conn-text { font-size: 0.75rem; color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.header-right { display: flex; gap: 4px; }
+.header-btn { background: none; border: none; color: var(--muted); font-size: 1rem; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.15s; }
+.header-btn:hover { color: var(--text); background: var(--surface); }
+.header-btn.active { color: var(--blue); }
 
-/* Toast */
-.toast-container {
-  position: fixed; top: 12px; right: 12px; z-index: 999;
-  display: flex; flex-direction: column; gap: 6px;
-}
-.toast {
-  padding: 6px 12px; border-radius: 8px; font-size: 0.75rem;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.4); min-width: 160px;
-}
-.toast.ok { background: #1b4332; color: var(--green); border: 1px solid var(--green); }
-.toast.err { background: #3d1515; color: var(--red); border: 1px solid var(--red); }
-.toast.info { background: #1a2a4a; color: #88ccff; border: 1px solid #336699; }
-.toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
-.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(40px); }
+/* ── Toast ── */
+.toast-container { position: fixed; top: 48px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 6px; }
+.toast { padding: 6px 16px; border-radius: 8px; font-size: 0.72rem; backdrop-filter: blur(8px); animation: toast-in 0.2s ease; }
+.toast.ok { background: rgba(74, 222, 128, 0.15); color: var(--green); border: 1px solid rgba(74, 222, 128, 0.3); }
+.toast.err { background: rgba(248, 113, 113, 0.15); color: var(--red); border: 1px solid rgba(248, 113, 113, 0.3); }
+.toast.info { background: rgba(96, 165, 250, 0.15); color: var(--blue); border: 1px solid rgba(96, 165, 250, 0.3); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.toast-enter-active, .toast-leave-active { transition: all 0.2s; }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-8px); }
 
-.status-row { display: flex; align-items: center; gap: 8px; justify-content: center; }
-.status-dot { width: 10px; height: 10px; border-radius: 50%; }
-.status-dot.idle { background: var(--muted); }
-.status-dot.recording { background: var(--red); animation: pulse 0.8s infinite; }
-.status-dot.loading { background: var(--yellow); animation: pulse 1.2s infinite; }
-.status-text { font-size: 0.9rem; }
-.timer { font-size: 0.8rem; color: var(--red); font-variant-numeric: tabular-nums; }
+/* ── Settings Panel ── */
+.settings-panel { position: absolute; top: 44px; left: 0; right: 0; bottom: 24px; background: var(--bg); z-index: 50; overflow: hidden; }
+.settings-scroll { height: 100%; overflow-y: auto; padding: 12px 14px; }
+.slide-enter-active, .slide-leave-active { transition: transform 0.2s ease; }
+.slide-enter-from, .slide-leave-to { transform: translateX(100%); }
+.slide-enter-to, .slide-leave-from { transform: translateX(0); }
 
-/* Audio level meter */
-.level-meter { display: flex; justify-content: center; }
-.level-bar { width: 60%; height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
-.level-fill { height: 100%; background: linear-gradient(90deg, var(--green), #ffcc00, var(--red)); border-radius: 3px; transition: width 0.1s ease; }
-
-/* Processing indicator */
-.processing-indicator {
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 6px; font-size: 0.8rem; color: var(--yellow);
-}
-.processing-spinner {
-  width: 18px; height: 18px; border: 2px solid var(--muted);
-  border-top-color: var(--yellow); border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.record-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  width: 140px; height: 140px; margin: 0 auto; border-radius: 50%;
-  border: 4px solid var(--accent); background: var(--card);
-  color: var(--text); cursor: pointer; transition: all 0.2s;
-}
-.record-btn.active { border-color: var(--red); background: #3d1515; }
-.record-btn:hover { transform: scale(1.05); }
-.record-btn:active { transform: scale(0.95); }
-.record-btn .icon { font-size: 2rem; }
-.record-btn .label { font-size: 0.75rem; color: var(--muted); }
-
-.result-box {
-  background: var(--card); border-radius: 12px; padding: 12px;
-  border: 1px solid #0f3460;
-}
-.result-header { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; font-size: 0.8rem; color: var(--muted); }
-.result-header :first-child { flex: 1; }
-.result-text { font-size: 0.95rem; line-height: 1.5; }
-.icon-btn, .tiny-btn { background: var(--accent); color: var(--text); border: none; border-radius: 6px; cursor: pointer; }
-.icon-btn { font-size: 0.9rem; padding: 2px; }
-.icon-btn:hover { color: white; }
-.tiny-btn { padding: 3px 8px; font-size: 0.7rem; white-space: nowrap; }
-.tiny-btn:hover { filter: brightness(1.3); }
-.tiny-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.settings details {
-  background: var(--card); border-radius: 12px; padding: 12px;
-  border: 1px solid #0f3460;
-}
-.settings summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; margin-bottom: 8px; }
-.setting-row {
-  display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 6px; font-size: 0.8rem; gap: 6px;
-}
-.setting-row select {
-  background: var(--bg); color: var(--text); border: 1px solid #333;
-  border-radius: 6px; padding: 4px 8px; max-width: 160px; flex: 1;
-}
-.host-input { display: flex; align-items: center; gap: 6px; flex: 1; }
-.host-input input {
-  background: var(--bg); color: var(--text); border: 1px solid #333;
-  border-radius: 6px; padding: 4px 8px; width: 100%;
-}
-.num-input {
-  background: var(--bg); color: var(--text); border: 1px solid #333;
-  border-radius: 6px; padding: 4px 8px; width: 70px;
-}
-.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.dot.green { background: var(--green); }
-.dot.red { background: var(--red); }
-
-/* Toggle switch */
-.toggle { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
-.toggle input { opacity: 0; width: 0; height: 0; }
-.slider {
-  position: absolute; cursor: pointer; inset: 0;
-  background: #555; border-radius: 20px; transition: 0.3s;
-}
-.slider::before {
-  content: ""; position: absolute; width: 16px; height: 16px;
-  left: 2px; bottom: 2px; background: white; border-radius: 50%; transition: 0.3s;
-}
-.toggle input:checked + .slider { background: var(--green); }
-.toggle input:checked + .slider::before { transform: translateX(16px); }
-
-/* Spinner */
-.spinner {
-  width: 14px; height: 14px; border: 2px solid var(--muted);
-  border-top-color: var(--green); border-radius: 50%;
-  animation: spin 0.6s linear infinite; flex-shrink: 0;
-}
-
-/* Status messages */
-.status-msg { font-size: 0.7rem; padding: 4px 8px; border-radius: 6px; margin-bottom: 4px; }
-.status-msg.ok { color: var(--green); }
-.status-msg.err { color: var(--red); }
-.setting-tip { font-size: 0.65rem; color: var(--muted); padding: 4px 0; }
-.hotkey-input { display: flex; gap: 4px; flex: 1; }
-.hotkey-field { background: var(--bg); color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 4px 8px; width: 100%; cursor: pointer; text-align: center; font-family: monospace; }
+.s-section { margin-bottom: 16px; }
+.s-title { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+.s-row { display: flex; align-items: center; gap: 6px; }
+.s-input { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 0.78rem; flex: 1; outline: none; }
+.s-input:focus { border-color: var(--blue); }
+.s-port { width: 60px; flex: none; }
+.s-btn { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 0.72rem; cursor: pointer; white-space: nowrap; }
+.s-btn:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.s-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.s-select { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 0.78rem; width: 100%; outline: none; }
+.s-loading { font-size: 0.7rem; color: var(--yellow); margin-top: 4px; }
+.s-label { font-size: 0.78rem; color: var(--text); }
+.s-tip { font-size: 0.68rem; color: var(--muted); margin-top: 4px; }
+.s-textarea { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 0.75rem; width: 100%; resize: vertical; font-family: inherit; outline: none; }
+.s-textarea:focus { border-color: var(--blue); }
+.hotkey-field { cursor: pointer; text-align: center; font-family: monospace; }
 .hotkey-field.recording { border-color: var(--yellow); animation: pulse-border 1s infinite; }
 @keyframes pulse-border { 0%,100% { border-color: var(--yellow); } 50% { border-color: transparent; } }
 
-.textarea-row { margin-bottom: 6px; }
-.textarea-row textarea {
-  width: 100%; background: var(--bg); color: var(--text);
-  border: 1px solid #333; border-radius: 6px; padding: 6px;
-  font-size: 0.8rem; resize: vertical; font-family: inherit;
-}
-.btn-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* Update */
+.update-info { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.update-new { color: var(--green); font-weight: 600; font-size: 0.85rem; }
+.update-ok { color: var(--muted); font-size: 0.8rem; }
+.update-body { font-size: 0.7rem; color: var(--muted); margin-top: 4px; max-height: 80px; overflow-y: auto; line-height: 1.4; }
+
+/* Toggle */
+.toggle { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; inset: 0; background: var(--surface); border-radius: 18px; transition: 0.2s; border: 1px solid var(--border); }
+.slider::before { content: ""; position: absolute; width: 14px; height: 14px; left: 1px; bottom: 1px; background: var(--muted); border-radius: 50%; transition: 0.2s; }
+.toggle input:checked + .slider { background: rgba(74, 222, 128, 0.2); border-color: var(--green); }
+.toggle input:checked + .slider::before { transform: translateX(16px); background: var(--green); }
+
+.spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--green); border-radius: 50%; animation: spin 0.6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.s-btn { padding: 4px 10px; font-size: 0.7rem; }
 
 /* Log box */
-.log-box {
-  background: var(--bg); border-radius: 6px; padding: 6px;
-  max-height: 180px; overflow-y: auto; font-size: 0.7rem;
-  font-family: monospace; line-height: 1.6;
-}
-.log-entry { display: flex; gap: 6px; }
-.log-time { color: var(--muted); flex-shrink: 0; }
-.log-msg { word-break: break-all; }
-.log-entry.ok .log-msg { color: var(--green); }
-.log-entry.err .log-msg { color: var(--red); }
-.log-entry.warn .log-msg { color: var(--yellow); }
-.log-empty { color: var(--muted); font-style: italic; }
+.log-box { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px; max-height: 200px; overflow-y: auto; font-size: 0.65rem; font-family: monospace; line-height: 1.5; }
+.log-entry { word-break: break-all; margin-bottom: 2px; }
+.log-empty { color: var(--muted); font-style: italic; font-size: 0.7rem; padding: 8px; }
 
-.footer { display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--muted); margin-top: auto; }
+/* ── Main Content ── */
+.main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; gap: 16px; overflow: hidden; }
+
+/* Record */
+.record-area { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.record-btn { position: relative; width: 100px; height: 100px; border-radius: 50%; background: var(--card); border: 3px solid var(--border); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; flex-shrink: 0; }
+.record-btn:hover:not(:disabled) { border-color: var(--text); transform: scale(1.04); }
+.record-btn:active:not(:disabled) { transform: scale(0.96); }
+.record-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.record-btn.active { border-color: var(--red); background: rgba(248, 113, 113, 0.08); }
+.record-btn.processing { border-color: var(--yellow); }
+.record-ring { position: absolute; inset: -6px; border-radius: 50%; border: 2px solid transparent; transition: all 0.3s; }
+.record-btn.active .record-ring { border-color: rgba(248, 113, 113, 0.3); animation: ring-pulse 1.2s infinite; }
+@keyframes ring-pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.08); opacity: 0.5; } }
+.record-icon { font-size: 2rem; z-index: 1; }
+.record-status { text-align: center; font-size: 0.78rem; }
+.status-rec { color: var(--red); }
+.status-proc { color: var(--yellow); }
+.status-ready { color: var(--muted); }
+.status-off { color: var(--muted); }
+
+/* Audio level */
+.main-level-meter { width: 100%; max-width: 360px; display: flex; justify-content: center; }
+.main-level-bar { width: 60%; height: 5px; background: var(--surface); border-radius: 3px; overflow: hidden; }
+.main-level-fill { height: 100%; background: linear-gradient(90deg, var(--green), var(--yellow), var(--red)); border-radius: 3px; transition: width 0.08s ease; }
+
+/* Result */
+.result-area { width: 100%; max-width: 360px; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.result-loading { display: flex; justify-content: center; padding: 16px; }
+.result-content { background: var(--card); border-radius: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.result-text { flex: 1; padding: 14px; font-size: 0.92rem; line-height: 1.6; overflow-y: auto; cursor: text; user-select: text; min-height: 0; word-break: break-word; }
+.result-actions { display: flex; gap: 1px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.r-btn { flex: 1; background: var(--surface); color: var(--muted); border: none; padding: 8px; font-size: 0.72rem; cursor: pointer; transition: all 0.15s; }
+.r-btn:hover { color: var(--text); background: var(--card); }
+.r-btn.ok { color: var(--green); }
+
+/* History */
+.history-area { width: 100%; max-width: 360px; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.history-title { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.history-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.history-item { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; transition: all 0.15s; display: flex; flex-direction: column; gap: 2px; }
+.history-item:hover { border-color: var(--blue); }
+.history-text { font-size: 0.82rem; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-time { font-size: 0.65rem; color: var(--muted); }
+
+/* Empty */
+.empty-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; }
+.empty-icon { font-size: 2.5rem; opacity: 0.3; }
+.empty-text { font-size: 0.78rem; color: var(--muted); text-align: center; line-height: 1.5; }
+
+/* Footer */
+.footer { display: flex; justify-content: center; padding: 6px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.footer-text { font-size: 0.6rem; color: var(--muted); }
 </style>

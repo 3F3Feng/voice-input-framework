@@ -10,6 +10,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 
+import math
 import numpy as np
 
 from server.models.base import BaseSTTEngine, STTEngineError
@@ -111,8 +112,9 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
         result = self._model.generate(
             audio=audio_array,
             language=lang,
-            max_tokens=256,
-            temperature=0.0,
+            temperature=0.2,
+            no_repeat_ngram_size=3,
+            max_tokens=9999,
         )
         text = result.text
         # MLX 返回的 language 可能是 ['English'] (list)，标准化为字符串
@@ -147,7 +149,7 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
                 combined = b"".join(buffer)
                 audio_array = self._convert_audio(combined, sample_rate)
                 result = self._model.generate(
-                    audio=audio_array, language=None, max_tokens=256
+                    audio=audio_array, language=None, temperature=0.2, no_repeat_ngram_size=3, max_tokens=9999
                 )
                 if result and result.text.strip():
                     yield TranscriptionResult(
@@ -163,7 +165,7 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
             combined = b"".join(buffer)
             audio_array = self._convert_audio(combined, sample_rate)
             result = self._model.generate(
-                audio=audio_array, language=None, max_tokens=256
+                audio=audio_array, language=None, temperature=0.2, no_repeat_ngram_size=3, max_tokens=9999
             )
             if result and result.text.strip():
                 yield TranscriptionResult(

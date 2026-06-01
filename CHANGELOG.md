@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.0.10] - 2026-05-30
+
+### Fixed
+
+- **Hotkey release detection after minimize (Windows)**: completely rewrote hotkey
+  detection to use `GetAsyncKeyState` polling instead of `rdev` `WH_KEYBOARD_LL`
+  hook. The hook stops firing KeyRelease events when the Tauri webview is minimized
+  to tray, causing recordings to never stop. Pure Win32 API polling works
+  regardless of window state.
+
+## [2.0.1] - 2026-05-26
+
+### Fixed
+
+- **Hotkey debounce**: prevent double-trigger when mouse side button is mapped to modifier key
+  - State guard, time debounce (150ms), min press duration (50ms, keep recording)
+  - Fixes stuck recording state with mouse button bounce
+
+## [1.1.6] - 2026-05-26
+
+### Fixed
+
+- **Hotkey debounce**: prevent double-trigger when mouse side button is mapped to modifier key
+  - State guard: skip PRESS if already recording, skip RELEASE if not recording
+  - Time debounce: ignore PRESS events within 150ms of last RELEASE
+  - Min duration guard: ignore RELEASE events within 50ms of PRESS (noise spike),
+    keeps recording active until the real release
+  - Fixes issue where mouse button bounce caused stuck recording state and
+    "already recording" popup with persistent floating indicator
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

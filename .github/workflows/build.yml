@@ -1,14 +1,16 @@
 name: Build Tauri Client
 on:
   push:
-    branches: [dev/llm-postprocessing-v2]
+    branches: [dev/llm-postprocessing-v2, main]
+    tags-ignore: ['**']
     paths:
       - 'gui/**'
       - '.github/workflows/build.yml'
   pull_request:
-    branches: [dev/llm-postprocessing-v2]
+    branches: [dev/llm-postprocessing-v2, main]
     paths:
       - 'gui/**'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
 
 jobs:
@@ -72,6 +74,9 @@ jobs:
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         id: build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: gui
           bundleIdentifier: com.voiceinput.app
