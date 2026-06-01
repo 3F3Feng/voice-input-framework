@@ -97,6 +97,26 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 ### 启动服务
 
+使用启动脚本（推荐）：
+
+```bash
+# macOS/Linux
+./start.sh              # 启动 STT 服务
+./start.sh --all        # 启动 STT + LLM 服务
+./start.sh --all --bg   # 后台启动所有服务
+./start.sh --stop       # 停止所有服务
+./start.sh --status     # 查看服务状态
+
+# Windows
+start.bat               # 启动 STT 服务
+start.bat --all         # 启动 STT + LLM 服务
+start.bat --all --bg    # 后台启动所有服务
+start.bat --stop        # 停止所有服务
+start.bat --status      # 查看服务状态
+```
+
+手动启动：
+
 ```bash
 # 启动 STT 服务 (端口 6544)
 python -m services.stt_server
