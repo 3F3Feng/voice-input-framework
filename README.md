@@ -36,7 +36,28 @@
 
 ## 🚀 快速开始
 
-### 自动安装（推荐）
+### 使用 uv 安装（推荐，最快）
+
+[uv](https://github.com/astral-sh/uv) 是一个超快的 Python 包管理器，比 pip 快 10-100x。
+
+```bash
+git clone https://github.com/3F3Feng/voice-input-framework.git
+cd voice-input-framework
+
+# macOS/Linux
+./install-uv.sh
+
+# Windows
+install-uv.bat
+
+# 指定安装选项
+./install-uv.sh --all         # 安装所有依赖
+./install-uv.sh --stt-only    # 只安装 STT
+./install-uv.sh --llm-only    # 只安装 LLM
+./install-uv.sh --dev         # 包含开发工具
+```
+
+### 使用 pip 安装（传统方式）
 
 ```bash
 git clone https://github.com/3F3Feng/voice-input-framework.git
@@ -45,10 +66,10 @@ cd voice-input-framework
 # 自动检测平台并安装依赖
 ./install.sh
 
-# 或指定安装选项
-./install.sh --all         # 安装所有依赖
-./install.sh --stt-only    # 只安装 STT
-./install.sh --llm-only    # 只安装 LLM
+# 或手动安装
+pip install -r requirements/base.txt
+pip install -r requirements/stt-cuda.txt   # NVIDIA GPU
+pip install -r requirements/llm-cuda.txt   # NVIDIA GPU (可选)
 ```
 
 ### 手动安装
