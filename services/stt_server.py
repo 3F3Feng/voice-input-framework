@@ -55,6 +55,31 @@ LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 LLM_ENABLED = os.getenv("VIF_LLM_ENABLED", "true").lower() == "true"
 LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
 
+# ============== LLM Fast-Fail Cache ==============
+# Track LLM server availability to avoid slow connection attempts
+_llm_available = False
+_llm_last_check = 0.0
+_llm_check_interval = 30.0  # Re-check every 30 seconds
+_llm_timeout = 1.0  # Fast timeout for LLM requests (1 second)
+
+def _is_llm_available() -> bool:
+    """Check if LLM server is available (cached)"""
+    global _llm_available, _llm_last_check
+    now = time.time()
+    
+    # If we recently checked, return cached result
+    if now - _llm_last_check < _llm_check_interval:
+        return _llm_available
+    
+    # Otherwise, we'll let the next request determine availability
+    return _llm_available
+
+def _mark_llm_available(available: bool):
+    """Update LLM availability cache"""
+    global _llm_available, _llm_last_check
+    _llm_available = available
+    _llm_last_check = time.time()
+
 # ============== State Persistence ==============
 """
 持久化最后使用的 STT 模型和 LLM 开关状态，
@@ -220,22 +245,29 @@ async def call_llm_server(text: str, request_id: str = "") -> Tuple[str, float]:
     Returns:
         tuple: (processed_text, latency_ms)
     """
+    # Fast-fail: skip if LLM server is known to be down
+    if not _is_llm_available():
+        return text, 0
+    
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{LLM_SERVER_URL}/process",
                 json={"text": text, "options": {}},
                 headers={"X-Request-ID": request_id},
-                timeout=30.0
+                timeout=_llm_timeout
             )
             if response.status_code == 200:
+                _mark_llm_available(True)
                 data = response.json()
                 return data.get("text", text), data.get("llm_latency_ms", 0)
             else:
+                _mark_llm_available(False)
                 logger.warning(f"LLM server returned {response.status_code}")
                 return text, 0
     except Exception as e:
-        logger.error(f"Failed to call LLM server: {e}")
+        _mark_llm_available(False)
+        logger.debug(f"LLM server not available: {e}")
         return text, 0
 
 # ============== STT Engine ==============
@@ -738,6 +770,27 @@ async def lifespan(app: FastAPI):
         logger.info(f"Unknown preload option: {preload}, defaulting to STT")
         asyncio.create_task(engine.load())
     
+    # Start LLM health check background task
+    async def llm_health_checker():
+        """Periodically check LLM server availability"""
+        while True:
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=2.0)
+                    if resp.status_code == 200:
+                        if not _is_llm_available():
+                            logger.info("LLM server is back online")
+                        _mark_llm_available(True)
+                    else:
+                        _mark_llm_available(False)
+            except Exception:
+                _mark_llm_available(False)
+            await asyncio.sleep(_llm_check_interval)
+    
+    if LLM_ENABLED:
+        asyncio.create_task(llm_health_checker())
+        logger.info(f"LLM health checker started (interval: {_llm_check_interval}s)")
+    
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
     
     yield
@@ -867,24 +920,34 @@ async def list_models():
 @app.get("/llm/models")
 async def list_llm_models():
     """转发：获取可用 LLM 模型列表"""
+    # Fast-fail: skip if LLM server is known to be down
+    if not _is_llm_available():
+        return {"models": [], "error": "LLM server not available", "cached": True}
+    
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{LLM_SERVER_URL}/models", timeout=10.0)
+            resp = await client.get(f"{LLM_SERVER_URL}/models", timeout=_llm_timeout)
             if resp.status_code == 200:
+                _mark_llm_available(True)
                 data = resp.json()
                 # 包装成客户端期望的格式
                 if isinstance(data, list):
                     return {"models": data}
                 return data
             else:
+                _mark_llm_available(False)
                 return {"error": f"LLM server returned {resp.status_code}"}
     except Exception as e:
-        logger.error(f"Failed to get LLM models: {e}")
-        return {"error": str(e)}
+        _mark_llm_available(False)
+        logger.debug(f"LLM server not available: {e}")
+        return {"models": [], "error": str(e)}
 
 @app.post("/llm/models/select")
 async def select_llm_model(request: Request):
     """转发：选择 LLM 模型"""
+    if not _is_llm_available():
+        return {"error": "LLM server not available"}
+    
     try:
         body = await request.json()
         model_name = body.get("model_name", "")
@@ -895,6 +958,7 @@ async def select_llm_model(request: Request):
                 timeout=30.0
             )
             if resp.status_code == 200:
+                _mark_llm_available(True)
                 # 持久化 LLM 模型选择
                 state = load_state()
                 state["llm_model"] = model_name
@@ -904,17 +968,23 @@ async def select_llm_model(request: Request):
             else:
                 return {"error": f"LLM server returned {resp.status_code}"}
     except Exception as e:
+        _mark_llm_available(False)
         logger.error(f"Failed to select LLM model: {e}")
         return {"error": str(e)}
 
 @app.get("/llm/health")
 async def llm_health():
     """转发：LLM 服务器健康检查"""
+    if not _is_llm_available():
+        return {"status": "offline", "error": "LLM server not available"}
+    
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
+            resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=_llm_timeout)
+            _mark_llm_available(True)
             return resp.json()
     except Exception as e:
+        _mark_llm_available(False)
         return {"status": "error", "error": str(e)}
 
 @app.get("/llm/enabled")
@@ -940,30 +1010,40 @@ async def set_llm_enabled(request: Request):
 @app.get("/llm/prompt")
 async def get_llm_prompt():
     """转发：获取 LLM 提示词"""
+    if not _is_llm_available():
+        return {"prompt": "", "error": "LLM server not available"}
+    
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{LLM_SERVER_URL}/prompt", timeout=5.0)
+            resp = await client.get(f"{LLM_SERVER_URL}/prompt", timeout=_llm_timeout)
             if resp.status_code == 200:
+                _mark_llm_available(True)
                 return resp.json()
             return {"error": f"LLM server returned {resp.status_code}"}
     except Exception as e:
+        _mark_llm_available(False)
         return {"error": str(e)}
 
 @app.put("/llm/prompt")
 async def update_llm_prompt(request: Request):
     """转发：更新 LLM 提示词"""
+    if not _is_llm_available():
+        return {"error": "LLM server not available"}
+    
     try:
         body = await request.json()
         async with httpx.AsyncClient() as client:
             resp = await client.put(
                 f"{LLM_SERVER_URL}/prompt",
                 json=body,
-                timeout=10.0
+                timeout=_llm_timeout
             )
             if resp.status_code == 200:
+                _mark_llm_available(True)
                 return resp.json()
             return {"error": f"LLM server returned {resp.status_code}"}
     except Exception as e:
+        _mark_llm_available(False)
         return {"error": str(e)}
 
 @app.post("/models/select")
