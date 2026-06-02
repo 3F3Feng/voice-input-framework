@@ -33,6 +33,7 @@ pub struct AppState {
     pub recorder: Mutex<audio::AudioRecorder>,
     pub config: Mutex<config::VoiceInputConfig>,
     pub indicator_status: std::sync::Arc<Mutex<String>>,
+    pub streaming_session: std::sync::Arc<Mutex<Option<stt::StreamingSession>>>,
 }
 
 #[tauri::command]
@@ -60,17 +61,49 @@ async fn set_server_host(
 /// Extracted so both Tauri commands and the hotkey thread can call the same logic.
 pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
     let device;
+    let host;
+    let language;
     {
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
         device = cfg.audio.device.clone();
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        host = stt_client.stt_url.clone();
+        language = cfg.audio.language.clone();
     }
 
     {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
         recorder.create_stream_channel(4096);
+        
+        // Get the chunk receiver before starting recording
+        let chunk_rx = recorder.take_chunk_receiver();
+        
         match recorder.start(device) {
             Ok(()) => {
                 let _ = indicator::show(app);
+                
+                // Start streaming in background if we have a chunk receiver
+                if let Some(rx) = chunk_rx {
+                    let stt_host = host.clone();
+                    let stt_language = language.clone();
+                    let session_lock = state.streaming_session.clone();
+                    
+                    tauri::async_runtime::spawn(async move {
+                        let client = stt::SttClient::new(&stt_host);
+                        match client.start_streaming(&stt_language, rx).await {
+                            Ok(session) => {
+                                eprintln!("[streaming] WebSocket connected, forwarding chunks");
+                                if let Ok(mut guard) = session_lock.lock() {
+                                    *guard = Some(session);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[streaming] Failed to connect: {}", e);
+                            }
+                        }
+                    });
+                }
+                
                 Ok(())
             }
             Err(e) => {
@@ -84,12 +117,15 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
 /// Stop recording: capture samples, hide indicator, spawn transcription.
 /// Extracted so both Tauri commands and the hotkey thread use the same code path.
 pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<String, String> {
-    let (chunk_rx, fallback_samples, src_rate) = {
+    // Stop recording first
+    let fallback_samples;
+    let src_rate;
+    {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
-        let chunk_rx = recorder.take_chunk_receiver();
         let (samples, rate) = recorder.stop()?;
-        (chunk_rx, samples, rate)
-    };
+        fallback_samples = samples;
+        src_rate = rate;
+    }
 
     let has_window = app.get_webview_window(indicator::INDICATOR_LABEL).is_some();
     eprintln!("[stop] indicator window exists: {}", has_window);
@@ -99,12 +135,10 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
         *status = "识别中...".to_string();
     }
 
-    log_info!("[stop] chunks={}, fallback_samples={}, src_rate={}", chunk_rx.is_some(), fallback_samples.len(), src_rate);
-
-    let (host, language) = {
-        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
-        let cfg = state.config.lock().map_err(|e| e.to_string())?;
-        (stt_client.stt_url.clone(), cfg.audio.language.clone())
+    // Take the streaming session
+    let streaming_session = {
+        let mut guard = state.streaming_session.lock().map_err(|e| e.to_string())?;
+        guard.take()
     };
 
     let indicator_status = state.indicator_status.clone();
@@ -112,11 +146,30 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
 
     // Use tauri::async_runtime::spawn to run transcription from any thread.
     tauri::async_runtime::spawn(async move {
-        eprintln!("[transcribe] Background task started, host={}", host);
+        eprintln!("[transcribe] Background task started");
         let transcribe_start = std::time::Instant::now();
         
-        // Connect and stream in one go
-        let result = run_streaming_transcription(&host, &language, chunk_rx, fallback_samples, src_rate).await;
+        let result = if let Some(session) = streaming_session {
+            // True streaming mode: session is already connected and forwarding chunks
+            eprintln!("[streaming] Finalizing streaming session");
+            session.finish().await
+        } else {
+            // Fallback: batch mode
+            eprintln!("[streaming] No session, using batch mode");
+            let host = if let Ok(stt_client) = state.stt.lock() {
+                stt_client.stt_url.clone()
+            } else {
+                "http://localhost:6544".to_string()
+            };
+            let client = stt::SttClient::new(&host);
+            let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
+            if wav.is_empty() {
+                Err("No audio captured".to_string())
+            } else {
+                let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
+                client.transcribe_ws(pcm, "auto").await
+            }
+        };
 
         let elapsed_ms = transcribe_start.elapsed().as_millis() as u64;
 
@@ -141,48 +194,6 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
     Ok(String::new())
 }
 
-/// Connect to STT server and stream audio for transcription
-async fn run_streaming_transcription(
-    host: &str,
-    language: &str,
-    chunk_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
-    fallback_samples: Vec<f32>,
-    src_rate: u32,
-) -> Result<String, String> {
-    let client = stt::SttClient::new(host);
-    
-    // Connect to server
-    eprintln!("[streaming] Connecting to {}...", host);
-    let mut session = client.connect_stream(language).await?;
-    eprintln!("[streaming] Connected, sending audio...");
-    
-    if let Some(mut rx) = chunk_rx {
-        // Stream chunks as they arrive from the recorder
-        let mut chunk_count = 0;
-        while let Some(chunk) = rx.recv().await {
-            chunk_count += 1;
-            if let Err(e) = session.send_chunk(chunk).await {
-                eprintln!("[streaming] Failed to send chunk {}: {}", chunk_count, e);
-                return Err(e);
-            }
-        }
-        eprintln!("[streaming] Sent {} chunks", chunk_count);
-    } else {
-        // Fallback: send all samples at once
-        eprintln!("[streaming] No chunk receiver, using fallback batch");
-        let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-        if wav.is_empty() {
-            return Err("No audio captured".to_string());
-        }
-        let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
-        session.send_chunk(pcm).await?;
-    }
-    
-    // Finalize and get result
-    eprintln!("[streaming] Waiting for transcription result...");
-    session.finish().await
-}
-
 #[tauri::command]
 async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     start_recording_internal(&app, &state)
@@ -191,54 +202,6 @@ async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> R
 #[tauri::command]
 async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     stop_recording_internal(&app, &state)
-}
-
-async fn run_transcription(
-    app_handle: &tauri::AppHandle,
-    indicator_status: &std::sync::Arc<Mutex<String>>,
-    host: &str,
-    language: &str,
-    chunk_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
-    fallback_samples: Vec<f32>,
-    src_rate: u32,
-) -> Result<String, String> {
-    let client = stt::SttClient::new(host);
-    eprintln!("[transcribe] Starting transcription, host={}, lang={}", host, language);
-
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<stt::StreamEvent>();
-
-    let indicator_status_fwd = indicator_status.clone();
-    let app_fwd = app_handle.clone();
-    let event_forwarder = tokio::spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            match &event {
-                stt::StreamEvent::LlmStart { .. } | stt::StreamEvent::LlmProgress { .. } => {
-                    if let Ok(mut status) = indicator_status_fwd.lock() {
-                        *status = "LLM 处理中...".to_string();
-                    }
-                }
-                _ => {}
-            }
-            let _ = app_fwd.emit("transcribe-progress", &event);
-        }
-    });
-
-    let result = if let Some(rx) = chunk_rx {
-        eprintln!("[transcribe] Using streaming mode");
-        client.transcribe_stream(rx, language, Some(event_tx)).await
-    } else {
-        eprintln!("[transcribe] Using fallback batch mode ({} samples)", fallback_samples.len());
-        let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-        if wav.is_empty() { return Err("No audio captured".to_string()); }
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
-        let _ = tx.send(pcm).await;
-        drop(tx);
-        client.transcribe_stream(rx, language, Some(event_tx)).await
-    };
-
-    let _ = event_forwarder.await;
-    result
 }
 
 // ── Audio device commands ──
@@ -416,6 +379,7 @@ pub fn run() {
                 recorder: Mutex::new(audio::AudioRecorder::new()),
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
+                streaming_session: std::sync::Arc::new(Mutex::new(None)),
             });
 
             log::init(app.handle());
