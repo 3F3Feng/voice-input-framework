@@ -33,7 +33,7 @@ pub struct AppState {
     pub recorder: Mutex<audio::AudioRecorder>,
     pub config: Mutex<config::VoiceInputConfig>,
     pub indicator_status: std::sync::Arc<Mutex<String>>,
-    pub streaming_session: Mutex<Option<stt::StreamingSession>>,
+    pub streaming_session: std::sync::Arc<Mutex<Option<stt::StreamingSession>>>,
 }
 
 #[tauri::command]
@@ -432,7 +432,7 @@ pub fn run() {
                 recorder: Mutex::new(audio::AudioRecorder::new()),
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
-                streaming_session: Mutex::new(None),
+                streaming_session: std::sync::Arc::new(Mutex::new(None)),
             });
 
             log::init(app.handle());
