@@ -2,14 +2,8 @@
 """
 Voice Input Framework - CUDA Qwen3-ASR 引擎 (4090 优化)
 
-替代 MLX 版 qwen3_asr_mlx_native.py。
-使用 Qwen ASR 官方包 + PyTorch CUDA 推理。
-
-优化方案（按推荐优先级）:
-1. Flash Attention 2 (-20-30% 推理时间)
-2. int8 量化 (bitsandbytes load_in_8bit, 显存减半, 速度持平)
-3. torch.compile (首次慢, 后续 -10-20%)
-4. 更大的 Qwen ASR 模型 (可跑 Qwen2-Audio-7B+)
+使用 Qwen ASR 官方包 (qwen_asr) 进行推理。
+支持 Flash Attention 2 和批量推理。
 
 使用方式:
     在分离架构中: 启动 STT Service (端口 6544)
@@ -21,15 +15,6 @@ import logging
 from collections.abc import AsyncIterator
 
 import numpy as np
-
-# Lazy import for torch (CUDA dependency)
-torch = None
-
-def _ensure_torch():
-    global torch
-    if torch is None:
-        import torch as _torch
-        torch = _torch
 
 from server.models.base import BaseSTTEngine, STTEngineError
 from shared.data_types import TranscriptionResult
@@ -43,37 +28,23 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
     MODEL_CONFIGS = {
         "qwen_asr": {
             "model_id": "Qwen/Qwen3-ASR-1.7B",
-            "memory_gb": 3.5,   # FP16 VRAM 占用
-            "dtype": "float16",
-            "description": "Qwen3-ASR-1.7B CUDA FP16 (推荐)",
+            "memory_gb": 3.5,
+            "description": "Qwen3-ASR-1.7B CUDA (推荐)",
         },
         "qwen_asr_small": {
             "model_id": "Qwen/Qwen3-ASR-0.6B",
             "memory_gb": 1.5,
-            "dtype": "float16",
-            "description": "Qwen3-ASR-0.6B CUDA FP16 (更快)",
+            "description": "Qwen3-ASR-0.6B CUDA (更快)",
         },
     }
 
     def __init__(self, model_name: str = "qwen_asr", **kwargs):
         super().__init__(model_name, **kwargs)
         self._model = None
-        self._processor = None
         self.model_config = self.MODEL_CONFIGS.get(
             model_name, self.MODEL_CONFIGS["qwen_asr"]
         )
         self._device = None
-
-    def _get_torch_dtype(self):
-        """获取 torch dtype 对象"""
-        _ensure_torch()
-        dtype_str = self.model_config.get("dtype", "float16")
-        if dtype_str == "float16":
-            return torch.float16
-        elif dtype_str == "bfloat16":
-            return torch.bfloat16
-        else:
-            return torch.float32
 
     async def load(self) -> None:
         if self._is_loaded:
@@ -82,90 +53,60 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         try:
             self._load_sync()
             self._is_loaded = True
-            logger.info(
-                f"Model loaded on {self._device}: {self.model_config['model_id']}"
-            )
+            logger.info(f"Model loaded on {self._device}: {self.model_config['model_id']}")
         except Exception as e:
             raise STTEngineError(f"Failed to load CUDA model: {e}")
 
     def _load_sync(self):
-        """同步加载模型（CUDA tensor ops 必须在主线程）"""
-        _ensure_torch()
-
+        """同步加载模型"""
+        import torch
+        
         model_id = self.model_config["model_id"]
-        dtype = self._get_torch_dtype()
 
         if not torch.cuda.is_available():
             raise STTEngineError("CUDA is not available on this machine")
 
-        self._device = torch.device("cuda:0")
+        self._device = "cuda:0"
 
-        # 使用 qwen_asr 包加载模型（自动注册架构）
+        # 使用 qwen_asr 官方包加载
+        from qwen_asr import Qwen3ASRModel
+
+        logger.info(f"Loading with qwen_asr package: {model_id}")
+
+        # 尝试 Flash Attention 2
         try:
-            from qwen_asr import Qwen3ASRForConditionalGeneration, Qwen3ASRProcessor
-            from transformers import AutoConfig
-            
-            logger.info(f"Loading with qwen_asr package: {model_id}")
-            config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-            
-            # 尝试 Flash Attention 2
-            try:
-                self._model = Qwen3ASRForConditionalGeneration.from_pretrained(
-                    model_id,
-                    torch_dtype=dtype,
-                    device_map="cuda:0",
-                    attn_implementation="flash_attention_2",
-                    trust_remote_code=True,
-                )
-                logger.info("Flash Attention 2 enabled")
-            except (ImportError, ValueError) as e:
-                logger.warning(f"Flash Attention 2 not available ({e}), falling back to sdpa")
-                self._model = Qwen3ASRForConditionalGeneration.from_pretrained(
-                    model_id,
-                    torch_dtype=dtype,
-                    device_map="cuda:0",
-                    trust_remote_code=True,
-                )
-            
-            self._processor = Qwen3ASRProcessor.from_pretrained(model_id, trust_remote_code=True)
-            
-        except ImportError:
-            # 回退：使用 transformers AutoClasses（需要更新版本）
-            from transformers import AutoModelForCausalLM, AutoProcessor
-            
-            logger.info(f"Loading with transformers AutoClasses: {model_id}")
-            self._processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+            self._model = Qwen3ASRModel.from_pretrained(
+                model_id,
+                dtype=torch.float16,
+                device_map=self._device,
+                attn_implementation="flash_attention_2",
+                max_inference_batch_size=32,
+                max_new_tokens=256,
+            )
+            logger.info("Flash Attention 2 enabled")
+        except (ImportError, ValueError, RuntimeError) as e:
+            logger.warning(f"Flash Attention 2 not available ({e}), falling back to default")
+            self._model = Qwen3ASRModel.from_pretrained(
+                model_id,
+                dtype=torch.float16,
+                device_map=self._device,
+                max_inference_batch_size=32,
+                max_new_tokens=256,
+            )
 
-            # 尝试 Flash Attention 2
-            try:
-                self._model = AutoModelForCausalLM.from_pretrained(
-                    model_id,
-                    torch_dtype=dtype,
-                    device_map="cuda:0",
-                    attn_implementation="flash_attention_2",
-                    trust_remote_code=True,
-                )
-                logger.info("Flash Attention 2 enabled")
-            except (ImportError, ValueError) as e:
-                logger.warning(f"Flash Attention 2 not available ({e}), falling back to sdpa")
-                self._model = AutoModelForCausalLM.from_pretrained(
-                    model_id,
-                    torch_dtype=dtype,
-                    device_map="cuda:0",
-                    trust_remote_code=True,
-                )
-
-        # 验证模型参数在 GPU 上
-        first_param_device = next(self._model.parameters()).device
-        logger.info(f"Model parameters on: {first_param_device}")
+        logger.info(f"Model loaded on {self._device}")
 
     async def unload(self) -> None:
         if not self._is_loaded:
             return
         self._model = None
-        self._processor = None
         self._device = None
-        torch.cuda.empty_cache()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
         self._is_loaded = False
         logger.info("CUDA model unloaded, VRAM released")
 
@@ -191,17 +132,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         sample_rate: int = 16000,
         audio: tuple = None,
     ) -> TranscriptionResult:
-        """转写单段音频
-
-        Args:
-            audio_data: 原始 PCM int16 bytes
-            language: "zh" / "en" / "auto"
-            sample_rate: 原始采样率
-            audio: (np_array, sr) 兼容 stt_server 通用转发
-
-        Returns:
-            TranscriptionResult
-        """
+        """转写单段音频"""
         if not self._is_loaded:
             await self.load()
 
@@ -210,39 +141,26 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         else:
             audio_array = self._convert_audio(audio_data, sample_rate)
 
-        lang_param = language if language != "auto" else None
-
         try:
-            # qwen_asr processor 接口
-            inputs = self._processor(
-                audios=audio_array,
-                sampling_rate=16000,
-                return_tensors="pt",
-            ).to(self._device)
+            # qwen_asr 的 transcribe 接口
+            lang_param = language if language != "auto" else None
+            
+            results = self._model.transcribe(
+                audio=(audio_array, sample_rate),
+                language=lang_param,
+            )
 
-            with torch.no_grad():
-                generated_ids = self._model.generate(
-                    **inputs,
-                    max_new_tokens=256,
-                    temperature=0.0,
-                    do_sample=False,
-                )
-
-            text = self._processor.batch_decode(
-                generated_ids, skip_special_tokens=True
-            )[0]
-
-            # 清理 ASR 输出前缀
-            text = text.strip()
-            for prefix in ["ASSISTANT: ", "assistant: ", "Assistant: "]:
-                if text.startswith(prefix):
-                    text = text[len(prefix):]
-                    break
+            if results and len(results) > 0:
+                text = results[0].text.strip()
+                detected_lang = results[0].language
+            else:
+                text = ""
+                detected_lang = language
 
             return TranscriptionResult(
                 text=text,
                 confidence=1.0,
-                language=language,
+                language=detected_lang or language,
                 is_final=True,
             )
 
