@@ -14,8 +14,6 @@ setlocal enabledelayedexpansion
 set "START_STT=false"
 set "START_LLM=false"
 set "BACKGROUND=false"
-set "STT_PID_FILE=.stt.pid"
-set "LLM_PID_FILE=.llm.pid"
 
 REM Parse arguments
 :parse_args
@@ -127,8 +125,6 @@ goto :end
 echo [INFO] Stopping servers...
 taskkill /FI "WindowTitle eq STT Server*" /F >nul 2>&1
 taskkill /FI "WindowTitle eq LLM Server*" /F >nul 2>&1
-if exist "%STT_PID_FILE%" del "%STT_PID_FILE%"
-if exist "%LLM_PID_FILE%" del "%LLM_PID_FILE%"
 echo [OK] Servers stopped
 goto :end
 
