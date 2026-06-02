@@ -110,6 +110,22 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
         "description": "Qwen3-ASR-0.6B CUDA FP16 (更快，NVIDIA GPU)",
         "requires_cuda": True,
     },
+    "qwen_asr_cuda_int8": {
+        "model_id": "Qwen/Qwen3-ASR-1.7B",
+        "engine": "qwen_asr_cuda",
+        "aligner_id": None,
+        "memory_gb": 2.0,
+        "description": "Qwen3-ASR-1.7B CUDA int8 (省内存，NVIDIA GPU)",
+        "requires_cuda": True,
+    },
+    "qwen_asr_cuda_small_int8": {
+        "model_id": "Qwen/Qwen3-ASR-0.6B",
+        "engine": "qwen_asr_cuda",
+        "aligner_id": None,
+        "memory_gb": 1.0,
+        "description": "Qwen3-ASR-0.6B CUDA int8 (最快，NVIDIA GPU)",
+        "requires_cuda": True,
+    },
     # ── Whisper Transformers 模型 (通用备选) ──
     "whisper_turbo": {
         "model_id": "openai/whisper-large-v3-turbo",
