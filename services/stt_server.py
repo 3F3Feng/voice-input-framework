@@ -572,7 +572,7 @@ class STTEngine:
 
                 # ── Qwen3-ASR (transformers 或 MLX 环境) ──
                 else:
-                    results = self._model.transcribe(
+                    results = await self._model.transcribe(
                         audio=(audio_array, sample_rate),
                         language=lang,
                     )
