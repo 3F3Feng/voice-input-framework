@@ -21,7 +21,15 @@ import logging
 from collections.abc import AsyncIterator
 
 import numpy as np
-import torch
+
+# Lazy import for torch (CUDA dependency)
+torch = None
+
+def _ensure_torch():
+    global torch
+    if torch is None:
+        import torch as _torch
+        torch = _torch
 
 from server.models.base import BaseSTTEngine, STTEngineError
 from shared.data_types import TranscriptionResult
@@ -71,6 +79,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
 
     def _load_sync(self):
         """同步加载模型（CUDA tensor ops 必须在主线程）"""
+        _ensure_torch()
         from transformers import AutoModelForCausalLM, AutoProcessor
 
         model_id = self.model_config["model_id"]

@@ -9,8 +9,5 @@ mlx-audio>=0.4.2
 # ============== MLX Whisper (optional) ==============
 mlx-whisper>=0.1.0
 
-# ============== Audio Processing ==============
-noisereduce>=3.0.0
-
 # ============== Speaker Diarization (optional) ==============
 # pyannote.audio==3.3.3  # Requires HuggingFace token

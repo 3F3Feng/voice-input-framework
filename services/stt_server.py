@@ -62,6 +62,11 @@ LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
 STATE_DIR = Path.home() / ".config" / "voice-input-framework"
 STATE_FILE = STATE_DIR / "stt_state.json"
 
+# ============== Early Logging (before full config) ==============
+# Configure basic logging early so state persistence can log
+_log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+logging.basicConfig(level=LOG_LEVEL, format=_log_format)
+logger = logging.getLogger("stt-server")
 
 def load_state() -> dict:
     """加载持久化的服务器状态"""
@@ -107,7 +112,7 @@ if "VIF_LLM_MODEL" not in os.environ:
 # ============== Context Variables ==============
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
 
-# ============== Structured Logging ==============
+# ============== Structured Logging (optional JSON mode) ==============
 class StructuredLogFormatter(logging.Formatter):
     """结构化日志格式化器"""
     def format(self, record: logging.LogRecord) -> str:
@@ -129,15 +134,11 @@ class StructuredLogFormatter(logging.Formatter):
             log_data["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_data, ensure_ascii=False, default=str)
 
-# 配置日志
-_log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+# Reconfigure with JSON format if requested
 if os.getenv("VIF_LOG_JSON", "").lower() == "true":
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(StructuredLogFormatter())
-    logging.basicConfig(level=LOG_LEVEL, handlers=[handler])
-else:
-    logging.basicConfig(level=LOG_LEVEL, format=_log_format)
-logger = logging.getLogger("stt-server")
+    logger.handlers = [handler]
 
 # ============== Data Models ==============
 class WordTimestamp(BaseModel):

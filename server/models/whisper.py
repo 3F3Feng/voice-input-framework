@@ -10,8 +10,18 @@ from collections.abc import AsyncIterator
 
 import io
 import numpy as np
-import torch
-from transformers import pipeline
+
+# Lazy imports for optional heavy dependencies
+torch = None
+pipeline = None
+
+def _ensure_torch():
+    global torch, pipeline
+    if torch is None:
+        import torch as _torch
+        from transformers import pipeline as _pipeline
+        torch = _torch
+        pipeline = _pipeline
 
 # 尝试导入音频解码库
 try:
@@ -62,6 +72,7 @@ class WhisperEngine(BaseSTTEngine):
             raise STTEngineError(f"Failed to load model: {e}")
 
     def _load_sync(self):
+        _ensure_torch()
         device = self.detect_device()
         dtype = torch.float16 if device == "cuda" else torch.float32
 

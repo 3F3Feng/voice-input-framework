@@ -7,8 +7,5 @@ transformers>=4.37.0,<5.0
 torch>=2.1.0
 torchaudio>=2.1.0
 
-# ============== Audio Processing ==============
-noisereduce>=3.0.0
-
 # ============== Speaker Diarization (optional) ==============
 # pyannote.audio==3.3.3  # Requires HuggingFace token

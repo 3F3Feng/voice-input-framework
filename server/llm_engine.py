@@ -16,97 +16,9 @@ import time
 from typing import Optional, Dict, Any
 
 from shared.platform_detector import detect_platform, PlatformInfo
+from shared.model_registry import LLM_MODELS_CONFIG
 
 logger = logging.getLogger(__name__)
-
-
-# LLM 模型注册表
-LLM_MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
-    # ── MLX 模型 (Apple Silicon) ──
-    "Qwen3.5-4B-OptiQ": {
-        "model_id": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
-        "backend": "mlx",
-        "memory_gb": 0.8,
-        "description": "Qwen3.5-4B MLX 4bit (推荐，平衡速度和精度)",
-        "requires_mlx": True,
-    },
-    "Qwen3.5-2B-OptiQ": {
-        "model_id": "mlx-community/Qwen3.5-2B-OptiQ-4bit",
-        "backend": "mlx",
-        "memory_gb": 2.0,
-        "description": "Qwen3.5-2B MLX 4bit (速度更快)",
-        "requires_mlx": True,
-    },
-    "Qwen3.5-4B-MLX": {
-        "model_id": "mlx-community/Qwen3.5-4B-MLX-4bit",
-        "backend": "mlx",
-        "memory_gb": 4.0,
-        "description": "Qwen3.5-4B MLX 标准量化",
-        "requires_mlx": True,
-    },
-    "Qwen3-0.6B": {
-        "model_id": "mlx-community/Qwen3-0.6B-4bit",
-        "backend": "mlx",
-        "memory_gb": 0.5,
-        "description": "Qwen3-0.6B MLX 4bit (最小，最快)",
-        "requires_mlx": True,
-    },
-    "Qwen3-1.7B": {
-        "model_id": "mlx-community/Qwen3-1.7B-4bit",
-        "backend": "mlx",
-        "memory_gb": 1.5,
-        "description": "Qwen3-1.7B MLX 4bit (中等)",
-        "requires_mlx": True,
-    },
-    "Gemma-4-E4B-DECKARD": {
-        "model_id": "nightmedia/gemma-4-E4B-it-The-DECKARD-V2-Strong-HERETIC-UNCENSORED-Instruct-mxfp8-mlx",
-        "backend": "mlx",
-        "memory_gb": 4.0,
-        "description": "Gemma 4 4B MLX (Google, 中文较弱)",
-        "requires_mlx": True,
-    },
-    # ── CUDA 模型 (NVIDIA GPU) ──
-    "Qwen3.5-4B-CUDA": {
-        "model_id": "Qwen/Qwen3.5-4B",
-        "backend": "cuda",
-        "memory_gb": 8.0,
-        "dtype": "float16",
-        "description": "Qwen3.5-4B CUDA FP16 (推荐，8GB VRAM)",
-        "requires_cuda": True,
-    },
-    "Qwen3.5-2B-CUDA": {
-        "model_id": "Qwen/Qwen3.5-2B",
-        "backend": "cuda",
-        "memory_gb": 4.0,
-        "dtype": "float16",
-        "description": "Qwen3.5-2B CUDA FP16 (4GB VRAM)",
-        "requires_cuda": True,
-    },
-    "Qwen3.5-4B-CUDA-INT8": {
-        "model_id": "Qwen/Qwen3.5-4B",
-        "backend": "cuda",
-        "memory_gb": 4.0,
-        "dtype": "int8",
-        "description": "Qwen3.5-4B CUDA int8 量化 (4GB VRAM)",
-        "requires_cuda": True,
-    },
-    "Qwen3.5-2B-CUDA-INT8": {
-        "model_id": "Qwen/Qwen3.5-2B",
-        "backend": "cuda",
-        "memory_gb": 2.0,
-        "dtype": "int8",
-        "description": "Qwen3.5-2B CUDA int8 量化 (2GB VRAM)",
-        "requires_cuda": True,
-    },
-    "Qwen3.5-4B-CUDA-INT4": {
-        "model_id": "Qwen/Qwen3.5-4B",
-        "backend": "cuda",
-        "memory_gb": 2.5,
-        "dtype": "int4",
-        "description": "Qwen3.5-4B CUDA int4 量化 (2.5GB VRAM)",
-        "requires_cuda": True,
-    },
-}
 
 
 class LLMEngine:
