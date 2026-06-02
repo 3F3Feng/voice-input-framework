@@ -29,6 +29,7 @@ from shared.platform_detector import detect_platform, get_platform_info, get_sta
 from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
 
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -538,10 +539,11 @@ class STTEngine:
                         language=lang,
                         return_timestamps=True,
                     )
-                    return result.get("text", "").strip(), result.get("language", lang or "en")
+                    text = result.get("text", "").strip()
+                    detected_lang = result.get("language", lang or "en")
 
                 # ── Whisper.cpp 引擎 ──
-                if getattr(self, '_model_type', None) == "whisper_cpp":
+                elif getattr(self, '_model_type', None) == "whisper_cpp":
                     import numpy as np
                     # whisper.cpp 需要 bytes
                     audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
@@ -550,24 +552,37 @@ class STTEngine:
                         language=lang or "auto",
                         sample_rate=sample_rate,
                     ))
-                    return result.text, result.language
+                    text = result.text
+                    detected_lang = result.language
 
                 # ── Whisper Turbo (transformers) ──
-                if getattr(self, '_model_type', None) == "whisper_turbo":
+                elif getattr(self, '_model_type', None) == "whisper_turbo":
                     result = self._model(
                         audio_array,
                         generate_kwargs={"language": lang},
                     )
-                    return result.get("text", "").strip(), lang or "en"
+                    # Pipeline returns list of dicts
+                    if isinstance(result, list) and len(result) > 0:
+                        text = result[0].get("text", "").strip()
+                    elif isinstance(result, dict):
+                        text = result.get("text", "").strip()
+                    else:
+                        text = str(result).strip()
+                    detected_lang = lang or "en"
 
                 # ── Qwen3-ASR (transformers 或 MLX 环境) ──
-                results = self._model.transcribe(
-                    audio=(audio_array, sample_rate),
-                    language=lang,
-                )
-                if results and len(results) > 0:
-                    return results[0].text, results[0].language
-                return "", language
+                else:
+                    results = self._model.transcribe(
+                        audio=(audio_array, sample_rate),
+                        language=lang,
+                    )
+                    if results and len(results) > 0:
+                        text = results[0].text
+                        detected_lang = results[0].language
+                    else:
+                        text = ""
+                        detected_lang = language
+
             text = text.strip()
 
             # 生成时间戳（如果需要）
@@ -674,46 +689,11 @@ diarize_engine = DiarizationEngine() if DIARIZE_ENABLED else None
 # ============== FastAPI App ==============
 engine = STTEngine(default_model=STT_MODEL)
 
-app = FastAPI(
-    title="Voice Input Framework - STT Service",
-    description="独立的语音识别服务，使用 Qwen3-ASR",
-    version="1.1.0",
-)
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 请求ID中间件
-@app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
-    """为每个请求生成唯一ID"""
-    request_id = str(uuid.uuid4())
-    request_id_ctx.set(request_id)
-    start_time = time.time()
-    try:
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        # 记录请求指标
-        duration = (time.time() - start_time) * 1000
-        logger.info(
-            f"{request.method} {request.url.path} - {response.status_code} - {duration:.2f}ms",
-            extra={"request_id": request_id, "duration_ms": duration}
-        )
-        return response
-    except Exception as e:
-        logger.error(f"Request failed: {e}", extra={"request_id": request_id})
-        raise
-
-@app.on_event("startup")
-async def startup_event():
-    """启动时加载模型"""
-    # 显示启动横幅
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # Startup
     extra_info = {
         "Default STT Model": STT_MODEL,
         "LLM Enabled": LLM_ENABLED,
@@ -749,12 +729,49 @@ async def startup_event():
         asyncio.create_task(engine.load())
     
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭时清理"""
+    
+    yield
+    
+    # Shutdown
     logger.info("STT Service shutting down")
+
+
+app = FastAPI(
+    title="Voice Input Framework - STT Service",
+    description="独立的语音识别服务，使用 Qwen3-ASR",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 请求ID中间件
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """为每个请求生成唯一ID"""
+    request_id = str(uuid.uuid4())
+    request_id_ctx.set(request_id)
+    start_time = time.time()
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        # 记录请求指标
+        duration = (time.time() - start_time) * 1000
+        logger.info(
+            f"{request.method} {request.url.path} - {response.status_code} - {duration:.2f}ms",
+            extra={"request_id": request_id, "duration_ms": duration}
+        )
+        return response
+    except Exception as e:
+        logger.error(f"Request failed: {e}", extra={"request_id": request_id})
+        raise
 
 @app.get("/platform")
 async def get_platform():

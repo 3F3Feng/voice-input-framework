@@ -198,7 +198,7 @@ def _detect_cuda() -> tuple[bool, Optional[CUDADeviceInfo]]:
         
         device_info = CUDADeviceInfo(
             name=device.name,
-            memory_gb=device.total_mem / (1024 ** 3),  # bytes to GB
+            memory_gb=getattr(device, 'total_memory', getattr(device, 'total_mem', 0)) / (1024 ** 3),  # bytes to GB
             driver_version=driver_version,
             compute_capability=f"{device.major}.{device.minor}",
             cuda_version=cuda_version,
