@@ -91,7 +91,6 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
     def _load_sync(self):
         """同步加载模型（CUDA tensor ops 必须在主线程）"""
         _ensure_torch()
-        from transformers import AutoModelForCausalLM, AutoProcessor
 
         model_id = self.model_config["model_id"]
         dtype = self._get_torch_dtype()
@@ -101,26 +100,60 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
 
         self._device = torch.device("cuda:0")
 
-        self._processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-
-        # 尝试 Flash Attention 2（需要 flash-attn 安装）
+        # 使用 qwen_asr 包加载模型（自动注册架构）
         try:
-            self._model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                torch_dtype=dtype,
-                device_map="cuda:0",
-                attn_implementation="flash_attention_2",
-                trust_remote_code=True,
-            )
-            logger.info("Flash Attention 2 enabled")
-        except (ImportError, ValueError) as e:
-            logger.warning(f"Flash Attention 2 not available ({e}), falling back to sdpa")
-            self._model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                torch_dtype=dtype,
-                device_map="cuda:0",
-                trust_remote_code=True,
-            )
+            from qwen_asr import Qwen3ASRForConditionalGeneration, Qwen3ASRProcessor
+            from transformers import AutoConfig
+            
+            logger.info(f"Loading with qwen_asr package: {model_id}")
+            config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+            
+            # 尝试 Flash Attention 2
+            try:
+                self._model = Qwen3ASRForConditionalGeneration.from_pretrained(
+                    model_id,
+                    torch_dtype=dtype,
+                    device_map="cuda:0",
+                    attn_implementation="flash_attention_2",
+                    trust_remote_code=True,
+                )
+                logger.info("Flash Attention 2 enabled")
+            except (ImportError, ValueError) as e:
+                logger.warning(f"Flash Attention 2 not available ({e}), falling back to sdpa")
+                self._model = Qwen3ASRForConditionalGeneration.from_pretrained(
+                    model_id,
+                    torch_dtype=dtype,
+                    device_map="cuda:0",
+                    trust_remote_code=True,
+                )
+            
+            self._processor = Qwen3ASRProcessor.from_pretrained(model_id, trust_remote_code=True)
+            
+        except ImportError:
+            # 回退：使用 transformers AutoClasses（需要更新版本）
+            from transformers import AutoModelForCausalLM, AutoProcessor
+            
+            logger.info(f"Loading with transformers AutoClasses: {model_id}")
+            self._processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+
+            # 尝试 Flash Attention 2
+            try:
+                self._model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    torch_dtype=dtype,
+                    device_map="cuda:0",
+                    attn_implementation="flash_attention_2",
+                    trust_remote_code=True,
+                )
+                logger.info("Flash Attention 2 enabled")
+            except (ImportError, ValueError) as e:
+                logger.warning(f"Flash Attention 2 not available ({e}), falling back to sdpa")
+                self._model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    torch_dtype=dtype,
+                    device_map="cuda:0",
+                    trust_remote_code=True,
+                )
 
         # 验证模型参数在 GPU 上
         first_param_device = next(self._model.parameters()).device
@@ -180,11 +213,11 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         lang_param = language if language != "auto" else None
 
         try:
+            # qwen_asr processor 接口
             inputs = self._processor(
                 audios=audio_array,
                 sampling_rate=16000,
                 return_tensors="pt",
-                language=lang_param,
             ).to(self._device)
 
             with torch.no_grad():
