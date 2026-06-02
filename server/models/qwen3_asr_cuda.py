@@ -44,13 +44,13 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         "qwen_asr": {
             "model_id": "Qwen/Qwen3-ASR-1.7B",
             "memory_gb": 3.5,   # FP16 VRAM 占用
-            "dtype": torch.float16,
+            "dtype": "float16",
             "description": "Qwen3-ASR-1.7B CUDA FP16 (推荐)",
         },
         "qwen_asr_small": {
             "model_id": "Qwen/Qwen3-ASR-0.6B",
             "memory_gb": 1.5,
-            "dtype": torch.float16,
+            "dtype": "float16",
             "description": "Qwen3-ASR-0.6B CUDA FP16 (更快)",
         },
     }
@@ -63,6 +63,17 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             model_name, self.MODEL_CONFIGS["qwen_asr"]
         )
         self._device = None
+
+    def _get_torch_dtype(self):
+        """获取 torch dtype 对象"""
+        _ensure_torch()
+        dtype_str = self.model_config.get("dtype", "float16")
+        if dtype_str == "float16":
+            return torch.float16
+        elif dtype_str == "bfloat16":
+            return torch.bfloat16
+        else:
+            return torch.float32
 
     async def load(self) -> None:
         if self._is_loaded:
@@ -83,6 +94,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         from transformers import AutoModelForCausalLM, AutoProcessor
 
         model_id = self.model_config["model_id"]
+        dtype = self._get_torch_dtype()
 
         if not torch.cuda.is_available():
             raise STTEngineError("CUDA is not available on this machine")
@@ -95,7 +107,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         try:
             self._model = AutoModelForCausalLM.from_pretrained(
                 model_id,
-                torch_dtype=self.model_config["dtype"],
+                torch_dtype=dtype,
                 device_map="cuda:0",
                 attn_implementation="flash_attention_2",
                 trust_remote_code=True,
@@ -105,7 +117,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             logger.warning(f"Flash Attention 2 not available ({e}), falling back to sdpa")
             self._model = AutoModelForCausalLM.from_pretrained(
                 model_id,
-                torch_dtype=self.model_config["dtype"],
+                torch_dtype=dtype,
                 device_map="cuda:0",
                 trust_remote_code=True,
             )
