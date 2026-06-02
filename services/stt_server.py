@@ -528,6 +528,16 @@ class STTEngine:
                     sample_rate=sample_rate,
                 )
                 text, detected_lang = result.text, result.language
+
+            # ── Qwen3-ASR CUDA 引擎 ──
+            elif model_type == "qwen_asr_cuda":
+                result = await self._model.transcribe(
+                    audio=(audio_array, sample_rate),
+                    language=lang or "auto",
+                    sample_rate=sample_rate,
+                )
+                text, detected_lang = result.text, result.language
+
             else:
                 # ── Whisper MLX 引擎 ──
                 if getattr(self, '_model_type', None) == "whisper_mlx":
