@@ -57,12 +57,18 @@ def _build_available_models():
                 f"No engine class registered for engine_type '{engine_type}' (model '{name}')"
             )
 
-# 延迟构建
-_build_available_models()
+# 不在模块级别构建，延迟到第一次访问时构建
+# _build_available_models()
+
+def get_available_models():
+    """获取可用模型注册表（延迟构建）"""
+    _build_available_models()
+    return AVAILABLE_MODELS
 
 __all__ = [
     "BaseSTTEngine",
     "STTEngineError",
     "AVAILABLE_MODELS",
     "MODELS_CONFIG",
+    "get_available_models",
 ]
