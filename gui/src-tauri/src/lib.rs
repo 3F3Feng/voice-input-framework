@@ -228,6 +228,13 @@ async fn get_models(state: State<'_, AppState>) -> Result<Vec<stt::ModelInfo>, S
 }
 
 #[tauri::command]
+async fn get_platform_info(state: State<'_, AppState>) -> Result<stt::PlatformInfo, String> {
+    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let client = stt::SttClient::new(&host);
+    client.get_platform().await
+}
+
+#[tauri::command]
 async fn switch_model(state: State<'_, AppState>, name: String) -> Result<String, String> {
     let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
     stt::SttClient::new(&host).switch_stt_model(&name).await
@@ -396,7 +403,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_server_host, start_recording, stop_recording,
             get_audio_devices, get_audio_level, get_indicator_status,
-            transcribe_ws, get_models, switch_model,
+            transcribe_ws, get_models, get_platform_info, switch_model,
             get_llm_models, switch_llm_model,
             get_config, update_config, import_old_config,
             get_llm_prompt, save_llm_prompt, get_llm_enabled, set_llm_enabled,

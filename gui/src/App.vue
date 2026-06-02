@@ -30,9 +30,15 @@
           <div class="s-section">
             <div class="s-title">连接</div>
             <div class="s-row">
-              <input class="s-input" v-model="serverHost" placeholder="localhost" @keyup.enter="updateServer" @change="onServerSettingChange" />
-              <input class="s-input s-port" v-model.number="serverPort" type="number" @keyup.enter="updateServer" @change="onServerSettingChange" />
+              <input class="s-input" v-model="serverAddress" placeholder="localhost:6544" list="server-history" @keyup.enter="updateServer" @change="onServerSettingChange" />
+              <datalist id="server-history">
+                <option v-for="addr in serverHistory" :key="addr" :value="addr" />
+              </datalist>
               <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
+            </div>
+            <div v-if="platformInfo" class="s-tip">
+              服务器: {{ platformInfo.system }} {{ platformInfo.arch }} | 后端: {{ platformInfo.backend }}
+              <span v-if="platformInfo.gpu"> | GPU: {{ platformInfo.gpu.name }}</span>
             </div>
           </div>
 
@@ -40,11 +46,14 @@
           <div class="s-section">
             <div class="s-title">STT 模型</div>
             <select class="s-select" v-model="sttModel" @change="switchStt">
-              <option v-for="m in sttModels" :key="m.name" :value="m.name">
-                {{ m.name }} {{ m.is_loaded ? '✓' : '' }}
+              <option v-for="m in sttModels" :key="m.name" :value="m.name" :disabled="m.is_available === false">
+                {{ m.name }} {{ m.is_loaded ? '✓' : '' }} {{ m.is_available === false ? '(不兼容)' : '' }}
               </option>
             </select>
             <div v-if="sttLoading" class="s-loading">切换中...</div>
+            <div v-if="platformInfo" class="s-tip">
+              推荐: {{ platformInfo.recommended_stt }} | 可用: {{ platformInfo.available_models.length }} 个模型
+            </div>
           </div>
 
           <div class="s-section">
@@ -231,9 +240,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 // ── Types ──
-interface ModelInfo { name: string; is_loaded: boolean; }
+interface ModelInfo { name: string; is_loaded: boolean; is_available?: boolean; }
 interface VoiceInputConfig {
-  server: { host: string; port: number };
+  server: { host: string; port: number; history?: string[] };
   hotkey: { key: string; distinguish_left_right: boolean };
   ui: { start_minimized: boolean; use_floating_indicator: boolean; use_tray: boolean; opacity: number; auto_input?: boolean };
   audio: { device: string | null; language: string };
@@ -241,6 +250,14 @@ interface VoiceInputConfig {
   _version: string;
 }
 interface HistoryItem { text: string; time: string; }
+interface PlatformInfo {
+  system: string;
+  arch: string;
+  backend: string;
+  gpu: { name: string; memory_gb: number } | null;
+  recommended_stt: string;
+  available_models: string[];
+}
 
 // ── State ──
 const recording = ref(false);
@@ -264,6 +281,8 @@ const promptStatus = ref("");
 
 const serverHost = ref("localhost");
 const serverPort = ref(6544);
+const serverHistory = ref<string[]>([]);
+const platformInfo = ref<PlatformInfo | null>(null);
 const llmEnabled = ref(true);
 const promptText = ref("");
 const autoInputEnabled = ref(false);
@@ -302,6 +321,18 @@ let processingTimerInterval: ReturnType<typeof setInterval> | null = null;
 let toastId = 0;
 
 // ── Computed ──
+const serverAddress = computed({
+  get: () => `${serverHost.value}:${serverPort.value}`,
+  set: (val: string) => {
+    const parts = val.split(':');
+    if (parts.length === 2) {
+      serverHost.value = parts[0] || 'localhost';
+      serverPort.value = parseInt(parts[1]) || 6544;
+    } else {
+      serverHost.value = val;
+    }
+  }
+});
 const currentModelName = computed(() => {
   const loaded = sttModels.value.find(m => m.is_loaded);
   return loaded?.name || sttModel.value || "";
@@ -398,6 +429,7 @@ async function loadConfig() {
     const cfg = await getConfig();
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
+    serverHistory.value = cfg.server.history || [];
     version.value = cfg._version;
     hotkeyStr.value = cfg.hotkey.key;
     startMinimized.value = cfg.ui.start_minimized;
@@ -429,12 +461,36 @@ async function updateServer() {
     if (ok) {
       connected.value = true;
       toast("已连接", "ok");
-      saveConfigPatch(cfg => { cfg.server.host = host; cfg.server.port = port; });
+      // Save to history
+      const address = `${host}:${port}`;
+      if (!serverHistory.value.includes(address)) {
+        serverHistory.value.unshift(address);
+        if (serverHistory.value.length > 20) serverHistory.value = serverHistory.value.slice(0, 20);
+      } else {
+        // Move to top
+        serverHistory.value = [address, ...serverHistory.value.filter(a => a !== address)];
+      }
+      saveConfigPatch(cfg => {
+        cfg.server.host = host;
+        cfg.server.port = port;
+        cfg.server.history = serverHistory.value;
+      });
+      // Fetch platform info
+      fetchPlatformInfo();
     } else {
       toast("服务器无响应", "err");
     }
   } catch (e) { toast(`连接失败: ${e}`, "err"); }
   connecting.value = false;
+}
+
+async function fetchPlatformInfo() {
+  try {
+    platformInfo.value = await invoke<PlatformInfo>("get_platform_info");
+  } catch (e) {
+    console.error("Failed to fetch platform info:", e);
+    platformInfo.value = null;
+  }
 }
 
 // ── Models ──

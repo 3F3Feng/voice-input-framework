@@ -18,6 +18,8 @@ pub struct VoiceInputConfig {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    #[serde(default)]
+    pub history: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +96,7 @@ impl Default for VoiceInputConfig {
             server: ServerConfig {
                 host: "localhost".into(),
                 port: 6544,
+                history: Vec::new(),
             },
             hotkey: HotkeyConfig {
                 key: "left_ctrl+left_alt".into(),
@@ -192,6 +195,7 @@ impl VoiceInputConfig {
                     .and_then(|s| s.host.clone())
                     .unwrap_or_else(|| "localhost".into()),
                 port: old.server.as_ref().and_then(|s| s.port).unwrap_or(6544),
+                history: Vec::new(),
             },
             hotkey: HotkeyConfig {
                 key: old

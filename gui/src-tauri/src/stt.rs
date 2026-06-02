@@ -12,6 +12,26 @@ use tokio_tungstenite::tungstenite::Message;
 pub struct ModelInfo {
     pub name: String,
     pub is_loaded: bool,
+    #[serde(default = "default_true")]
+    pub is_available: bool,
+}
+
+fn default_true() -> bool { true }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PlatformInfo {
+    pub system: String,
+    pub arch: String,
+    pub backend: String,
+    pub gpu: Option<GPUInfo>,
+    pub recommended_stt: Option<String>,
+    pub available_models: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GPUInfo {
+    pub name: Option<String>,
+    pub memory_gb: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,7 +259,31 @@ impl SttClient {
         let client = Client::new();
         let resp = client.get(format!("{}/models", self.stt_url)).send().await.map_err(|e| e.to_string())?;
         let models: Vec<Value> = resp.json().await.map_err(|e| e.to_string())?;
-        Ok(models.iter().map(|m| ModelInfo { name: m["name"].as_str().unwrap_or("").to_string(), is_loaded: m["is_loaded"].as_bool().unwrap_or(false) }).collect())
+        Ok(models.iter().map(|m| ModelInfo {
+            name: m["name"].as_str().unwrap_or("").to_string(),
+            is_loaded: m["is_loaded"].as_bool().unwrap_or(false),
+            is_available: m["is_available"].as_bool().unwrap_or(true),
+        }).collect())
+    }
+
+    pub async fn get_platform(&self) -> Result<PlatformInfo, String> {
+        let client = Client::new();
+        let resp = client.get(format!("{}/platform", self.stt_url)).send().await.map_err(|e| e.to_string())?;
+        let data: Value = resp.json().await.map_err(|e| e.to_string())?;
+        
+        Ok(PlatformInfo {
+            system: data["system"].as_str().unwrap_or("unknown").to_string(),
+            arch: data["arch"].as_str().unwrap_or("unknown").to_string(),
+            backend: data["backend"].as_str().unwrap_or("cpu").to_string(),
+            gpu: data["gpu"].as_object().map(|g| GPUInfo {
+                name: g.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                memory_gb: g.get("memory_gb").and_then(|v| v.as_f64()),
+            }),
+            recommended_stt: data["recommended"]["stt_model"].as_str().map(|s| s.to_string()),
+            available_models: data["available_models"].as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default(),
+        })
     }
 
     pub async fn switch_stt_model(&self, name: &str) -> Result<String, String> {
