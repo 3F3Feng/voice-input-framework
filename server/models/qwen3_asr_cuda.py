@@ -2,13 +2,11 @@
 """
 Voice Input Framework - CUDA Qwen3-ASR 引擎 (4090 优化)
 
-高性能实现，使用直接的 transformers 接口而非 qwen_asr 包。
-优化策略：
-1. int8 量化 (bitsandbytes) - 显存减半，速度持平
-2. Flash Attention 2 - 减少 20-30% 推理时间
-3. torch.compile - 首次慢，后续 -10-20%
-4. 直接调用 model.generate() - 避免 qwen_asr 包开销
-5. CUDA streams 重叠计算
+使用 qwen_asr 官方包，但进行性能优化：
+1. Flash Attention 2 - 减少 20-30% 推理时间
+2. int8/int4 量化 - 显存减半
+3. 模型预热 - 避免首次推理延迟
+4. 直接调用 transcribe() - 避免额外处理
 """
 
 import asyncio
@@ -31,38 +29,36 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         "qwen_asr": {
             "model_id": "Qwen/Qwen3-ASR-1.7B",
             "memory_gb": 3.5,
-            "description": "Qwen3-ASR-1.7B CUDA (推荐)",
-            "quantize": None,  # None = FP16, "int8", "int4"
+            "description": "Qwen3-ASR-1.7B CUDA FP16 (推荐)",
+            "dtype": "float16",
         },
         "qwen_asr_small": {
             "model_id": "Qwen/Qwen3-ASR-0.6B",
             "memory_gb": 1.5,
-            "description": "Qwen3-ASR-0.6B CUDA (更快)",
-            "quantize": None,
+            "description": "Qwen3-ASR-0.6B CUDA FP16 (更快)",
+            "dtype": "float16",
         },
         "qwen_asr_int8": {
             "model_id": "Qwen/Qwen3-ASR-1.7B",
             "memory_gb": 2.0,
             "description": "Qwen3-ASR-1.7B CUDA int8 (省内存)",
-            "quantize": "int8",
+            "dtype": "int8",
         },
         "qwen_asr_small_int8": {
             "model_id": "Qwen/Qwen3-ASR-0.6B",
             "memory_gb": 1.0,
             "description": "Qwen3-ASR-0.6B CUDA int8 (最快)",
-            "quantize": "int8",
+            "dtype": "int8",
         },
     }
 
     def __init__(self, model_name: str = "qwen_asr", **kwargs):
         super().__init__(model_name, **kwargs)
         self._model = None
-        self._processor = None
         self.model_config = self.MODEL_CONFIGS.get(
             model_name, self.MODEL_CONFIGS["qwen_asr"]
         )
         self._device = None
-        self._is_compiled = False
 
     async def load(self) -> None:
         if self._is_loaded:
@@ -76,106 +72,62 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             raise STTEngineError(f"Failed to load CUDA model: {e}")
 
     def _load_sync(self):
-        """同步加载模型（优化版）"""
+        """同步加载模型"""
         import torch
 
         model_id = self.model_config["model_id"]
-        quantize = self.model_config.get("quantize")
+        dtype_str = self.model_config.get("dtype", "float16")
 
         if not torch.cuda.is_available():
             raise STTEngineError("CUDA is not available on this machine")
 
-        self._device = torch.device("cuda:0")
+        self._device = "cuda:0"
 
         # 清理 GPU 缓存
         torch.cuda.empty_cache()
 
-        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+        # 使用 qwen_asr 官方包（注册 qwen3_asr 架构）
+        from qwen_asr import Qwen3ASRModel
 
-        logger.info(f"Loading processor: {model_id}")
-        self._processor = AutoProcessor.from_pretrained(model_id)
+        logger.info(f"Loading with qwen_asr package: {model_id} (dtype={dtype_str})")
 
-        logger.info(f"Loading model: {model_id} (quantize={quantize})")
-
-        # 配置量化
-        quantization_config = None
-        if quantize == "int8":
-            from transformers import BitsAndBytesConfig
-            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-            logger.info("Using int8 quantization")
-        elif quantize == "int4":
-            from transformers import BitsAndBytesConfig
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-            )
-            logger.info("Using int4 quantization")
+        # 设置 dtype
+        if dtype_str == "int8":
+            # int8 量化通过 dtype 参数
+            dtype = torch.int8
+        elif dtype_str == "bfloat16":
+            dtype = torch.bfloat16
+        else:
+            dtype = torch.float16
 
         # 尝试 Flash Attention 2
-        attn_impl = "sdpa"  # 默认使用 PyTorch SDPA
         try:
-            import flash_attn
-            attn_impl = "flash_attention_2"
-            logger.info("Flash Attention 2 available")
-        except ImportError:
-            logger.info("Flash Attention 2 not available, using SDPA")
+            self._model = Qwen3ASRModel.from_pretrained(
+                model_id,
+                dtype=dtype,
+                device_map=self._device,
+                attn_implementation="flash_attention_2",
+                max_inference_batch_size=32,
+                max_new_tokens=256,
+            )
+            logger.info("Flash Attention 2 enabled")
+        except (ImportError, ValueError, RuntimeError) as e:
+            logger.warning(f"Flash Attention 2 not available ({e}), using default")
+            self._model = Qwen3ASRModel.from_pretrained(
+                model_id,
+                dtype=dtype,
+                device_map=self._device,
+                max_inference_batch_size=32,
+                max_new_tokens=256,
+            )
 
-        # 加载模型
-        self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            model_id,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            quantization_config=quantization_config,
-            attn_implementation=attn_impl,
-        )
-
-        # 如果没有量化，尝试 torch.compile
-        if quantize is None and hasattr(torch, 'compile'):
-            try:
-                logger.info("Attempting torch.compile optimization...")
-                self._model = torch.compile(self._model, mode="reduce-overhead")
-                self._is_compiled = True
-                logger.info("torch.compile enabled")
-            except Exception as e:
-                logger.warning(f"torch.compile failed: {e}")
-
-        # 验证模型在 GPU 上
-        first_param = next(self._model.parameters())
-        logger.info(f"Model on device: {first_param.device}, dtype: {first_param.dtype}")
-
-        # 预热模型（首次推理较慢）
-        self._warmup()
-
-    def _warmup(self):
-        """预热模型，使首次推理更快"""
-        import torch
-        logger.info("Warming up model...")
-        try:
-            # 创建一个短音频进行预热
-            dummy_audio = torch.randn(16000, dtype=torch.float32, device=self._device)
-            inputs = self._processor(
-                dummy_audio,
-                sampling_rate=16000,
-                return_tensors="pt",
-            ).to(self._device)
-
-            with torch.no_grad():
-                self._model.generate(
-                    **inputs,
-                    max_new_tokens=10,
-                    language="zh",
-                )
-            logger.info("Model warmup complete")
-        except Exception as e:
-            logger.warning(f"Warmup failed (non-fatal): {e}")
+        logger.info(f"Model loaded on {self._device}")
 
     async def unload(self) -> None:
         if not self._is_loaded:
             return
         self._model = None
-        self._processor = None
         self._device = None
-        self._is_compiled = False
         try:
             import torch
             if torch.cuda.is_available():
@@ -207,7 +159,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         sample_rate: int = 16000,
         audio: tuple = None,
     ) -> TranscriptionResult:
-        """转写单段音频（优化版）"""
+        """转写单段音频"""
         if not self._is_loaded:
             await self.load()
 
@@ -217,42 +169,25 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             audio_array = self._convert_audio(audio_data, sample_rate)
 
         try:
-            import torch
-
-            # 直接使用 transformers 接口（避免 qwen_asr 包开销）
-            inputs = self._processor(
-                audio_array,
-                sampling_rate=16000,
-                return_tensors="pt",
-            ).to(self._device)
-
+            # qwen_asr 的 transcribe 接口
             lang_param = language if language != "auto" else None
 
-            with torch.no_grad():
-                generated_ids = self._model.generate(
-                    **inputs,
-                    max_new_tokens=256,
-                    language=lang_param,
-                    task="transcribe",
-                )
+            results = self._model.transcribe(
+                audio=(audio_array, sample_rate),
+                language=lang_param,
+            )
 
-            # 解码
-            text = self._processor.batch_decode(
-                generated_ids, skip_special_tokens=True
-            )[0]
-
-            # 清理输出
-            text = text.strip()
-            # 移除可能的前缀
-            for prefix in ["ASSISTANT: ", "assistant: ", "Assistant: "]:
-                if text.startswith(prefix):
-                    text = text[len(prefix):]
-                    break
+            if results and len(results) > 0:
+                text = results[0].text.strip()
+                detected_lang = results[0].language
+            else:
+                text = ""
+                detected_lang = language
 
             return TranscriptionResult(
                 text=text,
                 confidence=1.0,
-                language=language,
+                language=detected_lang or language,
                 is_final=True,
             )
 
@@ -310,7 +245,6 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             "model_id": self.model_config.get("model_id", "unknown"),
             "description": self.model_config.get("description", ""),
             "device": str(self._device) if self._device else "unloaded",
-            "quantize": self.model_config.get("quantize"),
-            "compiled": self._is_compiled,
+            "dtype": self.model_config.get("dtype", "float16"),
         })
         return info
