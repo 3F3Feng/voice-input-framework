@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -119,25 +120,11 @@ if LLM_MODEL:
 else:
     default_model = engine.get_default_model()
 
-app = FastAPI(
-    title="Voice Input Framework - LLM Service",
-    description="独立的文本后处理服务，支持 MLX (Apple Silicon) 和 CUDA (NVIDIA) 后端",
-    version="2.0.0",
-)
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.on_event("startup")
-async def startup_event():
-    """启动时加载模型"""
-    # 显示启动横幅
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # Startup
     extra_info = {
         "Default LLM Model": default_model or "(none - no GPU)",
         "Backend": platform_info.best_backend,
@@ -171,13 +158,29 @@ async def startup_event():
             logger.warning("No default LLM model available for this platform")
     else:
         logger.info(f"Unknown preload option: {preload}, skipping LLM preload")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭时清理"""
+    
+    yield
+    
+    # Shutdown
     logger.info("LLM Service shutting down")
     await engine.unload()
+
+
+app = FastAPI(
+    title="Voice Input Framework - LLM Service",
+    description="独立的文本后处理服务，支持 MLX (Apple Silicon) 和 CUDA (NVIDIA) 后端",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/health", response_model=HealthStatus)
 async def health_check():
