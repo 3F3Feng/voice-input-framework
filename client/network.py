@@ -159,6 +159,33 @@ class SttClient:
         self.is_connected = False
         self.connection_state = ConnectionState.DISCONNECTED
 
+    # ──────────────────── 平台信息 ────────────────────
+
+    async def fetch_platform_info(self) -> dict:
+        """获取服务器平台信息
+
+        Returns:
+            dict: 平台信息，包含 recommended_stt, available_models 等
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
+                url = f"{self.http_url}/platform"
+                self._log(f"正在获取平台信息 from {url}...")
+
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self._log(f"✓ 获取到平台信息: {data.get('system', 'unknown')} {data.get('arch', 'unknown')}")
+                    return data
+                else:
+                    self._log(f"⚠️ 获取平台信息失败: HTTP {resp.status_code}")
+                    return {}
+        except Exception as e:
+            self._log(f"⚠️ 获取平台信息失败: {e}")
+            return {}
+
     # ──────────────────── 模型管理 ────────────────────
 
     async def fetch_models(self) -> bool:
@@ -209,6 +236,8 @@ class SttClient:
     def _parse_models_response(self, response_data: Any):
         """解析模型列表响应（兼容多种格式）"""
         self.available_models = []
+        self.all_models = []  # 所有模型（包括不可用的）
+        self.available_model_names = []  # 当前平台可用的模型名称
 
         if isinstance(response_data, list):
             # 列表格式
@@ -217,21 +246,31 @@ class SttClient:
                     name = m.get("name", "")
                     if name:
                         self.available_models.append(name)
+                        self.all_models.append(name)
+                        # 检查可用性
+                        if m.get("is_available", True):
+                            self.available_model_names.append(name)
                     if m.get("is_loaded", False):
                         self.current_model = name
         elif isinstance(response_data, dict):
             # 字典格式，可能带有 "models" 键
             if "models" in response_data:
-                self.available_models = [
-                    m.get("name", "") for m in response_data.get("models", [])
-                ]
                 for m in response_data.get("models", []):
+                    name = m.get("name", "")
+                    if name:
+                        self.available_models.append(name)
+                        self.all_models.append(name)
+                        # 检查可用性
+                        if m.get("is_available", True):
+                            self.available_model_names.append(name)
                     if m.get("is_loaded", False):
-                        self.current_model = m.get("name", "")
+                        self.current_model = name
                         break
 
         # 过滤空字符串
         self.available_models = [m for m in self.available_models if m]
+        self.all_models = [m for m in self.all_models if m]
+        self.available_model_names = [m for m in self.available_model_names if m]
 
     async def switch_model(self, model_name: str) -> bool:
         """切换 STT 模型

@@ -105,6 +105,12 @@ class MainWindow:
             if self.audio_devices else "默认设备"
         )
 
+        # 服务器地址历史
+        server_history = self.config_manager.get_server_history_addresses()
+        current_address = f"{self.server_host}:{self.server_port}"
+        if current_address not in server_history:
+            server_history.insert(0, current_address)
+
         layout = [
             [sg.Text("🎤 Voice Input v1.1", font=("Helvetica", 14, "bold"),
                      justification="center", expand_x=True,
@@ -157,15 +163,20 @@ class MainWindow:
 
             # 服务器配置
             [sg.Frame("服务器配置", [
-                [sg.Text("主机:", background_color=BACKGROUND_COLOR,
+                [sg.Text("服务器地址:", background_color=BACKGROUND_COLOR,
                          text_color=TEXT_COLOR),
-                 sg.Input(self.server_host, key="-HOST-", size=(20, 1)),
-                 sg.Text("端口:", background_color=BACKGROUND_COLOR,
-                         text_color=TEXT_COLOR),
-                 sg.Input(str(self.server_port), key="-PORT-", size=(8, 1))],
-                [sg.Button("连接", key="-CONNECT-",
+                 sg.Combo(server_history,
+                          default_value=current_address,
+                          key="-SERVER-ADDRESS-",
+                          size=(30, 1),
+                          enable_events=True,
+                          readonly=False),
+                 sg.Button("连接", key="-CONNECT-",
                            button_color=("white", "green"), size=(10, 1)),
                  sg.Text("", key="-CONN-STATUS-", text_color="yellow",
+                         background_color=BACKGROUND_COLOR)],
+                [sg.Text("格式: host:port (如 192.168.1.100:6544)",
+                         text_color=TIP_TEXT_COLOR, font=("Helvetica", 8),
                          background_color=BACKGROUND_COLOR)],
             ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
                 expand_x=True)],
@@ -325,6 +336,73 @@ class MainWindow:
         else:
             self.window["-MODEL-SELECT-"].update(values=[], value="")
             self.window["-MODEL-STATUS-"].update("未找到可用模型", text_color="red")
+
+    def update_model_list_with_availability(self, models: list, current: str, available_models: list):
+        """更新 STT 模型下拉列表（带可用性标记）
+
+        Args:
+            models: 所有模型列表
+            current: 当前模型名称
+            available_models: 当前平台可用的模型列表
+        """
+        if not self.window:
+            return
+        if models:
+            # 标记不可用的模型
+            display_models = []
+            for m in models:
+                if m in available_models:
+                    display_models.append(m)
+                else:
+                    display_models.append(f"{m} (不兼容)")
+
+            # 过滤出可用的模型用于选择
+            self.window["-MODEL-SELECT-"].update(values=display_models, value=current)
+            self.window["-MODEL-STATUS-"].update(
+                f"当前模型: {current} | 可用: {len(available_models)}/{len(models)}",
+                text_color="yellow"
+            )
+        else:
+            self.window["-MODEL-SELECT-"].update(values=[], value="")
+            self.window["-MODEL-STATUS-"].update("未找到可用模型", text_color="red")
+
+    def get_selected_model(self) -> str:
+        """获取选中的模型名称（去除不兼容标记）"""
+        if not self.window:
+            return ""
+        value = self.window["-MODEL-SELECT-"].get()
+        # 移除 " (不兼容)" 后缀
+        if value.endswith(" (不兼容)"):
+            return value[:-len(" (不兼容)")]
+        return value
+
+    def get_server_address(self) -> tuple:
+        """获取服务器地址（从组合框解析）
+
+        Returns:
+            tuple: (host, port) 或解析失败返回 None
+        """
+        if not self.window:
+            return None
+
+        address = self.window["-SERVER-ADDRESS-"].get().strip()
+        if not address:
+            return None
+
+        try:
+            if ":" in address:
+                host, port_str = address.rsplit(":", 1)
+                return host, int(port_str)
+            else:
+                # 没有端口，使用默认端口
+                return address, 6544
+        except ValueError:
+            return None
+
+    def update_server_history(self, history: list):
+        """更新服务器地址历史列表"""
+        if self.window:
+            self.window["-SERVER-ADDRESS-"].update(values=history)
 
     def update_model_status(self, text: str, color: str = "yellow"):
         """更新 STT 模型状态文本"""

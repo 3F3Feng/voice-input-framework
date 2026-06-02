@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG = {
     "server": {
         "host": "localhost",
-        "port": 6544
+        "port": 6544,
+        "history": []  # 服务器地址历史记录
     },
     "hotkey": {
         "key": "left_ctrl+left_alt",
@@ -185,6 +186,40 @@ class ConfigManager:
     @server_port.setter
     def server_port(self, value: int) -> None:
         self.set('server.port', value)
+
+    @property
+    def server_history(self) -> list:
+        """服务器地址历史记录"""
+        return self.get('server.history', [])
+
+    @server_history.setter
+    def server_history(self, value: list) -> None:
+        self.set('server.history', value)
+
+    def add_server_history(self, host: str, port: int) -> None:
+        """添加服务器地址到历史记录
+
+        Args:
+            host: 服务器主机
+            port: 服务器端口
+        """
+        address = f"{host}:{port}"
+        history = self.server_history
+
+        # 移除已存在的相同地址
+        if address in history:
+            history.remove(address)
+
+        # 添加到开头
+        history.insert(0, address)
+
+        # 限制历史记录数量（最多20条）
+        self.server_history = history[:20]
+        self.save()
+
+    def get_server_history_addresses(self) -> list:
+        """获取服务器地址历史记录列表（格式：host:port）"""
+        return self.server_history
 
     @property
     def hotkey(self) -> str:

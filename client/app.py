@@ -71,13 +71,29 @@ class VoiceInputApp:
     async def _connect(self):
         await self.stt.connect()
         if self.stt.is_connected:
+            # 保存服务器地址到历史记录
+            self.config.add_server_history(self.server_host, self.server_port)
+            if self.window:
+                history = self.config.get_server_history_addresses()
+                self.window.update_server_history(history)
+
+            # 获取平台信息
+            platform_info = await self.stt.fetch_platform_info()
+            available_models = platform_info.get("available_models", [])
+
+            # 获取模型列表
             models = await self.stt.get_models()
             if self.window:
+                names = [m["name"] for m in models]
+                current = self.stt.current_model or (models[0]["name"] if models else "")
+
+                # 如果有平台信息，使用带可用性标记的更新方法
+                if available_models:
+                    self.window.update_model_list_with_availability(names, current, available_models)
+                else:
+                    self.window.update_model_list(names, current)
+
                 self.window.set_status(f"已连接 {self.server_host}:{self.server_port}", "green")
-                self.window.update_model_list(
-                    [m["name"] for m in models],
-                    self.stt.current_model or (models[0]["name"] if models else ""),
-                )
         else:
             if self.window:
                 self.window.set_status("连接失败", "red")
@@ -87,10 +103,23 @@ class VoiceInputApp:
     async def _fetch_models(self):
         if not self.stt.is_connected:
             await self._connect()
+
+        # 获取平台信息
+        platform_info = await self.stt.fetch_platform_info()
+        available_models = platform_info.get("available_models", [])
+
+        # 获取模型列表
         models = await self.stt.get_models()
         if self.window:
             names = [m["name"] for m in models]
-            self.window.update_model_list(names, self.stt.current_model or "")
+            current = self.stt.current_model or ""
+
+            # 如果有平台信息，使用带可用性标记的更新方法
+            if available_models:
+                self.window.update_model_list_with_availability(names, current, available_models)
+            else:
+                self.window.update_model_list(names, current)
+
             self.window.set_status(f"已加载 {len(models)} 个模型", "green")
 
     async def _switch_model(self, name: str):
@@ -261,28 +290,39 @@ class VoiceInputApp:
 
     def _handle_event(self, event, values, window):
         if event == "-CONNECT-":
-            self.server_host = values.get("-HOST-") or self.server_host
-            port_str = values.get("-PORT-") or str(self.server_port)
-            try:
-                self.server_port = int(port_str)
-            except ValueError:
+            # 从组合框解析服务器地址
+            address = values.get("-SERVER-ADDRESS-", "").strip()
+            if not address:
                 return
+
+            try:
+                if ":" in address:
+                    host, port_str = address.rsplit(":", 1)
+                    self.server_host = host
+                    self.server_port = int(port_str)
+                else:
+                    self.server_host = address
+                    self.server_port = 6544
+            except ValueError:
+                self.window.show_error(f"无效的服务器地址格式: {address}")
+                return
+
             self.stt = SttClient(self.server_host, self.server_port)
             self._async_task(self._connect())
 
-        elif event == "-REFRESH-":
+        elif event == "-REFRESH-MODELS-":
             self._async_task(self._fetch_models())
 
-        elif event == "-SWITCH-":
-            name = values.get("-MODEL-")
+        elif event == "-SWITCH-MODEL-":
+            name = self.window.get_selected_model() if self.window else values.get("-MODEL-SELECT-", "")
             if name:
                 self._async_task(self._switch_model(name))
 
-        elif event == "-REFRESH-LLM-":
+        elif event == "-REFRESH-LLM-MODELS-":
             self._async_task(self._fetch_llm_models())
 
-        elif event == "-SWITCH-LLM-":
-            name = values.get("-LLM-MODEL-")
+        elif event == "-SWITCH-LLM-MODEL-":
+            name = values.get("-LLM-MODEL-SELECT-")
             if name:
                 self._async_task(self._switch_llm_model(name))
 
