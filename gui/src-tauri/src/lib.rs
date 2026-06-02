@@ -33,6 +33,7 @@ pub struct AppState {
     pub recorder: Mutex<audio::AudioRecorder>,
     pub config: Mutex<config::VoiceInputConfig>,
     pub indicator_status: std::sync::Arc<Mutex<String>>,
+    pub streaming_session: Mutex<Option<stt::StreamingSession>>,
 }
 
 #[tauri::command]
@@ -60,10 +61,51 @@ async fn set_server_host(
 /// Extracted so both Tauri commands and the hotkey thread can call the same logic.
 pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
     let device;
+    let host;
+    let language;
     {
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
         device = cfg.audio.device.clone();
+        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        host = stt_client.stt_url.clone();
+        language = cfg.audio.language.clone();
     }
+
+    // Pre-connect WebSocket for streaming (in background)
+    let stt_host = host.clone();
+    let stt_language = language.clone();
+    let session_lock = state.streaming_session.clone();
+    
+    tauri::async_runtime::spawn(async move {
+        let client = stt::SttClient::new(&stt_host);
+        match client.connect_stream(&stt_language).await {
+            Ok(session) => {
+                eprintln!("[streaming] WebSocket pre-connected");
+                if let Ok(mut guard) = session_lock.lock() {
+                    *guard = Some(session);
+                }
+            }
+            Err(e) => {
+                eprintln!("[streaming] Failed to pre-connect: {}", e);
+            }
+        }
+    });
+
+    {
+        let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+        recorder.create_stream_channel(4096);
+        match recorder.start(device) {
+            Ok(()) => {
+                let _ = indicator::show(app);
+                Ok(())
+            }
+            Err(e) => {
+                recorder.reset();
+                Err(e)
+            }
+        }
+    }
+}
     {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
         recorder.create_stream_channel(4096);
@@ -100,6 +142,12 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
 
     log_info!("[stop] chunks={}, fallback_samples={}, src_rate={}", chunk_rx.is_some(), fallback_samples.len(), src_rate);
 
+    // Check if we have a pre-connected streaming session
+    let streaming_session = {
+        let mut guard = state.streaming_session.lock().map_err(|e| e.to_string())?;
+        guard.take()
+    };
+
     let (host, language) = {
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
@@ -110,18 +158,44 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
     let app_handle = app.clone();
 
     // Use tauri::async_runtime::spawn to run transcription from any thread.
-    // This uses Tauri's internal global tokio runtime handle, so it works
-    // even when called from the hotkey listener (a std::thread, not tokio).
     tauri::async_runtime::spawn(async move {
         eprintln!("[transcribe] Background task started, host={}", host);
         let transcribe_start = std::time::Instant::now();
-        let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
+        
+        let result = if let Some(mut session) = streaming_session {
+            // True streaming mode: send chunks directly via pre-connected WebSocket
+            eprintln!("[transcribe] Using pre-connected streaming session");
+            
+            if let Some(mut rx) = chunk_rx {
+                // Stream chunks as they arrive
+                while let Some(chunk) = rx.recv().await {
+                    if let Err(e) = session.send_chunk(chunk).await {
+                        eprintln!("[transcribe] Failed to send chunk: {}", e);
+                        break;
+                    }
+                }
+            } else {
+                // Fallback: send all samples at once
+                let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
+                if !wav.is_empty() {
+                    let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
+                    let _ = session.send_chunk(pcm).await;
+                }
+            }
+            
+            // Finalize and get result
+            session.finish().await
+        } else {
+            // Fallback: use old batch mode
+            eprintln!("[transcribe] Using fallback batch mode");
+            run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await
+        };
+
         let elapsed_ms = transcribe_start.elapsed().as_millis() as u64;
 
         match result {
             Ok(text) => {
                 eprintln!("[transcribe] Done: {} chars in {}ms", text.len(), elapsed_ms);
-                // Show processing time on indicator for 500ms before hiding
                 indicator::show_result(&app_handle, elapsed_ms);
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
@@ -373,6 +447,7 @@ pub fn run() {
                 recorder: Mutex::new(audio::AudioRecorder::new()),
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
+                streaming_session: Mutex::new(None),
             });
 
             log::init(app.handle());
