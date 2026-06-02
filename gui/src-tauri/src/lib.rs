@@ -106,21 +106,6 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
         }
     }
 }
-    {
-        let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
-        recorder.create_stream_channel(4096);
-        match recorder.start(device) {
-            Ok(()) => {
-                let _ = indicator::show(app);
-                Ok(())
-            }
-            Err(e) => {
-                recorder.reset();
-                Err(e)
-            }
-        }
-    }
-}
 
 /// Stop recording: capture samples, hide indicator, spawn transcription.
 /// Extracted so both Tauri commands and the hotkey thread use the same code path.
