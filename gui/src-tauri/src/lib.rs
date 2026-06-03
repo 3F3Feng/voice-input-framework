@@ -141,8 +141,10 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
         guard.take()
     };
 
+    // Clone what we need for the async block
     let indicator_status = state.indicator_status.clone();
     let app_handle = app.clone();
+    let stt_host = state.stt.lock().map(|c| c.stt_url.clone()).unwrap_or_else(|_| "http://localhost:6544".to_string());
 
     // Use tauri::async_runtime::spawn to run transcription from any thread.
     tauri::async_runtime::spawn(async move {
@@ -156,12 +158,7 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
         } else {
             // Fallback: batch mode
             eprintln!("[streaming] No session, using batch mode");
-            let host = if let Ok(stt_client) = state.stt.lock() {
-                stt_client.stt_url.clone()
-            } else {
-                "http://localhost:6544".to_string()
-            };
-            let client = stt::SttClient::new(&host);
+            let client = stt::SttClient::new(&stt_host);
             let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
             if wav.is_empty() {
                 Err("No audio captured".to_string())
