@@ -108,6 +108,14 @@ impl StreamingSession {
 }
 
 impl SttClient {
+    pub fn new(host_or_url: &str) -> Self {
+        if host_or_url.starts_with("http://") || host_or_url.starts_with("https://") {
+            Self { stt_url: host_or_url.to_string() }
+        } else {
+            Self { stt_url: format!("http://{}:6544", host_or_url) }
+        }
+    }
+
     /// Connect to server and set up streaming. Returns session and chunk sender.
     /// The session will forward chunks from the receiver to the WebSocket.
     pub async fn start_streaming(
@@ -233,118 +241,6 @@ impl SttClient {
             ws_sender,
             result_rx,
             audio_task: Some(audio_task),
-        })
-    }
-
-impl SttClient {
-    pub fn new(host_or_url: &str) -> Self {
-        if host_or_url.starts_with("http://") || host_or_url.starts_with("https://") {
-            Self { stt_url: host_or_url.to_string() }
-        } else {
-            Self { stt_url: format!("http://{}:6544", host_or_url) }
-        }
-    }
-
-    /// Pre-connect WebSocket for streaming. Call this BEFORE recording starts.
-    pub async fn connect_stream(&self, language: &str) -> Result<StreamingSession, String> {
-        let ws_url = self.stt_url.replace("http://", "ws://");
-        let url = format!("{}/ws/stream", ws_url);
-
-        eprintln!("[stt] Pre-connecting WebSocket to {}", url);
-        let (mut ws, _) = connect_async(&url).await
-            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
-
-        // Wait for ready message
-        match ws.next().await {
-            Some(Ok(Message::Text(json))) => {
-                let data: Value = serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
-                if data["type"] != "ready" {
-                    return Err(format!("Unexpected server message: {}", json));
-                }
-                eprintln!("[stt] Server ready, model: {}", data["model"]);
-            }
-            _ => return Err("Expected text ready message".to_string()),
-        }
-
-        // Send config
-        let lang_msg = serde_json::json!({"type": "config", "language": language});
-        SinkExt::send(&mut ws, Message::Text(lang_msg.to_string())).await
-            .map_err(|e| format!("WebSocket send config failed: {}", e))?;
-
-        eprintln!("[stt] WebSocket connected and configured");
-
-        let ws_sender = Arc::new(tokio::sync::Mutex::new(ws));
-        let (result_tx, result_rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
-        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
-
-        // Spawn result reader task
-        let ws_clone = ws_sender.clone();
-        let result_tx_clone = result_tx.clone();
-        tokio::spawn(async move {
-            let mut final_text = String::new();
-            loop {
-                let msg = {
-                    let mut ws = ws_clone.lock().await;
-                    ws.next().await
-                };
-                
-                match msg {
-                    Some(Ok(Message::Text(json))) => {
-                        let data: Value = match serde_json::from_str(&json) {
-                            Ok(d) => d,
-                            Err(_) => continue,
-                        };
-                        let msg_type = data["type"].as_str().unwrap_or("");
-                        match msg_type {
-                            "stt_result" => {
-                                let text = data["text"].as_str().unwrap_or("");
-                                if !text.is_empty() {
-                                    final_text = text.to_string();
-                                    let _ = result_tx_clone.send(StreamEvent::SttResult { text: text.to_string() });
-                                }
-                            }
-                            "result" => {
-                                let text = data["text"].as_str().unwrap_or("");
-                                let llm_ms = data["llm_latency_ms"].as_f64();
-                                if !text.is_empty() { final_text = text.to_string(); }
-                                let _ = result_tx_clone.send(StreamEvent::FinalResult { 
-                                    text: final_text.clone(), 
-                                    llm_latency_ms: llm_ms 
-                                });
-                                break;
-                            }
-                            "llm_start" => {
-                                let text = data["text"].as_str().unwrap_or("");
-                                let _ = result_tx_clone.send(StreamEvent::LlmStart { text: text.to_string() });
-                            }
-                            "llm_progress" => {
-                                let text = data["text"].as_str().unwrap_or("");
-                                let _ = result_tx_clone.send(StreamEvent::LlmProgress { text: text.to_string() });
-                            }
-                            "done" => {
-                                if final_text.is_empty() {
-                                    let _ = result_tx_clone.send(StreamEvent::Error { message: "No speech detected".to_string() });
-                                }
-                                break;
-                            }
-                            "error" => {
-                                let msg = data["message"].as_str().unwrap_or("Unknown error");
-                                let _ = result_tx_clone.send(StreamEvent::Error { message: msg.to_string() });
-                                break;
-                            }
-                            _ => {}
-                        }
-                    }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    _ => {}
-                }
-            }
-        });
-
-        Ok(StreamingSession {
-            ws_sender,
-            result_rx,
-            done_tx: Some(done_tx),
         })
     }
 }
