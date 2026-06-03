@@ -34,15 +34,6 @@ pub struct GPUInfo {
     pub memory_gb: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
-struct LlmModelsResponse {
-    models: Vec<ModelInfo>,
-    #[allow(dead_code)]
-    current_model: Option<String>,
-    #[allow(dead_code)]
-    enabled: Option<bool>,
-}
-
 /// Events emitted during streaming transcription
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
@@ -63,50 +54,6 @@ pub struct SttClient {
     pub stt_url: String,
 }
 
-/// A pre-connected WebSocket session for streaming audio
-pub struct StreamingSession {
-    ws_sender: Arc<tokio::sync::Mutex<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>>,
-    result_rx: tokio::sync::mpsc::UnboundedReceiver<StreamEvent>,
-    audio_task: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl StreamingSession {
-    /// Send an audio chunk to the server during recording
-    pub async fn send_chunk(&self, chunk: Vec<u8>) -> Result<(), String> {
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&chunk);
-        let audio_msg = serde_json::json!({"type": "audio", "data": b64});
-        let mut ws = self.ws_sender.lock().await;
-        SinkExt::send(&mut *ws, Message::Text(audio_msg.to_string())).await
-            .map_err(|e| format!("Failed to send audio chunk: {}", e))
-    }
-
-    /// Signal end of recording and wait for final result
-    pub async fn finish(mut self) -> Result<String, String> {
-        // Wait for audio forwarding task to complete
-        if let Some(task) = self.audio_task.take() {
-            let _ = task.await;
-        }
-        
-        // Send end signal
-        {
-            let mut ws = self.ws_sender.lock().await;
-            SinkExt::send(&mut *ws, Message::Text(r#"{"type":"end"}"#.into())).await
-                .map_err(|e| format!("Failed to send end signal: {}", e))?;
-        }
-
-        // Wait for final result
-        while let Some(event) = self.result_rx.recv().await {
-            match event {
-                StreamEvent::FinalResult { text, .. } => return Ok(text),
-                StreamEvent::Error { message } => return Err(message),
-                _ => {} // Ignore intermediate events
-            }
-        }
-        
-        Err("Connection closed without result".to_string())
-    }
-}
-
 impl SttClient {
     pub fn new(host_or_url: &str) -> Self {
         if host_or_url.starts_with("http://") || host_or_url.starts_with("https://") {
@@ -116,28 +63,18 @@ impl SttClient {
         }
     }
 
-    /// Connect to server and set up streaming. Returns session and chunk sender.
-    /// The session will forward chunks from the receiver to the WebSocket.
-    pub async fn start_streaming(
-        &self,
-        language: &str,
-        chunk_rx: mpsc::Receiver<Vec<u8>>,
-    ) -> Result<StreamingSession, String> {
+    // ── Simple batch transcription (connect, send all, get result) ──
+
+    pub async fn transcribe_ws(&self, audio_data: Vec<u8>, language: &str) -> Result<String, String> {
         let ws_url = self.stt_url.replace("http://", "ws://");
         let url = format!("{}/ws/stream", ws_url);
+        let (mut ws, _) = connect_async(&url).await.map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
-        eprintln!("[stt] Connecting to {}...", url);
-        let (mut ws, _) = connect_async(&url).await
-            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
-
-        // Wait for ready message
+        // Wait for ready
         match ws.next().await {
             Some(Ok(Message::Text(json))) => {
                 let data: Value = serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
-                if data["type"] != "ready" {
-                    return Err(format!("Unexpected server message: {}", json));
-                }
-                eprintln!("[stt] Server ready, model: {}", data["model"]);
+                if data["type"] != "ready" { return Err(format!("Unexpected server message: {}", json)); }
             }
             _ => return Err("Expected text ready message".to_string()),
         }
@@ -147,284 +84,34 @@ impl SttClient {
         SinkExt::send(&mut ws, Message::Text(lang_msg.to_string())).await
             .map_err(|e| format!("WebSocket send config failed: {}", e))?;
 
-        eprintln!("[stt] WebSocket ready for streaming");
-
-        let ws_sender = Arc::new(tokio::sync::Mutex::new(ws));
-        let (result_tx, result_rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
-
-        // Spawn task to forward audio chunks to WebSocket
-        let ws_clone = ws_sender.clone();
-        let audio_task = tokio::spawn(async move {
-            let mut chunk_count: u64 = 0;
-            let mut byte_count: u64 = 0;
-            let mut rx = chunk_rx;
-            
-            while let Some(chunk) = rx.recv().await {
-                chunk_count += 1;
-                byte_count += chunk.len() as u64;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&chunk);
-                let audio_msg = serde_json::json!({"type": "audio", "data": b64});
-                let mut ws = ws_clone.lock().await;
-                if let Err(e) = SinkExt::send(&mut *ws, Message::Text(audio_msg.to_string())).await {
-                    eprintln!("[stt] Failed to send audio chunk: {}", e);
-                    break;
-                }
-            }
-            eprintln!("[stt] Audio forwarding done: {} chunks, {} bytes", chunk_count, byte_count);
-        });
-
-        // Spawn task to read results from server
-        let ws_clone2 = ws_sender.clone();
-        let result_tx_clone = result_tx.clone();
-        tokio::spawn(async move {
-            let mut final_text = String::new();
-            loop {
-                let msg = {
-                    let mut ws = ws_clone2.lock().await;
-                    ws.next().await
-                };
-                
-                match msg {
-                    Some(Ok(Message::Text(json))) => {
-                        let data: Value = match serde_json::from_str(&json) {
-                            Ok(d) => d,
-                            Err(_) => continue,
-                        };
-                        let msg_type = data["type"].as_str().unwrap_or("");
-                        match msg_type {
-                            "stt_result" => {
-                                let text = data["text"].as_str().unwrap_or("");
-                                if !text.is_empty() {
-                                    final_text = text.to_string();
-                                    let _ = result_tx_clone.send(StreamEvent::SttResult { text: text.to_string() });
-                                }
-                            }
-                            "result" => {
-                                let text = data["text"].as_str().unwrap_or("");
-                                let llm_ms = data["llm_latency_ms"].as_f64();
-                                if !text.is_empty() { final_text = text.to_string(); }
-                                let _ = result_tx_clone.send(StreamEvent::FinalResult { 
-                                    text: final_text.clone(), 
-                                    llm_latency_ms: llm_ms 
-                                });
-                                break;
-                            }
-                            "llm_start" => {
-                                let text = data["text"].as_str().unwrap_or("");
-                                let _ = result_tx_clone.send(StreamEvent::LlmStart { text: text.to_string() });
-                            }
-                            "llm_progress" => {
-                                let text = data["text"].as_str().unwrap_or("");
-                                let _ = result_tx_clone.send(StreamEvent::LlmProgress { text: text.to_string() });
-                            }
-                            "done" => {
-                                if final_text.is_empty() {
-                                    let _ = result_tx_clone.send(StreamEvent::Error { message: "No speech detected".to_string() });
-                                }
-                                break;
-                            }
-                            "error" => {
-                                let msg = data["message"].as_str().unwrap_or("Unknown error");
-                                let _ = result_tx_clone.send(StreamEvent::Error { message: msg.to_string() });
-                                break;
-                            }
-                            _ => {}
-                        }
-                    }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    _ => {}
-                }
-            }
-        });
-
-        Ok(StreamingSession {
-            ws_sender,
-            result_rx,
-            audio_task: Some(audio_task),
-        })
-    }
-}
-
-impl SttClient {
-    // ── WebSocket streaming transcription (real-time) ──
-
-    pub async fn transcribe_stream(
-        &self,
-        mut chunk_rx: mpsc::Receiver<Vec<u8>>,
-        language: &str,
-        event_tx: Option<mpsc::UnboundedSender<StreamEvent>>,
-    ) -> Result<String, String> {
-        let ws_url = self.stt_url.replace("http://", "ws://");
-        let url = format!("{}/ws/stream", ws_url);
-
-        let (mut ws, _) = connect_async(&url).await
-            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
-
-        match ws.next().await {
-            Some(Ok(Message::Text(json))) => {
-                let data: Value = serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
-                if data["type"] != "ready" {
-                    return Err(format!("Unexpected server message: {}", json));
-                }
-                eprintln!("[stt] Server ready, model: {}", data["model"]);
-            }
-            _ => return Err("Expected text ready message".to_string()),
-        }
-
-        let lang_msg = serde_json::json!({"type": "config", "language": language});
-        SinkExt::send(&mut ws, Message::Text(lang_msg.to_string())).await
-            .map_err(|e| format!("WebSocket send config failed: {}", e))?;
-
-        // Spawn task to stream audio chunks
-        let (audio_done_tx, mut audio_done_rx) = tokio::sync::oneshot::channel::<()>();
-        let ws_sender = Arc::new(tokio::sync::Mutex::new(ws));
-
-        let ws_clone = ws_sender.clone();
-        let stream_task = tauri::async_runtime::spawn(async move {
-            let mut chunk_count: u64 = 0;
-            let mut byte_count: u64 = 0;
-            while let Some(chunk) = chunk_rx.recv().await {
-                chunk_count += 1;
-                byte_count += chunk.len() as u64;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&chunk);
-                let audio_msg = serde_json::json!({"type": "audio", "data": b64});
-                let mut ws = ws_clone.lock().await;
-                if let Err(e) = SinkExt::send(&mut *ws, Message::Text(audio_msg.to_string())).await {
-                    eprintln!("[stt] Failed to send audio chunk: {}", e);
-                    break;
-                }
-            }
-            eprintln!("[stt] Streaming complete: {} chunks, {} bytes", chunk_count, byte_count);
-            let _ = audio_done_tx.send(());
-        });
-
-        // Wait for streaming to finish, then send end signal
-        let _ = audio_done_rx.await;
-        {
-            let mut ws = ws_sender.lock().await;
-            SinkExt::send(&mut *ws, Message::Text(r#"{"type":"end"}"#.into())).await
-                .map_err(|e| format!("WebSocket send end failed: {}", e))?;
-        }
-
-        // Receive result(s)
-        let mut final_text = String::new();
-        let ws_recv = ws_sender.clone();
-        loop {
-            let msg_result = {
-                let mut ws = ws_recv.lock().await;
-                tokio::time::timeout(std::time::Duration::from_secs(300), (&mut *ws).next()).await
-            };
-
-            let msg = match msg_result {
-                Ok(Some(Ok(m))) => m,
-                Ok(Some(Err(e))) => return Err(format!("WebSocket read failed: {}", e)),
-                Ok(None) => break,
-                Err(_) => {
-                    let _ = stream_task.await;
-                    return Err("Result timeout (5 min)".to_string());
-                }
-            };
-
-            match msg {
-                Message::Text(json) => {
-                    let data: Value = serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
-                    let msg_type = data["type"].as_str().unwrap_or("");
-                    match msg_type {
-                        "stt_result" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            if !text.is_empty() {
-                                final_text = text.to_string();
-                                if let Some(ref tx) = event_tx {
-                                    let _ = tx.send(StreamEvent::SttResult { text: text.to_string() });
-                                }
-                            }
-                        }
-                        "result" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            let llm_ms = data["llm_latency_ms"].as_f64();
-                            if !text.is_empty() { final_text = text.to_string(); }
-                            if let Some(ref tx) = event_tx {
-                                let _ = tx.send(StreamEvent::FinalResult { text: final_text.clone(), llm_latency_ms: llm_ms });
-                            }
-                            let _ = stream_task.await;
-                            return Ok(final_text);
-                        }
-                        "llm_start" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            if let Some(ref tx) = event_tx { let _ = tx.send(StreamEvent::LlmStart { text: text.to_string() }); }
-                        }
-                        "llm_progress" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            if let Some(ref tx) = event_tx { let _ = tx.send(StreamEvent::LlmProgress { text: text.to_string() }); }
-                        }
-                        "done" => {
-                            let _ = stream_task.await;
-                            return if final_text.is_empty() { Err("No speech detected".to_string()) } else { Ok(final_text) };
-                        }
-                        "error" => {
-                            let _ = stream_task.await;
-                            return Err(data["message"].as_str().unwrap_or("Unknown error").to_string());
-                        }
-                        _ => {}
-                    }
-                }
-                Message::Close(_) => break,
-                _ => {}
-            }
-        }
-
-        let _ = stream_task.await;
-        if final_text.is_empty() { Err("Connection closed without result".to_string()) } else { Ok(final_text) }
-    }
-
-    /// Fallback: send entire audio as a single WebSocket message (batch mode).
-    pub async fn transcribe_ws(&self, audio_data: Vec<u8>, language: &str) -> Result<String, String> {
-        let ws_url = self.stt_url.replace("http://", "ws://");
-        let url = format!("{}/ws/stream", ws_url);
-        let (mut ws, _) = connect_async(&url).await.map_err(|e| format!("WebSocket connect failed: {}", e))?;
-
-        match ws.next().await {
-            Some(Ok(Message::Text(json))) => {
-                let data: Value = serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
-                if data["type"] != "ready" { return Err(format!("Unexpected server message: {}", json)); }
-            }
-            _ => return Err("Expected text ready message".to_string()),
-        }
-
-        let lang_msg = serde_json::json!({"type": "config", "language": language});
-        SinkExt::send(&mut ws, Message::Text(lang_msg.to_string())).await
-            .map_err(|e| format!("WebSocket send config failed: {}", e))?;
-
-        let pcm_data = if audio_data.len() > 44 && &audio_data[..4] == b"RIFF" { &audio_data[44..] } else { &audio_data[..] };
-        let b64 = base64::engine::general_purpose::STANDARD.encode(pcm_data);
+        // Send audio
+        let pcm = if audio_data.len() > 44 && &audio_data[..4] == b"RIFF" { &audio_data[44..] } else { &audio_data[..] };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(pcm);
         let audio_msg = serde_json::json!({"type": "audio", "data": b64});
         SinkExt::send(&mut ws, Message::Text(audio_msg.to_string())).await
             .map_err(|e| format!("WebSocket send audio failed: {}", e))?;
+
+        // Send end
         SinkExt::send(&mut ws, Message::Text(r#"{"type":"end"}"#.into())).await
             .map_err(|e| format!("WebSocket send end failed: {}", e))?;
 
-        let mut final_text = String::new();
+        // Wait for result
         while let Some(msg) = ws.next().await {
             let msg = msg.map_err(|e| format!("WebSocket read failed: {}", e))?;
-            match msg {
-                Message::Text(json) => {
-                    let data: Value = serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
-                    match data["type"].as_str().unwrap_or("") {
-                        "result" | "stt_result" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            if !text.is_empty() { final_text = text.to_string(); }
-                            if data["type"].as_str().unwrap_or("") == "result" { return Ok(final_text); }
-                        }
-                        "done" => return if final_text.is_empty() { Err("No speech detected".to_string()) } else { Ok(final_text) },
-                        "error" => return Err(data["message"].as_str().unwrap_or("Unknown error").to_string()),
-                        _ => {}
+            if let Message::Text(json) = msg {
+                let data: Value = serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
+                match data["type"].as_str().unwrap_or("") {
+                    "result" | "stt_result" => {
+                        let text = data["text"].as_str().unwrap_or("");
+                        if !text.is_empty() { return Ok(text.to_string()); }
                     }
+                    "done" => return Err("No speech detected".to_string()),
+                    "error" => return Err(data["message"].as_str().unwrap_or("Unknown error").to_string()),
+                    _ => {}
                 }
-                Message::Close(_) => break,
-                _ => {}
             }
         }
-        if final_text.is_empty() { Err("Connection closed without result".to_string()) } else { Ok(final_text) }
+        Err("Connection closed without result".to_string())
     }
 
     // ── HTTP endpoints ──
@@ -471,8 +158,13 @@ impl SttClient {
     pub async fn get_llm_models(&self) -> Result<Vec<ModelInfo>, String> {
         let client = Client::new();
         let resp = client.get(format!("{}/llm/models", self.stt_url)).send().await.map_err(|e| e.to_string())?;
-        let data: LlmModelsResponse = resp.json().await.map_err(|e| e.to_string())?;
-        Ok(data.models)
+        let data: Value = resp.json().await.map_err(|e| e.to_string())?;
+        let models = data["models"].as_array().unwrap_or(&vec![]);
+        Ok(models.iter().map(|m| ModelInfo {
+            name: m["name"].as_str().unwrap_or("").to_string(),
+            is_loaded: m["is_loaded"].as_bool().unwrap_or(false),
+            is_available: true,
+        }).collect())
     }
 
     pub async fn switch_llm_model(&self, name: &str) -> Result<String, String> {

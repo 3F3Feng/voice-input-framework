@@ -33,7 +33,6 @@ pub struct AppState {
     pub recorder: Mutex<audio::AudioRecorder>,
     pub config: Mutex<config::VoiceInputConfig>,
     pub indicator_status: std::sync::Arc<Mutex<String>>,
-    pub streaming_session: std::sync::Arc<Mutex<Option<stt::StreamingSession>>>,
 }
 
 #[tauri::command]
@@ -58,52 +57,19 @@ async fn set_server_host(
 }
 
 /// Start recording: acquire device, create stream, begin capture, show indicator.
-/// Extracted so both Tauri commands and the hotkey thread can call the same logic.
 pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
     let device;
-    let host;
-    let language;
     {
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
         device = cfg.audio.device.clone();
-        let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
-        host = stt_client.stt_url.clone();
-        language = cfg.audio.language.clone();
     }
 
     {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
         recorder.create_stream_channel(4096);
-        
-        // Get the chunk receiver before starting recording
-        let chunk_rx = recorder.take_chunk_receiver();
-        
         match recorder.start(device) {
             Ok(()) => {
                 let _ = indicator::show(app);
-                
-                // Start streaming in background if we have a chunk receiver
-                if let Some(rx) = chunk_rx {
-                    let stt_host = host.clone();
-                    let stt_language = language.clone();
-                    let session_lock = state.streaming_session.clone();
-                    
-                    tauri::async_runtime::spawn(async move {
-                        let client = stt::SttClient::new(&stt_host);
-                        match client.start_streaming(&stt_language, rx).await {
-                            Ok(session) => {
-                                eprintln!("[streaming] WebSocket connected, forwarding chunks");
-                                if let Ok(mut guard) = session_lock.lock() {
-                                    *guard = Some(session);
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("[streaming] Failed to connect: {}", e);
-                            }
-                        }
-                    });
-                }
-                
                 Ok(())
             }
             Err(e) => {
@@ -114,59 +80,52 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
     }
 }
 
-/// Stop recording: capture samples, hide indicator, spawn transcription.
-/// Extracted so both Tauri commands and the hotkey thread use the same code path.
+/// Stop recording: capture samples, hide indicator, transcribe.
 pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<String, String> {
-    // Stop recording first
-    let fallback_samples;
-    let src_rate;
-    {
+    // Stop recording and get samples
+    let (fallback_samples, src_rate) = {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+        // Discard chunk receiver - we'll use batch mode
+        let _ = recorder.take_chunk_receiver();
         let (samples, rate) = recorder.stop()?;
-        fallback_samples = samples;
-        src_rate = rate;
-    }
+        (samples, rate)
+    };
 
-    let has_window = app.get_webview_window(indicator::INDICATOR_LABEL).is_some();
-    eprintln!("[stop] indicator window exists: {}", has_window);
+    eprintln!("[stop] samples={}, src_rate={}", fallback_samples.len(), src_rate);
 
     {
         let mut status = state.indicator_status.lock().map_err(|e| e.to_string())?;
         *status = "识别中...".to_string();
     }
 
-    // Take the streaming session
-    let streaming_session = {
-        let mut guard = state.streaming_session.lock().map_err(|e| e.to_string())?;
-        guard.take()
-    };
-
-    // Clone what we need for the async block
+    // Clone what we need for async
     let indicator_status = state.indicator_status.clone();
     let app_handle = app.clone();
     let stt_host = state.stt.lock().map(|c| c.stt_url.clone()).unwrap_or_else(|_| "http://localhost:6544".to_string());
+    let language = state.config.lock().map(|c| c.audio.language.clone()).unwrap_or_else(|_| "auto".to_string());
 
-    // Use tauri::async_runtime::spawn to run transcription from any thread.
+    // Spawn transcription task
     tauri::async_runtime::spawn(async move {
-        eprintln!("[transcribe] Background task started");
+        eprintln!("[transcribe] Starting batch transcription");
         let transcribe_start = std::time::Instant::now();
-        
-        let result = if let Some(session) = streaming_session {
-            // True streaming mode: session is already connected and forwarding chunks
-            eprintln!("[streaming] Finalizing streaming session");
-            session.finish().await
-        } else {
-            // Fallback: batch mode
-            eprintln!("[streaming] No session, using batch mode");
-            let client = stt::SttClient::new(&stt_host);
-            let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-            if wav.is_empty() {
-                Err("No audio captured".to_string())
-            } else {
-                let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
-                client.transcribe_ws(pcm, "auto").await
-            }
-        };
+
+        // Encode audio to WAV
+        let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
+        if wav.is_empty() {
+            eprintln!("[transcribe] No audio captured");
+            if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
+            let _ = indicator::hide(&app_handle);
+            let _ = app_handle.emit("transcribe-error", "No audio captured");
+            return;
+        }
+
+        // Extract PCM data
+        let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
+        eprintln!("[transcribe] Audio size: {} bytes", pcm.len());
+
+        // Connect and transcribe
+        let client = stt::SttClient::new(&stt_host);
+        let result = client.transcribe_ws(pcm, &language).await;
 
         let elapsed_ms = transcribe_start.elapsed().as_millis() as u64;
 
@@ -189,16 +148,6 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
     });
 
     Ok(String::new())
-}
-
-#[tauri::command]
-async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    start_recording_internal(&app, &state)
-}
-
-#[tauri::command]
-async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    stop_recording_internal(&app, &state)
 }
 
 // ── Audio device commands ──
@@ -302,36 +251,27 @@ async fn set_llm_enabled(state: State<'_, AppState>, enabled: bool) -> Result<()
     stt::SttClient::new(&host).set_llm_enabled(enabled).await
 }
 
-#[tauri::command]
-async fn register_hotkey(app: tauri::AppHandle, shortcut: String) -> Result<(), String> {
-    if let Some(keys) = hotkey::parse_hotkey(&shortcut) {
-        hotkey::start_listener(app.clone(), keys);
-        eprintln!("[hotkey] Re-registered: {}", shortcut);
-        Ok(())
-    } else { Err(format!("Invalid hotkey format: {}", shortcut)) }
-}
-
-#[tauri::command]
-async fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
-    app.autolaunch().is_enabled().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-    if enabled { app.autolaunch().enable().map_err(|e| e.to_string()) }
-    else { app.autolaunch().disable().map_err(|e| e.to_string()) }
-}
-
 // ── Diarize commands ──
 
+#[tauri::command]
+async fn get_diarize_speakers(state: State<'_, AppState>) -> Result<u32, String> {
+    let cfg = state.config.lock().map_err(|e| e.to_string())?;
+    Ok(cfg.diarize.num_speakers)
+}
 
+#[tauri::command]
+async fn set_diarize_speakers(app: tauri::AppHandle, state: State<'_, AppState>, num_speakers: u32) -> Result<(), String> {
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    cfg.diarize.num_speakers = num_speakers;
+    cfg.save(&app)?;
+    Ok(())
+}
 
 #[tauri::command]
 async fn auto_input(text: String) -> Result<(), String> { input::type_text(&text) }
 
 #[tauri::command]
 async fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {
-    hotkey::reset_state();
     if let Some(window) = app.get_webview_window("main") { let _ = window.hide(); }
     Ok(())
 }
@@ -359,6 +299,36 @@ async fn transcribe_ws(
     stt::SttClient::new(&host).transcribe_ws(audio_data, &lang).await
 }
 
+#[tauri::command]
+async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    start_recording_internal(&app, &state)
+}
+
+#[tauri::command]
+async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    stop_recording_internal(&app, &state)
+}
+
+#[tauri::command]
+async fn register_hotkey(app: tauri::AppHandle, shortcut: String) -> Result<(), String> {
+    if let Some(keys) = hotkey::parse_hotkey(&shortcut) {
+        hotkey::start_listener(app.clone(), keys);
+        eprintln!("[hotkey] Re-registered: {}", shortcut);
+        Ok(())
+    } else { Err(format!("Invalid hotkey format: {}", shortcut)) }
+}
+
+#[tauri::command]
+async fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled { app.autolaunch().enable().map_err(|e| e.to_string()) }
+    else { app.autolaunch().disable().map_err(|e| e.to_string()) }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -376,7 +346,6 @@ pub fn run() {
                 recorder: Mutex::new(audio::AudioRecorder::new()),
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
-                streaming_session: std::sync::Arc::new(Mutex::new(None)),
             });
 
             log::init(app.handle());
@@ -412,31 +381,10 @@ pub fn run() {
             get_config, update_config, import_old_config,
             get_llm_prompt, save_llm_prompt, get_llm_enabled, set_llm_enabled,
             auto_input, minimize_to_tray,
+            get_diarize_speakers, set_diarize_speakers,
             register_hotkey, get_autostart, set_autostart,
             check_update, install_update,
         ])
         .run(tauri::generate_context!())
-        .unwrap_or_else(|e| {
-            let msg = format!("Fatal startup error: {:?}", e);
-            eprintln!("{}", msg);
-            // Write to log file so user can diagnose silent startup crashes (Windows GUI app
-            // has no visible console output by default).
-            if let Ok(cwd) = std::env::current_dir() {
-                let log_path = cwd.join("vif_startup_error.log");
-                let _ = std::fs::write(&log_path, &msg);
-            }
-            // Try to show a message box on Windows so the user sees the error
-            #[cfg(target_os = "windows")]
-            {
-                use std::os::windows::process::CommandExt;
-                let _ = std::process::Command::new("mshta.exe")
-                    .arg(format!(
-                        "javascript:alert('{}');close()",
-                        msg.replace('\\', "\\\\").replace('\'', "\\'")
-                    ))
-                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                    .spawn();
-            }
-            std::process::exit(1);
-        });
+        .expect("error while running tauri application");
 }
