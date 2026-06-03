@@ -245,46 +245,6 @@ impl SttClient {
     }
 }
 
-impl StreamingSession {
-    /// Send an audio chunk to the server during recording
-    pub async fn send_chunk(&self, chunk: Vec<u8>) -> Result<(), String> {
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&chunk);
-        let audio_msg = serde_json::json!({"type": "audio", "data": b64});
-        let mut ws = self.ws_sender.lock().await;
-        SinkExt::send(&mut *ws, Message::Text(audio_msg.to_string())).await
-            .map_err(|e| format!("Failed to send audio chunk: {}", e))
-    }
-
-    /// Signal end of recording and wait for final result
-    pub async fn finish(mut self) -> Result<String, String> {
-        // Send end signal
-        {
-            let mut ws = self.ws_sender.lock().await;
-            SinkExt::send(&mut *ws, Message::Text(r#"{"type":"end"}"#.into())).await
-                .map_err(|e| format!("Failed to send end signal: {}", e))?;
-        }
-
-        // Wait for final result
-        while let Some(event) = self.result_rx.recv().await {
-            match event {
-                StreamEvent::FinalResult { text, .. } => return Ok(text),
-                StreamEvent::Error { message } => return Err(message),
-                _ => {} // Ignore intermediate events
-            }
-        }
-        
-        Err("Connection closed without result".to_string())
-    }
-
-    /// Get a receiver for streaming events (for progress updates)
-    pub fn take_event_receiver(&mut self) -> tokio::sync::mpsc::UnboundedReceiver<StreamEvent> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        // We need to replace the existing receiver
-        // This is a simplified approach - in production you'd want better design
-        rx
-    }
-}
-
 impl SttClient {
     // ── WebSocket streaming transcription (real-time) ──
 
