@@ -159,7 +159,8 @@ impl SttClient {
         let client = Client::new();
         let resp = client.get(format!("{}/llm/models", self.stt_url)).send().await.map_err(|e| e.to_string())?;
         let data: Value = resp.json().await.map_err(|e| e.to_string())?;
-        let models = data["models"].as_array().unwrap_or(&vec![]);
+        let empty = vec![];
+        let models = data["models"].as_array().unwrap_or(&empty);
         Ok(models.iter().map(|m| ModelInfo {
             name: m["name"].as_str().unwrap_or("").to_string(),
             is_loaded: m["is_loaded"].as_bool().unwrap_or(false),
