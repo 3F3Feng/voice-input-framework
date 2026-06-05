@@ -31,7 +31,7 @@
             <div class="s-title">连接</div>
             <div class="s-row" style="position:relative">
               <div class="combobox" style="flex:1">
-                <input class="s-input combobox-input" v-model="serverAddress" placeholder="输入服务器地址 (如 192.168.1.100:6544)"
+                <input class="s-input combobox-input" v-model="serverAddress" placeholder="127.0.0.1:6544 或 192.168.1.100:6544"
                   @input="onAddressInput" @keyup.enter="connectFromInput" @focus="showHistory = true" @blur="hideHistory" />
                 <div v-if="showHistory && filteredHistory.length > 0" class="combobox-dropdown">
                   <div v-for="addr in filteredHistory" :key="addr" class="combobox-item" @mousedown.prevent="selectHistory(addr)">
@@ -460,6 +460,10 @@ const filteredHistory = computed(() => {
 });
 
 function onAddressInput() {
+  // Auto-replace localhost with 127.0.0.1 to avoid IPv6 delay on Windows
+  if (serverAddress.value.startsWith('localhost')) {
+    serverAddress.value = serverAddress.value.replace('localhost', '127.0.0.1');
+  }
   // Show dropdown when typing
   showHistory.value = true;
 }
