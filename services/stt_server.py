@@ -58,8 +58,8 @@ _last_llm_model = LLM_MODEL  # Cached for WebSocket handler (no blocking)
 
 # ============== LLM Fast-Fail Cache ==============
 # Track LLM server availability to avoid slow connection attempts
-_llm_available = False
-_llm_last_check = 0.0
+_llm_available = True  # Start optimistic - first request will verify
+_llm_last_check = 0.0  # Never checked yet
 _llm_check_interval = 30.0  # Re-check every 30 seconds
 _llm_timeout = 1.0  # Fast timeout for LLM requests (1 second)
 
@@ -72,7 +72,11 @@ def _is_llm_available() -> bool:
     if now - _llm_last_check < _llm_check_interval:
         return _llm_available
     
-    # Otherwise, we'll let the next request determine availability
+    # If we haven't checked yet, assume available (let first request verify)
+    if _llm_last_check == 0.0:
+        return True
+    
+    # Otherwise, return cached result
     return _llm_available
 
 def _mark_llm_available(available: bool):
@@ -774,7 +778,23 @@ async def lifespan(app: FastAPI):
     # Start LLM health check background task
     async def llm_health_checker():
         """Periodically check LLM server availability"""
+        # Probe immediately on startup
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=2.0)
+                if resp.status_code == 200:
+                    _mark_llm_available(True)
+                    logger.info("LLM server detected on startup")
+                else:
+                    _mark_llm_available(False)
+                    logger.info("LLM server not responding")
+        except Exception:
+            _mark_llm_available(False)
+            logger.info("LLM server not available (will retry every 30s)")
+        
+        # Then check periodically
         while True:
+            await asyncio.sleep(_llm_check_interval)
             try:
                 async with httpx.AsyncClient() as client:
                     resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=2.0)
@@ -786,11 +806,10 @@ async def lifespan(app: FastAPI):
                         _mark_llm_available(False)
             except Exception:
                 _mark_llm_available(False)
-            await asyncio.sleep(_llm_check_interval)
     
     if LLM_ENABLED:
         asyncio.create_task(llm_health_checker())
-        logger.info(f"LLM health checker started (interval: {_llm_check_interval}s)")
+        logger.info(f"LLM health checker started")
     
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
     

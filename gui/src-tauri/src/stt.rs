@@ -297,14 +297,33 @@ impl SttClient {
     pub async fn get_llm_models(&self) -> Result<Vec<ModelInfo>, String> {
         let client = Client::new();
         let resp = client.get(format!("{}/llm/models", self.stt_url)).send().await.map_err(|e| e.to_string())?;
-        let data: LlmModelsResponse = resp.json().await.map_err(|e| e.to_string())?;
-        Ok(data.models)
+        let data: Value = resp.json().await.map_err(|e| e.to_string())?;
+        
+        // Server returns a list directly, not wrapped in {models: [...]}
+        let models = if let Some(arr) = data.as_array() {
+            arr.iter().map(|m| ModelInfo {
+                name: m["name"].as_str().unwrap_or("").to_string(),
+                is_loaded: m["is_loaded"].as_bool().unwrap_or(false),
+                is_available: m["is_available"].as_bool().unwrap_or(true),
+            }).collect()
+        } else if let Some(arr) = data["models"].as_array() {
+            // Fallback: wrapped format
+            arr.iter().map(|m| ModelInfo {
+                name: m["name"].as_str().unwrap_or("").to_string(),
+                is_loaded: m["is_loaded"].as_bool().unwrap_or(false),
+                is_available: m["is_available"].as_bool().unwrap_or(true),
+            }).collect()
+        } else {
+            Vec::new()
+        };
+        Ok(models)
     }
 
     pub async fn switch_llm_model(&self, name: &str) -> Result<String, String> {
         let client = Client::new();
-        let body = serde_json::json!({"model_name": name});
-        let resp = client.post(format!("{}/llm/models/select", self.stt_url)).json(&body).send().await.map_err(|e| e.to_string())?;
+        // Server expects Form data, not JSON
+        let params = [("model_name", name)];
+        let resp = client.post(format!("{}/llm/models/select", self.stt_url)).form(&params).send().await.map_err(|e| e.to_string())?;
         let data: Value = resp.json().await.map_err(|e| e.to_string())?;
         Ok(data["message"].as_str().unwrap_or("").to_string())
     }
