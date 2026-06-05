@@ -133,6 +133,20 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
 
         logger.info(f"Model loaded on {self._device}")
 
+        # Try torch.compile for faster repeated inference
+        if hasattr(torch, 'compile') and not quantize:
+            try:
+                logger.info("Attempting torch.compile optimization...")
+                # Access the inner transformers model
+                if hasattr(self._model, '_model'):
+                    self._model._model = torch.compile(
+                        self._model._model,
+                        mode="reduce-overhead",
+                    )
+                    logger.info("torch.compile enabled (first call will be slow)")
+            except Exception as e:
+                logger.info(f"torch.compile not available: {e}")
+
     async def _warmup(self):
         """预热模型，初始化 CUDA kernels"""
         if self._warmed_up:
