@@ -110,14 +110,15 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             logger.info("Using float16")
 
         # 尝试 Flash Attention 2
-        attn_impl = "sdpa"  # Default
+        attn_impl = "sdpa"  # Default - PyTorch Scaled Dot Product Attention
         try:
             import flash_attn
             attn_impl = "flash_attention_2"
             logger.info("Flash Attention 2 available, using it")
         except ImportError:
-            logger.info("Flash Attention 2 not installed, using SDPA")
-            logger.info("  Install with: pip install flash-attn --no-build-isolation")
+            logger.info("Flash Attention 2 not available (using SDPA)")
+            logger.info("  SDPA with bfloat16 is fast enough for voice input")
+            # Don't recommend flash-attn on Windows - CUDA version mismatch issues
 
         # 加载模型
         logger.info(f"Loading model with attn_implementation={attn_impl}")
