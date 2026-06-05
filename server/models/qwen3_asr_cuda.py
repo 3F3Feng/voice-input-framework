@@ -224,14 +224,10 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             # qwen_asr 的 transcribe 接口
             lang_param = language if language != "auto" else None
 
-            # Run in thread pool to not block async
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(
-                None,
-                lambda: self._model.transcribe(
-                    audio=(audio_array, sample_rate),
-                    language=lang_param,
-                )
+            # 直接调用，不使用 run_in_executor (减少开销)
+            results = self._model.transcribe(
+                audio=(audio_array, sample_rate),
+                language=lang_param,
             )
 
             if results and len(results) > 0:
