@@ -94,7 +94,7 @@ impl Default for VoiceInputConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig {
-                host: "localhost".into(),
+                host: "127.0.0.1".into(),
                 port: 6544,
                 history: Vec::new(),
             },
@@ -193,7 +193,7 @@ impl VoiceInputConfig {
                     .server
                     .as_ref()
                     .and_then(|s| s.host.clone())
-                    .unwrap_or_else(|| "localhost".into()),
+                    .unwrap_or_else(|| "127.0.0.1".into()),
                 port: old.server.as_ref().and_then(|s| s.port).unwrap_or(6544),
                 history: Vec::new(),
             },
