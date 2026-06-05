@@ -161,52 +161,41 @@ async fn run_transcription(
     let t0 = std::time::Instant::now();
     let client = stt::SttClient::new(host);
 
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<stt::StreamEvent>();
-
-    let indicator_status_fwd = indicator_status.clone();
-    let app_fwd = app_handle.clone();
-    let event_forwarder = tokio::spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            match &event {
-                stt::StreamEvent::LlmStart { .. } | stt::StreamEvent::LlmProgress { .. } => {
-                    if let Ok(mut status) = indicator_status_fwd.lock() {
-                        *status = "LLM 处理中...".to_string();
-                    }
-                }
-                _ => {}
-            }
-            let _ = app_fwd.emit("transcribe-progress", &event);
+    // Collect all audio into PCM bytes
+    eprintln!("[timing] Collecting audio...");
+    let t_collect = std::time::Instant::now();
+    
+    let pcm_data = if let Some(mut rx) = chunk_rx {
+        // Collect chunks from channel
+        let mut all_chunks = Vec::new();
+        while let Some(chunk) = rx.recv().await {
+            all_chunks.extend_from_slice(&chunk);
         }
-    });
-
-    let result = if let Some(rx) = chunk_rx {
-        eprintln!("[timing] Using streaming mode");
-        client.transcribe_stream(rx, language, Some(event_tx)).await
+        eprintln!("[timing] Collected {} chunks, {} bytes", all_chunks.len() / 1024, all_chunks.len());
+        all_chunks
     } else {
-        eprintln!("[timing] Encoding audio ({} samples, {}Hz)...", fallback_samples.len(), src_rate);
-        let t_encode = std::time::Instant::now();
+        // Encode from samples
+        eprintln!("[timing] Encoding {} samples at {}Hz...", fallback_samples.len(), src_rate);
         let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-        eprintln!("[timing] Audio encoded: {}ms, {} bytes", t_encode.elapsed().as_millis(), wav.len());
-        
-        if wav.is_empty() { return Err("No audio captured".to_string()); }
-        
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
-        eprintln!("[timing] PCM size: {} bytes", pcm.len());
-        
-        let t_send = std::time::Instant::now();
-        let _ = tx.send(pcm).await;
-        drop(tx);
-        eprintln!("[timing] Audio queued: {}ms", t_send.elapsed().as_millis());
-        
-        eprintln!("[timing] Starting WebSocket transcription...");
-        let t_ws = std::time::Instant::now();
-        let result = client.transcribe_stream(rx, language, Some(event_tx)).await;
-        eprintln!("[timing] WebSocket transcription: {}ms", t_ws.elapsed().as_millis());
-        result
+        if wav.is_empty() {
+            return Err("No audio captured".to_string());
+        }
+        // Skip WAV header
+        if wav.len() > 44 && &wav[..4] == b"RIFF" {
+            wav[44..].to_vec()
+        } else {
+            wav
+        }
     };
+    
+    eprintln!("[timing] Audio ready: {}ms, {} bytes", t_collect.elapsed().as_millis(), pcm_data.len());
 
-    let _ = event_forwarder.await;
+    // Use simple batch mode - connect, send all, get result
+    let t_ws = std::time::Instant::now();
+    eprintln!("[timing] Connecting to {}...", host);
+    let result = client.transcribe_ws(pcm_data, language).await;
+    eprintln!("[timing] WebSocket round-trip: {}ms", t_ws.elapsed().as_millis());
+
     eprintln!("[timing] run_transcription total: {}ms", t0.elapsed().as_millis());
     result
 }
