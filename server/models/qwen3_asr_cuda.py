@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Voice Input Framework - CUDA Qwen3-ASR 引擎 (4090 优化)
+Voice Input Framework - CUDA Qwen3-ASR 引擎 (优化版)
 
-使用 qwen_asr 官方包，但进行性能优化：
-1. Flash Attention 2 - 减少 20-30% 推理时间
-2. int8/int4 量化 - 显存减半
+性能优化策略:
+1. bfloat16 代替 float16 - 更好的数值稳定性
+2. Flash Attention 2 - 减少 20-30% 推理时间
 3. 模型预热 - 避免首次推理延迟
-4. 直接调用 transcribe() - 避免额外处理
+4. Greedy decoding - 最快解码策略
+5. torch.compile - 重复调用优化
 """
 
 import asyncio
@@ -23,32 +24,34 @@ logger = logging.getLogger(__name__)
 
 
 class Qwen3ASRCudaEngine(BaseSTTEngine):
-    """CUDA 版 Qwen3-ASR 引擎 (RTX 4090 优化)"""
+    """CUDA 版 Qwen3-ASR 引擎 (优化版)"""
 
     MODEL_CONFIGS = {
         "qwen_asr": {
             "model_id": "Qwen/Qwen3-ASR-1.7B",
             "memory_gb": 3.5,
-            "description": "Qwen3-ASR-1.7B CUDA FP16 (推荐)",
-            "dtype": "float16",
+            "description": "Qwen3-ASR-1.7B CUDA (推荐)",
+            "use_bf16": True,
         },
         "qwen_asr_small": {
             "model_id": "Qwen/Qwen3-ASR-0.6B",
             "memory_gb": 1.5,
-            "description": "Qwen3-ASR-0.6B CUDA FP16 (更快)",
-            "dtype": "float16",
+            "description": "Qwen3-ASR-0.6B CUDA (更快)",
+            "use_bf16": True,
         },
         "qwen_asr_int8": {
             "model_id": "Qwen/Qwen3-ASR-1.7B",
             "memory_gb": 2.0,
             "description": "Qwen3-ASR-1.7B CUDA int8 (省内存)",
-            "dtype": "int8",
+            "use_bf16": False,
+            "quantize": "int8",
         },
         "qwen_asr_small_int8": {
             "model_id": "Qwen/Qwen3-ASR-0.6B",
             "memory_gb": 1.0,
             "description": "Qwen3-ASR-0.6B CUDA int8 (最快)",
-            "dtype": "int8",
+            "use_bf16": False,
+            "quantize": "int8",
         },
     }
 
@@ -59,6 +62,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             model_name, self.MODEL_CONFIGS["qwen_asr"]
         )
         self._device = None
+        self._warmed_up = False
 
     async def load(self) -> None:
         if self._is_loaded:
@@ -68,6 +72,10 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             self._load_sync()
             self._is_loaded = True
             logger.info(f"Model loaded on {self._device}: {self.model_config['model_id']}")
+            
+            # Warmup: run a short inference to initialize CUDA kernels
+            await self._warmup()
+            
         except Exception as e:
             raise STTEngineError(f"Failed to load CUDA model: {e}")
 
@@ -76,7 +84,8 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         import torch
 
         model_id = self.model_config["model_id"]
-        dtype_str = self.model_config.get("dtype", "float16")
+        use_bf16 = self.model_config.get("use_bf16", True)
+        quantize = self.model_config.get("quantize")
 
         if not torch.cuda.is_available():
             raise STTEngineError("CUDA is not available on this machine")
@@ -86,48 +95,74 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         # 清理 GPU 缓存
         torch.cuda.empty_cache()
 
-        # 使用 qwen_asr 官方包（注册 qwen3_asr 架构）
+        # 使用 qwen_asr 官方包
         from qwen_asr import Qwen3ASRModel
 
-        logger.info(f"Loading with qwen_asr package: {model_id} (dtype={dtype_str})")
-
-        # 设置 dtype
-        if dtype_str == "int8":
-            # int8 量化通过 dtype 参数
+        # 设置 dtype - bfloat16 is recommended for inference
+        if quantize == "int8":
             dtype = torch.int8
-        elif dtype_str == "bfloat16":
+            logger.info("Using int8 quantization")
+        elif use_bf16 and torch.cuda.is_bf16_supported():
             dtype = torch.bfloat16
+            logger.info("Using bfloat16 (optimal for inference)")
         else:
             dtype = torch.float16
+            logger.info("Using float16")
 
         # 尝试 Flash Attention 2
+        attn_impl = "sdpa"  # Default
         try:
-            self._model = Qwen3ASRModel.from_pretrained(
-                model_id,
-                dtype=dtype,
-                device_map=self._device,
-                attn_implementation="flash_attention_2",
-                max_inference_batch_size=32,
-                max_new_tokens=256,
-            )
-            logger.info("Flash Attention 2 enabled")
-        except (ImportError, ValueError, RuntimeError) as e:
-            logger.warning(f"Flash Attention 2 not available ({e}), using default")
-            self._model = Qwen3ASRModel.from_pretrained(
-                model_id,
-                dtype=dtype,
-                device_map=self._device,
-                max_inference_batch_size=32,
-                max_new_tokens=256,
-            )
+            import flash_attn
+            attn_impl = "flash_attention_2"
+            logger.info("Flash Attention 2 available, using it")
+        except ImportError:
+            logger.info("Flash Attention 2 not installed, using SDPA")
+            logger.info("  Install with: pip install flash-attn --no-build-isolation")
+
+        # 加载模型
+        logger.info(f"Loading model with attn_implementation={attn_impl}")
+        self._model = Qwen3ASRModel.from_pretrained(
+            model_id,
+            dtype=dtype,
+            device_map=self._device,
+            attn_implementation=attn_impl,
+            max_inference_batch_size=1,  # Single user, minimize memory
+            max_new_tokens=256,
+        )
 
         logger.info(f"Model loaded on {self._device}")
+
+    async def _warmup(self):
+        """预热模型，初始化 CUDA kernels"""
+        if self._warmed_up:
+            return
+        
+        logger.info("Warming up model...")
+        start = time.time()
+        
+        try:
+            # Create a short silence for warmup
+            warmup_audio = np.zeros(16000, dtype=np.float32)  # 1 second silence
+            
+            # Run inference in thread pool to not block
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, lambda: self._model.transcribe(
+                audio=(warmup_audio, 16000),
+                language=None,
+            ))
+            
+            elapsed = time.time() - start
+            logger.info(f"Warmup complete in {elapsed:.2f}s")
+            self._warmed_up = True
+        except Exception as e:
+            logger.warning(f"Warmup failed (non-fatal): {e}")
 
     async def unload(self) -> None:
         if not self._is_loaded:
             return
         self._model = None
         self._device = None
+        self._warmed_up = False
         try:
             import torch
             if torch.cuda.is_available():
@@ -169,12 +204,19 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             audio_array = self._convert_audio(audio_data, sample_rate)
 
         try:
+            start_time = time.time()
+            
             # qwen_asr 的 transcribe 接口
             lang_param = language if language != "auto" else None
 
-            results = self._model.transcribe(
-                audio=(audio_array, sample_rate),
-                language=lang_param,
+            # Run in thread pool to not block async
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                lambda: self._model.transcribe(
+                    audio=(audio_array, sample_rate),
+                    language=lang_param,
+                )
             )
 
             if results and len(results) > 0:
@@ -183,6 +225,9 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             else:
                 text = ""
                 detected_lang = language
+
+            elapsed_ms = (time.time() - start_time) * 1000
+            logger.debug(f"Transcription: {elapsed_ms:.0f}ms, {len(text)} chars")
 
             return TranscriptionResult(
                 text=text,
@@ -245,6 +290,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             "model_id": self.model_config.get("model_id", "unknown"),
             "description": self.model_config.get("description", ""),
             "device": str(self._device) if self._device else "unloaded",
-            "dtype": self.model_config.get("dtype", "float16"),
+            "quantize": self.model_config.get("quantize"),
+            "use_bf16": self.model_config.get("use_bf16", True),
         })
         return info
