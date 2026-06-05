@@ -436,9 +436,6 @@ async function loadConfig() {
 async function loadAutostart() {
   try { autoStart.value = await invoke<boolean>("get_autostart"); } catch {}
 }
-function onServerSettingChange() {
-  saveConfigPatch(cfg => { cfg.server.host = serverHost.value.trim() || "localhost"; cfg.server.port = serverPort.value; });
-}
 async function toggleAutoStart() {
   try { await invoke("set_autostart", { enabled: autoStart.value }); } catch { autoStart.value = !autoStart.value; }
 }
