@@ -30,11 +30,11 @@
           <div class="s-section">
             <div class="s-title">连接</div>
             <div class="s-row">
-              <input class="s-input" v-model="serverAddress" placeholder="localhost:6544" list="server-history" @keyup.enter="updateServer" @change="onServerSettingChange" />
-              <datalist id="server-history">
-                <option v-for="addr in serverHistory" :key="addr" :value="addr" />
-              </datalist>
-              <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
+              <select class="s-select" v-model="serverAddress" @change="onHistorySelect" style="flex:1">
+                <option v-for="addr in serverHistory" :key="addr" :value="addr">{{ addr }}</option>
+              </select>
+              <input class="s-input" v-model="newAddress" placeholder="输入新地址 (如 192.168.1.100:6544)" @keyup.enter="connectNew" style="flex:1" />
+              <button class="s-btn" @click="connectNew" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
             </div>
             <div v-if="platformInfo" class="s-tip">
               服务器: {{ platformInfo.system }} {{ platformInfo.arch }} | 后端: {{ platformInfo.backend }}
@@ -281,7 +281,8 @@ const promptStatus = ref("");
 
 const serverHost = ref("localhost");
 const serverPort = ref(6544);
-const serverAddress = ref("localhost:6544");  // Simple ref, not computed
+const serverAddress = ref("localhost:6544");  // Selected from history
+const newAddress = ref("");  // For typing new address
 const serverHistory = ref<string[]>([]);
 const platformInfo = ref<PlatformInfo | null>(null);
 const llmEnabled = ref(true);
@@ -419,7 +420,7 @@ async function loadConfig() {
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
     serverAddress.value = `${cfg.server.host}:${cfg.server.port}`;
-    serverHistory.value = cfg.server.history || [];
+    serverHistory.value = (cfg.server.history || []).slice(0, 5);
     version.value = cfg._version;
     hotkeyStr.value = cfg.hotkey.key;
     startMinimized.value = cfg.ui.start_minimized;
@@ -440,29 +441,36 @@ function toggleStartMinimized() { saveConfigPatch(cfg => { cfg.ui.start_minimize
 function onAutoInputToggle() { saveConfigPatch(cfg => { cfg.ui.auto_input = autoInputEnabled.value; }); }
 
 // ── Connection ──
-async function updateServer() {
-  connected.value = false;
-  connecting.value = true;
-  
-  // Parse address from input - auto-add port if missing
-  let address = serverAddress.value.trim();
-  let host: string;
-  let port: number;
-  
+function parseAddress(address: string): { host: string; port: number } {
+  address = address.trim();
   if (address.includes(':')) {
-    // Has port specified
     const parts = address.split(':');
-    host = parts[0] || 'localhost';
-    port = parseInt(parts[1]) || 6544;
-  } else {
-    // No port - use default
-    host = address || 'localhost';
-    port = 6544;
+    return { host: parts[0] || 'localhost', port: parseInt(parts[1]) || 6544 };
   }
-  
-  // Update refs
+  return { host: address || 'localhost', port: 6544 };
+}
+
+function onHistorySelect() {
+  // When selecting from history, connect immediately
+  const { host, port } = parseAddress(serverAddress.value);
   serverHost.value = host;
   serverPort.value = port;
+  doConnect(host, port);
+}
+
+function connectNew() {
+  // Connect using the new address input
+  const address = newAddress.value.trim();
+  if (!address) return;
+  const { host, port } = parseAddress(address);
+  serverHost.value = host;
+  serverPort.value = port;
+  doConnect(host, port);
+}
+
+async function doConnect(host: string, port: number) {
+  connected.value = false;
+  connecting.value = true;
   
   try {
     await invoke("set_server_host", { host, port });
@@ -473,9 +481,11 @@ async function updateServer() {
       // Save to history (with port)
       const fullAddress = `${host}:${port}`;
       serverAddress.value = fullAddress;
+      newAddress.value = "";
       if (!serverHistory.value.includes(fullAddress)) {
         serverHistory.value.unshift(fullAddress);
-        if (serverHistory.value.length > 20) serverHistory.value = serverHistory.value.slice(0, 20);
+        // Limit to 5 history items
+        if (serverHistory.value.length > 5) serverHistory.value = serverHistory.value.slice(0, 5);
       } else {
         // Move to top
         serverHistory.value = [fullAddress, ...serverHistory.value.filter(a => a !== fullAddress)];
@@ -492,6 +502,13 @@ async function updateServer() {
     }
   } catch (e) { toast(`连接失败: ${e}`, "err"); }
   connecting.value = false;
+}
+
+// Keep updateServer for backward compatibility (called by onMounted)
+async function updateServer() {
+  const address = serverAddress.value || newAddress.value;
+  const { host, port } = parseAddress(address);
+  await doConnect(host, port);
 }
 
 async function fetchPlatformInfo() {
