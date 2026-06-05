@@ -8,9 +8,51 @@ mod stt;
 mod tray;
 mod update;
 
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
+
+// IPv6 support cache: OnceLock ensures we only test once per app launch
+static IPV6_SUPPORTED: OnceLock<bool> = OnceLock::new();
+
+/// Test if IPv6 localhost works (cached - only runs once per app launch)
+fn is_ipv6_supported() -> bool {
+    *IPV6_SUPPORTED.get_or_init(|| {
+        // Try to connect to IPv6 localhost
+        use std::net::TcpStream;
+        use std::time::Duration;
+        
+        // Try IPv6 localhost first
+        let result = TcpStream::connect_timeout(
+            &"[::1]:0".parse().unwrap(),
+            Duration::from_millis(100),
+        );
+        
+        // If connection refused, IPv6 is working (just no server)
+        // If other error, IPv6 might not be supported
+        let supported = match result {
+            Err(e) => {
+                // Connection refused means IPv6 works, just no server listening
+                e.kind() == std::io::ErrorKind::ConnectionRefused ||
+                e.kind() == std::io::ErrorKind::TimedOut
+            }
+            Ok(_) => true,
+        };
+        
+        eprintln!("[network] IPv6 support: {}", supported);
+        supported
+    })
+}
+
+/// Resolve host, preferring IPv4 if IPv6 is not supported
+fn resolve_host(host: &str) -> String {
+    // If it's localhost and IPv6 is not supported, use 127.0.0.1
+    if host == "localhost" && !is_ipv6_supported() {
+        eprintln!("[network] IPv6 not available, using 127.0.0.1 instead of localhost");
+        return "127.0.0.1".to_string();
+    }
+    host.to_string()
+}
 
 #[macro_export]
 macro_rules! log_info {
@@ -42,17 +84,22 @@ async fn set_server_host(
     host: String,
     port: Option<u16>,
 ) -> Result<(), String> {
+    // Resolve host (handles IPv6/IPv4 fallback)
+    let resolved_host = resolve_host(&host);
+    
     let url = if let Some(port) = port {
-        format!("http://{}:{}", host, port)
+        format!("http://{}:{}", resolved_host, port)
     } else {
-        format!("http://{}", host)
+        format!("http://{}", resolved_host)
     };
     let mut stt_client = state.stt.lock().map_err(|e| e.to_string())?;
     *stt_client = stt::SttClient::new(&url);
     let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
-    cfg.server.host = host;
+    cfg.server.host = resolved_host.clone();
     if let Some(port) = port { cfg.server.port = port; }
     cfg.save(&app).ok();
+    
+    eprintln!("[network] Server set to: {}", url);
     Ok(())
 }
 

@@ -460,10 +460,6 @@ const filteredHistory = computed(() => {
 });
 
 function onAddressInput() {
-  // Auto-replace localhost with 127.0.0.1 to avoid IPv6 delay on Windows
-  if (serverAddress.value.startsWith('localhost')) {
-    serverAddress.value = serverAddress.value.replace('localhost', '127.0.0.1');
-  }
   // Show dropdown when typing
   showHistory.value = true;
 }
