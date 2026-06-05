@@ -83,22 +83,22 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
 /// Stop recording: capture samples, hide indicator, spawn transcription.
 /// Extracted so both Tauri commands and the hotkey thread use the same code path.
 pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<String, String> {
+    let stop_start = std::time::Instant::now();
+    
     let (chunk_rx, fallback_samples, src_rate) = {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
         let chunk_rx = recorder.take_chunk_receiver();
         let (samples, rate) = recorder.stop()?;
         (chunk_rx, samples, rate)
     };
+    eprintln!("[timing] Audio stopped: {}ms", stop_start.elapsed().as_millis());
 
     let has_window = app.get_webview_window(indicator::INDICATOR_LABEL).is_some();
-    eprintln!("[stop] indicator window exists: {}", has_window);
 
     {
         let mut status = state.indicator_status.lock().map_err(|e| e.to_string())?;
         *status = "识别中...".to_string();
     }
-
-    log_info!("[stop] chunks={}, fallback_samples={}, src_rate={}", chunk_rx.is_some(), fallback_samples.len(), src_rate);
 
     let (host, language) = {
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
@@ -110,26 +110,25 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
     let app_handle = app.clone();
 
     // Use tauri::async_runtime::spawn to run transcription from any thread.
-    // This uses Tauri's internal global tokio runtime handle, so it works
-    // even when called from the hotkey listener (a std::thread, not tokio).
     tauri::async_runtime::spawn(async move {
-        eprintln!("[transcribe] Background task started, host={}", host);
-        let transcribe_start = std::time::Instant::now();
+        let total_start = std::time::Instant::now();
+        eprintln!("[timing] Transcription task started");
+        
         let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
-        let elapsed_ms = transcribe_start.elapsed().as_millis() as u64;
+        let elapsed_ms = total_start.elapsed().as_millis() as u64;
 
         match result {
             Ok(text) => {
-                eprintln!("[transcribe] Done: {} chars in {}ms", text.len(), elapsed_ms);
-                // Show processing time on indicator for 500ms before hiding
+                eprintln!("[timing] TOTAL client: {}ms, result: {} chars", elapsed_ms, text.len());
                 indicator::show_result(&app_handle, elapsed_ms);
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                // Reduced delay from 500ms to 200ms
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
                 let _ = indicator::hide(&app_handle);
                 let _ = app_handle.emit("transcribe-done", text);
             }
             Err(e) => {
-                eprintln!("[transcribe] Error: {}", e);
+                eprintln!("[timing] Error after {}ms: {}", elapsed_ms, e);
                 if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
                 let _ = indicator::hide(&app_handle);
                 let _ = app_handle.emit("transcribe-error", e);
@@ -159,8 +158,8 @@ async fn run_transcription(
     fallback_samples: Vec<f32>,
     src_rate: u32,
 ) -> Result<String, String> {
+    let t0 = std::time::Instant::now();
     let client = stt::SttClient::new(host);
-    eprintln!("[transcribe] Starting transcription, host={}, lang={}", host, language);
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<stt::StreamEvent>();
 
@@ -181,20 +180,34 @@ async fn run_transcription(
     });
 
     let result = if let Some(rx) = chunk_rx {
-        eprintln!("[transcribe] Using streaming mode");
+        eprintln!("[timing] Using streaming mode");
         client.transcribe_stream(rx, language, Some(event_tx)).await
     } else {
-        eprintln!("[transcribe] Using fallback batch mode ({} samples)", fallback_samples.len());
+        eprintln!("[timing] Encoding audio ({} samples, {}Hz)...", fallback_samples.len(), src_rate);
+        let t_encode = std::time::Instant::now();
         let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
+        eprintln!("[timing] Audio encoded: {}ms, {} bytes", t_encode.elapsed().as_millis(), wav.len());
+        
         if wav.is_empty() { return Err("No audio captured".to_string()); }
+        
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
+        eprintln!("[timing] PCM size: {} bytes", pcm.len());
+        
+        let t_send = std::time::Instant::now();
         let _ = tx.send(pcm).await;
         drop(tx);
-        client.transcribe_stream(rx, language, Some(event_tx)).await
+        eprintln!("[timing] Audio queued: {}ms", t_send.elapsed().as_millis());
+        
+        eprintln!("[timing] Starting WebSocket transcription...");
+        let t_ws = std::time::Instant::now();
+        let result = client.transcribe_stream(rx, language, Some(event_tx)).await;
+        eprintln!("[timing] WebSocket transcription: {}ms", t_ws.elapsed().as_millis());
+        result
     };
 
     let _ = event_forwarder.await;
+    eprintln!("[timing] run_transcription total: {}ms", t0.elapsed().as_millis());
     result
 }
 
