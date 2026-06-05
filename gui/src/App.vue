@@ -29,12 +29,17 @@
           <!-- Connection -->
           <div class="s-section">
             <div class="s-title">连接</div>
-            <div class="s-row">
-              <select class="s-select" v-model="serverAddress" @change="onHistorySelect" style="flex:1">
-                <option v-for="addr in serverHistory" :key="addr" :value="addr">{{ addr }}</option>
-              </select>
-              <input class="s-input" v-model="newAddress" placeholder="输入新地址 (如 192.168.1.100:6544)" @keyup.enter="connectNew" style="flex:1" />
-              <button class="s-btn" @click="connectNew" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
+            <div class="s-row" style="position:relative">
+              <div class="combobox" style="flex:1">
+                <input class="s-input combobox-input" v-model="serverAddress" placeholder="输入服务器地址 (如 192.168.1.100:6544)"
+                  @input="onAddressInput" @keyup.enter="connectFromInput" @focus="showHistory = true" @blur="hideHistory" />
+                <div v-if="showHistory && filteredHistory.length > 0" class="combobox-dropdown">
+                  <div v-for="addr in filteredHistory" :key="addr" class="combobox-item" @mousedown.prevent="selectHistory(addr)">
+                    {{ addr }}
+                  </div>
+                </div>
+              </div>
+              <button class="s-btn" @click="connectFromInput" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
             </div>
             <div v-if="platformInfo" class="s-tip">
               服务器: {{ platformInfo.system }} {{ platformInfo.arch }} | 后端: {{ platformInfo.backend }}
@@ -281,9 +286,9 @@ const promptStatus = ref("");
 
 const serverHost = ref("localhost");
 const serverPort = ref(6544);
-const serverAddress = ref("localhost:6544");  // Selected from history
-const newAddress = ref("");  // For typing new address
+const serverAddress = ref("");  // Current input value
 const serverHistory = ref<string[]>([]);
+const showHistory = ref(false);
 const platformInfo = ref<PlatformInfo | null>(null);
 const llmEnabled = ref(true);
 const promptText = ref("");
@@ -450,21 +455,34 @@ function parseAddress(address: string): { host: string; port: number } {
   return { host: address || 'localhost', port: 6544 };
 }
 
-function onHistorySelect() {
-  // When selecting from history, connect immediately
-  const { host, port } = parseAddress(serverAddress.value);
-  serverHost.value = host;
-  serverPort.value = port;
+// Computed: filter history based on input
+const filteredHistory = computed(() => {
+  const query = serverAddress.value.toLowerCase().trim();
+  if (!query) return serverHistory.value;
+  return serverHistory.value.filter(addr => addr.toLowerCase().includes(query));
+});
+
+function onAddressInput() {
+  // Show dropdown when typing
+  showHistory.value = true;
+}
+
+function hideHistory() {
+  // Delay hide to allow click on dropdown items
+  setTimeout(() => { showHistory.value = false; }, 150);
+}
+
+function selectHistory(addr: string) {
+  serverAddress.value = addr;
+  showHistory.value = false;
+  const { host, port } = parseAddress(addr);
   doConnect(host, port);
 }
 
-function connectNew() {
-  // Connect using the new address input
-  const address = newAddress.value.trim();
+function connectFromInput() {
+  const address = serverAddress.value.trim();
   if (!address) return;
   const { host, port } = parseAddress(address);
-  serverHost.value = host;
-  serverPort.value = port;
   doConnect(host, port);
 }
 
@@ -481,7 +499,6 @@ async function doConnect(host: string, port: number) {
       // Save to history (with port)
       const fullAddress = `${host}:${port}`;
       serverAddress.value = fullAddress;
-      newAddress.value = "";
       if (!serverHistory.value.includes(fullAddress)) {
         serverHistory.value.unshift(fullAddress);
         // Limit to 5 history items
@@ -506,7 +523,7 @@ async function doConnect(host: string, port: number) {
 
 // Keep updateServer for backward compatibility (called by onMounted)
 async function updateServer() {
-  const address = serverAddress.value || newAddress.value;
+  const address = serverAddress.value || serverHost.value;
   const { host, port } = parseAddress(address);
   await doConnect(host, port);
 }
@@ -877,4 +894,19 @@ html, body, #app { height: 100%; }
 /* Footer */
 .footer { display: flex; justify-content: center; padding: 6px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .footer-text { font-size: 0.6rem; color: var(--muted); }
+
+/* Combobox */
+.combobox { position: relative; flex: 1; }
+.combobox-input { width: 100%; }
+.combobox-dropdown {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  margin-top: 4px; max-height: 200px; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.combobox-item {
+  padding: 8px 12px; cursor: pointer; font-size: 0.82rem; color: var(--text);
+  transition: background 0.1s;
+}
+.combobox-item:hover { background: var(--card); }
 </style>
