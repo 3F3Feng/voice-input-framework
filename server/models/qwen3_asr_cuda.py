@@ -225,11 +225,13 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             lang_param = language if language != "auto" else None
 
             # 直接调用，不使用 run_in_executor (减少开销)
+            t0 = time.time()
             results = self._model.transcribe(
                 audio=(audio_array, sample_rate),
                 language=lang_param,
             )
-
+            t1 = time.time()
+            
             if results and len(results) > 0:
                 text = results[0].text.strip()
                 detected_lang = results[0].language
@@ -238,7 +240,8 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
                 detected_lang = language
 
             elapsed_ms = (time.time() - start_time) * 1000
-            logger.debug(f"Transcription: {elapsed_ms:.0f}ms, {len(text)} chars")
+            inference_ms = (t1 - t0) * 1000
+            logger.info(f"[timing] qwen_asr.transcribe: {inference_ms:.0f}ms (total: {elapsed_ms:.0f}ms)")
 
             return TranscriptionResult(
                 text=text,
