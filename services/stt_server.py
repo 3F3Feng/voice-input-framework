@@ -1107,9 +1107,10 @@ async def transcribe(
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
     """WebSocket 流式识别"""
+    ws_start = time.time()
     await websocket.accept()
     engine.increment_connections()
-    logger.info("WebSocket connection accepted")
+    logger.info(f"[timing] WebSocket accepted (+{(time.time()-ws_start)*1000:.0f}ms)")
 
     # Use cached LLM status (don't block connection)
     llm_info = {"llm_enabled": LLM_ENABLED, "llm_model": _last_llm_model}
@@ -1123,6 +1124,7 @@ async def websocket_stream(websocket: WebSocket):
         "llm_enabled": llm_info["llm_enabled"],
         "llm_model": llm_info["llm_model"],
     }))
+    logger.info(f"[timing] Ready sent (+{(time.time()-ws_start)*1000:.0f}ms)")
 
     return_timestamps = False
     audio_queue = asyncio.Queue()
@@ -1183,6 +1185,8 @@ async def websocket_stream(websocket: WebSocket):
 
     # ── 等待音频接收完成，一次性转写 ──
     await receive_task
+    audio_recv_time = time.time()
+    logger.info(f"[timing] Audio received (+{(audio_recv_time-ws_start)*1000:.0f}ms)")
 
     # 收集所有音频数据
     all_audio = bytearray()
@@ -1193,6 +1197,9 @@ async def websocket_stream(websocket: WebSocket):
 
     if all_audio:
         try:
+            audio_size_kb = len(all_audio) / 1024
+            logger.info(f"[timing] Audio: {audio_size_kb:.1f}KB, starting transcription...")
+            
             result = await asyncio.wait_for(
                 engine.transcribe(
                     bytes(all_audio),
@@ -1200,6 +1207,8 @@ async def websocket_stream(websocket: WebSocket):
                 ),
                 timeout=600.0
             )
+            stt_done_time = time.time()
+            logger.info(f"[timing] STT done (+{(stt_done_time-ws_start)*1000:.0f}ms, stt={result.stt_latency_ms:.0f}ms)")
 
             # 发送 STT 结果
             await websocket.send_text(json.dumps({
@@ -1217,9 +1226,14 @@ async def websocket_stream(websocket: WebSocket):
                     "type": "llm_start", "text": result.text[:50],
                 }))
                 processed_text, llm_latency = await call_llm_server(result.text)
+                llm_done_time = time.time()
+                logger.info(f"[timing] LLM done (+{(llm_done_time-ws_start)*1000:.0f}ms, llm={llm_latency:.0f}ms)")
             else:
                 processed_text = result.text
                 llm_latency = 0
+
+            total_ms = (time.time() - ws_start) * 1000
+            logger.info(f"[timing] TOTAL: {total_ms:.0f}ms (recv={((audio_recv_time-ws_start)*1000):.0f}ms, stt={result.stt_latency_ms:.0f}ms, llm={llm_latency:.0f}ms)")
 
             await websocket.send_text(json.dumps({
                 "type": "result",
@@ -1229,6 +1243,7 @@ async def websocket_stream(websocket: WebSocket):
                 "is_final": True,
                 "stt_latency_ms": result.stt_latency_ms,
                 "llm_latency_ms": llm_latency,
+                "total_latency_ms": total_ms,
                 "model": result.model,
             }))
 
