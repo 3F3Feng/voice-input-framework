@@ -54,6 +54,7 @@ LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 # LLM Processing Toggle
 LLM_ENABLED = os.getenv("VIF_LLM_ENABLED", "true").lower() == "true"
 LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
+_last_llm_model = LLM_MODEL  # Cached for WebSocket handler (no blocking)
 
 # ============== LLM Fast-Fail Cache ==============
 # Track LLM server availability to avoid slow connection attempts
@@ -1110,21 +1111,10 @@ async def websocket_stream(websocket: WebSocket):
     engine.increment_connections()
     logger.info("WebSocket connection accepted")
 
-    # 获取 LLM 服务器状态
-    llm_info = {"llm_enabled": LLM_ENABLED, "llm_model": None}
-    try:
-        async with httpx.AsyncClient() as client:
-            llm_resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
-            if llm_resp.status_code == 200:
-                llm_data = llm_resp.json()
-                llm_info = {
-                    "llm_enabled": LLM_ENABLED,
-                    "llm_model": llm_data.get("current_model", "unknown")
-                }
-    except Exception as e:
-        logger.debug(f"Failed to get LLM status: {e}")
+    # Use cached LLM status (don't block connection)
+    llm_info = {"llm_enabled": LLM_ENABLED, "llm_model": _last_llm_model}
 
-    # 发送就绪消息
+    # 发送就绪消息 immediately
     await websocket.send_text(json.dumps({
         "type": "ready",
         "model": engine.current_model_name,
