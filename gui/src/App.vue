@@ -281,6 +281,7 @@ const promptStatus = ref("");
 
 const serverHost = ref("localhost");
 const serverPort = ref(6544);
+const serverAddress = ref("localhost:6544");  // Simple ref, not computed
 const serverHistory = ref<string[]>([]);
 const platformInfo = ref<PlatformInfo | null>(null);
 const llmEnabled = ref(true);
@@ -321,18 +322,6 @@ let processingTimerInterval: ReturnType<typeof setInterval> | null = null;
 let toastId = 0;
 
 // ── Computed ──
-const serverAddress = computed({
-  get: () => `${serverHost.value}:${serverPort.value}`,
-  set: (val: string) => {
-    const parts = val.split(':');
-    if (parts.length === 2) {
-      serverHost.value = parts[0] || 'localhost';
-      serverPort.value = parseInt(parts[1]) || 6544;
-    } else {
-      serverHost.value = val;
-    }
-  }
-});
 const currentModelName = computed(() => {
   const loaded = sttModels.value.find(m => m.is_loaded);
   return loaded?.name || sttModel.value || "";
@@ -429,6 +418,7 @@ async function loadConfig() {
     const cfg = await getConfig();
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
+    serverAddress.value = `${cfg.server.host}:${cfg.server.port}`;
     serverHistory.value = cfg.server.history || [];
     version.value = cfg._version;
     hotkeyStr.value = cfg.hotkey.key;
@@ -453,22 +443,42 @@ function onAutoInputToggle() { saveConfigPatch(cfg => { cfg.ui.auto_input = auto
 async function updateServer() {
   connected.value = false;
   connecting.value = true;
-  const host = serverHost.value.trim() || "localhost";
-  const port = serverPort.value || 6544;
+  
+  // Parse address from input - auto-add port if missing
+  let address = serverAddress.value.trim();
+  let host: string;
+  let port: number;
+  
+  if (address.includes(':')) {
+    // Has port specified
+    const parts = address.split(':');
+    host = parts[0] || 'localhost';
+    port = parseInt(parts[1]) || 6544;
+  } else {
+    // No port - use default
+    host = address || 'localhost';
+    port = 6544;
+  }
+  
+  // Update refs
+  serverHost.value = host;
+  serverPort.value = port;
+  
   try {
     await invoke("set_server_host", { host, port });
     const ok = await loadModels();
     if (ok) {
       connected.value = true;
       toast("已连接", "ok");
-      // Save to history
-      const address = `${host}:${port}`;
-      if (!serverHistory.value.includes(address)) {
-        serverHistory.value.unshift(address);
+      // Save to history (with port)
+      const fullAddress = `${host}:${port}`;
+      serverAddress.value = fullAddress;
+      if (!serverHistory.value.includes(fullAddress)) {
+        serverHistory.value.unshift(fullAddress);
         if (serverHistory.value.length > 20) serverHistory.value = serverHistory.value.slice(0, 20);
       } else {
         // Move to top
-        serverHistory.value = [address, ...serverHistory.value.filter(a => a !== address)];
+        serverHistory.value = [fullAddress, ...serverHistory.value.filter(a => a !== fullAddress)];
       }
       saveConfigPatch(cfg => {
         cfg.server.host = host;
