@@ -33,9 +33,9 @@ import numpy as np
 
 # 焦点管理（Windows）
 try:
-    import ctypes
+    import ctypes  # noqa: F401
     import win32gui
-    import win32con
+    import win32con  # noqa: F401
 
     WINAPI_AVAILABLE = True
 except ImportError:
@@ -113,7 +113,7 @@ def get_input_cursor_position():
     try:
         # 获取现在的鼠标位置
         # 这是最可靠的方式，因为用户通常在鼠标位置输入
-        import pyautogui
+        import pyautogui  # noqa: F401
 
         x, y = pyautogui.position()
         # 将浮标显示在鼠标上方（而不是旁边）
@@ -1245,7 +1245,7 @@ class HotkeyVoiceInputV2:
 
     async def _poll_model_loading_status(self, model_name: str):
         """轮询检查模型加载状态"""
-        import httpx
+        import httpx  # noqa: F401
 
         self.log(f"开始轮询模型 {model_name} 的加载状态...")
         poll_count = 0
@@ -1459,7 +1459,7 @@ class HotkeyVoiceInputV2:
 
     async def _stream_audio_to_server(self):
         """流式发送音频到服务器（边录边发）"""
-        import websockets
+        import websockets  # noqa: F401
 
         try:
             self.log("建立 WebSocket 连接...")
@@ -2090,11 +2090,11 @@ class HotkeyVoiceInputV2:
 def main():
     """主程序入口"""
     try:
-        import sounddevice
-        import websockets
-        import httpx
-        import pyautogui
-        import pynput
+        import sounddevice  # noqa: F401
+        import websockets  # noqa: F401
+        import httpx  # noqa: F401
+        import pyautogui  # noqa: F401
+        import pynput  # noqa: F401
     except ImportError as e:
         print(f"缺少依赖: {e}")
         print("\n请运行以下命令安装依赖:")

@@ -36,8 +36,8 @@ try:
 except ImportError:
     AudioSegment = None
 
-from server.models.base import BaseSTTEngine, STTEngineError
-from shared.data_types import TranscriptionResult
+from server.models.base import BaseSTTEngine, STTEngineError  # noqa: E402
+from shared.data_types import TranscriptionResult  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

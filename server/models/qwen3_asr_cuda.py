@@ -110,7 +110,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         # 尝试 Flash Attention 2
         attn_impl = "sdpa"  # Default - PyTorch Scaled Dot Product Attention
         try:
-            import flash_attn
+            import flash_attn  # noqa: F401
 
             attn_impl = "flash_attention_2"
             logger.info("Flash Attention 2 available, using it")

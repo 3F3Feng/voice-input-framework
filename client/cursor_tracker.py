@@ -22,7 +22,7 @@ from typing import Optional, Tuple, Callable
 logger = logging.getLogger(__name__)
 
 # Platform detection
-import platform
+import platform  # noqa: E402
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"

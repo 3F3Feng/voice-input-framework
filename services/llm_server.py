@@ -28,12 +28,12 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
-from shared.platform_detector import (
+from shared.platform_detector import (  # noqa: E402
     detect_platform,
     get_startup_banner,
     check_resource_requirements,
 )
-from server.llm_engine import LLMEngine
+from server.llm_engine import LLMEngine  # noqa: E402
 
 # 配置日志
 _log_level = os.getenv("VIF_LOG_LEVEL", "INFO").upper()

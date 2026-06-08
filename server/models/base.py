@@ -148,4 +148,4 @@ class BaseSTTEngine(ABC):
 
 
 # 前向引用避免循环导入
-from shared.data_types import TranscriptionResult
+from shared.data_types import TranscriptionResult  # noqa: E402

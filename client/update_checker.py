@@ -19,7 +19,7 @@ from urllib.error import URLError
 
 logger = logging.getLogger(__name__)
 
-from . import __version__ as CURRENT_VERSION
+from . import __version__ as CURRENT_VERSION  # noqa: E402
 
 GITHUB_REPO = "3F3Feng/voice-input-framework"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"

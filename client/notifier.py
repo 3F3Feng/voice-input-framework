@@ -34,7 +34,7 @@ if IS_WINDOWS:
     except ImportError:
         # 备选: winotify
         try:
-            from winotify import Notification, audio
+            from winotify import Notification, audio  # noqa: F401
 
             # 注册 App ID
             try:
@@ -52,7 +52,7 @@ if IS_WINDOWS:
         except ImportError:
             # 最后备选: win10toast
             try:
-                from win10toast import ToastNotifier
+                from win10toast import ToastNotifier  # noqa: F401
 
                 _notifier_backend = "win10toast"
                 logger.info("使用 win10toast 作为 Windows 通知后端")
@@ -74,7 +74,7 @@ elif IS_LINUX:
     except subprocess.CalledProcessError:
         # 备选: plyer
         try:
-            from plyer import notification
+            from plyer import notification  # noqa: F401
 
             _notifier_backend = "plyer"
             logger.info("使用 plyer 作为 Linux 通知后端")

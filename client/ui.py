@@ -36,7 +36,7 @@ BUTTON_COLOR = ("white", "gray")
 # 焦点管理函数（Windows）
 try:
     import win32gui
-    import win32con
+    import win32con  # noqa: F401
 
     WINAPI_AVAILABLE = True
 except ImportError:

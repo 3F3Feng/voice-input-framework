@@ -20,7 +20,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # 平台检测
-import platform
+import platform  # noqa: E402
 
 IS_WINDOWS = platform.system() == "Windows"
 

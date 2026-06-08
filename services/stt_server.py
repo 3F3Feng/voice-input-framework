@@ -24,17 +24,17 @@ import httpx
 project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
-from shared.model_registry import MODELS_CONFIG, get_default_model
-from shared.platform_detector import (
+from shared.model_registry import MODELS_CONFIG, get_default_model  # noqa: E402
+from shared.platform_detector import (  # noqa: E402
     detect_platform,
     get_startup_banner,
     check_resource_requirements,
 )
-from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
+from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED  # noqa: E402
 
-import uvicorn
-from contextlib import asynccontextmanager
-from fastapi import (
+import uvicorn  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+from fastapi import (  # noqa: E402
     FastAPI,
     File,
     Form,
@@ -44,8 +44,8 @@ from fastapi import (
     WebSocketDisconnect,
     Request,
 )
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
 # ============== Configuration ==============
 STT_HOST = os.getenv("VIF_STT_HOST", "0.0.0.0")
@@ -600,7 +600,7 @@ class STTEngine:
                 success = await self.load(load_aligner=True)
                 if not success:
                     logger.warning("Failed to load ForcedAligner, returning without timestamps")
-                    return_timestamps = False
+                    _ = False
 
             # 转换音频
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
@@ -1232,9 +1232,9 @@ async def websocket_stream(websocket: WebSocket):
     )
     logger.info(f"[timing] Ready sent (+{(time.time() - ws_start) * 1000:.0f}ms)")
 
-    return_timestamps = False
+    _ = False
     audio_queue = asyncio.Queue()
-    stream_finished = asyncio.Event()
+    _ = asyncio.Event()
     stream_error = None
     language = "auto"
 
@@ -1346,13 +1346,17 @@ async def websocket_stream(websocket: WebSocket):
                 await ws_send({"type": "llm_start", "text": result.text[:50]})
                 processed_text, llm_latency = await call_llm_server(result.text)
                 llm_done_time = time.time()
-                logger.info(f"[timing] LLM done (+{(llm_done_time - ws_start) * 1000:.0f}ms, llm={llm_latency:.0f}ms)")
+                logger.info(
+                    f"[timing] LLM done (+{(llm_done_time - ws_start) * 1000:.0f}ms, llm={llm_latency:.0f}ms)"
+                )
             else:
                 processed_text = result.text
                 llm_latency = 0
 
             total_ms = (time.time() - ws_start) * 1000
-            logger.info(f"[timing] TOTAL: {total_ms:.0f}ms (recv={((audio_recv_time - ws_start) * 1000):.0f}ms, stt={result.stt_latency_ms:.0f}ms, llm={llm_latency:.0f}ms)")
+            logger.info(
+                f"[timing] TOTAL: {total_ms:.0f}ms (recv={((audio_recv_time - ws_start) * 1000):.0f}ms, stt={result.stt_latency_ms:.0f}ms, llm={llm_latency:.0f}ms)"
+            )
 
             await ws_send(
                 {

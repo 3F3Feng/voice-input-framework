@@ -182,7 +182,7 @@ class PlatformInfo:
 def _detect_mlx() -> bool:
     """检测 MLX 是否可用"""
     try:
-        import mlx.core
+        import mlx.core  # noqa: F401
 
         return True
     except ImportError:

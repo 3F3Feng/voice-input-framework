@@ -128,7 +128,7 @@ def is_available() -> bool:
 
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             return False
-        import mlx_lm
+        import mlx_lm  # noqa: F401
 
         return True
     except ImportError:

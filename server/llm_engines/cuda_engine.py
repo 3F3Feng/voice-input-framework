@@ -141,7 +141,7 @@ class CUDALLMEngine(BaseLLMEngine):
             # 尝试 Flash Attention 2
             attn_impl = "eager"
             try:
-                import flash_attn
+                import flash_attn  # noqa: F401
 
                 attn_impl = "flash_attention_2"
                 logger.info("Flash Attention 2 available")

@@ -202,7 +202,11 @@ class SttClient:
                 if resp.status_code == 200:
                     response_data = resp.json()
                     self._parse_models_response(response_data)
-                    return response_data if isinstance(response_data, list) else response_data.get("models", [])
+                    return (
+                        response_data
+                        if isinstance(response_data, list)
+                        else response_data.get("models", [])
+                    )
                 else:
                     self._log(f"✗ 获取模型列表失败: HTTP {resp.status_code}")
                     return []

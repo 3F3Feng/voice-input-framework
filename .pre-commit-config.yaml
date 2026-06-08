@@ -3,20 +3,21 @@ repos:
     rev: v0.11.0
     hooks:
       - id: ruff
-        name: ruff (Python lint)
-        args: [--fix, --exit-non-zero-on-fix]
-        files: ^(client/|server/|services/)
+        name: ruff check (Python lint)
+        args: [--fix]
+        files: ^(client/|server/|services/|shared/)
       - id: ruff-format
         name: ruff format (Python fmt)
-        files: ^(client/|server/|services/)
+        files: ^(client/|server/|services/|shared/)
 
   - repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:
       - id: clippy
         name: clippy (Rust lint)
-        args: [--all-targets, --all-features, --, -D, warnings]
+        args: [--manifest-path=gui/src-tauri/Cargo.toml, --all-targets, --all-features, --, -D, warnings]
         files: ^gui/src-tauri/
       - id: fmt
         name: rustfmt (Rust fmt)
+        args: [--manifest-path, gui/src-tauri/Cargo.toml]
         files: ^gui/src-tauri/
