@@ -97,11 +97,14 @@ class AudioRecorder:
 
     # ──────────────────── 录制控制 ────────────────────
 
-    def start_recording(self):
+    def start_recording(self, device: Optional[int] = None):
         """开始录音
 
         启动 sounddevice.InputStream，音频数据同时写入 buffer 和 queue。
         queue 用于流式发送，buffer 用于备用整段发送。
+
+        Args:
+            device: 音频设备 ID，None 表示默认设备
         """
         import sounddevice as sd
 
@@ -118,6 +121,9 @@ class AudioRecorder:
             except queue.Empty:
                 break
 
+        # 使用传入的设备 ID 或当前选中的设备
+        dev = device if device is not None else self._selected_device
+
         def callback(indata, frames, time_info, status):
             if status:
                 logger.warning(f"Audio status: {status}")
@@ -131,7 +137,7 @@ class AudioRecorder:
 
         try:
             self._stream = sd.InputStream(
-                device=self._selected_device,
+                device=dev,
                 samplerate=self.sample_rate,
                 channels=self.channels,
                 dtype="int16",
