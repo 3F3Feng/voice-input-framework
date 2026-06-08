@@ -188,6 +188,28 @@ class SttClient:
             self._log(f"⚠️ 获取平台信息失败: {e}")
             return {}
 
+    async def get_models(self) -> list[dict]:
+        """获取服务器模型列表（返回原始数据）
+
+        Returns:
+            list[dict]: 模型信息列表，每个模型包含 name, is_loaded, is_available 等字段
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
+                resp = await client.get(f"{self.http_url}/models")
+                if resp.status_code == 200:
+                    response_data = resp.json()
+                    self._parse_models_response(response_data)
+                    return response_data if isinstance(response_data, list) else response_data.get("models", [])
+                else:
+                    self._log(f"✗ 获取模型列表失败: HTTP {resp.status_code}")
+                    return []
+        except Exception as e:
+            self._log(f"✗ 获取模型列表失败: {e}")
+            return []
+
     # ──────────────────── 模型管理 ────────────────────
 
     async def fetch_models(self) -> bool:
