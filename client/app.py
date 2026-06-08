@@ -8,7 +8,6 @@ Voice Input Framework - 客户端应用控制器
 
 import asyncio
 import logging
-import sys
 import threading
 import time
 from typing import Optional
@@ -23,16 +22,6 @@ from client.hotkey_manager import HotkeyManager, HotkeyPresets
 from client.auto_start import AutoStartManager
 
 logger = logging.getLogger(__name__)
-
-# 全局异常钩子，捕获未处理的异常并记录
-def _global_exception_handler(exc_type, exc_value, exc_traceback):
-    logger.critical(
-        "未处理的异常", exc_info=(exc_type, exc_value, exc_traceback)
-    )
-    import traceback
-    traceback.print_exception(exc_type, exc_value, exc_traceback)
-
-sys.excepthook = _global_exception_handler
 
 # 文本输入方式: True = osascript (macOS), False = pyautogui (cross-platform)
 CLIPBOARD_METHOD = False
@@ -283,18 +272,10 @@ class VoiceInputApp:
             TrayMenu(self.window._tray_manager, self._auto_start_manager) if _window else None
         )
 
-        # 热键 (设置回调但不启动监听器 - pynput 在部分 Windows 环境下会崩溃)
+        # 热键
         self.hotkey_manager.set_hotkey(self.config.hotkey)
         self.hotkey_manager.on_press = lambda: self._async_task(self._start_recording())
         self.hotkey_manager.on_release = lambda: self._async_task(self._stop_recording())
-
-    def _on_hotkey_recorded(self, hotkey: str, window):
-        """快捷键录制完成后的回调"""
-        window["-HOTKEY-"].update(hotkey)
-        self.config.hotkey = hotkey
-        self.config.save()
-        self.hotkey_manager.set_hotkey(hotkey)
-        self.window.log(f"快捷键已录制并应用: {hotkey}")
 
         # 自动连接
         self._async_task(self._connect())
@@ -374,23 +355,18 @@ class VoiceInputApp:
             self.window.log(f"快捷键已更新: {hotkey}")
 
         elif event == "-RECORD-HOTKEY-":
-            self.hotkey_manager.start_recording(
-                lambda k: self._on_hotkey_recorded(k, window)
-            )
+            self.hotkey_manager.start_recording(lambda k: window["-HOTKEY-"].update(k))
 
         elif event == "-CLEAR-HOTKEY-":
             window["-HOTKEY-"].update("")
-            self.config.hotkey = ""
-            self.config.save()
-            self.window.log("快捷键已清除")
 
         elif event == "-PRESET-":
             name = values.get("-PRESET-")
             if name:
-                preset = HotkeyPresets.get_preset(name)
+                preset = HotkeyPresets.get_hotkey(name)
                 if preset:
-                    window["-HOTKEY-"].update(preset["hotkey"])
-                    self.window.log(f"预设 {name} 已应用: {preset['hotkey']}")
+                    window["-HOTKEY-"].update(preset)
+                    self.window.log(f"预设 {name} 已应用: {preset}")
 
         elif event == "-APPLY-PRESET-":
             self._handle_event("-UPDATE-HOTKEY-", values, window)
@@ -458,18 +434,13 @@ class VoiceInputApp:
             self.window.log(f"检查更新失败: {e}")
 
     def _async_task(self, coro):
-        """安全地将协程提交到异步事件循环"""
-        loop = self.async_loop
-        if loop is not None and loop.is_running():
-            asyncio.run_coroutine_threadsafe(coro, loop)
+        if self.async_loop:
+            asyncio.run_coroutine_threadsafe(coro, self.async_loop)
 
     def _cleanup(self):
         self.is_running = False
         if self.async_loop:
             self.async_loop.call_soon_threadsafe(self.async_loop.stop)
-        self.hotkey_manager.stop_listener()
-        if hasattr(self, "tray") and self.tray:
-            self.tray.stop()
         if hasattr(self, "window") and self.window and hasattr(self.window, "_window"):
             self.window.close()
         logger.info("客户端已关闭")
