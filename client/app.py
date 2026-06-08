@@ -274,8 +274,16 @@ class VoiceInputApp:
 
         # 热键
         self.hotkey_manager.set_hotkey(self.config.hotkey)
-        self.hotkey_manager.on_press = lambda: self._async_task(self._start_recording())
-        self.hotkey_manager.on_release = lambda: self._async_task(self._stop_recording())
+        try:
+            self.hotkey_manager.start_listener(
+                on_press=self._on_hotkey_press,
+                on_release=self._on_hotkey_release,
+            )
+            self.hotkey_manager._hotkey_triggered = False
+            self.window.log(f"快捷键监听器已启动: {self.config.hotkey}")
+        except Exception as e:
+            self.window.log(f"快捷键监听器启动失败: {e}")
+            logger.warning(f"快捷键监听器启动失败 (非致命): {e}")
 
         # 自动连接
         self._async_task(self._connect())
@@ -288,7 +296,12 @@ class VoiceInputApp:
                 event, values = _window.read(timeout=100)
                 if event == sg.WIN_CLOSED or event == "-EXIT-":
                     break
-                self._handle_event(event, values, _window)
+                if event == "-HOTKEY-PRESS-":
+                    self._async_task(self._start_recording())
+                elif event == "-HOTKEY-RELEASE-":
+                    self._async_task(self._stop_recording())
+                else:
+                    self._handle_event(event, values, _window)
             except Exception as e:
                 logger.error(f"Main loop error: {e}")
 
@@ -363,10 +376,10 @@ class VoiceInputApp:
         elif event == "-PRESET-":
             name = values.get("-PRESET-")
             if name:
-                preset = HotkeyPresets.get_hotkey(name)
+                preset = HotkeyPresets.get_preset(name)
                 if preset:
-                    window["-HOTKEY-"].update(preset)
-                    self.window.log(f"预设 {name} 已应用: {preset}")
+                    window["-HOTKEY-"].update(preset["hotkey"])
+                    self.window.log(f"预设 {name} 已应用: {preset['hotkey']}")
 
         elif event == "-APPLY-PRESET-":
             self._handle_event("-UPDATE-HOTKEY-", values, window)
@@ -432,6 +445,16 @@ class VoiceInputApp:
                 self.window.log("已是最新版本")
         except Exception as e:
             self.window.log(f"检查更新失败: {e}")
+
+    def _on_hotkey_press(self):
+        """快捷键按下回调（pynput 后台线程调用）"""
+        if self.window and self.window.window:
+            self.window.window.write_event_value("-HOTKEY-PRESS-", None)
+
+    def _on_hotkey_release(self):
+        """快捷键释放回调（pynput 后台线程调用）"""
+        if self.window and self.window.window:
+            self.window.window.write_event_value("-HOTKEY-RELEASE-", None)
 
     def _async_task(self, coro):
         if self.async_loop:
