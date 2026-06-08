@@ -20,12 +20,14 @@ import PySimpleGUI as sg
 
 from client.audio import AudioRecorder, AUDIO_SAMPLE_RATE
 from client.network import SttClient, LlmClient
-from client.ui import MainWindow, TrayMenu
+from client.ui import MainWindow, TrayMenu, get_input_cursor_position, restore_focus_later
 from client.config_manager import ConfigManager
 from client.hotkey_manager import HotkeyManager, HotkeyPresets
-from client.cursor_tracker import get_input_cursor_position, restore_focus_later, CLIPBOARD_METHOD
 
 logger = logging.getLogger(__name__)
+
+# 文本输入方式: True = osascript (macOS), False = pyautogui (cross-platform)
+CLIPBOARD_METHOD = False
 
 
 class VoiceInputApp:
