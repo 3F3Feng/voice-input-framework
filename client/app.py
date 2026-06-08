@@ -7,20 +7,16 @@ Voice Input Framework - 客户端应用控制器
 """
 
 import asyncio
-import json
 import logging
-import os
-import queue
 import threading
 import time
 from typing import Optional
 
-import numpy as np
 import PySimpleGUI as sg
 
-from client.audio import AudioRecorder, AUDIO_SAMPLE_RATE
+from client.audio import AudioRecorder
 from client.network import SttClient, LlmClient
-from client.ui import MainWindow, TrayMenu, get_input_cursor_position, restore_focus_later
+from client.ui import MainWindow, TrayMenu, get_input_cursor_position
 from client.config_manager import ConfigManager
 from client.hotkey_manager import HotkeyManager, HotkeyPresets
 from client.auto_start import AutoStartManager
@@ -92,7 +88,9 @@ class VoiceInputApp:
 
                 # 如果有平台信息，使用带可用性标记的更新方法
                 if available_models:
-                    self.window.update_model_list_with_availability(names, current, available_models)
+                    self.window.update_model_list_with_availability(
+                        names, current, available_models
+                    )
                 else:
                     self.window.update_model_list(names, current)
 
@@ -187,20 +185,20 @@ class VoiceInputApp:
             self.window.write_event_value("-REC-STOPPED-", "")
 
     def _on_recording_started(self):
-        if hasattr(self.window, 'floating_indicator') and self.window.floating_indicator:
+        if hasattr(self.window, "floating_indicator") and self.window.floating_indicator:
             pos = get_input_cursor_position()
             self.window.floating_indicator.show(pos)
 
     def _on_recording_stopped(self):
-        if hasattr(self.window, 'floating_indicator') and self.window.floating_indicator:
+        if hasattr(self.window, "floating_indicator") and self.window.floating_indicator:
             self.window.floating_indicator.hide()
-        if hasattr(self.window, 'processing_indicator') and self.window.processing_indicator:
+        if hasattr(self.window, "processing_indicator") and self.window.processing_indicator:
             self.window.processing_indicator.show()
 
     async def _process_audio(self):
         """处理已录制的音频"""
         audio_data = self.audio.stop_recording()
-        if hasattr(self.window, 'processing_indicator') and self.window.processing_indicator:
+        if hasattr(self.window, "processing_indicator") and self.window.processing_indicator:
             self.window.processing_indicator.hide()
         if not audio_data or len(audio_data) < 320:
             return
@@ -229,14 +227,16 @@ class VoiceInputApp:
         try:
             if CLIPBOARD_METHOD:
                 import subprocess
+
                 process = subprocess.Popen(
-                    ["osascript", "-e",
-                     f'tell application "System Events" to keystroke "{text}"'],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    ["osascript", "-e", f'tell application "System Events" to keystroke "{text}"'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
                 process.wait(timeout=5)
             else:
                 import pyautogui
+
                 pyautogui.typewrite(text, interval=0.01)
         except Exception as e:
             logger.error(f"自动输入失败: {e}")
@@ -268,7 +268,9 @@ class VoiceInputApp:
 
         # 设置托盘
         self._auto_start_manager = AutoStartManager()
-        self.tray = TrayMenu(self.window._tray_manager, self._auto_start_manager) if _window else None
+        self.tray = (
+            TrayMenu(self.window._tray_manager, self._auto_start_manager) if _window else None
+        )
 
         # 热键
         self.hotkey_manager.set_hotkey(self.config.hotkey)
@@ -318,7 +320,11 @@ class VoiceInputApp:
             self._async_task(self._fetch_models())
 
         elif event == "-SWITCH-MODEL-":
-            name = self.window.get_selected_model() if self.window else values.get("-MODEL-SELECT-", "")
+            name = (
+                self.window.get_selected_model()
+                if self.window
+                else values.get("-MODEL-SELECT-", "")
+            )
             if name:
                 self._async_task(self._switch_model(name))
 
@@ -349,9 +355,7 @@ class VoiceInputApp:
             self.window.log(f"快捷键已更新: {hotkey}")
 
         elif event == "-RECORD-HOTKEY-":
-            self.hotkey_manager.start_recording(
-                lambda k: window["-HOTKEY-"].update(k)
-            )
+            self.hotkey_manager.start_recording(lambda k: window["-HOTKEY-"].update(k))
 
         elif event == "-CLEAR-HOTKEY-":
             window["-HOTKEY-"].update("")
@@ -378,6 +382,7 @@ class VoiceInputApp:
             result = window["-RESULT-"].get()
             if result:
                 import subprocess
+
                 subprocess.run(["pbcopy"], input=result.encode("utf-8"))
                 self.window.log("已复制到剪贴板")
 
@@ -417,6 +422,7 @@ class VoiceInputApp:
 
     async def _check_update(self):
         from client.update_checker import check_for_updates, format_version_message
+
         try:
             result = await check_for_updates()
             if result:
@@ -435,6 +441,6 @@ class VoiceInputApp:
         self.is_running = False
         if self.async_loop:
             self.async_loop.call_soon_threadsafe(self.async_loop.stop)
-        if hasattr(self, 'window') and self.window and hasattr(self.window, '_window'):
+        if hasattr(self, "window") and self.window and hasattr(self.window, "_window"):
             self.window.close()
         logger.info("客户端已关闭")

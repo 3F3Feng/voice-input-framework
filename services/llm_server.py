@@ -15,7 +15,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import uvicorn
 from contextlib import asynccontextmanager
@@ -28,8 +28,12 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
-from shared.platform_detector import detect_platform, get_startup_banner, check_resource_requirements
-from server.llm_engine import LLMEngine, LLM_MODELS_CONFIG
+from shared.platform_detector import (
+    detect_platform,
+    get_startup_banner,
+    check_resource_requirements,
+)
+from server.llm_engine import LLMEngine
 
 # 配置日志
 _log_level = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
@@ -52,6 +56,7 @@ DEFAULT_PROMPT = """你是一个语音输入后处理助手。
 
 只返回优化后的文本，不要额外解释。"""
 
+
 def load_prompt() -> str:
     """加载提示词"""
     if PROMPT_FILE.exists():
@@ -60,6 +65,7 @@ def load_prompt() -> str:
         except Exception as e:
             logger.warning(f"Failed to load prompt file: {e}")
     return DEFAULT_PROMPT
+
 
 def save_prompt(prompt: str) -> bool:
     """保存提示词"""
@@ -70,11 +76,14 @@ def save_prompt(prompt: str) -> bool:
         logger.error(f"Failed to save prompt file: {e}")
         return False
 
+
 # ============== Data Models ==============
+
 
 class ProcessRequest(BaseModel):
     text: str
     options: dict = {}
+
 
 class ProcessResult(BaseModel):
     text: str
@@ -83,6 +92,7 @@ class ProcessResult(BaseModel):
     model: str
     success: bool = True
 
+
 class ModelInfo(BaseModel):
     name: str
     description: str = ""
@@ -90,6 +100,7 @@ class ModelInfo(BaseModel):
     is_current: bool = False
     backend: str = ""
     memory_gb: float = 0.0
+
 
 class HealthStatus(BaseModel):
     status: str
@@ -100,6 +111,7 @@ class HealthStatus(BaseModel):
     active_connections: int = 0
     is_processing: bool = False
     platform: dict = {}
+
 
 # ============== FastAPI App ==============
 
@@ -131,20 +143,21 @@ async def lifespan(app: FastAPI):
     }
     banner = get_startup_banner("LLM Service", extra_info)
     logger.info(banner)
-    
+
     # 资源检查
     if default_model:
         from server.llm_engine import LLM_MODELS_CONFIG
+
         model_config = LLM_MODELS_CONFIG.get(default_model, {})
         required_memory = model_config.get("memory_gb", 0)
         resource_result = check_resource_requirements(default_model, required_memory)
-        
+
         if resource_result["passed"]:
             logger.info("✓ Resource check passed")
         else:
             for warning in resource_result["warnings"]:
                 logger.warning(f"⚠️  {warning}")
-    
+
     # 预加载配置
     preload = os.getenv("VIF_PRELOAD_MODELS", "stt").lower()
     if preload == "none" or preload == "stt":
@@ -158,9 +171,9 @@ async def lifespan(app: FastAPI):
             logger.warning("No default LLM model available for this platform")
     else:
         logger.info(f"Unknown preload option: {preload}, skipping LLM preload")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("LLM Service shutting down")
     await engine.unload()
@@ -182,6 +195,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health", response_model=HealthStatus)
 async def health_check():
     """健康检查"""
@@ -201,21 +215,25 @@ async def health_check():
         },
     )
 
+
 @app.get("/models", response_model=List[ModelInfo])
 async def list_models():
     """获取可用模型列表"""
     available = engine.get_available_models()
     models = []
     for name, config in available.items():
-        models.append(ModelInfo(
-            name=name,
-            description=config.get("description", ""),
-            is_loaded=(name == engine.current_model and engine.is_loaded),
-            is_current=(name == engine.current_model),
-            backend=config.get("backend", ""),
-            memory_gb=config.get("memory_gb", 0.0),
-        ))
+        models.append(
+            ModelInfo(
+                name=name,
+                description=config.get("description", ""),
+                is_loaded=(name == engine.current_model and engine.is_loaded),
+                is_current=(name == engine.current_model),
+                backend=config.get("backend", ""),
+                memory_gb=config.get("memory_gb", 0.0),
+            )
+        )
     return models
+
 
 @app.post("/models/select")
 async def select_model(model_name: str = Form(...)):
@@ -232,6 +250,7 @@ async def select_model(model_name: str = Form(...)):
         logger.error(f"Error switching model: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/process", response_model=ProcessResult)
 async def process_text(request: ProcessRequest):
     """处理文本"""
@@ -243,14 +262,16 @@ async def process_text(request: ProcessRequest):
                 if not loaded:
                     raise HTTPException(status_code=503, detail="LLM model not loaded")
             else:
-                raise HTTPException(status_code=503, detail="No LLM model available for this platform")
-        
+                raise HTTPException(
+                    status_code=503, detail="No LLM model available for this platform"
+                )
+
         # 加载提示词
         system_prompt = load_prompt()
-        
+
         # 处理文本
         result_text, latency_ms = await engine.process(request.text, system_prompt)
-        
+
         return ProcessResult(
             text=result_text,
             original_text=request.text,
@@ -264,11 +285,13 @@ async def process_text(request: ProcessRequest):
         logger.error(f"Process error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ============== Prompt Management API ==============
 @app.get("/prompt")
 async def get_prompt():
     """获取当前提示词"""
     return {"prompt": load_prompt()}
+
 
 @app.put("/prompt")
 async def update_prompt(request: Request):
@@ -282,6 +305,7 @@ async def update_prompt(request: Request):
         return {"status": "success"}
     raise HTTPException(status_code=500, detail="Failed to save prompt")
 
+
 # ============== Platform Info API ==============
 @app.get("/platform")
 async def get_platform():
@@ -294,9 +318,15 @@ async def get_platform():
         "gpu": {
             "name": platform_info.cuda_device.name if platform_info.cuda_device else None,
             "memory_gb": platform_info.cuda_device.memory_gb if platform_info.cuda_device else 0,
-            "driver": platform_info.cuda_device.driver_version if platform_info.cuda_device else None,
-            "cuda_version": platform_info.cuda_device.cuda_version if platform_info.cuda_device else None,
-        } if platform_info.has_cuda else None,
+            "driver": platform_info.cuda_device.driver_version
+            if platform_info.cuda_device
+            else None,
+            "cuda_version": platform_info.cuda_device.cuda_version
+            if platform_info.cuda_device
+            else None,
+        }
+        if platform_info.has_cuda
+        else None,
         "cpu": {
             "cores": platform_info.cpu_cores,
             "ram_gb": round(platform_info.ram_gb, 1),
@@ -310,6 +340,7 @@ async def get_platform():
         "available_models": list(engine.get_available_models().keys()),
     }
 
+
 def main():
     """主函数"""
     logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
@@ -319,6 +350,7 @@ def main():
         port=LLM_PORT,
         log_level=_log_level.lower(),
     )
+
 
 if __name__ == "__main__":
     main()

@@ -140,25 +140,25 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
 
 def get_default_model() -> str:
     """返回当前平台推荐的默认模型
-    
+
     优先级:
     1. Apple Silicon + MLX -> qwen_asr_mlx_native_small
     2. NVIDIA CUDA GPU -> qwen_asr_cuda (显存>=8GB) 或 qwen_asr_cuda_small
     3. 其他 -> whisper_turbo (通用 CPU/MPS)
     """
     platform_info = get_platform_info()
-    
+
     # Apple Silicon: 优先 MLX
     if platform_info.is_apple_silicon and platform_info.has_mlx:
         return "qwen_asr_mlx_native_small"
-    
+
     # NVIDIA GPU: 优先 CUDA
     if platform_info.has_cuda:
         if platform_info.cuda_device and platform_info.cuda_device.memory_gb >= 8:
             return "qwen_asr_cuda"
         else:
             return "qwen_asr_cuda_small"
-    
+
     # 其他平台: 通用模型
     return "whisper_turbo"
 
@@ -167,7 +167,7 @@ def get_available_models() -> Dict[str, Dict[str, Any]]:
     """返回当前平台可用的模型（过滤掉不支持的模型）"""
     platform_info = get_platform_info()
     available = {}
-    
+
     for name, config in MODELS_CONFIG.items():
         # 检查平台要求
         if config.get("requires_apple_silicon") and not platform_info.is_apple_silicon:
@@ -178,9 +178,9 @@ def get_available_models() -> Dict[str, Dict[str, Any]]:
             continue
         if config.get("requires_macos") and not platform_info.is_macos:
             continue
-        
+
         available[name] = config
-    
+
     return available
 
 
@@ -288,25 +288,25 @@ LLM_MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
 
 def get_default_llm_model() -> str:
     """返回当前平台推荐的默认 LLM 模型
-    
+
     优先级:
     1. Apple Silicon + MLX -> Qwen3.5-4B-OptiQ
     2. NVIDIA CUDA GPU -> Qwen3.5-4B-CUDA (显存>=8GB) 或 Qwen3.5-2B-CUDA
     3. 其他 -> "" (不推荐在 CPU 上运行 LLM)
     """
     platform_info = get_platform_info()
-    
+
     # Apple Silicon: 优先 MLX
     if platform_info.is_apple_silicon and platform_info.has_mlx:
         return "Qwen3.5-4B-OptiQ"
-    
+
     # NVIDIA GPU: 优先 CUDA
     if platform_info.has_cuda:
         if platform_info.cuda_device and platform_info.cuda_device.memory_gb >= 8:
             return "Qwen3.5-4B-CUDA"
         else:
             return "Qwen3.5-2B-CUDA"
-    
+
     # 其他平台: 不推荐运行 LLM
     return ""
 
@@ -315,19 +315,19 @@ def get_available_llm_models() -> Dict[str, Dict[str, Any]]:
     """返回当前平台可用的 LLM 模型（过滤掉不支持的模型）"""
     platform_info = get_platform_info()
     available = {}
-    
+
     for name, config in LLM_MODELS_CONFIG.items():
         # 检查平台要求
         if config.get("requires_mlx") and not platform_info.has_mlx:
             continue
         if config.get("requires_cuda") and not platform_info.has_cuda:
             continue
-        
+
         # 检查 VRAM 要求
         if config.get("requires_cuda") and platform_info.cuda_device:
             if config["memory_gb"] > platform_info.cuda_device.memory_gb:
                 continue
-        
+
         available[name] = config
-    
+
     return available

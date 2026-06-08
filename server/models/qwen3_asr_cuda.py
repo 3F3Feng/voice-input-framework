@@ -58,9 +58,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
     def __init__(self, model_name: str = "qwen_asr", **kwargs):
         super().__init__(model_name, **kwargs)
         self._model = None
-        self.model_config = self.MODEL_CONFIGS.get(
-            model_name, self.MODEL_CONFIGS["qwen_asr"]
-        )
+        self.model_config = self.MODEL_CONFIGS.get(model_name, self.MODEL_CONFIGS["qwen_asr"])
         self._device = None
         self._warmed_up = False
 
@@ -72,10 +70,10 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             self._load_sync()
             self._is_loaded = True
             logger.info(f"Model loaded on {self._device}: {self.model_config['model_id']}")
-            
+
             # Warmup: run a short inference to initialize CUDA kernels
             await self._warmup()
-            
+
         except Exception as e:
             raise STTEngineError(f"Failed to load CUDA model: {e}")
 
@@ -113,6 +111,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         attn_impl = "sdpa"  # Default - PyTorch Scaled Dot Product Attention
         try:
             import flash_attn
+
             attn_impl = "flash_attention_2"
             logger.info("Flash Attention 2 available, using it")
         except ImportError:
@@ -134,11 +133,11 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         logger.info(f"Model loaded on {self._device}")
 
         # Try torch.compile for faster repeated inference
-        if hasattr(torch, 'compile') and not quantize:
+        if hasattr(torch, "compile") and not quantize:
             try:
                 logger.info("Attempting torch.compile optimization...")
                 # Access the inner transformers model
-                if hasattr(self._model, '_model'):
+                if hasattr(self._model, "_model"):
                     self._model._model = torch.compile(
                         self._model._model,
                         mode="reduce-overhead",
@@ -151,21 +150,24 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         """预热模型，初始化 CUDA kernels"""
         if self._warmed_up:
             return
-        
+
         logger.info("Warming up model...")
         start = time.time()
-        
+
         try:
             # Create a short silence for warmup
             warmup_audio = np.zeros(16000, dtype=np.float32)  # 1 second silence
-            
+
             # Run inference in thread pool to not block
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: self._model.transcribe(
-                audio=(warmup_audio, 16000),
-                language=None,
-            ))
-            
+            await loop.run_in_executor(
+                None,
+                lambda: self._model.transcribe(
+                    audio=(warmup_audio, 16000),
+                    language=None,
+                ),
+            )
+
             elapsed = time.time() - start
             logger.info(f"Warmup complete in {elapsed:.2f}s")
             self._warmed_up = True
@@ -180,6 +182,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
         self._warmed_up = False
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:
@@ -220,7 +223,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
 
         try:
             start_time = time.time()
-            
+
             # qwen_asr 的 transcribe 接口
             lang_param = language if language != "auto" else None
 
@@ -231,7 +234,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
                 language=lang_param,
             )
             t1 = time.time()
-            
+
             if results and len(results) > 0:
                 text = results[0].text.strip()
                 detected_lang = results[0].language
@@ -241,7 +244,9 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
 
             elapsed_ms = (time.time() - start_time) * 1000
             inference_ms = (t1 - t0) * 1000
-            logger.info(f"[timing] qwen_asr.transcribe: {inference_ms:.0f}ms (total: {elapsed_ms:.0f}ms)")
+            logger.info(
+                f"[timing] qwen_asr.transcribe: {inference_ms:.0f}ms (total: {elapsed_ms:.0f}ms)"
+            )
 
             return TranscriptionResult(
                 text=text,
@@ -300,11 +305,13 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
 
     def get_model_info(self) -> dict:
         info = super().get_model_info()
-        info.update({
-            "model_id": self.model_config.get("model_id", "unknown"),
-            "description": self.model_config.get("description", ""),
-            "device": str(self._device) if self._device else "unloaded",
-            "quantize": self.model_config.get("quantize"),
-            "use_bf16": self.model_config.get("use_bf16", True),
-        })
+        info.update(
+            {
+                "model_id": self.model_config.get("model_id", "unknown"),
+                "description": self.model_config.get("description", ""),
+                "device": str(self._device) if self._device else "unloaded",
+                "quantize": self.model_config.get("quantize"),
+                "use_bf16": self.model_config.get("use_bf16", True),
+            }
+        )
         return info

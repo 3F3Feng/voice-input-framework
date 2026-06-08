@@ -6,11 +6,9 @@ Voice Input Framework - 真正的 MLX 原生引擎
 相比 PyTorch 版：内存更低、Apple Silicon 优化、支持 4-bit/8-bit 量化。
 """
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator
 
-import math
 import numpy as np
 
 from server.models.base import BaseSTTEngine, STTEngineError
@@ -149,7 +147,11 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
                 combined = b"".join(buffer)
                 audio_array = self._convert_audio(combined, sample_rate)
                 result = self._model.generate(
-                    audio=audio_array, language=None, temperature=0.2, no_repeat_ngram_size=3, max_tokens=9999
+                    audio=audio_array,
+                    language=None,
+                    temperature=0.2,
+                    no_repeat_ngram_size=3,
+                    max_tokens=9999,
                 )
                 if result and result.text.strip():
                     yield TranscriptionResult(
@@ -165,7 +167,11 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
             combined = b"".join(buffer)
             audio_array = self._convert_audio(combined, sample_rate)
             result = self._model.generate(
-                audio=audio_array, language=None, temperature=0.2, no_repeat_ngram_size=3, max_tokens=9999
+                audio=audio_array,
+                language=None,
+                temperature=0.2,
+                no_repeat_ngram_size=3,
+                max_tokens=9999,
             )
             if result and result.text.strip():
                 yield TranscriptionResult(

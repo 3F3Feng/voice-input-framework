@@ -8,21 +8,17 @@ Voice Input Framework - Speaker Diarization Engine
 
 运行环境: Apple Silicon (MPS) 优先, 回退 CPU
 """
+
 import asyncio
-import json
 import logging
 import os
-import sys
 import time
-from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger("diarize-engine")
 
 # ── 配置 ──
-DIARIZE_MODEL_ID = os.getenv(
-    "VIF_DIARIZE_MODEL", "pyannote/speaker-diarization-3.1"
-)
+DIARIZE_MODEL_ID = os.getenv("VIF_DIARIZE_MODEL", "pyannote/speaker-diarization-3.1")
 DIARIZE_ENABLED = os.getenv("VIF_DIARIZE_ENABLED", "true").lower() == "true"
 
 
@@ -121,6 +117,7 @@ class DiarizationEngine:
         """检查 pyannote.audio 是否可导入"""
         try:
             import pyannote.audio  # noqa
+
             return True
         except ImportError:
             return False
@@ -166,6 +163,7 @@ class DiarizationEngine:
         t0 = time.time()
 
         try:
+
             def _run_diarize():
                 kwargs = {}
                 if num_speakers is not None:
@@ -185,24 +183,28 @@ class DiarizationEngine:
             if hasattr(diarization, "itertracks"):
                 # 旧版 API: Annotation
                 for turn, _, speaker in diarization.itertracks(yield_label=True):
-                    segments.append({
-                        "speaker": speaker,
-                        "start": round(turn.start, 3),
-                        "end": round(turn.end, 3),
-                        "duration": round(turn.end - turn.start, 3),
-                    })
+                    segments.append(
+                        {
+                            "speaker": speaker,
+                            "start": round(turn.start, 3),
+                            "end": round(turn.end, 3),
+                            "duration": round(turn.end - turn.start, 3),
+                        }
+                    )
                 if diarization.get_timeline():
                     duration = diarization.get_timeline().extent().end
             else:
                 # 新版 API: DiarizeOutput (3.4+, 4.0+)
                 if hasattr(diarization, "speaker_diarization"):
                     for turn, speaker in diarization.speaker_diarization:
-                        segments.append({
-                            "speaker": speaker,
-                            "start": round(turn.start, 3),
-                            "end": round(turn.end, 3),
-                            "duration": round(turn.end - turn.start, 3),
-                        })
+                        segments.append(
+                            {
+                                "speaker": speaker,
+                                "start": round(turn.start, 3),
+                                "end": round(turn.end, 3),
+                                "duration": round(turn.end - turn.start, 3),
+                            }
+                        )
                     # 尝试获取总时长
                     try:
                         duration = diarization.end
@@ -212,12 +214,15 @@ class DiarizationEngine:
                     # 其他格式兜底
                     data = diarization.for_json()
                     for seg in data.get("content", []):
-                        segments.append({
-                            "speaker": seg.get("label", "?"),
-                            "start": seg.get("segment", {}).get("start", 0),
-                            "end": seg.get("segment", {}).get("end", 0),
-                            "duration": seg.get("segment", {}).get("end", 0) - seg.get("segment", {}).get("start", 0),
-                        })
+                        segments.append(
+                            {
+                                "speaker": seg.get("label", "?"),
+                                "start": seg.get("segment", {}).get("start", 0),
+                                "end": seg.get("segment", {}).get("end", 0),
+                                "duration": seg.get("segment", {}).get("end", 0)
+                                - seg.get("segment", {}).get("start", 0),
+                            }
+                        )
 
             # 获取说话人数量
             speakers = set(s["speaker"] for s in segments)
@@ -259,6 +264,7 @@ class DiarizationEngine:
         """释放模型内存"""
         import gc
         import torch
+
         if self._pipeline is not None:
             del self._pipeline
             self._pipeline = None

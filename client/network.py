@@ -27,7 +27,7 @@ DEFAULT_WS_PING_INTERVAL = 20
 DEFAULT_WS_PING_TIMEOUT = 10
 DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_READY_TIMEOUT = 30.0
-DEFAULT_RESULT_TIMEOUT = 300.0   # 5 分钟（大模型如 qwen_asr 需要较长时间）
+DEFAULT_RESULT_TIMEOUT = 300.0  # 5 分钟（大模型如 qwen_asr 需要较长时间）
 DEFAULT_HTTP_TIMEOUT = 10.0
 DEFAULT_MODEL_SWITCH_TIMEOUT = 300.0  # 5 分钟（大模型加载需要时间）
 DEFAULT_POLL_INTERVAL = 2.0
@@ -177,7 +177,9 @@ class SttClient:
                 resp = await client.get(url)
                 if resp.status_code == 200:
                     data = resp.json()
-                    self._log(f"✓ 获取到平台信息: {data.get('system', 'unknown')} {data.get('arch', 'unknown')}")
+                    self._log(
+                        f"✓ 获取到平台信息: {data.get('system', 'unknown')} {data.get('arch', 'unknown')}"
+                    )
                     return data
                 else:
                     self._log(f"⚠️ 获取平台信息失败: HTTP {resp.status_code}")
@@ -214,7 +216,9 @@ class SttClient:
                                 self._log(f"⚠️ 响应中未找到模型，响应完整内容: {response_data}")
 
                             if self.on_models_updated:
-                                self.on_models_updated(self.available_models, self.current_model or "")
+                                self.on_models_updated(
+                                    self.available_models, self.current_model or ""
+                                )
 
                             return bool(self.available_models)
                         except json.JSONDecodeError as e:
@@ -430,10 +434,14 @@ class SttClient:
             self._log(f"发送 {audio_size_kb:.1f} KB 音频...")
 
             # 发送音频消息
-            await ws.send(json.dumps({
-                "type": "audio",
-                "data": base64.b64encode(full_audio).decode(),
-            }))
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "audio",
+                        "data": base64.b64encode(full_audio).decode(),
+                    }
+                )
+            )
 
             # 发送结束信号
             await ws.send(json.dumps({"type": "end"}))
@@ -480,7 +488,9 @@ class SttClient:
             self._log(f"发送音频失败: {e}")
             return None
 
-    async def stream_audio(self, audio_queue: asyncio.Queue, language: str = "auto") -> Optional[str]:
+    async def stream_audio(
+        self, audio_queue: asyncio.Queue, language: str = "auto"
+    ) -> Optional[str]:
         """流式发送音频到服务器（边录边发）
 
         从 audio_queue 中逐块读取音频数据，通过 WebSocket 实时发送。
@@ -528,10 +538,14 @@ class SttClient:
                             # 收到结束信号
                             break
                         # 发送音频块
-                        await ws.send(json.dumps({
-                            "type": "audio",
-                            "data": base64.b64encode(chunk).decode(),
-                        }))
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "audio",
+                                    "data": base64.b64encode(chunk).decode(),
+                                }
+                            )
+                        )
                     except asyncio.TimeoutError:
                         # 队列为空但可能还在录音，继续等待
                         continue
@@ -557,7 +571,7 @@ class SttClient:
                         if msg_type == "result":
                             result_text = data.get("text", "")
                             llm_latency = data.get("llm_latency_ms")
-                            llm_model = data.get("llm_model", "")
+                            data.get("llm_model", "")
                             if llm_latency is not None:
                                 self._log(f"识别结果: {result_text} (LLM: {llm_latency:.0f}ms)")
                             else:

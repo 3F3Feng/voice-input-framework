@@ -13,18 +13,19 @@ from shared.model_registry import MODELS_CONFIG
 # 使用函数获取，避免在 import 时加载所有引擎
 _ENGINE_CLASSES = None
 
+
 def _get_engine_classes():
     """延迟加载引擎类映射"""
     global _ENGINE_CLASSES
     if _ENGINE_CLASSES is not None:
         return _ENGINE_CLASSES
-    
+
     from server.models.whisper import WhisperEngine
     from server.models.whisper_mlx import WhisperMLXEngine
     from server.models.whisper_cpp import WhisperCppEngine
     from server.models.qwen3_asr_mlx_native import Qwen3ASRMLXNativeEngine
     from server.models.qwen3_asr_cuda import Qwen3ASRCudaEngine
-    
+
     _ENGINE_CLASSES = {
         "qwen_asr_mlx_native": Qwen3ASRMLXNativeEngine,
         "qwen_asr_cuda": Qwen3ASRCudaEngine,
@@ -36,16 +37,18 @@ def _get_engine_classes():
     }
     return _ENGINE_CLASSES
 
+
 # 可用模型注册表：名称 → EngineClass
 # 从 shared/model_registry.py 自动构建
 AVAILABLE_MODELS: dict = {}
+
 
 def _build_available_models():
     """构建可用模型注册表"""
     global AVAILABLE_MODELS
     if AVAILABLE_MODELS:
         return
-    
+
     engine_classes = _get_engine_classes()
     for name, config in MODELS_CONFIG.items():
         engine_type = config.get("engine")
@@ -53,17 +56,21 @@ def _build_available_models():
             AVAILABLE_MODELS[name] = engine_classes[engine_type]
         else:
             import logging
+
             logging.getLogger(__name__).warning(
                 f"No engine class registered for engine_type '{engine_type}' (model '{name}')"
             )
 
+
 # 不在模块级别构建，延迟到第一次访问时构建
 # _build_available_models()
+
 
 def get_available_models():
     """获取可用模型注册表（延迟构建）"""
     _build_available_models()
     return AVAILABLE_MODELS
+
 
 __all__ = [
     "BaseSTTEngine",

@@ -90,6 +90,7 @@ class WhisperMLXEngine(BaseSTTEngine):
 
         # 清理 MLX 缓存
         import mlx.core as mx
+
         mx.clear_cache()
 
     def _convert_audio(self, audio_data: bytes, sample_rate: int = 16000) -> np.ndarray:
@@ -183,11 +184,13 @@ class WhisperMLXEngine(BaseSTTEngine):
     def get_model_info(self) -> dict:
         """获取模型信息"""
         info = super().get_model_info()
-        info.update({
-            "model_id": self.model_config.get("model_id", "unknown"),
-            "description": self.model_config.get("description", ""),
-            "backend": "mlx-whisper",
-        })
+        info.update(
+            {
+                "model_id": self.model_config.get("model_id", "unknown"),
+                "description": self.model_config.get("description", ""),
+                "backend": "mlx-whisper",
+            }
+        )
         return info
 
 

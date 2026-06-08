@@ -5,12 +5,12 @@ Voice Input Framework - STT Service
 运行在独立的 conda 环境: vif-stt (MLX + transformers 5.x)
 Port: 6544
 """
+
 import asyncio
 import base64
 import json
 import logging
 import os
-import platform
 import sys
 import time
 import uuid
@@ -24,13 +24,26 @@ import httpx
 project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
-from shared.model_registry import MODELS_CONFIG, get_default_model, get_apple_silicon_only_models, IS_APPLE_SILICON
-from shared.platform_detector import detect_platform, get_platform_info, get_startup_banner, check_resource_requirements
+from shared.model_registry import MODELS_CONFIG, get_default_model
+from shared.platform_detector import (
+    detect_platform,
+    get_startup_banner,
+    check_resource_requirements,
+)
 from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
 
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Request
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+    Request,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -63,27 +76,30 @@ _llm_last_check = 0.0  # Never checked yet
 _llm_check_interval = 30.0  # Re-check every 30 seconds
 _llm_timeout = 1.0  # Fast timeout for LLM requests (1 second)
 
+
 def _is_llm_available() -> bool:
     """Check if LLM server is available (cached)"""
     global _llm_available, _llm_last_check
     now = time.time()
-    
+
     # If we recently checked, return cached result
     if now - _llm_last_check < _llm_check_interval:
         return _llm_available
-    
+
     # If we haven't checked yet, assume available (let first request verify)
     if _llm_last_check == 0.0:
         return True
-    
+
     # Otherwise, return cached result
     return _llm_available
+
 
 def _mark_llm_available(available: bool):
     """Update LLM availability cache"""
     global _llm_available, _llm_last_check
     _llm_available = available
     _llm_last_check = time.time()
+
 
 # ============== State Persistence ==============
 """
@@ -98,6 +114,7 @@ STATE_FILE = STATE_DIR / "stt_state.json"
 _log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 logging.basicConfig(level=LOG_LEVEL, format=_log_format)
 logger = logging.getLogger("stt-server")
+
 
 def load_state() -> dict:
     """加载持久化的服务器状态"""
@@ -125,6 +142,7 @@ _persisted_state = load_state()
 if "VIF_STT_MODEL" not in os.environ:
     if saved_model := _persisted_state.get("stt_model"):
         from shared.model_registry import MODELS_CONFIG
+
         if saved_model in MODELS_CONFIG:
             logger.info(f"Restoring STT model from saved state: {saved_model}")
             STT_MODEL = saved_model
@@ -143,9 +161,11 @@ if "VIF_LLM_MODEL" not in os.environ:
 # ============== Context Variables ==============
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
 
+
 # ============== Structured Logging (optional JSON mode) ==============
 class StructuredLogFormatter(logging.Formatter):
     """结构化日志格式化器"""
+
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
             "timestamp": self.formatTime(record),
@@ -165,21 +185,26 @@ class StructuredLogFormatter(logging.Formatter):
             log_data["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_data, ensure_ascii=False, default=str)
 
+
 # Reconfigure with JSON format if requested
 if os.getenv("VIF_LOG_JSON", "").lower() == "true":
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(StructuredLogFormatter())
     logger.handlers = [handler]
 
+
 # ============== Data Models ==============
 class WordTimestamp(BaseModel):
     """词级别时间戳"""
+
     word: str
     start: float
     end: float
 
+
 class TranscriptionResult(BaseModel):
     """转写结果"""
+
     text: str
     confidence: float = 1.0
     language: str = "auto"
@@ -188,13 +213,17 @@ class TranscriptionResult(BaseModel):
     model: str = ""
     timestamps: Optional[List[WordTimestamp]] = None
 
+
 class TranscriptionRequest(BaseModel):
     """转写请求"""
+
     language: str = "auto"
     return_timestamps: bool = False
 
+
 class ModelInfo(BaseModel):
     """模型信息"""
+
     name: str
     description: str = ""
     is_loaded: bool = False
@@ -202,8 +231,10 @@ class ModelInfo(BaseModel):
     is_available: bool = True
     memory_gb: float = 0.0
 
+
 class HealthStatus(BaseModel):
     """健康状态"""
+
     status: str
     version: str = "2.0.0"
     uptime_seconds: float
@@ -215,15 +246,19 @@ class HealthStatus(BaseModel):
     diarize: Optional[Dict[str, Any]] = None
     platform: Optional[Dict[str, Any]] = None
 
+
 class ErrorResponse(BaseModel):
     """错误响应"""
+
     error_code: str
     error_message: str
     request_id: str
 
+
 # ============== Retry Decorator ==============
 def with_retry(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
     """重试装饰器"""
+
     def decorator(func):
         async def wrapper(*args, **kwargs):
             last_exception = None
@@ -233,34 +268,38 @@ def with_retry(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
                 except Exception as e:
                     last_exception = e
                     if attempt < max_retries:
-                        logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {delay}s...")
-                        await asyncio.sleep(delay * (2 ** attempt))  # 指数退避
+                        logger.warning(
+                            f"Attempt {attempt + 1} failed: {e}. Retrying in {delay}s..."
+                        )
+                        await asyncio.sleep(delay * (2**attempt))  # 指数退避
                     else:
                         logger.error(f"Failed after {max_retries + 1} attempts: {e}")
                         raise
             raise last_exception
+
         return wrapper
+
     return decorator
 
 
 # ============== LLM Client ==============
 async def call_llm_server(text: str, request_id: str = "") -> Tuple[str, float]:
     """调用 LLM 服务器进行后处理
-    
+
     Returns:
         tuple: (processed_text, latency_ms)
     """
     # Fast-fail: skip if LLM server is known to be down
     if not _is_llm_available():
         return text, 0
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{LLM_SERVER_URL}/process",
                 json={"text": text, "options": {}},
                 headers={"X-Request-ID": request_id},
-                timeout=_llm_timeout
+                timeout=_llm_timeout,
             )
             if response.status_code == 200:
                 _mark_llm_available(True)
@@ -275,11 +314,12 @@ async def call_llm_server(text: str, request_id: str = "") -> Tuple[str, float]:
         logger.debug(f"LLM server not available: {e}")
         return text, 0
 
+
 # ============== STT Engine ==============
 class STTEngine:
     """STT 引擎管理器"""
-    AVAILABLE_MODELS = MODELS_CONFIG
 
+    AVAILABLE_MODELS = MODELS_CONFIG
 
     def __init__(self, default_model: str = get_default_model()):
         self.default_model = default_model
@@ -329,7 +369,9 @@ class STTEngine:
                 # 加载 ForcedAligner（如果需要时间戳功能）
                 if load_aligner and not self._aligner_loaded:
                     logger.info(f"Loading ForcedAligner: {self._model_info['aligner_id']}")
-                    logger.warning("ForcedAligner not available (deprecated engine removed). Timestamps disabled.")
+                    logger.warning(
+                        "ForcedAligner not available (deprecated engine removed). Timestamps disabled."
+                    )
                     self._aligner_loaded = True
                     logger.info("ForcedAligner loaded successfully")
 
@@ -343,7 +385,7 @@ class STTEngine:
 
     def _load_model_sync(self):
         """同步加载主模型
-        
+
         使用统一平台检测模块，自动选择最优设备和引擎。
         """
         import torch
@@ -354,7 +396,7 @@ class STTEngine:
         # 使用统一平台检测
         platform_info = detect_platform()
         device = platform_info.best_backend
-        
+
         # 对于非 MLX 引擎，使用 torch 设备
         if device == "mlx":
             # MLX 引擎不使用 torch 设备，单独处理
@@ -366,12 +408,16 @@ class STTEngine:
         else:
             torch_device = "cpu"
 
-        logger.info(f"Platform: {platform_info.system} {platform_info.arch}, Backend: {device}, GPU: {platform_info.gpu_info}")
+        logger.info(
+            f"Platform: {platform_info.system} {platform_info.arch}, Backend: {device}, GPU: {platform_info.gpu_info}"
+        )
 
         # ── Whisper MLX 引擎 ──
         if engine_type == "whisper_mlx":
             if not platform_info.has_mlx:
-                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS) with mlx installed")
+                raise RuntimeError(
+                    "MLX models require Apple Silicon (ARM64 + macOS) with mlx installed"
+                )
             import mlx_whisper
             import numpy as np
 
@@ -386,8 +432,11 @@ class STTEngine:
         # ── Qwen3-ASR MLX 原生引擎 (mlx-audio) ──
         if engine_type == "qwen_asr_mlx_native":
             if not platform_info.has_mlx:
-                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS) with mlx installed")
+                raise RuntimeError(
+                    "MLX models require Apple Silicon (ARM64 + macOS) with mlx installed"
+                )
             from server.models.qwen3_asr_mlx_native import Qwen3ASRMLXNativeEngine
+
             model_name = self.current_model_name
             logger.info(f"Loading Qwen3-ASR MLX native model: {model_name}")
             native_engine = Qwen3ASRMLXNativeEngine(model_name=model_name)
@@ -403,6 +452,7 @@ class STTEngine:
             if not platform_info.has_cuda:
                 raise RuntimeError("CUDA models require NVIDIA GPU with CUDA support")
             from server.models.qwen3_asr_cuda import Qwen3ASRCudaEngine
+
             model_name = self.current_model_name
             logger.info(f"Loading Qwen3-ASR CUDA model: {model_name}")
             cuda_engine = Qwen3ASRCudaEngine(model_name=model_name)
@@ -425,6 +475,7 @@ class STTEngine:
 
             # WhisperCppEngine 同步加载
             import asyncio
+
             asyncio.run(whisper_engine.load())
             self._model = whisper_engine
             self._model_type = "whisper_cpp"
@@ -446,6 +497,7 @@ class STTEngine:
 
         # ── 未匹配引擎 ──
         raise ValueError(f"Unknown engine type: {engine_type} for model: {model_id}")
+
     async def switch_model(self, model_name: str) -> dict:
         """
         切换到指定的 STT 模型
@@ -457,7 +509,9 @@ class STTEngine:
             dict: 包含切换状态的字典
         """
         if model_name not in self.AVAILABLE_MODELS:
-            raise ValueError(f"Unknown model: {model_name}. Available: {list(self.AVAILABLE_MODELS.keys())}")
+            raise ValueError(
+                f"Unknown model: {model_name}. Available: {list(self.AVAILABLE_MODELS.keys())}"
+            )
 
         # 如果已经是当前模型且已加载，直接返回
         if model_name == self.current_model_name and self._is_loaded:
@@ -485,9 +539,10 @@ class STTEngine:
         if self._model is not None:
             import gc
             import torch
+
             del self._model
             self._model = None
-            
+
             # 使用统一平台检测清理 GPU 内存
             platform_info = detect_platform()
             if platform_info.has_mps:
@@ -521,10 +576,7 @@ class STTEngine:
         }
 
     async def transcribe(
-        self,
-        audio_data: bytes,
-        language: str = "auto",
-        return_timestamps: bool = False
+        self, audio_data: bytes, language: str = "auto", return_timestamps: bool = False
     ) -> TranscriptionResult:
         """转写音频"""
         import numpy as np
@@ -540,7 +592,11 @@ class STTEngine:
                     raise RuntimeError("Failed to load STT model")
 
             # 如果需要时间戳但 aligner 未加载，尝试加载
-            if return_timestamps and not self._aligner_loaded and getattr(self, "_model_type", None) != "whisper_cpp":
+            if (
+                return_timestamps
+                and not self._aligner_loaded
+                and getattr(self, "_model_type", None) != "whisper_cpp"
+            ):
                 success = await self.load(load_aligner=True)
                 if not success:
                     logger.warning("Failed to load ForcedAligner, returning without timestamps")
@@ -552,13 +608,12 @@ class STTEngine:
             sample_rate = 16000
 
             # 执行转写
-            loop = asyncio.get_event_loop()
+            asyncio.get_event_loop()
             lang = None if language == "auto" else language
 
             # ── MLX 原生引擎 (mlx-audio) ── 必须在加载模型的同一线程执行
-            model_type = getattr(self, '_model_type', None)
+            model_type = getattr(self, "_model_type", None)
             if model_type == "qwen_asr_mlx_native":
-                import server.models.qwen3_asr_mlx_native as _mlx_engine
                 result = await self._model.transcribe(
                     audio=(audio_array, sample_rate),
                     language=lang or "auto",
@@ -577,8 +632,9 @@ class STTEngine:
 
             else:
                 # ── Whisper MLX 引擎 ──
-                if getattr(self, '_model_type', None) == "whisper_mlx":
+                if getattr(self, "_model_type", None) == "whisper_mlx":
                     import mlx_whisper
+
                     model_id = self._model["model_id"]
                     result = mlx_whisper.transcribe(
                         audio_array,
@@ -590,20 +646,23 @@ class STTEngine:
                     detected_lang = result.get("language", lang or "en")
 
                 # ── Whisper.cpp 引擎 ──
-                elif getattr(self, '_model_type', None) == "whisper_cpp":
+                elif getattr(self, "_model_type", None) == "whisper_cpp":
                     import numpy as np
+
                     # whisper.cpp 需要 bytes
                     audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
-                    result = asyncio.run(self._model.transcribe(
-                        audio_data=audio_bytes,
-                        language=lang or "auto",
-                        sample_rate=sample_rate,
-                    ))
+                    result = asyncio.run(
+                        self._model.transcribe(
+                            audio_data=audio_bytes,
+                            language=lang or "auto",
+                            sample_rate=sample_rate,
+                        )
+                    )
                     text = result.text
                     detected_lang = result.language
 
                 # ── Whisper Turbo (transformers) ──
-                elif getattr(self, '_model_type', None) == "whisper_turbo":
+                elif getattr(self, "_model_type", None) == "whisper_turbo":
                     result = self._model(
                         audio_array,
                         generate_kwargs={"language": lang},
@@ -634,7 +693,12 @@ class STTEngine:
 
             # 生成时间戳（如果需要）
             timestamps = None
-            if return_timestamps and text and self._aligner_loaded and getattr(self, "_model_type", None) != "whisper_cpp":
+            if (
+                return_timestamps
+                and text
+                and self._aligner_loaded
+                and getattr(self, "_model_type", None) != "whisper_cpp"
+            ):
                 timestamps = await self._generate_timestamps(
                     audio_array, sample_rate, text, detected_lang or language
                 )
@@ -655,11 +719,7 @@ class STTEngine:
             raise
 
     async def _generate_timestamps(
-        self,
-        audio_array,
-        sample_rate: int,
-        text: str,
-        language: str
+        self, audio_array, sample_rate: int, text: str, language: str
     ) -> Optional[List[WordTimestamp]]:
         """使用 ForcedAligner 生成词级别时间戳"""
         import tempfile
@@ -671,6 +731,7 @@ class STTEngine:
                 tmp_path = tmp.name
                 # 使用 soundfile 写入音频
                 import soundfile as sf
+
                 sf.write(tmp_path, audio_array, sample_rate)
 
             loop = asyncio.get_event_loop()
@@ -688,19 +749,21 @@ class STTEngine:
             # 清理临时文件
             try:
                 os.unlink(tmp_path)
-            except:
+            except Exception:
                 pass
 
             # 转换结果格式
-            if results and hasattr(results, 'segments'):
+            if results and hasattr(results, "segments"):
                 timestamps = []
                 for segment in results.segments:
-                    for word_info in segment.get('words', []):
-                        timestamps.append(WordTimestamp(
-                            word=word_info.get('word', ''),
-                            start=word_info.get('start', 0.0),
-                            end=word_info.get('end', 0.0),
-                        ))
+                    for word_info in segment.get("words", []):
+                        timestamps.append(
+                            WordTimestamp(
+                                word=word_info.get("word", ""),
+                                start=word_info.get("start", 0.0),
+                                end=word_info.get("end", 0.0),
+                            )
+                        )
                 return timestamps if timestamps else None
 
             return None
@@ -730,6 +793,7 @@ class STTEngine:
     def decrement_connections(self):
         self._active_connections = max(0, self._active_connections - 1)
 
+
 # ============== Diarization Engine ==============
 diarize_engine = DiarizationEngine() if DIARIZE_ENABLED else None
 
@@ -748,19 +812,20 @@ async def lifespan(app: FastAPI):
     }
     banner = get_startup_banner("STT Service", extra_info)
     logger.info(banner)
-    
+
     # 资源检查
     from shared.model_registry import MODELS_CONFIG
+
     model_config = MODELS_CONFIG.get(STT_MODEL, {})
     required_memory = model_config.get("memory_gb", 0)
     resource_result = check_resource_requirements(STT_MODEL, required_memory)
-    
+
     if resource_result["passed"]:
         logger.info("✓ Resource check passed")
     else:
         for warning in resource_result["warnings"]:
             logger.warning(f"⚠️  {warning}")
-    
+
     # 预加载配置
     preload = os.getenv("VIF_PRELOAD_MODELS", "stt").lower()
     if preload == "none":
@@ -774,7 +839,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(f"Unknown preload option: {preload}, defaulting to STT")
         asyncio.create_task(engine.load())
-    
+
     # Start LLM health check background task
     async def llm_health_checker():
         """Periodically check LLM server availability"""
@@ -791,7 +856,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             _mark_llm_available(False)
             logger.info("LLM server not available (will retry every 30s)")
-        
+
         # Then check periodically
         while True:
             await asyncio.sleep(_llm_check_interval)
@@ -806,15 +871,15 @@ async def lifespan(app: FastAPI):
                         _mark_llm_available(False)
             except Exception:
                 _mark_llm_available(False)
-    
+
     if LLM_ENABLED:
         asyncio.create_task(llm_health_checker())
-        logger.info(f"LLM health checker started")
-    
+        logger.info("LLM health checker started")
+
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("STT Service shutting down")
 
@@ -835,6 +900,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # 请求ID中间件
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
@@ -849,20 +915,22 @@ async def request_id_middleware(request: Request, call_next):
         duration = (time.time() - start_time) * 1000
         logger.info(
             f"{request.method} {request.url.path} - {response.status_code} - {duration:.2f}ms",
-            extra={"request_id": request_id, "duration_ms": duration}
+            extra={"request_id": request_id, "duration_ms": duration},
         )
         return response
     except Exception as e:
         logger.error(f"Request failed: {e}", extra={"request_id": request_id})
         raise
 
+
 @app.get("/platform")
 async def get_platform():
     """获取平台信息"""
     platform_info = detect_platform()
     from shared.model_selector import ModelSelector
+
     selector = ModelSelector(platform_info)
-    
+
     return {
         "system": platform_info.system,
         "arch": platform_info.arch,
@@ -871,9 +939,15 @@ async def get_platform():
         "gpu": {
             "name": platform_info.cuda_device.name if platform_info.cuda_device else None,
             "memory_gb": platform_info.cuda_device.memory_gb if platform_info.cuda_device else 0,
-            "driver": platform_info.cuda_device.driver_version if platform_info.cuda_device else None,
-            "cuda_version": platform_info.cuda_device.cuda_version if platform_info.cuda_device else None,
-        } if platform_info.has_cuda else None,
+            "driver": platform_info.cuda_device.driver_version
+            if platform_info.cuda_device
+            else None,
+            "cuda_version": platform_info.cuda_device.cuda_version
+            if platform_info.cuda_device
+            else None,
+        }
+        if platform_info.has_cuda
+        else None,
         "cpu": {
             "cores": platform_info.cpu_cores,
             "ram_gb": round(platform_info.ram_gb, 1),
@@ -889,6 +963,7 @@ async def get_platform():
         },
         "available_models": list(selector.get_available_models().keys()),
     }
+
 
 @app.get("/health", response_model=HealthStatus)
 async def health_check():
@@ -912,30 +987,36 @@ async def health_check():
         },
     )
 
+
 @app.get("/models", response_model=List[ModelInfo])
 async def list_models():
     """获取可用 STT 模型列表"""
     platform_info = detect_platform()
     from shared.model_selector import ModelSelector
+
     selector = ModelSelector(platform_info)
-    
+
     models = []
     for name, info in STTEngine.AVAILABLE_MODELS.items():
         # 检查模型是否在当前平台可用
         available_models = selector.get_available_models()
         is_available = name in available_models
-        
-        models.append(ModelInfo(
-            name=name,
-            description=info.get('description', f"STT model: {info['model_id']}"),
-            is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
-            is_default=(name == engine.default_model),
-            is_available=is_available,
-            memory_gb=info.get('memory_gb', 0),
-        ))
+
+        models.append(
+            ModelInfo(
+                name=name,
+                description=info.get("description", f"STT model: {info['model_id']}"),
+                is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
+                is_default=(name == engine.default_model),
+                is_available=is_available,
+                memory_gb=info.get("memory_gb", 0),
+            )
+        )
     return models
 
+
 # ============== LLM 转发 API ==============
+
 
 @app.get("/llm/models")
 async def list_llm_models():
@@ -943,7 +1024,7 @@ async def list_llm_models():
     # Fast-fail: skip if LLM server is known to be down
     if not _is_llm_available():
         return {"models": [], "error": "LLM server not available", "cached": True}
-    
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{LLM_SERVER_URL}/models", timeout=_llm_timeout)
@@ -962,20 +1043,19 @@ async def list_llm_models():
         logger.debug(f"LLM server not available: {e}")
         return {"models": [], "error": str(e)}
 
+
 @app.post("/llm/models/select")
 async def select_llm_model(request: Request):
     """转发：选择 LLM 模型"""
     if not _is_llm_available():
         return {"error": "LLM server not available"}
-    
+
     try:
         body = await request.json()
         model_name = body.get("model_name", "")
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{LLM_SERVER_URL}/models/select",
-                data={"model_name": model_name},
-                timeout=30.0
+                f"{LLM_SERVER_URL}/models/select", data={"model_name": model_name}, timeout=30.0
             )
             if resp.status_code == 200:
                 _mark_llm_available(True)
@@ -992,12 +1072,13 @@ async def select_llm_model(request: Request):
         logger.error(f"Failed to select LLM model: {e}")
         return {"error": str(e)}
 
+
 @app.get("/llm/health")
 async def llm_health():
     """转发：LLM 服务器健康检查"""
     if not _is_llm_available():
         return {"status": "offline", "error": "LLM server not available"}
-    
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=_llm_timeout)
@@ -1007,10 +1088,12 @@ async def llm_health():
         _mark_llm_available(False)
         return {"status": "error", "error": str(e)}
 
+
 @app.get("/llm/enabled")
 async def get_llm_enabled():
     """获取 LLM 后处理是否启用"""
     return {"enabled": LLM_ENABLED}
+
 
 @app.put("/llm/enabled")
 async def set_llm_enabled(request: Request):
@@ -1026,13 +1109,14 @@ async def set_llm_enabled(request: Request):
     logger.info(f"LLM enabled set to {LLM_ENABLED} (persisted)")
     return {"enabled": LLM_ENABLED}
 
+
 # ============== LLM Prompt API ==============
 @app.get("/llm/prompt")
 async def get_llm_prompt():
     """转发：获取 LLM 提示词"""
     if not _is_llm_available():
         return {"prompt": "", "error": "LLM server not available"}
-    
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{LLM_SERVER_URL}/prompt", timeout=_llm_timeout)
@@ -1044,20 +1128,17 @@ async def get_llm_prompt():
         _mark_llm_available(False)
         return {"error": str(e)}
 
+
 @app.put("/llm/prompt")
 async def update_llm_prompt(request: Request):
     """转发：更新 LLM 提示词"""
     if not _is_llm_available():
         return {"error": "LLM server not available"}
-    
+
     try:
         body = await request.json()
         async with httpx.AsyncClient() as client:
-            resp = await client.put(
-                f"{LLM_SERVER_URL}/prompt",
-                json=body,
-                timeout=_llm_timeout
-            )
+            resp = await client.put(f"{LLM_SERVER_URL}/prompt", json=body, timeout=_llm_timeout)
             if resp.status_code == 200:
                 _mark_llm_available(True)
                 return resp.json()
@@ -1065,6 +1146,7 @@ async def update_llm_prompt(request: Request):
     except Exception as e:
         _mark_llm_available(False)
         return {"error": str(e)}
+
 
 @app.post("/models/select")
 async def select_stt_model(model_name: str = Form(...)):
@@ -1085,6 +1167,7 @@ async def select_stt_model(model_name: str = Form(...)):
         logger.error(f"Unexpected error switching model: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
+
 @app.get("/models/status/{model_name}")
 async def get_model_status(model_name: str):
     """获取指定模型的加载状态"""
@@ -1103,6 +1186,7 @@ async def get_model_status(model_name: str):
         "model_info": engine.AVAILABLE_MODELS.get(model_name, {}),
     }
 
+
 @app.post("/transcribe", response_model=TranscriptionResult)
 async def transcribe(
     file: UploadFile = File(...),
@@ -1114,14 +1198,13 @@ async def transcribe(
     try:
         audio_content = await file.read()
         result = await engine.transcribe(
-            audio_content,
-            language=language,
-            return_timestamps=return_timestamps
+            audio_content, language=language, return_timestamps=return_timestamps
         )
         return result
     except Exception as e:
         logger.error(f"Transcription error: {e}", extra={"request_id": req_id})
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
@@ -1129,25 +1212,28 @@ async def websocket_stream(websocket: WebSocket):
     ws_start = time.time()
     await websocket.accept()
     engine.increment_connections()
-    logger.info(f"[timing] WebSocket accepted (+{(time.time()-ws_start)*1000:.0f}ms)")
+    logger.info(f"[timing] WebSocket accepted (+{(time.time() - ws_start) * 1000:.0f}ms)")
 
     # Use cached LLM status (don't block connection)
     llm_info = {"llm_enabled": LLM_ENABLED, "llm_model": _last_llm_model}
 
     # 发送就绪消息 immediately
-    await websocket.send_text(json.dumps({
-        "type": "ready",
-        "model": engine.current_model_name,
-        "is_loading": engine.is_loading(),
-        "aligner_loaded": engine.is_aligner_loaded(),
-        "llm_enabled": llm_info["llm_enabled"],
-        "llm_model": llm_info["llm_model"],
-    }))
-    logger.info(f"[timing] Ready sent (+{(time.time()-ws_start)*1000:.0f}ms)")
+    await websocket.send_text(
+        json.dumps(
+            {
+                "type": "ready",
+                "model": engine.current_model_name,
+                "is_loading": engine.is_loading(),
+                "aligner_loaded": engine.is_aligner_loaded(),
+                "llm_enabled": llm_info["llm_enabled"],
+                "llm_model": llm_info["llm_model"],
+            }
+        )
+    )
+    logger.info(f"[timing] Ready sent (+{(time.time() - ws_start) * 1000:.0f}ms)")
 
-    return_timestamps = False
     audio_queue = asyncio.Queue()
-    stream_finished = asyncio.Event()
+    asyncio.Event()
     stream_error = None
     language = "auto"
 
@@ -1182,11 +1268,15 @@ async def websocket_stream(websocket: WebSocket):
                 elif msg_type == "config":
                     return_timestamps = data.get("return_timestamps", False)
                     language = data.get("language", "auto")
-                    await websocket.send_text(json.dumps({
-                        "type": "config_ack",
-                        "return_timestamps": return_timestamps,
-                        "language": language,
-                    }))
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "config_ack",
+                                "return_timestamps": return_timestamps,
+                                "language": language,
+                            }
+                        )
+                    )
 
                 elif msg_type in ("end", "stop"):
                     await audio_queue.put(None)  # 通知 stream 结束
@@ -1205,7 +1295,7 @@ async def websocket_stream(websocket: WebSocket):
     # ── 等待音频接收完成，一次性转写 ──
     await receive_task
     audio_recv_time = time.time()
-    logger.info(f"[timing] Audio received (+{(audio_recv_time-ws_start)*1000:.0f}ms)")
+    logger.info(f"[timing] Audio received (+{(audio_recv_time - ws_start) * 1000:.0f}ms)")
 
     # 收集所有音频数据
     all_audio = bytearray()
@@ -1218,76 +1308,106 @@ async def websocket_stream(websocket: WebSocket):
         try:
             audio_size_kb = len(all_audio) / 1024
             logger.info(f"[timing] Audio: {audio_size_kb:.1f}KB, starting transcription...")
-            
+
             result = await asyncio.wait_for(
                 engine.transcribe(
                     bytes(all_audio),
                     language=language,
                 ),
-                timeout=600.0
+                timeout=600.0,
             )
             stt_done_time = time.time()
-            logger.info(f"[timing] STT done (+{(stt_done_time-ws_start)*1000:.0f}ms, stt={result.stt_latency_ms:.0f}ms)")
+            logger.info(
+                f"[timing] STT done (+{(stt_done_time - ws_start) * 1000:.0f}ms, stt={result.stt_latency_ms:.0f}ms)"
+            )
 
             # 发送 STT 结果
-            await websocket.send_text(json.dumps({
-                "type": "stt_result",
-                "text": result.text,
-                "stt_latency_ms": result.stt_latency_ms,
-                "confidence": result.confidence,
-                "language": result.language,
-                "model": result.model,
-            }))
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "stt_result",
+                        "text": result.text,
+                        "stt_latency_ms": result.stt_latency_ms,
+                        "confidence": result.confidence,
+                        "language": result.language,
+                        "model": result.model,
+                    }
+                )
+            )
 
             # LLM 后处理
             if result.text.strip() and LLM_ENABLED:
-                await websocket.send_text(json.dumps({
-                    "type": "llm_start", "text": result.text[:50],
-                }))
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "llm_start",
+                            "text": result.text[:50],
+                        }
+                    )
+                )
                 processed_text, llm_latency = await call_llm_server(result.text)
                 llm_done_time = time.time()
-                logger.info(f"[timing] LLM done (+{(llm_done_time-ws_start)*1000:.0f}ms, llm={llm_latency:.0f}ms)")
+                logger.info(
+                    f"[timing] LLM done (+{(llm_done_time - ws_start) * 1000:.0f}ms, llm={llm_latency:.0f}ms)"
+                )
             else:
                 processed_text = result.text
                 llm_latency = 0
 
             total_ms = (time.time() - ws_start) * 1000
-            logger.info(f"[timing] TOTAL: {total_ms:.0f}ms (recv={((audio_recv_time-ws_start)*1000):.0f}ms, stt={result.stt_latency_ms:.0f}ms, llm={llm_latency:.0f}ms)")
+            logger.info(
+                f"[timing] TOTAL: {total_ms:.0f}ms (recv={((audio_recv_time - ws_start) * 1000):.0f}ms, stt={result.stt_latency_ms:.0f}ms, llm={llm_latency:.0f}ms)"
+            )
 
-            await websocket.send_text(json.dumps({
-                "type": "result",
-                "text": processed_text,
-                "confidence": result.confidence,
-                "language": result.language,
-                "is_final": True,
-                "stt_latency_ms": result.stt_latency_ms,
-                "llm_latency_ms": llm_latency,
-                "total_latency_ms": total_ms,
-                "model": result.model,
-            }))
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "text": processed_text,
+                        "confidence": result.confidence,
+                        "language": result.language,
+                        "is_final": True,
+                        "stt_latency_ms": result.stt_latency_ms,
+                        "llm_latency_ms": llm_latency,
+                        "total_latency_ms": total_ms,
+                        "model": result.model,
+                    }
+                )
+            )
 
         except asyncio.TimeoutError:
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "error_code": "E5002", "error_message": "转写超时",
-            }))
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error_code": "E5002",
+                        "error_message": "转写超时",
+                    }
+                )
+            )
         except Exception as e:
             logger.error(f"Transcription error: {e}")
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "error_code": "E5001", "error_message": str(e),
-            }))
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error_code": "E5001",
+                        "error_message": str(e),
+                    }
+                )
+            )
 
     await websocket.send_text(json.dumps({"type": "done"}))
 
     try:
         await websocket.close()
-    except:
+    except Exception:
         pass
     engine.decrement_connections()
 
 
 # ============== Diarization API ==============
+
 
 @app.get("/diarize/models")
 async def list_diarize_models():
@@ -1332,8 +1452,10 @@ async def diarize(
         async with aiofiles.open(tmp_path, "wb") as f:
             await f.write(content)
 
-        logger.info(f"Starting diarization: {file.filename} ({len(content)} bytes)",
-                    extra={"request_id": req_id})
+        logger.info(
+            f"Starting diarization: {file.filename} ({len(content)} bytes)",
+            extra={"request_id": req_id},
+        )
 
         result = await diarize_engine.diarize(
             audio_path=tmp_path,
@@ -1345,16 +1467,18 @@ async def diarize(
         result["filename"] = file.filename
         result["file_size"] = len(content)
 
-        logger.info(f"Diarization complete: {result['num_speakers']} speakers, "
-                    f"{result['duration']:.0f}s, {result['inference_latency_ms']:.0f}ms",
-                    extra={"request_id": req_id})
+        logger.info(
+            f"Diarization complete: {result['num_speakers']} speakers, "
+            f"{result['duration']:.0f}s, {result['inference_latency_ms']:.0f}ms",
+            extra={"request_id": req_id},
+        )
 
         return result
 
     except ImportError as e:
         raise HTTPException(
             status_code=501,
-            detail=f"pyannote.audio not installed: {e}. Run: pip install pyannote.audio==3.3.3"
+            detail=f"pyannote.audio not installed: {e}. Run: pip install pyannote.audio==3.3.3",
         )
     except Exception as e:
         logger.error(f"Diarization error: {e}", exc_info=True, extra={"request_id": req_id})
@@ -1375,6 +1499,7 @@ def main():
         port=STT_PORT,
         log_level=LOG_LEVEL.lower(),
     )
+
 
 if __name__ == "__main__":
     main()

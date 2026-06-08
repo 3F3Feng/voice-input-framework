@@ -36,6 +36,7 @@ try:
     import ctypes
     import win32gui
     import win32con
+
     WINAPI_AVAILABLE = True
 except ImportError:
     WINAPI_AVAILABLE = False
@@ -50,10 +51,7 @@ from .auto_start import AutoStartManager
 from .websocket_keepalive import WebSocketKeepAlive, ConnectionState
 
 # 日志配置
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 BACKGROUND_COLOR = "#2e2e2e"
@@ -84,7 +82,7 @@ def restore_focus(hwnd):
     """恢复给定窗口的焦点"""
     if not hwnd or not WINAPI_AVAILABLE:
         return False
-    
+
     try:
         # 使用 SetForegroundWindow 恢复焦点
         win32gui.SetForegroundWindow(hwnd)
@@ -97,10 +95,11 @@ def restore_focus(hwnd):
 
 def restore_focus_later(hwnd, delay_ms: int = 100):
     """延迟一段时间后恢复焦点"""
+
     def _restore():
         time.sleep(delay_ms / 1000.0)
         restore_focus(hwnd)
-    
+
     thread = threading.Thread(target=_restore, daemon=True)
     thread.start()
 
@@ -115,6 +114,7 @@ def get_input_cursor_position():
         # 获取现在的鼠标位置
         # 这是最可靠的方式，因为用户通常在鼠标位置输入
         import pyautogui
+
         x, y = pyautogui.position()
         # 将浮标显示在鼠标上方（而不是旁边）
         # 这样更接近输入框光标的位置
@@ -131,7 +131,7 @@ class HotkeyVoiceInputV2:
     def __init__(self, server_host: str = None, server_port: int = None):
         # 加载配置
         self.config_manager = ConfigManager()
-        
+
         # 从配置或参数获取服务器设置
         self.server_host = server_host or self.config_manager.server_host
         self.server_port = server_port or self.config_manager.server_port
@@ -162,7 +162,7 @@ class HotkeyVoiceInputV2:
         # 快捷键状态追踪
         self._hotkey_pressed = False
         self._pressed_keys = set()
-        self._last_hotkey_press_time = 0.0   # 防抖：上次快捷键按下时间
+        self._last_hotkey_press_time = 0.0  # 防抖：上次快捷键按下时间
         self._last_hotkey_release_time = 0.0  # 防抖：上次快捷键释放时间
         self.HOTKEY_DEBOUNCE_MS = 150  # 防抖窗口（毫秒）
 
@@ -172,7 +172,9 @@ class HotkeyVoiceInputV2:
 
         # ======== v1.1 新增功能 ========
         # 快捷键管理器
-        self.hotkey_manager = HotkeyManager(distinguish_left_right=self.config_manager.distinguish_left_right)
+        self.hotkey_manager = HotkeyManager(
+            distinguish_left_right=self.config_manager.distinguish_left_right
+        )
         self.hotkey_manager.set_hotkey(self.config_manager.hotkey)
 
         # WebSocket 保活管理器
@@ -183,7 +185,7 @@ class HotkeyVoiceInputV2:
         self.tray_manager = TrayIconManager()
         self.use_tray = self.config_manager.use_tray  # 是否使用系统托盘
         self.is_minimized_to_tray = False
-        
+
         # 开机自启动管理器
         self.auto_start_manager = AutoStartManager()
 
@@ -195,16 +197,15 @@ class HotkeyVoiceInputV2:
                 if not self.audio_buffer:
                     return 0, 0
                 # 获取最后一个音频块（最新的音频数据）
-                last_chunk = self.audio_buffer[-1] if self.audio_buffer else b''
+                last_chunk = self.audio_buffer[-1] if self.audio_buffer else b""
                 if not last_chunk:
                     return 0, 0
-                
-    
+
                 # 将字节转换为 numpy 数组
                 audio_data = np.frombuffer(last_chunk, dtype=np.int16)
                 if len(audio_data) == 0:
                     return 0, 0
-                
+
                 # 计算 RMS（均方根）音量，转换为 dB
                 rms = np.sqrt(np.mean(audio_data.astype(np.float32) ** 2))
                 # 转换为 dB（0-100 范围）
@@ -213,8 +214,10 @@ class HotkeyVoiceInputV2:
             except Exception as e:
                 logger.debug(f"获取音频电平失败: {e}")
                 return 0, 0
-        
-        self.floating_indicator = FloatingIndicator(follow_mouse=False, audio_callback=get_audio_level)
+
+        self.floating_indicator = FloatingIndicator(
+            follow_mouse=False, audio_callback=get_audio_level
+        )
         self.processing_indicator = ProcessingIndicator(follow_mouse=False)
         self.use_floating_indicator = True  # 是否使用悬浮指示器
         # ================================
@@ -225,11 +228,12 @@ class HotkeyVoiceInputV2:
         """获取系统中可用的音频输入设备"""
         try:
             import sounddevice as sd
+
             devices = sd.query_devices()
             # 过滤出输入设备
             input_devices = {}
             for i, device in enumerate(devices):
-                if device['max_input_channels'] > 0:
+                if device["max_input_channels"] > 0:
                     input_devices[i] = f"{device['name']}"
             return input_devices if input_devices else {-1: "默认设备"}
         except Exception as e:
@@ -241,119 +245,374 @@ class HotkeyVoiceInputV2:
         sg.theme("DarkBlue3")
 
         layout = [
-            [sg.Text("🎤 Voice Input v1.1", font=("Helvetica", 14, "bold"),
-                     justification="center", expand_x=True, background_color=BACKGROUND_COLOR, text_color=TITLE_TEXT_COLOR)],
+            [
+                sg.Text(
+                    "🎤 Voice Input v1.1",
+                    font=("Helvetica", 14, "bold"),
+                    justification="center",
+                    expand_x=True,
+                    background_color=BACKGROUND_COLOR,
+                    text_color=TITLE_TEXT_COLOR,
+                )
+            ],
             [sg.HorizontalSeparator()],
-
             # 连接状态
-            [sg.Text(f"服务器: {self.server_host}:{self.server_port}", size=(50, 1), background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-             sg.Text("未连接", key="-STATUS-", text_color="red", size=(15, 1), background_color=BACKGROUND_COLOR)],
-
+            [
+                sg.Text(
+                    f"服务器: {self.server_host}:{self.server_port}",
+                    size=(50, 1),
+                    background_color=BACKGROUND_COLOR,
+                    text_color=TEXT_COLOR,
+                ),
+                sg.Text(
+                    "未连接",
+                    key="-STATUS-",
+                    text_color="red",
+                    size=(15, 1),
+                    background_color=BACKGROUND_COLOR,
+                ),
+            ],
             # ======== v1.1 快捷键设置（增强版） ========
-            [sg.Frame("快捷键设置", [
-                [sg.Text("开始/停止录音:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-                 sg.Input(self.config_manager.hotkey, key="-HOTKEY-", size=(30, 1)),
-                 sg.Button("录制", key="-RECORD-HOTKEY-", size=(8, 1)),
-                 sg.Button("更新", key="-UPDATE-HOTKEY-", size=(8, 1)),
-                 sg.Button("清除", key="-CLEAR-HOTKEY-", size=(8, 1))],
-                [sg.Checkbox("区分左右修饰键", default=self.config_manager.distinguish_left_right,
-                            key="-DISTINGUISH-LR-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR)],
-                [sg.Text("(按住快捷键说话，松开后自动输入)",
-                        text_color=TIP_TEXT_COLOR, font=("Helvetica", 9), background_color=BACKGROUND_COLOR)],
-                # 快捷键预设方案
-                [sg.Text("预设方案:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-                 sg.Combo(list(HotkeyPresets.get_preset_names()),
-                         default_value="default", key="-HOTKEY-PRESET-",
-                         size=(20, 1), readonly=True, enable_events=True),
-                 sg.Button("应用预设", key="-APPLY-PRESET-", size=(10, 1))],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
+            [
+                sg.Frame(
+                    "快捷键设置",
+                    [
+                        [
+                            sg.Text(
+                                "开始/停止录音:",
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            ),
+                            sg.Input(self.config_manager.hotkey, key="-HOTKEY-", size=(30, 1)),
+                            sg.Button("录制", key="-RECORD-HOTKEY-", size=(8, 1)),
+                            sg.Button("更新", key="-UPDATE-HOTKEY-", size=(8, 1)),
+                            sg.Button("清除", key="-CLEAR-HOTKEY-", size=(8, 1)),
+                        ],
+                        [
+                            sg.Checkbox(
+                                "区分左右修饰键",
+                                default=self.config_manager.distinguish_left_right,
+                                key="-DISTINGUISH-LR-",
+                                enable_events=True,
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            )
+                        ],
+                        [
+                            sg.Text(
+                                "(按住快捷键说话，松开后自动输入)",
+                                text_color=TIP_TEXT_COLOR,
+                                font=("Helvetica", 9),
+                                background_color=BACKGROUND_COLOR,
+                            )
+                        ],
+                        # 快捷键预设方案
+                        [
+                            sg.Text(
+                                "预设方案:",
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            ),
+                            sg.Combo(
+                                list(HotkeyPresets.get_preset_names()),
+                                default_value="default",
+                                key="-HOTKEY-PRESET-",
+                                size=(20, 1),
+                                readonly=True,
+                                enable_events=True,
+                            ),
+                            sg.Button("应用预设", key="-APPLY-PRESET-", size=(10, 1)),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # ==========================================
-
             # 麦克风选择
-            [sg.Frame("麦克风设置", [
-                [sg.Text("麦克风:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-                 sg.Combo(list(self.audio_devices.values()),
-                         default_value=self.audio_devices.get(list(self.audio_devices.keys())[0], "默认设备"),
-                         key="-MICROPHONE-", size=(50, 1), readonly=True)],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
-
+            [
+                sg.Frame(
+                    "麦克风设置",
+                    [
+                        [
+                            sg.Text(
+                                "麦克风:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Combo(
+                                list(self.audio_devices.values()),
+                                default_value=self.audio_devices.get(
+                                    list(self.audio_devices.keys())[0], "默认设备"
+                                ),
+                                key="-MICROPHONE-",
+                                size=(50, 1),
+                                readonly=True,
+                            ),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 服务器配置
-            [sg.Frame("服务器配置", [
-                [sg.Text("主机:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR), sg.Input(self.server_host, key="-HOST-", size=(20, 1)),
-                 sg.Text("端口:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR), sg.Input(str(self.server_port), key="-PORT-", size=(8, 1))],
-                [sg.Button("连接", key="-CONNECT-", button_color=("white", "green"), size=(10, 1)),
-                 sg.Text("", key="-CONN-STATUS-", text_color="yellow", background_color=BACKGROUND_COLOR)],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
-
+            [
+                sg.Frame(
+                    "服务器配置",
+                    [
+                        [
+                            sg.Text(
+                                "主机:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Input(self.server_host, key="-HOST-", size=(20, 1)),
+                            sg.Text(
+                                "端口:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Input(str(self.server_port), key="-PORT-", size=(8, 1)),
+                        ],
+                        [
+                            sg.Button(
+                                "连接",
+                                key="-CONNECT-",
+                                button_color=("white", "green"),
+                                size=(10, 1),
+                            ),
+                            sg.Text(
+                                "",
+                                key="-CONN-STATUS-",
+                                text_color="yellow",
+                                background_color=BACKGROUND_COLOR,
+                            ),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 模型选择
-            [sg.Frame("模型设置", [
-                [sg.Text("STT模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-                 sg.Combo([], default_value="", key="-MODEL-SELECT-", size=(25, 1), readonly=True),
-                 sg.Button("刷新", key="-REFRESH-MODELS-", size=(8, 1)),
-                 sg.Button("切换", key="-SWITCH-MODEL-", button_color=("white", "blue"), size=(8, 1))],
-                [sg.Text("", key="-MODEL-STATUS-", text_color="yellow", size=(70, 1), background_color=BACKGROUND_COLOR)],
-                # LLM 模型选择
-                [sg.HorizontalSeparator()],
-                [sg.Text("LLM模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-                 sg.Combo([], default_value="", key="-LLM-MODEL-SELECT-", size=(25, 1), readonly=True),
-                 sg.Button("刷新", key="-REFRESH-LLM-MODELS-", size=(8, 1)),
-                 sg.Button("切换", key="-SWITCH-LLM-MODEL-", button_color=("white", "purple"), size=(8, 1)),
-                 sg.Text("", size=(5, 1), background_color=BACKGROUND_COLOR),
-                 sg.Checkbox("启用LLM后处理", key="-LLM-ENABLED-", enable_events=True, default=self.config_manager.llm_enabled, text_color=TEXT_COLOR, background_color=BACKGROUND_COLOR, size=(15, 1))],
-                [sg.Text("", key="-LLM-MODEL-STATUS-", text_color="cyan", size=(70, 1), background_color=BACKGROUND_COLOR)],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
+            [
+                sg.Frame(
+                    "模型设置",
+                    [
+                        [
+                            sg.Text(
+                                "STT模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Combo(
+                                [],
+                                default_value="",
+                                key="-MODEL-SELECT-",
+                                size=(25, 1),
+                                readonly=True,
+                            ),
+                            sg.Button("刷新", key="-REFRESH-MODELS-", size=(8, 1)),
+                            sg.Button(
+                                "切换",
+                                key="-SWITCH-MODEL-",
+                                button_color=("white", "blue"),
+                                size=(8, 1),
+                            ),
+                        ],
+                        [
+                            sg.Text(
+                                "",
+                                key="-MODEL-STATUS-",
+                                text_color="yellow",
+                                size=(70, 1),
+                                background_color=BACKGROUND_COLOR,
+                            )
+                        ],
+                        # LLM 模型选择
+                        [sg.HorizontalSeparator()],
+                        [
+                            sg.Text(
+                                "LLM模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Combo(
+                                [],
+                                default_value="",
+                                key="-LLM-MODEL-SELECT-",
+                                size=(25, 1),
+                                readonly=True,
+                            ),
+                            sg.Button("刷新", key="-REFRESH-LLM-MODELS-", size=(8, 1)),
+                            sg.Button(
+                                "切换",
+                                key="-SWITCH-LLM-MODEL-",
+                                button_color=("white", "purple"),
+                                size=(8, 1),
+                            ),
+                            sg.Text("", size=(5, 1), background_color=BACKGROUND_COLOR),
+                            sg.Checkbox(
+                                "启用LLM后处理",
+                                key="-LLM-ENABLED-",
+                                enable_events=True,
+                                default=self.config_manager.llm_enabled,
+                                text_color=TEXT_COLOR,
+                                background_color=BACKGROUND_COLOR,
+                                size=(15, 1),
+                            ),
+                        ],
+                        [
+                            sg.Text(
+                                "",
+                                key="-LLM-MODEL-STATUS-",
+                                text_color="cyan",
+                                size=(70, 1),
+                                background_color=BACKGROUND_COLOR,
+                            )
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # LLM 提示词配置
             [sg.HorizontalSeparator()],
-            [sg.Frame("LLM 提示词配置", [
-                [sg.Multiline("", key="-LLM-PROMPT-", size=(60, 5), font=("Consolas", 9))],
-                [sg.Button("加载", key="-LOAD-PROMPT-", size=(8, 1)), sg.Button("保存", key="-SAVE-PROMPT-", size=(8, 1)), sg.Text("", key="-PROMPT-STATUS-", text_color="yellow", size=(30, 1))],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
-
+            [
+                sg.Frame(
+                    "LLM 提示词配置",
+                    [
+                        [sg.Multiline("", key="-LLM-PROMPT-", size=(60, 5), font=("Consolas", 9))],
+                        [
+                            sg.Button("加载", key="-LOAD-PROMPT-", size=(8, 1)),
+                            sg.Button("保存", key="-SAVE-PROMPT-", size=(8, 1)),
+                            sg.Text("", key="-PROMPT-STATUS-", text_color="yellow", size=(30, 1)),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # ======== v1.1 新增：托盘和指示器设置 ========
-            [sg.Frame("界面设置", [
-                [sg.Checkbox("启动时最小化到托盘", default=self.config_manager.start_minimized,
-                            key="-START-MINIMIZED-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR)],
-                [sg.Checkbox("使用悬浮录音指示器", default=self.config_manager.use_floating_indicator,
-                            key="-USE-INDICATOR-", enable_events=True, background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR),
-                 sg.Button("显示主窗口", key="-SHOW-WINDOW-", size=(15, 1))],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
+            [
+                sg.Frame(
+                    "界面设置",
+                    [
+                        [
+                            sg.Checkbox(
+                                "启动时最小化到托盘",
+                                default=self.config_manager.start_minimized,
+                                key="-START-MINIMIZED-",
+                                enable_events=True,
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            )
+                        ],
+                        [
+                            sg.Checkbox(
+                                "使用悬浮录音指示器",
+                                default=self.config_manager.use_floating_indicator,
+                                key="-USE-INDICATOR-",
+                                enable_events=True,
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            ),
+                            sg.Button("显示主窗口", key="-SHOW-WINDOW-", size=(15, 1)),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # =============================================
-
             # 识别结果
-            [sg.Frame("识别结果", [
-                [sg.Multiline("", key="-RESULT-", size=(80, 8), font=("Consolas", 10),
-                             autoscroll=True, disabled=True,
-                             background_color="#1e1e1e", text_color="white")],
-                [sg.Button("复制", key="-COPY-", size=(10, 1)),
-                 sg.Button("清空", key="-CLEAR-", size=(10, 1)),
-                 sg.Button("输入（自动）", key="-PASTE-", size=(15, 1))],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
-
+            [
+                sg.Frame(
+                    "识别结果",
+                    [
+                        [
+                            sg.Multiline(
+                                "",
+                                key="-RESULT-",
+                                size=(80, 8),
+                                font=("Consolas", 10),
+                                autoscroll=True,
+                                disabled=True,
+                                background_color="#1e1e1e",
+                                text_color="white",
+                            )
+                        ],
+                        [
+                            sg.Button("复制", key="-COPY-", size=(10, 1)),
+                            sg.Button("清空", key="-CLEAR-", size=(10, 1)),
+                            sg.Button("输入（自动）", key="-PASTE-", size=(15, 1)),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 日志
-            [sg.Frame("日志", [
-                [sg.Multiline("", key="-LOG-", size=(80, 5), font=("Consolas", 10),
-                             autoscroll=True, disabled=True,
-                             background_color="#1e1e1e", text_color="#aaaaaa")],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
-
+            [
+                sg.Frame(
+                    "日志",
+                    [
+                        [
+                            sg.Multiline(
+                                "",
+                                key="-LOG-",
+                                size=(80, 5),
+                                font=("Consolas", 10),
+                                autoscroll=True,
+                                disabled=True,
+                                background_color="#1e1e1e",
+                                text_color="#aaaaaa",
+                            )
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 错误信息显示
-            [sg.Frame("错误信息", [
-                [sg.Multiline("", key="-ERROR-", size=(80, 3), font=("Consolas", 10),
-                             autoscroll=True, disabled=True,
-                             background_color="#3e1e1e", text_color="#ff8888")],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR, expand_x=True)],
-
-            [sg.Push(background_color=BACKGROUND_COLOR),
-              sg.Button("退出", key="-EXIT-", button_color=("white", "gray"), size=(10, 1)),
-              sg.Button("最小化到托盘", key="-MINIMIZE-TRAY-", size=(15, 1)),
-                sg.Push(background_color=BACKGROUND_COLOR)],
+            [
+                sg.Frame(
+                    "错误信息",
+                    [
+                        [
+                            sg.Multiline(
+                                "",
+                                key="-ERROR-",
+                                size=(80, 3),
+                                font=("Consolas", 10),
+                                autoscroll=True,
+                                disabled=True,
+                                background_color="#3e1e1e",
+                                text_color="#ff8888",
+                            )
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
+            [
+                sg.Push(background_color=BACKGROUND_COLOR),
+                sg.Button("退出", key="-EXIT-", button_color=("white", "gray"), size=(10, 1)),
+                sg.Button("最小化到托盘", key="-MINIMIZE-TRAY-", size=(15, 1)),
+                sg.Push(background_color=BACKGROUND_COLOR),
+            ],
         ]
 
-        self.window = sg.Window("🎤 Voice Input Framework v1.1", layout,
-                               finalize=True, keep_on_top=True, no_titlebar=True, grab_anywhere=True,
-                               background_color="#2e2e2e", button_color=("white", "#4e4e4e")
-                               )
-        
+        self.window = sg.Window(
+            "🎤 Voice Input Framework v1.1",
+            layout,
+            finalize=True,
+            keep_on_top=True,
+            no_titlebar=True,
+            grab_anywhere=True,
+            background_color="#2e2e2e",
+            button_color=("white", "#4e4e4e"),
+        )
+
         if self.config_manager.start_minimized:
             self._minimize_to_tray()
 
@@ -399,7 +658,7 @@ class HotkeyVoiceInputV2:
         # 设置模型列表
         self.tray_manager.set_available_models(self.available_models)
         self.tray_manager.set_current_model(self.current_model or "")
-        
+
         # 设置开机自启动状态
         auto_start_enabled = self.auto_start_manager.is_enabled()
         self.tray_manager.set_auto_start_enabled(auto_start_enabled)
@@ -435,18 +694,12 @@ class HotkeyVoiceInputV2:
     def _switch_model_from_tray(self, model_name: str):
         """从托盘切换模型"""
         if self.async_loop:
-            asyncio.run_coroutine_threadsafe(
-                self.async_switch_model(model_name),
-                self.async_loop
-            )
+            asyncio.run_coroutine_threadsafe(self.async_switch_model(model_name), self.async_loop)
 
     def _refresh_models_from_tray(self):
         """从托盘刷新模型列表"""
         if self.async_loop:
-            asyncio.run_coroutine_threadsafe(
-                self.async_fetch_models(),
-                self.async_loop
-            )
+            asyncio.run_coroutine_threadsafe(self.async_fetch_models(), self.async_loop)
 
     def _quit_from_tray(self):
         """从托盘退出"""
@@ -468,22 +721,20 @@ class HotkeyVoiceInputV2:
         hotkey = self.config_manager.hotkey
         # 从 __init__.py 获取版本号
         from . import __version__
+
         version = f"v{__version__}"
-        
+
         # 托盘通知
         if self.tray_manager and self.tray_manager.icon:
             logger.info("正在显示托盘启动通知...")
             try:
-                self.tray_manager.notify(
-                    "Voice Input Framework",
-                    f"已就绪！快捷键: {hotkey}"
-                )
+                self.tray_manager.notify("Voice Input Framework", f"已就绪！快捷键: {hotkey}")
                 logger.info("托盘启动通知已发送")
             except Exception as e:
                 logger.warning(f"托盘通知失败: {e}")
         else:
             logger.warning("托盘未启动或不可用，跳过托盘通知")
-        
+
         # 同时显示在状态栏
         self.log(f"✓ Voice Input Framework {version} 已启动")
         self.log(f"✓ 快捷键: {hotkey}")
@@ -492,20 +743,19 @@ class HotkeyVoiceInputV2:
     def _check_for_updates(self):
         """检查更新（从托盘菜单调用）"""
         self.log("正在检查更新...")
-        
+
         try:
             version_info = check_for_updates()
             message = format_version_message(version_info)
-            
+
             self.log(message)
-            
+
             # 如果有更新，显示通知
             if version_info.is_outdated and self.tray_manager:
                 self.tray_manager.notify(
-                    "发现新版本",
-                    f"{version_info.latest_version} 可用，点击下载"
+                    "发现新版本", f"{version_info.latest_version} 可用，点击下载"
                 )
-                
+
         except Exception as e:
             self.log(f"检查更新失败: {e}")
 
@@ -514,7 +764,7 @@ class HotkeyVoiceInputV2:
         try:
             new_state = self.auto_start_manager.toggle()
             self.tray_manager.set_auto_start_enabled(new_state)
-            
+
             if new_state:
                 self.log("✓ 开机自启动已启用")
             else:
@@ -527,8 +777,7 @@ class HotkeyVoiceInputV2:
         try:
             self.hotkey_manager.set_hotkey(hotkey_str)
             self.hotkey_manager.start_listener(
-                on_press=self._on_hotkey_press,
-                on_release=self._on_hotkey_release
+                on_press=self._on_hotkey_press, on_release=self._on_hotkey_release
             )
             self.log(f"✓ 快捷键已激活: {hotkey_str}")
         except Exception as e:
@@ -536,7 +785,7 @@ class HotkeyVoiceInputV2:
 
     def _on_hotkey_press(self):
         """快捷键按下回调 - 线程安全版本
-        
+
         注意：此方法在 pynput 的后台线程中调用，不能直接操作 GUI。
         使用 write_event_value 将事件发送到主线程处理。
         """
@@ -545,15 +794,15 @@ class HotkeyVoiceInputV2:
 
     def _on_hotkey_release(self):
         """快捷键释放回调 - 线程安全版本
-        
+
         注意：此方法在 pynput 的后台线程中调用，不能直接操作 GUI。
         使用 write_event_value 将事件发送到主线程处理。
         """
         if self.window:
             self.window.write_event_value("-HOTKEY-RELEASE-", None)
 
- # 注意：音频处理在主线程的 -HOTKEY-RELEASE- 事件处理中执行
- # 不在这里直接调用 _process_audio()，避免线程安全问题
+    # 注意：音频处理在主线程的 -HOTKEY-RELEASE- 事件处理中执行
+    # 不在这里直接调用 _process_audio()，避免线程安全问题
 
     def _on_hotkey_recorded(self, hotkey_str: str):
         """快捷键录制完成回调"""
@@ -566,13 +815,16 @@ class HotkeyVoiceInputV2:
         """连接到服务器并验证连接"""
         try:
             import websockets
+
             self.log(f"连接到 {self.server_url}...")
             self.set_status("连接中...", "yellow")
 
             # 创建临时连接来测试
             self.ws = await asyncio.wait_for(
-                websockets.connect(self.server_url, close_timeout=5, ping_interval=20, ping_timeout=10),
-                timeout=10.0
+                websockets.connect(
+                    self.server_url, close_timeout=5, ping_interval=20, ping_timeout=10
+                ),
+                timeout=10.0,
             )
 
             # 等待服务器准备就绪
@@ -600,9 +852,13 @@ class HotkeyVoiceInputV2:
                 # 解析 LLM 信息
                 llm_info = data.get("llm_info", {})
                 # 从本地配置读取用户偏好（优先于服务器默认值）
-                saved_llm_enabled = self.config_manager.get("llm.enabled", llm_info.get("llm_enabled", True))
+                saved_llm_enabled = self.config_manager.get(
+                    "llm.enabled", llm_info.get("llm_enabled", True)
+                )
                 llm_model = llm_info.get("llm_model", None)
-                self.log(f"LLM后处理: {'启用' if saved_llm_enabled else '禁用'}, 模型: {llm_model or '未设置'}")
+                self.log(
+                    f"LLM后处理: {'启用' if saved_llm_enabled else '禁用'}, 模型: {llm_model or '未设置'}"
+                )
                 if self.window:
                     self.window["-LLM-ENABLED-"].update(saved_llm_enabled)
 
@@ -613,7 +869,7 @@ class HotkeyVoiceInputV2:
                 # 关闭测试连接，后续会为每次转写创建新连接
                 try:
                     await self.ws.close()
-                except:
+                except Exception:
                     pass
                 self.ws = None
 
@@ -629,7 +885,7 @@ class HotkeyVoiceInputV2:
                     self.tray_manager.set_status(TrayStatus.ERROR)
                 try:
                     await self.ws.close()
-                except:
+                except Exception:
                     pass
                 self.ws = None
                 return False
@@ -651,6 +907,7 @@ class HotkeyVoiceInputV2:
         """获取服务器上的可用模型列表"""
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=10.0) as client:
                 url = f"{self.rest_api_url}/models"
                 self.log(f"正在获取模型列表 from {url}...")
@@ -678,8 +935,9 @@ class HotkeyVoiceInputV2:
                             elif isinstance(response_data, dict):
                                 # 字典格式，可能带有 "models" 键
                                 if "models" in response_data:
-                                    self.available_models = [m.get("name", "")
-                                                            for m in response_data.get("models", [])]
+                                    self.available_models = [
+                                        m.get("name", "") for m in response_data.get("models", [])
+                                    ]
                                     for m in response_data.get("models", []):
                                         if m.get("is_loaded", False):
                                             self.current_model = m.get("name", "")
@@ -701,12 +959,10 @@ class HotkeyVoiceInputV2:
                             # 更新UI下拉菜单
                             if self.window and self.available_models:
                                 self.window["-MODEL-SELECT-"].update(
-                                    values=self.available_models,
-                                    value=self.current_model
+                                    values=self.available_models, value=self.current_model
                                 )
                                 self.window["-MODEL-STATUS-"].update(
-                                    f"当前模型: {self.current_model}",
-                                    text_color="yellow"
+                                    f"当前模型: {self.current_model}", text_color="yellow"
                                 )
                                 # 更新托盘
                                 if self.tray_manager:
@@ -715,7 +971,9 @@ class HotkeyVoiceInputV2:
                             elif self.window:
                                 self.log("没有可用的模型")
                                 self.window["-MODEL-SELECT-"].update(values=[], value="")
-                                self.window["-MODEL-STATUS-"].update("未找到可用模型", text_color="red")
+                                self.window["-MODEL-STATUS-"].update(
+                                    "未找到可用模型", text_color="red"
+                                )
 
                             return bool(self.available_models)
 
@@ -728,11 +986,14 @@ class HotkeyVoiceInputV2:
                         error_text = resp.text
                         self.log(f"✗ 获取模型失败: HTTP {resp.status_code}")
                         self.log(f"错误响应: {error_text}")
-                        self.show_error(f"获取模型失败: HTTP {resp.status_code}\n{error_text[:200]}")
+                        self.show_error(
+                            f"获取模型失败: HTTP {resp.status_code}\n{error_text[:200]}"
+                        )
                         return False
 
                 except Exception as e:
                     import traceback
+
                     self.log(f"✗ HTTP 请求失败: {e}")
                     self.log(f"错误堆栈: {traceback.format_exc()}")
                     self.show_error(f"HTTP 请求失败: {e}")
@@ -744,6 +1005,7 @@ class HotkeyVoiceInputV2:
             return False
         except Exception as e:
             import traceback
+
             self.log(f"✗ 获取模型失败: {e}")
             self.log(f"错误堆栈: {traceback.format_exc()}")
             self.show_error(f"获取模型失败: {e}")
@@ -753,17 +1015,19 @@ class HotkeyVoiceInputV2:
         """切换模型"""
         try:
             import httpx
+
             # 大幅增加超时时间以允许 qwen_asr 模型（14GB）加载
             async with httpx.AsyncClient(timeout=300.0) as client:  # 5 分钟超时
                 url = f"{self.rest_api_url}/models/select"
                 data = {"model_name": model_name}
 
                 try:
-                    self.log(f"正在切换到模型: {model_name}，请等待（qwen_asr 模型较大，需几分钟）...")
+                    self.log(
+                        f"正在切换到模型: {model_name}，请等待（qwen_asr 模型较大，需几分钟）..."
+                    )
                     if self.window:
                         self.window["-MODEL-STATUS-"].update(
-                            f"正在切换到 {model_name}...（请等待）",
-                            text_color="yellow"
+                            f"正在切换到 {model_name}...（请等待）", text_color="yellow"
                         )
 
                     resp = await client.post(url, data=data)
@@ -777,8 +1041,7 @@ class HotkeyVoiceInputV2:
                             self.log(f"✓ 切换请求已接受，模型 {model_name} 正在后台加载")
                             if self.window:
                                 self.window["-MODEL-STATUS-"].update(
-                                    f"模型 {model_name} 正在加载中...",
-                                    text_color="yellow"
+                                    f"模型 {model_name} 正在加载中...", text_color="yellow"
                                 )
                             # 启动轮询任务检查模型加载状态
                             asyncio.create_task(self._poll_model_loading_status(model_name))
@@ -786,8 +1049,7 @@ class HotkeyVoiceInputV2:
                             self.log(f"✓ 已切换到模型: {model_name}")
                             if self.window:
                                 self.window["-MODEL-STATUS-"].update(
-                                    f"当前模型: {model_name}",
-                                    text_color="green"
+                                    f"当前模型: {model_name}", text_color="green"
                                 )
                             if self.tray_manager:
                                 self.tray_manager.set_current_model(model_name)
@@ -805,6 +1067,7 @@ class HotkeyVoiceInputV2:
 
                 except Exception as e:
                     import traceback
+
                     self.log(f"✗ HTTP 请求失败: {type(e).__name__}: {e}")
                     self.log(f"错误堆栈: {traceback.format_exc()}")
                     self.show_error(f"HTTP 请求失败: {type(e).__name__}: {e}")
@@ -840,6 +1103,7 @@ class HotkeyVoiceInputV2:
         """获取服务器上的可用LLM模型列表"""
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=10.0) as client:
                 url = f"{self.rest_api_url}/llm/models"
                 self.log(f"正在获取LLM模型列表 from {url}...")
@@ -849,7 +1113,9 @@ class HotkeyVoiceInputV2:
                     data = resp.json()
                     # 提取模型名称列表
                     models = data.get("models", [])
-                    self.available_llm_models = [m.get("name") if isinstance(m, dict) else m for m in models]
+                    self.available_llm_models = [
+                        m.get("name") if isinstance(m, dict) else m for m in models
+                    ]
                     # 直接从响应中获取当前模型（服务端返回 current_model 字段）
                     self.current_llm_model = data.get("current_model", "")
                     llm_enabled = data.get("enabled", True)
@@ -865,18 +1131,16 @@ class HotkeyVoiceInputV2:
                     elif not self.current_llm_model and models:
                         self.current_llm_model = models[0] if isinstance(models[0], str) else ""
 
-
                     self.log(f"✓ 获取到LLM模型列表: {', '.join(self.available_llm_models)}")
                     self.log(f"  当前LLM模型: {self.current_llm_model}, 启用: {llm_enabled}")
 
                     if self.window:
                         self.window["-LLM-MODEL-SELECT-"].update(
-                            values=self.available_llm_models,
-                            value=self.current_llm_model
+                            values=self.available_llm_models, value=self.current_llm_model
                         )
                         self.window["-LLM-MODEL-STATUS-"].update(
                             f"当前: {self.current_llm_model}",
-                            text_color="cyan" if llm_enabled else "gray"
+                            text_color="cyan" if llm_enabled else "gray",
                         )
                     return True
                 else:
@@ -890,6 +1154,7 @@ class HotkeyVoiceInputV2:
         """切换LLM模型"""
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=10.0) as client:
                 url = f"{self.rest_api_url}/llm/models/select"
                 self.log(f"正在切换LLM模型到: {model_name}...")
@@ -903,8 +1168,7 @@ class HotkeyVoiceInputV2:
                     if success:
                         self.current_llm_model = current
                         self.window["-LLM-MODEL-STATUS-"].update(
-                            f"当前: {current} (已启用)",
-                            text_color="cyan"
+                            f"当前: {current} (已启用)", text_color="cyan"
                         )
                         self.log(f"✓ LLM模型切换成功: {current}")
                     else:
@@ -927,12 +1191,12 @@ class HotkeyVoiceInputV2:
 
     # ======================================
 
-
     # ========== LLM 提示词相关方法 ==========
     async def load_llm_prompt(self):
         """加载 LLM 提示词"""
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(f"{self.rest_api_url}/llm/prompt")
                 if resp.status_code == 200:
@@ -952,15 +1216,13 @@ class HotkeyVoiceInputV2:
         """保存 LLM 提示词"""
         try:
             import httpx
+
             prompt = self.window["-LLM-PROMPT-"].get()
             if not prompt.strip():
                 self.window["-PROMPT-STATUS-"].update("提示词不能为空", text_color="red")
                 return
             async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.put(
-                    f"{self.rest_api_url}/llm/prompt",
-                    json={"prompt": prompt}
-                )
+                resp = await client.put(f"{self.rest_api_url}/llm/prompt", json={"prompt": prompt})
                 if resp.status_code == 200:
                     self.window["-PROMPT-STATUS-"].update("已保存", text_color="green")
                     self.log("LLM提示词已保存")
@@ -978,36 +1240,37 @@ class HotkeyVoiceInputV2:
     async def async_save_llm_prompt(self):
         """异步保存LLM提示词"""
         await self.save_llm_prompt()
+
     # ======================================
 
     async def _poll_model_loading_status(self, model_name: str):
         """轮询检查模型加载状态"""
         import httpx
+
         self.log(f"开始轮询模型 {model_name} 的加载状态...")
         poll_count = 0
         max_polls = 300  # 最多轮询300次，每次2秒，共10分钟
-        
+
         while poll_count < max_polls:
             await asyncio.sleep(2.0)  # 每2秒检查一次
             poll_count += 1
-            
+
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     url = f"{self.rest_api_url}/models/status/{model_name}"
                     resp = await client.get(url)
-                    
+
                     if resp.status_code == 200:
                         data = resp.json()
                         is_loading = data.get("is_loading", False)
-                        
+
                         if not is_loading:
                             # 模型加载完成
                             self.log(f"✓ 模型 {model_name} 加载完成！")
                             self.current_model = model_name
                             if self.window:
                                 self.window["-MODEL-STATUS-"].update(
-                                    f"当前模型: {model_name}",
-                                    text_color="green"
+                                    f"当前模型: {model_name}", text_color="green"
                                 )
                             self.set_status(f"已连接 ({model_name})", "green")
                             if self.tray_manager:
@@ -1022,11 +1285,11 @@ class HotkeyVoiceInputV2:
                                 self.log(f"模型 {model_name} 加载中... ({elapsed:.0f}s)")
                     else:
                         self.log(f"⚠️ 检查模型状态失败: HTTP {resp.status_code}")
-                        
+
             except Exception as e:
                 self.log(f"⚠️ 轮询模型状态出错: {e}")
                 continue
-        
+
         self.log(f"⚠️ 轮询超时: 模型 {model_name} 加载时间过长")
 
     async def send_audio_to_server(self) -> Optional[str]:
@@ -1046,8 +1309,10 @@ class HotkeyVoiceInputV2:
             # 创建新的WebSocket连接用于此次转写
             self.log("正在连接到服务器...")
             ws = await asyncio.wait_for(
-                websockets.connect(self.server_url, close_timeout=10, ping_interval=20, ping_timeout=10),
-                timeout=15.0
+                websockets.connect(
+                    self.server_url, close_timeout=10, ping_interval=20, ping_timeout=10
+                ),
+                timeout=15.0,
             )
 
             # 等待服务器准备就绪
@@ -1068,10 +1333,7 @@ class HotkeyVoiceInputV2:
                 self.log("⚠️ 模型正在加载中，可能需要等待...")
 
             # 发送配置消息（服务器期望的第一条消息）
-            await ws.send(json.dumps({
-                "type": "config",
-                "language": "auto"
-            }))
+            await ws.send(json.dumps({"type": "config", "language": "auto"}))
 
             # 合并音频数据
             full_audio = b"".join(self.audio_buffer)
@@ -1079,10 +1341,9 @@ class HotkeyVoiceInputV2:
             self.log(f"发送 {audio_size_kb:.1f} KB 音频...")
 
             # 发送音频消息
-            await ws.send(json.dumps({
-                "type": "audio",
-                "data": base64.b64encode(full_audio).decode()
-            }))
+            await ws.send(
+                json.dumps({"type": "audio", "data": base64.b64encode(full_audio).decode()})
+            )
 
             # 发送结束信号
             await ws.send(json.dumps({"type": "end"}))
@@ -1100,7 +1361,7 @@ class HotkeyVoiceInputV2:
                     if msg_type == "result":
                         result_text = data.get("text", "")
                         llm_latency = data.get("llm_latency_ms")
-                        llm_model = data.get("llm_model", "")
+                        data.get("llm_model", "")
                         if llm_latency is not None:
                             self.log(f"识别结果: {result_text} (LLM: {llm_latency:.0f}ms)")
                         else:
@@ -1154,22 +1415,19 @@ class HotkeyVoiceInputV2:
                 device=self.selected_device,
                 samplerate=AUDIO_SAMPLE_RATE,
                 channels=AUDIO_CHANNELS,
-                dtype='int16',
+                dtype="int16",
                 blocksize=AUDIO_CHUNK_SIZE,
-                callback=callback
+                callback=callback,
             )
             self.stream.start()
-            
+
             # 记录录音开始时间
             self._record_start_time = time.time()
-            
+
             # 启动流式发送协程
             if self.async_loop:
-                asyncio.run_coroutine_threadsafe(
-                    self._stream_audio_to_server(),
-                    self.async_loop
-                )
-                
+                asyncio.run_coroutine_threadsafe(self._stream_audio_to_server(), self.async_loop)
+
         except Exception as e:
             self.log(f"启动录音失败: {e}")
             self.is_recording = False
@@ -1179,7 +1437,7 @@ class HotkeyVoiceInputV2:
         self.is_recording = False
         chunks_count = len(self.audio_buffer)
         # 计算录音时长
-        if hasattr(self, '_record_start_time') and self._record_start_time:
+        if hasattr(self, "_record_start_time") and self._record_start_time:
             record_duration = time.time() - self._record_start_time
             self.log(f"⏹️ 停止录音 ({chunks_count} 个音频块, 录音时长: {record_duration:.1f}s)")
         else:
@@ -1192,29 +1450,28 @@ class HotkeyVoiceInputV2:
             except Exception as e:
                 logger.warning(f"关闭音频流失败: {e}")
             self.stream = None
-        
+
         # 通知发送协程结束
         try:
             self.audio_queue.put_nowait(None)  # None 表示结束
-        except:
+        except Exception:
             pass
 
     async def _stream_audio_to_server(self):
         """流式发送音频到服务器（边录边发）"""
         import websockets
-        
+
         try:
             self.log("建立 WebSocket 连接...")
-            
-            async with websockets.connect(self.server_url, close_timeout=10, ping_interval=20, ping_timeout=10) as ws:
+
+            async with websockets.connect(
+                self.server_url, close_timeout=10, ping_interval=20, ping_timeout=10
+            ) as ws:
                 # 发送配置
-                language = self.config_manager.get('audio.language', 'auto')
-                await ws.send(json.dumps({
-                    "type": "config",
-                    "language": language
-                }))
+                language = self.config_manager.get("audio.language", "auto")
+                await ws.send(json.dumps({"type": "config", "language": language}))
                 self.log(f"已发送配置 (language: {language})")
-                
+
                 # 等待准备就绪
                 try:
                     ready_msg = await asyncio.wait_for(ws.recv(), timeout=30.0)
@@ -1226,47 +1483,46 @@ class HotkeyVoiceInputV2:
                 except asyncio.TimeoutError:
                     self.log("等待服务器准备超时")
                     return
-                
+
                 # 流式发送音频块
                 while self.is_recording or not self.audio_queue.empty():
                     try:
                         # 从队列获取音频块（最多等待 0.1 秒）
                         chunk = self.audio_queue.get(timeout=0.1)
-                        
+
                         if chunk is None:  # 收到结束信号
                             break
-                            
+
                         # 发送音频块
-                        await ws.send(json.dumps({
-                            "type": "audio",
-                            "data": base64.b64encode(chunk).decode()
-                        }))
-                        
+                        await ws.send(
+                            json.dumps({"type": "audio", "data": base64.b64encode(chunk).decode()})
+                        )
+
                     except queue.Empty:
                         # 队列为空但还在录音，继续等待
                         continue
                     except Exception as e:
                         self.log(f"发送音频块出错: {e}")
                         break
-                
+
                 # 发送结束信号
                 self.log("发送结束信号...")
                 await ws.send(json.dumps({"type": "end"}))
-                
+
                 # 等待识别结果
                 self.log("等待识别结果...")
                 result_text = ""
-                
+
                 while True:
                     try:
                         response = await asyncio.wait_for(ws.recv(), timeout=300.0)
                         data = json.loads(response)
                         msg_type = data.get("type")
-                        
+
                         if msg_type == "result":
                             result_text = data.get("text", "")
                             llm_latency = data.get("llm_latency_ms")
-                            llm_model = data.get("llm_model", "")
+                            data.get("llm_model", "")
                             if llm_latency is not None:
                                 self.log(f"识别结果: {result_text} (LLM: {llm_latency:.0f}ms)")
                             else:
@@ -1290,27 +1546,28 @@ class HotkeyVoiceInputV2:
                             self.log(f"识别错误 [{error_code}]: {error_msg}")
                             self.stream_error = error_msg
                             break
-                            
+
                     except asyncio.TimeoutError:
                         self.log("等待结果超时")
                         break
-                        
+
         except Exception as e:
             self.log(f"流式传输出错: {e}")
             self.stream_error = str(e)
         finally:
             # 在主线程处理结果
             if self.async_loop:
-                asyncio.run_coroutine_threadsafe(
-                    self._handle_stream_result(),
-                    self.async_loop
-                )
+                asyncio.run_coroutine_threadsafe(self._handle_stream_result(), self.async_loop)
 
     async def _handle_stream_result(self):
         """处理流式传输的结果（在主线程中调用）"""
         # 计算总处理时间
-        total_time = time.time() - self._record_start_time if hasattr(self, '_record_start_time') and self._record_start_time else 0
-        
+        total_time = (
+            time.time() - self._record_start_time
+            if hasattr(self, "_record_start_time") and self._record_start_time
+            else 0
+        )
+
         if self.stream_error:
             self.log(f"流式识别失败: {self.stream_error}")
             print(f"[耗时统计] 录音: {total_time:.1f}s, 错误: {self.stream_error}")
@@ -1319,14 +1576,14 @@ class HotkeyVoiceInputV2:
             if self.processing_indicator:
                 self.processing_indicator.hide()
             return
-        
+
         result = self.stream_result
-        
+
         if result:
             self.update_result(result)
             await self._auto_input_text(result)
             print(f"[耗时统计] 录音: {total_time:.1f}s, 结果: {result[:50]}...")
-            
+
             if self.tray_manager:
                 self.tray_manager.set_status(TrayStatus.READY)
         else:
@@ -1334,7 +1591,7 @@ class HotkeyVoiceInputV2:
             print(f"[耗时统计] 录音: {total_time:.1f}s, 结果: (无)")
             if self.tray_manager:
                 self.tray_manager.set_status(TrayStatus.ERROR)
-        
+
         if self.processing_indicator:
             self.processing_indicator.hide()
 
@@ -1371,6 +1628,7 @@ class HotkeyVoiceInputV2:
 
         except Exception as e:
             import traceback
+
             self.log(f"处理音频出错: {e}")
             self.log(traceback.format_exc())
             if self.tray_manager:
@@ -1382,16 +1640,18 @@ class HotkeyVoiceInputV2:
         """自动将文本输入到活跃窗口"""
         try:
             import pyautogui
+
             self.log(f"准备输入文本: {text[:50]}...")
 
             # 使用剪贴板粘贴（更可靠，支持特殊字符）
             try:
                 import pyperclip
+
                 pyperclip.copy(text)
                 self.log("✓ 文本已复制到剪贴板")
 
                 # 粘贴文本
-                pyautogui.hotkey('ctrl', 'v')
+                pyautogui.hotkey("ctrl", "v")
                 self.log(f"✓ 已粘贴: {text[:50]}...")
 
             except ImportError as e:
@@ -1431,18 +1691,15 @@ class HotkeyVoiceInputV2:
 
         # 自动连接到服务器
         if self.async_loop:
-            asyncio.run_coroutine_threadsafe(
-                self.connect_to_server(),
-                self.async_loop
-            )
-        
+            asyncio.run_coroutine_threadsafe(self.connect_to_server(), self.async_loop)
+
         # 等待托盘启动完成后显示通知
         def _delayed_startup_notification():
             logger.info("等待托盘启动...")
             time.sleep(2.0)  # Windows 上需要更长时间
             logger.info("准备显示启动通知...")
             self._show_startup_notification()
-        
+
         notification_thread = threading.Thread(target=_delayed_startup_notification, daemon=True)
         notification_thread.start()
 
@@ -1453,7 +1710,7 @@ class HotkeyVoiceInputV2:
                 if not self.window:
                     logger.error("Window is None, breaking")
                     break
-                    
+
                 event, values = self.window.read(timeout=100)
 
                 if event == sg.WIN_CLOSED or event == "-EXIT-":
@@ -1475,10 +1732,7 @@ class HotkeyVoiceInputV2:
                     self.is_connected = False
 
                     if self.async_loop:
-                        asyncio.run_coroutine_threadsafe(
-                            self.connect_to_server(),
-                            self.async_loop
-                        )
+                        asyncio.run_coroutine_threadsafe(self.connect_to_server(), self.async_loop)
 
                 elif event == "-UPDATE-HOTKEY-":
                     hotkey = values.get("-HOTKEY-", self.config_manager.hotkey).strip()
@@ -1512,17 +1766,20 @@ class HotkeyVoiceInputV2:
                     # 同步到服务器
                     if self.rest_api_url:
                         import httpx
+
                         try:
+
                             async def update_llm_enabled():
                                 async with httpx.AsyncClient(timeout=5.0) as client:
                                     resp = await client.put(
                                         f"{self.rest_api_url}/llm/enabled",
-                                        json={"enabled": enabled}
+                                        json={"enabled": enabled},
                                     )
                                     if resp.status_code == 200:
                                         self.log(f"✓ LLM后处理已{'启用' if enabled else '禁用'}")
                                     else:
                                         self.log(f"✗ 更新失败: {resp.status_code}")
+
                             asyncio.run(update_llm_enabled())
                         except Exception as e:
                             self.log(f"✗ 更新LLM状态失败: {e}")
@@ -1533,7 +1790,7 @@ class HotkeyVoiceInputV2:
                     preset_name = values["-HOTKEY-PRESET-"]
                     preset = HotkeyPresets.get_preset(preset_name)
                     if preset:
-                        self.window["-HOTKEY-"].update(preset['hotkey'])
+                        self.window["-HOTKEY-"].update(preset["hotkey"])
                         self.log(f"选择预设: {preset['name']}")
 
                 elif event == "-APPLY-PRESET-":
@@ -1541,7 +1798,7 @@ class HotkeyVoiceInputV2:
                     preset_name = values.get("-HOTKEY-PRESET-", "default")
                     preset = HotkeyPresets.get_preset(preset_name)
                     if preset:
-                        hotkey = preset['hotkey']
+                        hotkey = preset["hotkey"]
                         self._setup_hotkey_with_manager(hotkey)
                         self.window["-HOTKEY-"].update(hotkey)
                         self.log(f"✓ 已应用预设: {preset['name']}")
@@ -1560,6 +1817,7 @@ class HotkeyVoiceInputV2:
                     if self.last_result:
                         try:
                             import pyperclip
+
                             pyperclip.copy(self.last_result)
                             self.log("✓ 已复制到剪贴板")
                         except ImportError:
@@ -1573,18 +1831,14 @@ class HotkeyVoiceInputV2:
                 elif event == "-PASTE-":
                     if self.last_result and self.async_loop:
                         asyncio.run_coroutine_threadsafe(
-                            self._auto_input_text(self.last_result),
-                            self.async_loop
+                            self._auto_input_text(self.last_result), self.async_loop
                         )
 
                 elif event == "-REFRESH-MODELS-":
                     self.log("正在获取模型列表...")
                     self.window["-MODEL-STATUS-"].update("正在获取模型列表...", text_color="yellow")
                     if self.async_loop:
-                        asyncio.run_coroutine_threadsafe(
-                            self.async_fetch_models(),
-                            self.async_loop
-                        )
+                        asyncio.run_coroutine_threadsafe(self.async_fetch_models(), self.async_loop)
 
                 elif event == "-SWITCH-MODEL-":
                     selected_model = values.get("-MODEL-SELECT-", "").strip()
@@ -1594,18 +1848,16 @@ class HotkeyVoiceInputV2:
                     else:
                         self.log(f"正在切换到模型: {selected_model}")
                         self.window["-MODEL-STATUS-"].update(
-                            f"正在切换到 {selected_model}...",
-                            text_color="yellow"
+                            f"正在切换到 {selected_model}...", text_color="yellow"
                         )
                         if self.async_loop:
                             asyncio.run_coroutine_threadsafe(
-                                self.async_switch_model(selected_model),
-                                self.async_loop
+                                self.async_switch_model(selected_model), self.async_loop
                             )
 
                 # ======== v1.1 新增事件处理 ========
                 elif event == "-START-MINIMIZED-":
-                    self.config_manager.start_minimized = values['-START-MINIMIZED-']
+                    self.config_manager.start_minimized = values["-START-MINIMIZED-"]
                     self.config_manager.save()
                     self.log(f"启动最小化设置: {values['-START-MINIMIZED-']}")
 
@@ -1618,11 +1870,12 @@ class HotkeyVoiceInputV2:
                 # ======== LLM 模型切换 ========
                 elif event == "-REFRESH-LLM-MODELS-":
                     self.log("正在获取LLM模型列表...")
-                    self.window["-LLM-MODEL-STATUS-"].update("正在获取LLM模型列表...", text_color="yellow")
+                    self.window["-LLM-MODEL-STATUS-"].update(
+                        "正在获取LLM模型列表...", text_color="yellow"
+                    )
                     if self.async_loop:
                         asyncio.run_coroutine_threadsafe(
-                            self.async_fetch_llm_models(),
-                            self.async_loop
+                            self.async_fetch_llm_models(), self.async_loop
                         )
 
                 elif event == "-SWITCH-LLM-MODEL-":
@@ -1636,8 +1889,7 @@ class HotkeyVoiceInputV2:
                         )
                         if self.async_loop:
                             asyncio.run_coroutine_threadsafe(
-                                self.async_switch_llm_model(selected_model),
-                                self.async_loop
+                                self.async_switch_llm_model(selected_model), self.async_loop
                             )
                 # ================================
 
@@ -1682,7 +1934,9 @@ class HotkeyVoiceInputV2:
                         # 显示悬浮指示器
                         if self.use_floating_indicator and self.floating_indicator:
                             try:
-                                self._show_indicator_with_focus_preservation(self.floating_indicator)
+                                self._show_indicator_with_focus_preservation(
+                                    self.floating_indicator
+                                )
                             except Exception as e:
                                 logger.warning(f"Failed to show floating indicator: {e}")
                     except Exception as e:
@@ -1698,7 +1952,9 @@ class HotkeyVoiceInputV2:
                         # 防抖：如果录音时长小于 80ms，可能是鼠标侧键的噪声释放
                         press_duration = (time.time() - self._last_hotkey_press_time) * 1000
                         if press_duration < 50:
-                            self.log(f"⚠️ 防抖: {press_duration:.0f}ms 短触释放（疑似噪声），继续录音中")
+                            self.log(
+                                f"⚠️ 防抖: {press_duration:.0f}ms 短触释放（疑似噪声），继续录音中"
+                            )
                             # 不停止录音！仅更新防抖时间，等待真正的释放
                             self._last_hotkey_release_time = time.time()
                             continue
@@ -1718,7 +1974,9 @@ class HotkeyVoiceInputV2:
                         # 显示处理中指示器
                         if self.use_floating_indicator and self.processing_indicator:
                             try:
-                                self._show_indicator_with_focus_preservation(self.processing_indicator)
+                                self._show_indicator_with_focus_preservation(
+                                    self.processing_indicator
+                                )
                             except Exception as e:
                                 logger.warning(f"Failed to show processing indicator: {e}")
                         # 流式传输已在 _stop_recording() 中触发，会自动处理结果
@@ -1731,18 +1989,27 @@ class HotkeyVoiceInputV2:
                 # 处理悬浮指示器事件
                 if self.use_floating_indicator:
                     try:
-                        if self.floating_indicator and hasattr(self.floating_indicator, 'is_visible') and self.floating_indicator.is_visible:
+                        if (
+                            self.floating_indicator
+                            and hasattr(self.floating_indicator, "is_visible")
+                            and self.floating_indicator.is_visible
+                        ):
                             self.floating_indicator.process_events(timeout=0)
                     except Exception as e:
                         logger.warning(f"Floating indicator error: {e}")
                     try:
-                        if self.processing_indicator and hasattr(self.processing_indicator, 'is_visible') and self.processing_indicator.is_visible:
+                        if (
+                            self.processing_indicator
+                            and hasattr(self.processing_indicator, "is_visible")
+                            and self.processing_indicator.is_visible
+                        ):
                             self.processing_indicator.process_events(timeout=0)
                     except Exception as e:
                         logger.warning(f"Processing indicator error: {e}")
 
             except Exception as e:
                 import traceback
+
                 logger.error(f"UI 循环错误: {e}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 # Log to GUI as well
@@ -1757,10 +2024,10 @@ class HotkeyVoiceInputV2:
         """清理资源"""
         try:
             self.is_running = False
-            
+
             # 保存配置
             try:
-                if hasattr(self, 'config_manager'):
+                if hasattr(self, "config_manager"):
                     self.config_manager.save()
                     logger.info("配置已保存")
             except Exception as e:
@@ -1792,7 +2059,7 @@ class HotkeyVoiceInputV2:
                     self.floating_indicator.hide()
             except Exception as e:
                 logger.warning(f"Error hiding floating indicator: {e}")
-            
+
             try:
                 if self.processing_indicator:
                     self.processing_indicator.hide()
@@ -1831,7 +2098,9 @@ def main():
     except ImportError as e:
         print(f"缺少依赖: {e}")
         print("\n请运行以下命令安装依赖:")
-        print("pip install websockets sounddevice httpx pyautogui pyperclip pynput PySimpleGUI pystray Pillow")
+        print(
+            "pip install websockets sounddevice httpx pyautogui pyperclip pynput PySimpleGUI pystray Pillow"
+        )
         return
 
     # 配置管理器会自动处理默认值
@@ -1840,6 +2109,7 @@ def main():
     port = None
 
     import os
+
     if "VIF_SERVER_HOST" in os.environ:
         host = os.getenv("VIF_SERVER_HOST")
     if "VIF_SERVER_PORT" in os.environ:

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 try:
     import pystray
     from PIL import Image, ImageDraw
+
     PYSTRAY_AVAILABLE = True
 except ImportError:
     PYSTRAY_AVAILABLE = False
@@ -32,10 +33,11 @@ except ImportError:
 
 class TrayStatus(Enum):
     """托盘图标状态"""
-    READY = "ready"              # 就绪(灰色)
-    RECORDING = "recording"      # 录音中(红色)
-    PROCESSING = "processing"    # 处理中(蓝色)
-    ERROR = "error"              # 错误(感叹号)
+
+    READY = "ready"  # 就绪(灰色)
+    RECORDING = "recording"  # 录音中(红色)
+    PROCESSING = "processing"  # 处理中(蓝色)
+    ERROR = "error"  # 错误(感叹号)
     DISCONNECTED = "disconnected"  # 未连接(灰色半透明)
 
 
@@ -103,7 +105,7 @@ class TrayIconManager:
             PIL Image 对象
         """
         # 创建 RGBA 图像
-        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
         # 颜色加 alpha
@@ -117,21 +119,25 @@ class TrayIconManager:
 
         # 绘制麦克风头部(椭圆)
         draw.ellipse(
-            [mic_x - mic_width // 2, mic_y - mic_height // 2,
-             mic_x + mic_width // 2, mic_y + mic_height // 2],
+            [
+                mic_x - mic_width // 2,
+                mic_y - mic_height // 2,
+                mic_x + mic_width // 2,
+                mic_y + mic_height // 2,
+            ],
             fill=rgba,
-            outline=rgba
+            outline=rgba,
         )
 
         # 绘制麦克风底部(弧线)
         arc_y = mic_y + mic_height // 2 - size // 10
         arc_width = size // 2
         draw.arc(
-            [mic_x - arc_width // 2, arc_y,
-             mic_x + arc_width // 2, arc_y + size // 3],
-            start=0, end=180,
+            [mic_x - arc_width // 2, arc_y, mic_x + arc_width // 2, arc_y + size // 3],
+            start=0,
+            end=180,
             fill=rgba,
-            width=3
+            width=3,
         )
 
         # 绘制麦克风支架(竖线)
@@ -143,9 +149,11 @@ class TrayIconManager:
         # 绘制底座横线
         base_y = stand_y2
         base_width = size // 4
-        draw.line([stand_x - base_width // 2, base_y,
-                   stand_x + base_width // 2, base_y],
-                  fill=rgba, width=2)
+        draw.line(
+            [stand_x - base_width // 2, base_y, stand_x + base_width // 2, base_y],
+            fill=rgba,
+            width=2,
+        )
 
         return img
 
@@ -159,15 +167,12 @@ class TrayIconManager:
         Returns:
             PIL Image 对象
         """
-        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
         # 红色圆形背景
         margin = size // 8
-        draw.ellipse(
-            [margin, margin, size - margin, size - margin],
-            fill=(220, 53, 69, 255)
-        )
+        draw.ellipse([margin, margin, size - margin, size - margin], fill=(220, 53, 69, 255))
 
         # 白色感叹号
         # 竖线
@@ -177,16 +182,15 @@ class TrayIconManager:
         draw.line(
             [center_x, size // 4, center_x, size // 4 + line_height],
             fill=(255, 255, 255, 255),
-            width=line_width
+            width=line_width,
         )
 
         # 点
         dot_y = size - size // 4
         dot_radius = line_width // 2
         draw.ellipse(
-            [center_x - dot_radius, dot_y - dot_radius,
-             center_x + dot_radius, dot_y + dot_radius],
-            fill=(255, 255, 255, 255)
+            [center_x - dot_radius, dot_y - dot_radius, center_x + dot_radius, dot_y + dot_radius],
+            fill=(255, 255, 255, 255),
         )
 
         return img
@@ -240,48 +244,35 @@ class TrayIconManager:
             pystray.MenuItem(
                 "显示窗口",
                 lambda: self._call_callback("show_window"),
-                default=True  # 双击触发
+                default=True,  # 双击触发
             ),
-            pystray.MenuItem(
-                "隐藏窗口",
-                lambda: self._call_callback("hide_window")
-            ),
+            pystray.MenuItem("隐藏窗口", lambda: self._call_callback("hide_window")),
             pystray.Menu.SEPARATOR,
-
             # 录音控制
             pystray.MenuItem(
                 "开始录音",
                 lambda: self._call_callback("start_recording"),
-                enabled=lambda item: self.status == TrayStatus.READY
+                enabled=lambda item: self.status == TrayStatus.READY,
             ),
             pystray.MenuItem(
                 "停止录音",
                 lambda: self._call_callback("stop_recording"),
-                enabled=lambda item: self.status == TrayStatus.RECORDING
+                enabled=lambda item: self.status == TrayStatus.RECORDING,
             ),
             pystray.Menu.SEPARATOR,
-
             # 模型选择子菜单
             pystray.MenuItem(
                 "模型",
                 pystray.Menu(
                     *self._create_model_menu_items(),
                     pystray.Menu.SEPARATOR,
-                    pystray.MenuItem(
-                        "刷新模型列表",
-                        lambda: self._call_callback("refresh_models")
-                    )
-                )
+                    pystray.MenuItem("刷新模型列表", lambda: self._call_callback("refresh_models")),
+                ),
             ),
             pystray.Menu.SEPARATOR,
-
             # 检查更新
-            pystray.MenuItem(
-                "检查更新",
-                lambda: self._call_callback("check_update")
-            ),
+            pystray.MenuItem("检查更新", lambda: self._call_callback("check_update")),
             pystray.Menu.SEPARATOR,
-
             # 开机自启动
             pystray.MenuItem(
                 "开机自启动",
@@ -289,30 +280,20 @@ class TrayIconManager:
                 checked=(lambda item: self.auto_start_enabled),
             ),
             pystray.Menu.SEPARATOR,
-
             # 状态显示 - 使用当前状态生成文本
-            pystray.MenuItem(
-                f"状态: {self._get_status_text()}",
-                None,
-                enabled=False
-            ),
-            pystray.MenuItem(
-                f"当前模型: {self.current_model or '未选择'}",
-                None,
-                enabled=False
-            ),
+            pystray.MenuItem(f"状态: {self._get_status_text()}", None, enabled=False),
+            pystray.MenuItem(f"当前模型: {self.current_model or '未选择'}", None, enabled=False),
             pystray.Menu.SEPARATOR,
-
             # 退出
             pystray.MenuItem("退出", lambda: self._call_callback("quit")),
         ]
 
         return pystray.Menu(*menu_items)
-    
+
     def set_auto_start_enabled(self, enabled: bool):
         """
         设置开机自启动状态并更新菜单
-        
+
         Args:
             enabled: 是否启用
         """
@@ -323,7 +304,7 @@ class TrayIconManager:
                 self.icon.menu = self.create_menu()
             except Exception as e:
                 logger.warning(f"更新托盘菜单失败: {e}")
-    
+
     def _create_model_menu_items(self) -> list:
         """创建模型选择菜单项"""
         items = []
@@ -332,7 +313,7 @@ class TrayIconManager:
                 pystray.MenuItem(
                     text=model,
                     action=(lambda m: lambda icon, item: self._switch_model(m))(model),
-                    checked=(lambda m: lambda item: self.current_model == m)(model)
+                    checked=(lambda m: lambda item: self.current_model == m)(model),
                 )
             )
         return items
@@ -401,12 +382,7 @@ class TrayIconManager:
 
         menu = self.create_menu()
 
-        self.icon = pystray.Icon(
-            "voice_input",
-            icon_image,
-            "Voice Input Framework",
-            menu
-        )
+        self.icon = pystray.Icon("voice_input", icon_image, "Voice Input Framework", menu)
 
         # 在后台线程中运行
         self.icon.run_detached()
@@ -435,7 +411,6 @@ class TrayIconManager:
         if self.icon:
             self.icon.title = text
 
-
     def notify(self, title: str, message: str):
         """
         显示系统通知
@@ -459,8 +434,9 @@ class TrayIconManager:
             logger.warning("通知发送失败，使用 tooltip 替代")
             self.update_tooltip(f"{title}: {message}")
 
+
 # 导出
 if PYSTRAY_AVAILABLE:
-    __all__ = ['TrayIconManager', 'TrayStatus']
+    __all__ = ["TrayIconManager", "TrayStatus"]
 else:
     __all__ = []

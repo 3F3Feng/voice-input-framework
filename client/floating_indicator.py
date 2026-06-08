@@ -21,16 +21,19 @@ logger = logging.getLogger(__name__)
 
 # 平台检测
 import platform
+
 IS_WINDOWS = platform.system() == "Windows"
 
 # 尝试导入鼠标位置库
 try:
     from pynput import mouse
+
     PYNPUT_MOUSE_AVAILABLE = True
 except ImportError:
     PYNPUT_MOUSE_AVAILABLE = False
     try:
         import pyautogui
+
         PYAUTOGUI_AVAILABLE = True
     except ImportError:
         PYAUTOGUI_AVAILABLE = False
@@ -38,6 +41,7 @@ except ImportError:
 # 尝试导入 PySimpleGUI
 try:
     import PySimpleGUI as sg
+
     PYSIMPLEGUI_AVAILABLE = True
 except ImportError:
     PYSIMPLEGUI_AVAILABLE = False
@@ -51,10 +55,12 @@ _CursorTracker = None
 if IS_WINDOWS:
     try:
         from .cursor_tracker import CursorTracker as _CursorTracker
+
         CURSOR_TRACKER_AVAILABLE = True
     except ImportError:
         try:
             from cursor_tracker import CursorTracker as _CursorTracker
+
             CURSOR_TRACKER_AVAILABLE = True
         except ImportError:
             logger.debug("CursorTracker 不可用，浮标将使用鼠标位置")
@@ -66,12 +72,14 @@ class FloatingIndicator:
     小型、半透明、可拖动、自动消失
     """
 
-    def __init__(self,
-                 opacity: float = 0.8,
-                 size: tuple = (110, 50),
-                 auto_hide_delay: float = 0.5,
-                 follow_mouse: bool = False,
-                 audio_callback = None):
+    def __init__(
+        self,
+        opacity: float = 0.8,
+        size: tuple = (110, 50),
+        auto_hide_delay: float = 0.5,
+        follow_mouse: bool = False,
+        audio_callback=None,
+    ):
         """
         初始化悬浮指示器
 
@@ -91,7 +99,7 @@ class FloatingIndicator:
         self.window: Optional[sg.Window] = None
         self.is_visible = False
         self.is_recording = False
-        
+
         # Thread safety lock for window operations
         self._window_lock = threading.Lock()
 
@@ -107,15 +115,15 @@ class FloatingIndicator:
         self.position = None  # (x, y)
         self.last_mouse_pos = None  # (x, y) - 上一次鼠标位置
         self.cursor_pos = None  # (x, y) - 输入光标位置
-        
+
         # CursorTracker（仅 Windows，自动跟踪输入光标）
         self._cursor_tracker = None
         self._last_tracker_pos = None  # tracker 返回的最新位置
-        
+
         # 音量显示
         self.current_level = 0  # 当前音量级别 (0-100)
-        self.peak_level = 0     # 峰值音量级别 (0-100)
-        
+        self.peak_level = 0  # 峰值音量级别 (0-100)
+
         # 待处理的更新(线程安全)
         self._pending_timer_update: Optional[str] = None
         self._pending_volume_update: Optional[tuple] = None  # (current, peak)
@@ -136,7 +144,7 @@ class FloatingIndicator:
     def _on_cursor_position_update(self, x: int, y: int, window_title: str):
         """
         CursorTracker 回调：新的光标位置可用
-        
+
         Args:
             x, y: 光标屏幕坐标
             window_title: 当前窗口标题
@@ -151,10 +159,10 @@ class FloatingIndicator:
     def _calculate_window_position(self, pos: tuple = None) -> tuple:
         """
         根据光标位置计算窗口位置
-        
+
         Args:
             pos: (x, y) 光标位置（优先使用光标位置，其次鼠标位置）
-            
+
         Returns:
             (x, y) 窗口位置 - 显示在光标右上方
         """
@@ -163,14 +171,14 @@ class FloatingIndicator:
             x, y = pos
             # 显示在光标右上方，偏移 10 像素
             return (x + 10, y - 50)
-        
+
         # 其次使用鼠标位置
         if self.follow_mouse:
             mouse_pos = self._get_mouse_position()
             if mouse_pos:
                 x, y = mouse_pos
                 return (x + 10, y - 50)
-        
+
         # 如果都没有，使用默认位置
         return (1200, 100)
 
@@ -190,22 +198,50 @@ class FloatingIndicator:
             layout = [
                 # 第一行：图标和录音中文字
                 [
-                    sg.Text("🔴", font=("Helvetica", 12), key="-ICON-",
-                            background_color=bg_color, pad=(2, 0)),
-                    sg.Text("录音中", font=("Helvetica", 8), key="-STATUS-",
-                            text_color="white", background_color=bg_color, pad=(2, 0)),
+                    sg.Text(
+                        "🔴",
+                        font=("Helvetica", 12),
+                        key="-ICON-",
+                        background_color=bg_color,
+                        pad=(2, 0),
+                    ),
+                    sg.Text(
+                        "录音中",
+                        font=("Helvetica", 8),
+                        key="-STATUS-",
+                        text_color="white",
+                        background_color=bg_color,
+                        pad=(2, 0),
+                    ),
                 ],
                 # 第二行：计时和音量
                 [
-                    sg.Text("00:00", font=("Consolas", 10), key="-TIMER-",
-                            text_color="#ff6b6b", background_color=bg_color, pad=(2, 0)),
-                    sg.Text("", font=("Consolas", 8), key="-VOLUME-",
-                            text_color="#4ecdc4", background_color=bg_color, pad=(2, 0)),
+                    sg.Text(
+                        "00:00",
+                        font=("Consolas", 10),
+                        key="-TIMER-",
+                        text_color="#ff6b6b",
+                        background_color=bg_color,
+                        pad=(2, 0),
+                    ),
+                    sg.Text(
+                        "",
+                        font=("Consolas", 8),
+                        key="-VOLUME-",
+                        text_color="#4ecdc4",
+                        background_color=bg_color,
+                        pad=(2, 0),
+                    ),
                 ],
                 # 第三行：音量条
                 [
-                    sg.ProgressBar(max_value=100, size=(15, 10), key="-VOLUME-BAR-",
-                                  bar_color=("#4ecdc4", "#333333"), pad=(2, 1)),
+                    sg.ProgressBar(
+                        max_value=100,
+                        size=(15, 10),
+                        key="-VOLUME-BAR-",
+                        bar_color=("#4ecdc4", "#333333"),
+                        pad=(2, 1),
+                    ),
                 ],
             ]
 
@@ -234,9 +270,9 @@ class FloatingIndicator:
                     logger.debug(f"浮标位置: {window_pos}")
 
             window = sg.Window("", **window_kwargs)  # title 作为位置参数
-            
+
             logger.debug("浮标窗口已创建")
-            
+
             return window
         except Exception as e:
             logger.error(f"创建悬浮窗口失败: {e}")
@@ -245,7 +281,7 @@ class FloatingIndicator:
     def show(self, cursor_pos: tuple = None):
         """
         显示悬浮指示器
-        
+
         Args:
             cursor_pos: (x, y) 输入框光标位置，若提供则优先在光标处显示浮标
         """
@@ -270,9 +306,14 @@ class FloatingIndicator:
             self.is_visible = True
             self.is_recording = True
             self.recording_start_time = time.time()
-            
+
             # 启动 CursorTracker（仅 Windows，仅在未提供 cursor_pos 时）
-            if IS_WINDOWS and CURSOR_TRACKER_AVAILABLE and self._cursor_tracker is None and not cursor_pos:
+            if (
+                IS_WINDOWS
+                and CURSOR_TRACKER_AVAILABLE
+                and self._cursor_tracker is None
+                and not cursor_pos
+            ):
                 try:
                     self._cursor_tracker = _CursorTracker(poll_interval=0.15)
                     self._cursor_tracker.start(callback=self._on_cursor_position_update)
@@ -280,7 +321,7 @@ class FloatingIndicator:
                 except Exception as e:
                     logger.warning(f"启动 CursorTracker 失败: {e}")
                     self._cursor_tracker = None
-            
+
             # 确保窗口显示
             try:
                 if self.window.TKroot:
@@ -345,7 +386,7 @@ class FloatingIndicator:
         if self.window and self.is_visible:
             try:
                 self.window["-STATUS-"].update(status, text_color=color)
-            except:
+            except Exception:
                 pass
 
     def set_icon(self, icon: str):
@@ -358,7 +399,7 @@ class FloatingIndicator:
         if self.window and self.is_visible:
             try:
                 self.window["-ICON-"].update(icon)
-            except:
+            except Exception:
                 pass
 
     def _update_loop(self):
@@ -386,7 +427,10 @@ class FloatingIndicator:
                         current_level, peak_level = self.audio_callback()
                         if current_level is not None:
                             self.current_level = int(current_level)
-                            self._pending_volume_update = (self.current_level, int(peak_level) if peak_level else self.current_level)
+                            self._pending_volume_update = (
+                                self.current_level,
+                                int(peak_level) if peak_level else self.current_level,
+                            )
                     except Exception as e:
                         logger.debug(f"获取音量失败: {e}")
 
@@ -399,7 +443,10 @@ class FloatingIndicator:
     def update_volume(self, current_level: float, peak_level: float = None):
         """外部调用: 更新音量显示"""
         self.current_level = int(current_level)
-        self._pending_volume_update = (self.current_level, int(peak_level) if peak_level else self.current_level)
+        self._pending_volume_update = (
+            self.current_level,
+            int(peak_level) if peak_level else self.current_level,
+        )
 
     def process_events(self, timeout: int = 0):
         """
@@ -414,7 +461,7 @@ class FloatingIndicator:
         with self._window_lock:
             if not self.window or not self.is_visible:
                 return
-                
+
             try:
                 event, values = self.window.read(timeout=max(0, min(100, timeout)))
 
@@ -422,7 +469,7 @@ class FloatingIndicator:
                     if event == sg.WIN_CLOSED:
                         self.window = None
                         self.is_visible = False
-                
+
                 # 检查后台线程是否有待处理的计时器更新
                 if self._pending_timer_update and self.window:
                     try:
@@ -430,7 +477,7 @@ class FloatingIndicator:
                         self._pending_timer_update = None  # 清除待处理更新
                     except Exception as e:
                         logger.debug(f"计时器更新失败: {e}")
-                
+
                 # 检查后台线程是否有待处理的音量更新
                 if self._pending_volume_update and self.window:
                     try:
@@ -442,7 +489,7 @@ class FloatingIndicator:
                         self._pending_volume_update = None  # 清除待处理更新
                     except Exception as e:
                         logger.debug(f"音量更新失败: {e}")
-                
+
                 # 处理位置更新（跟随光标）
                 if self._pending_position_update and self.window:
                     try:
@@ -450,15 +497,17 @@ class FloatingIndicator:
                         # 只有位置变化时才移动窗口（减少闪烁）
                         try:
                             current_geom = self.window.TKroot.geometry()
-                            parts = current_geom.split('+')
+                            parts = current_geom.split("+")
                             if len(parts) >= 3:
                                 current_loc = (int(parts[1]), int(parts[2]))
                             else:
                                 current_loc = None
-                        except:
+                        except Exception:
                             current_loc = None
-                        
-                        if current_loc is None or (abs(current_loc[0] - new_x) > 5 or abs(current_loc[1] - new_y) > 5):
+
+                        if current_loc is None or (
+                            abs(current_loc[0] - new_x) > 5 or abs(current_loc[1] - new_y) > 5
+                        ):
                             self.window.move(new_x, new_y)
                         self._pending_position_update = None
                     except Exception as e:
@@ -506,16 +555,16 @@ class ProcessingIndicator:
         self.animation_frame = 0
         self.animation_thread: Optional[threading.Thread] = None
         self.stop_animation = False
-        
+
         # Thread safety lock for window operations
         self._window_lock = threading.Lock()
-        
+
         # 待处理的图标更新(线程安全)
         self._pending_icon_update: Optional[str] = None
         self.position = None  # (x, y)
         self.last_mouse_pos = None  # (x, y)
         self.cursor_pos = None  # (x, y) - 光标位置
-        
+
         # CursorTracker（仅 Windows，自动跟踪输入光标）
         self._cursor_tracker = None
         self._last_tracker_pos = None  # tracker 返回的最新位置
@@ -536,7 +585,7 @@ class ProcessingIndicator:
     def _on_cursor_position_update(self, x: int, y: int, window_title: str):
         """
         CursorTracker 回调：新的光标位置可用
-        
+
         Args:
             x, y: 光标屏幕坐标
             window_title: 当前窗口标题
@@ -546,28 +595,30 @@ class ProcessingIndicator:
         indicator_y = y - 50
         self._last_tracker_pos = (indicator_x, indicator_y)
         self._pending_position_update = (indicator_x, indicator_y)
-        logger.debug(f"Tracker 光标(Processing): ({x}, {y}) -> 浮标: ({indicator_x}, {indicator_y})")
+        logger.debug(
+            f"Tracker 光标(Processing): ({x}, {y}) -> 浮标: ({indicator_x}, {indicator_y})"
+        )
 
     def _calculate_window_position(self, pos: tuple = None) -> tuple:
         """
         根据光标位置计算窗口位置
-        
+
         Args:
             pos: (x, y) 光标位置
-            
+
         Returns:
             (x, y) 窗口位置 - 显示在光标右上方
         """
         if pos:
             x, y = pos
             return (x + 10, y - 50)
-        
+
         if self.follow_mouse:
             mouse_pos = self._get_mouse_position()
             if mouse_pos:
                 x, y = mouse_pos
                 return (x + 10, y - 50)
-        
+
         return (1200, 100)
 
     def _create_window(self) -> Optional[sg.Window]:
@@ -580,10 +631,23 @@ class ProcessingIndicator:
             bg_color = "#1a1a1a"
 
             layout = [
-                [sg.Text("⏳", font=("Helvetica", 12), key="-ICON-",
-                         background_color=bg_color, pad=(2, 0)),
-                 sg.Text("处理中", font=("Helvetica", 8), key="-STATUS-",
-                         text_color="#4ecdc4", background_color=bg_color, pad=(2, 0))],
+                [
+                    sg.Text(
+                        "⏳",
+                        font=("Helvetica", 12),
+                        key="-ICON-",
+                        background_color=bg_color,
+                        pad=(2, 0),
+                    ),
+                    sg.Text(
+                        "处理中",
+                        font=("Helvetica", 8),
+                        key="-STATUS-",
+                        text_color="#4ecdc4",
+                        background_color=bg_color,
+                        pad=(2, 0),
+                    ),
+                ],
             ]
 
             window_kwargs = {
@@ -621,7 +685,7 @@ class ProcessingIndicator:
     def show(self, cursor_pos: tuple = None):
         """
         显示处理中指示器
-        
+
         Args:
             cursor_pos: (x, y) 输入框光标位置
         """
@@ -639,9 +703,14 @@ class ProcessingIndicator:
                 return
 
             self.is_visible = True
-            
+
             # 启动 CursorTracker（仅 Windows，仅在未提供 cursor_pos 时）
-            if IS_WINDOWS and CURSOR_TRACKER_AVAILABLE and self._cursor_tracker is None and not cursor_pos:
+            if (
+                IS_WINDOWS
+                and CURSOR_TRACKER_AVAILABLE
+                and self._cursor_tracker is None
+                and not cursor_pos
+            ):
                 try:
                     self._cursor_tracker = _CursorTracker(poll_interval=0.15)
                     self._cursor_tracker.start(callback=self._on_cursor_position_update)
@@ -649,7 +718,7 @@ class ProcessingIndicator:
                 except Exception as e:
                     logger.warning(f"启动 CursorTracker 失败: {e}")
                     self._cursor_tracker = None
-            
+
             # 确保窗口显示
             try:
                 if self.window.TKroot:
@@ -726,7 +795,7 @@ class ProcessingIndicator:
                     # 不直接调用 window.write_event_value() 以避免线程冲突
                     self._pending_icon_update = icon
                     self.animation_frame += 1
-                
+
                 # 跟随鼠标位置（每 5 次迭代检查一次）
                 mouse_update_counter += 1
                 if mouse_update_counter >= 5 and self.follow_mouse:
@@ -736,12 +805,12 @@ class ProcessingIndicator:
                         if mouse_pos and mouse_pos != self.last_mouse_pos:
                             self.last_mouse_pos = mouse_pos
                             new_pos = self._calculate_window_position(mouse_pos)
-                            
+
                             # 在线程安全的方式下更新窗口位置
                             with self._window_lock:
                                 if self.window and self.is_visible:
                                     try:
-                                        if hasattr(self.window, 'move'):
+                                        if hasattr(self.window, "move"):
                                             self.window.move(new_pos[0], new_pos[1])
                                         elif self.window.TKroot:
                                             self.window.TKroot.geometry(
@@ -751,7 +820,7 @@ class ProcessingIndicator:
                                         logger.debug(f"更新窗口位置失败: {e}")
                     except Exception as e:
                         logger.debug(f"跟随鼠标时出错: {e}")
-                
+
                 time.sleep(0.5)
             except Exception as e:
                 logger.error(f"动画循环出错: {e}")
@@ -765,7 +834,7 @@ class ProcessingIndicator:
         with self._window_lock:
             if not self.window or not self.is_visible:
                 return
-                
+
             try:
                 event, values = self.window.read(timeout=max(0, min(100, timeout)))
 
@@ -773,7 +842,7 @@ class ProcessingIndicator:
                     if event == sg.WIN_CLOSED:
                         self.window = None
                         self.is_visible = False
-                
+
                 # 检查后台线程是否有待处理的图标更新
                 if self._pending_icon_update and self.window:
                     try:
@@ -781,22 +850,24 @@ class ProcessingIndicator:
                         self._pending_icon_update = None  # 清除待处理更新
                     except Exception as e:
                         logger.debug(f"图标更新失败: {e}")
-                
+
                 # 处理位置更新（跟随光标）
                 if self._pending_position_update and self.window:
                     try:
                         new_x, new_y = self._pending_position_update
                         try:
                             current_geom = self.window.TKroot.geometry()
-                            parts = current_geom.split('+')
+                            parts = current_geom.split("+")
                             if len(parts) >= 3:
                                 current_loc = (int(parts[1]), int(parts[2]))
                             else:
                                 current_loc = None
-                        except:
+                        except Exception:
                             current_loc = None
-                        
-                        if current_loc is None or (abs(current_loc[0] - new_x) > 5 or abs(current_loc[1] - new_y) > 5):
+
+                        if current_loc is None or (
+                            abs(current_loc[0] - new_x) > 5 or abs(current_loc[1] - new_y) > 5
+                        ):
                             self.window.move(new_x, new_y)
                         self._pending_position_update = None
                     except Exception as e:
@@ -808,6 +879,6 @@ class ProcessingIndicator:
 
 # 导出
 if PYSIMPLEGUI_AVAILABLE:
-    __all__ = ['FloatingIndicator', 'ProcessingIndicator']
+    __all__ = ["FloatingIndicator", "ProcessingIndicator"]
 else:
     __all__ = []

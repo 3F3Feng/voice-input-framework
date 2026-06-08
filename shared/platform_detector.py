@@ -7,7 +7,7 @@ Voice Input Framework - 统一平台检测模块
 
 使用方式:
     from shared.platform_detector import detect_platform, get_platform_info
-    
+
     platform = detect_platform()
     print(platform.best_backend)  # "mlx" | "cuda" | "mps" | "cpu"
     print(platform.recommended_models)  # ["qwen_asr_mlx_native_small", ...]
@@ -25,40 +25,42 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CUDADeviceInfo:
     """CUDA 设备信息"""
-    name: str                           # "NVIDIA RTX 4090"
-    memory_gb: float                    # 24.0
-    driver_version: str                 # "550.0"
-    compute_capability: str             # "8.9"
-    cuda_version: str                   # "12.4"
+
+    name: str  # "NVIDIA RTX 4090"
+    memory_gb: float  # 24.0
+    driver_version: str  # "550.0"
+    compute_capability: str  # "8.9"
+    cuda_version: str  # "12.4"
 
 
 @dataclass
 class PlatformInfo:
     """平台硬件信息"""
+
     # 系统信息
-    system: str                         # "Darwin", "Windows", "Linux"
-    arch: str                           # "arm64", "x86_64"
-    python_version: str                 # "3.11.0"
-    
+    system: str  # "Darwin", "Windows", "Linux"
+    arch: str  # "arm64", "x86_64"
+    python_version: str  # "3.11.0"
+
     # 平台标志
-    is_apple_silicon: bool              # ARM64 + macOS
-    is_macos: bool                      # macOS (any arch)
-    is_windows: bool                    # Windows
-    is_linux: bool                      # Linux
-    
+    is_apple_silicon: bool  # ARM64 + macOS
+    is_macos: bool  # macOS (any arch)
+    is_windows: bool  # Windows
+    is_linux: bool  # Linux
+
     # 硬件加速
-    has_mlx: bool                       # mlx 库可用 (Apple Silicon)
-    has_cuda: bool                      # CUDA 可用 (NVIDIA GPU)
-    has_mps: bool                       # MPS (Metal Performance Shaders) 可用
+    has_mlx: bool  # mlx 库可用 (Apple Silicon)
+    has_cuda: bool  # CUDA 可用 (NVIDIA GPU)
+    has_mps: bool  # MPS (Metal Performance Shaders) 可用
     cuda_device: Optional[CUDADeviceInfo] = None  # CUDA 设备信息
-    
+
     # 系统资源
-    cpu_cores: int = 0                  # CPU 核心数
-    ram_gb: float = 0.0                 # 系统内存 (GB)
-    
+    cpu_cores: int = 0  # CPU 核心数
+    ram_gb: float = 0.0  # 系统内存 (GB)
+
     # 检测状态
     detection_errors: list[str] = field(default_factory=list)
-    
+
     @property
     def best_backend(self) -> str:
         """返回最优后端: mlx > cuda > mps > cpu"""
@@ -70,7 +72,7 @@ class PlatformInfo:
             return "mps"
         else:
             return "cpu"
-    
+
     @property
     def gpu_info(self) -> str:
         """返回 GPU 信息字符串"""
@@ -82,66 +84,80 @@ class PlatformInfo:
             return "Apple Silicon GPU (MLX)"
         else:
             return "No GPU acceleration"
-    
+
     def get_recommended_stt_models(self) -> list[str]:
         """返回推荐的 STT 模型列表（按优先级排序）"""
         models = []
-        
+
         if self.is_apple_silicon and self.has_mlx:
             # Apple Silicon: 优先 MLX 模型
-            models.extend([
-                "qwen_asr_mlx_native_small",  # 0.5GB, 最快
-                "qwen_asr_mlx_native",         # 1.0GB, 更准
-                "whisper_mlx_small",           # 0.5GB, 备选
-                "whisper_mlx_turbo",           # 2.0GB, 平衡
-            ])
+            models.extend(
+                [
+                    "qwen_asr_mlx_native_small",  # 0.5GB, 最快
+                    "qwen_asr_mlx_native",  # 1.0GB, 更准
+                    "whisper_mlx_small",  # 0.5GB, 备选
+                    "whisper_mlx_turbo",  # 2.0GB, 平衡
+                ]
+            )
         elif self.has_cuda:
             # NVIDIA GPU: 优先 CUDA 模型
             if self.cuda_device and self.cuda_device.memory_gb >= 8:
-                models.extend([
-                    "qwen_asr_cuda",            # 3.5GB, 大模型
-                    "qwen_asr_cuda_small",      # 1.5GB, 小模型
-                ])
+                models.extend(
+                    [
+                        "qwen_asr_cuda",  # 3.5GB, 大模型
+                        "qwen_asr_cuda_small",  # 1.5GB, 小模型
+                    ]
+                )
             else:
-                models.extend([
-                    "qwen_asr_cuda_small",      # 1.5GB, 小模型
-                    "qwen_asr_cuda",            # 3.5GB, 大模型
-                ])
-            models.append("whisper_turbo")      # 3GB, 通用备选
+                models.extend(
+                    [
+                        "qwen_asr_cuda_small",  # 1.5GB, 小模型
+                        "qwen_asr_cuda",  # 3.5GB, 大模型
+                    ]
+                )
+            models.append("whisper_turbo")  # 3GB, 通用备选
         else:
             # CPU: 只能用 transformers 模型
-            models.extend([
-                "whisper_turbo",                # 3GB, 通用
-            ])
-        
+            models.extend(
+                [
+                    "whisper_turbo",  # 3GB, 通用
+                ]
+            )
+
         return models
-    
+
     def get_recommended_llm_models(self) -> list[str]:
         """返回推荐的 LLM 模型列表（按优先级排序）"""
         models = []
-        
+
         if self.is_apple_silicon and self.has_mlx:
-            models.extend([
-                "qwen3.5-4b-mlx",              # MLX 量化，2.5GB
-                "qwen3.5-2b-mlx",              # MLX 量化，1.5GB
-            ])
+            models.extend(
+                [
+                    "qwen3.5-4b-mlx",  # MLX 量化，2.5GB
+                    "qwen3.5-2b-mlx",  # MLX 量化，1.5GB
+                ]
+            )
         elif self.has_cuda:
             if self.cuda_device and self.cuda_device.memory_gb >= 16:
-                models.extend([
-                    "qwen3.5-4b-cuda",          # FP16, 8GB
-                    "qwen3.5-2b-cuda",          # FP16, 4GB
-                ])
+                models.extend(
+                    [
+                        "qwen3.5-4b-cuda",  # FP16, 8GB
+                        "qwen3.5-2b-cuda",  # FP16, 4GB
+                    ]
+                )
             else:
-                models.extend([
-                    "qwen3.5-2b-cuda-int8",     # int8 量化, 2GB
-                    "qwen3.5-4b-cuda-int8",     # int8 量化, 4GB
-                ])
+                models.extend(
+                    [
+                        "qwen3.5-2b-cuda-int8",  # int8 量化, 2GB
+                        "qwen3.5-4b-cuda-int8",  # int8 量化, 4GB
+                    ]
+                )
         else:
             # CPU: 不推荐运行 LLM
             pass
-        
+
         return models
-    
+
     def summary(self) -> str:
         """返回平台信息摘要"""
         lines = [
@@ -151,13 +167,15 @@ class PlatformInfo:
             f"GPU: {self.gpu_info}",
             f"Backend: {self.best_backend}",
         ]
-        
+
         if self.has_cuda and self.cuda_device:
-            lines.append(f"CUDA: {self.cuda_device.cuda_version}, Driver: {self.cuda_device.driver_version}")
-        
+            lines.append(
+                f"CUDA: {self.cuda_device.cuda_version}, Driver: {self.cuda_device.driver_version}"
+            )
+
         if self.detection_errors:
             lines.append(f"Warnings: {'; '.join(self.detection_errors)}")
-        
+
         return "\n".join(lines)
 
 
@@ -165,6 +183,7 @@ def _detect_mlx() -> bool:
     """检测 MLX 是否可用"""
     try:
         import mlx.core
+
         return True
     except ImportError:
         return False
@@ -174,38 +193,42 @@ def _detect_cuda() -> tuple[bool, Optional[CUDADeviceInfo]]:
     """检测 CUDA 是否可用，返回 (available, device_info)"""
     try:
         import torch
+
         if not torch.cuda.is_available():
             return False, None
-        
+
         device = torch.cuda.get_device_properties(0)
-        
+
         # 获取 CUDA 版本
         cuda_version = torch.version.cuda or "unknown"
-        
+
         # 获取驱动版本（通过 nvidia-smi）
         driver_version = "unknown"
         try:
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 driver_version = result.stdout.strip().split("\n")[0]
         except (subprocess.TimeoutExpired, FileNotFoundError):
             # 尝试从 torch 获取
-            if hasattr(torch.cuda, 'driver_version'):
+            if hasattr(torch.cuda, "driver_version"):
                 driver_version = str(torch.cuda.driver_version())
-        
+
         device_info = CUDADeviceInfo(
             name=device.name,
-            memory_gb=getattr(device, 'total_memory', getattr(device, 'total_mem', 0)) / (1024 ** 3),  # bytes to GB
+            memory_gb=getattr(device, "total_memory", getattr(device, "total_mem", 0))
+            / (1024**3),  # bytes to GB
             driver_version=driver_version,
             compute_capability=f"{device.major}.{device.minor}",
             cuda_version=cuda_version,
         )
-        
+
         return True, device_info
-        
+
     except ImportError:
         return False, None
     except Exception as e:
@@ -217,7 +240,8 @@ def _detect_mps() -> bool:
     """检测 MPS (Metal Performance Shaders) 是否可用"""
     try:
         import torch
-        return hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()
+
+        return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
     except ImportError:
         return False
     except Exception:
@@ -227,24 +251,24 @@ def _detect_mps() -> bool:
 def _get_system_resources() -> tuple[int, float]:
     """获取系统资源信息: (cpu_cores, ram_gb)"""
     import os
-    
+
     cpu_cores = os.cpu_count() or 0
     ram_gb = 0.0
-    
+
     try:
         import psutil
-        ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+
+        ram_gb = psutil.virtual_memory().total / (1024**3)
     except ImportError:
         # psutil 不可用，尝试其他方法
         try:
             if platform.system() == "Darwin":
                 result = subprocess.run(
-                    ["sysctl", "-n", "hw.memsize"],
-                    capture_output=True, text=True, timeout=5
+                    ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5
                 )
                 if result.returncode == 0:
                     ram_bytes = int(result.stdout.strip())
-                    ram_gb = ram_bytes / (1024 ** 3)
+                    ram_gb = ram_bytes / (1024**3)
             elif platform.system() == "Linux":
                 with open("/proc/meminfo", "r") as f:
                     for line in f:
@@ -253,11 +277,11 @@ def _get_system_resources() -> tuple[int, float]:
                             parts = line.split()
                             if len(parts) >= 2:
                                 ram_kb = int(parts[1])
-                                ram_gb = ram_kb / (1024 ** 2)
+                                ram_gb = ram_kb / (1024**2)
                             break
         except Exception:
             pass
-    
+
     return cpu_cores, ram_gb
 
 
@@ -268,55 +292,55 @@ _platform_info: Optional[PlatformInfo] = None
 def detect_platform(force_redetect: bool = False) -> PlatformInfo:
     """
     检测当前平台信息
-    
+
     Args:
         force_redetect: 强制重新检测（忽略缓存）
-    
+
     Returns:
         PlatformInfo 对象
     """
     global _platform_info
-    
+
     if _platform_info is not None and not force_redetect:
         return _platform_info
-    
+
     errors = []
-    
+
     # 系统信息
     system = platform.system()  # "Darwin", "Windows", "Linux"
-    arch = platform.machine()   # "arm64", "x86_64"
+    arch = platform.machine()  # "arm64", "x86_64"
     python_version = platform.python_version()
-    
+
     # 平台标志
     is_macos = system == "Darwin"
     is_windows = system == "Windows"
     is_linux = system == "Linux"
     is_apple_silicon = is_macos and arch == "arm64"
-    
+
     # 硬件加速检测
     has_mlx = False
     has_cuda = False
     has_mps = False
     cuda_device = None
-    
+
     # 检测 MLX
     try:
         has_mlx = _detect_mlx()
     except Exception as e:
         errors.append(f"MLX detection failed: {e}")
-    
+
     # 检测 CUDA
     try:
         has_cuda, cuda_device = _detect_cuda()
     except Exception as e:
         errors.append(f"CUDA detection failed: {e}")
-    
+
     # 检测 MPS
     try:
         has_mps = _detect_mps()
     except Exception as e:
         errors.append(f"MPS detection failed: {e}")
-    
+
     # 系统资源
     try:
         cpu_cores, ram_gb = _get_system_resources()
@@ -324,7 +348,7 @@ def detect_platform(force_redetect: bool = False) -> PlatformInfo:
         errors.append(f"Resource detection failed: {e}")
         cpu_cores = 0
         ram_gb = 0.0
-    
+
     _platform_info = PlatformInfo(
         system=system,
         arch=arch,
@@ -341,9 +365,9 @@ def detect_platform(force_redetect: bool = False) -> PlatformInfo:
         ram_gb=ram_gb,
         detection_errors=errors,
     )
-    
+
     logger.info(f"Platform detected:\n{_platform_info.summary()}")
-    
+
     return _platform_info
 
 
@@ -375,16 +399,16 @@ def has_mlx() -> bool:
 def get_startup_banner(service_name: str = "STT Service", extra_info: dict = None) -> str:
     """
     生成启动横幅
-    
+
     Args:
         service_name: 服务名称
         extra_info: 额外信息字典
-    
+
     Returns:
         格式化的启动横幅字符串
     """
     info = detect_platform()
-    
+
     lines = [
         "=" * 60,
         f"Voice Input Framework - {service_name}",
@@ -398,24 +422,28 @@ def get_startup_banner(service_name: str = "STT Service", extra_info: dict = Non
         f"  GPU:        {info.gpu_info}",
         f"  Backend:    {info.best_backend}",
     ]
-    
+
     if info.has_cuda and info.cuda_device:
-        lines.extend([
-            f"  CUDA:       {info.cuda_device.cuda_version}",
-            f"  Driver:     {info.cuda_device.driver_version}",
-            f"  GPU Memory: {info.cuda_device.memory_gb:.1f} GB",
-        ])
-    
+        lines.extend(
+            [
+                f"  CUDA:       {info.cuda_device.cuda_version}",
+                f"  Driver:     {info.cuda_device.driver_version}",
+                f"  GPU Memory: {info.cuda_device.memory_gb:.1f} GB",
+            ]
+        )
+
     if extra_info:
         lines.append("")
         for key, value in extra_info.items():
             lines.append(f"  {key}: {value}")
-    
-    lines.extend([
-        "",
-        "=" * 60,
-    ])
-    
+
+    lines.extend(
+        [
+            "",
+            "=" * 60,
+        ]
+    )
+
     return "\n".join(lines)
 
 
@@ -426,12 +454,12 @@ def check_resource_requirements(
 ) -> dict:
     """
     检查资源是否满足要求
-    
+
     Args:
         model_name: 模型名称
         required_memory_gb: 需要的内存/显存 (GB)
         platform_info: 平台信息，如果为 None 则自动检测
-    
+
     Returns:
         dict: {
             "passed": bool,
@@ -442,11 +470,11 @@ def check_resource_requirements(
     """
     if platform_info is None:
         platform_info = detect_platform()
-    
+
     warnings = []
     gpu_available = 0.0
     ram_available = platform_info.ram_gb
-    
+
     # 检查 GPU 显存
     if platform_info.has_cuda and platform_info.cuda_device:
         gpu_available = platform_info.cuda_device.memory_gb
@@ -455,16 +483,15 @@ def check_resource_requirements(
                 f"Model {model_name} requires {required_memory_gb}GB VRAM, "
                 f"but only {gpu_available}GB available. May cause OOM."
             )
-    
+
     # 检查系统内存
     if platform_info.ram_gb > 0:
         total_required = required_memory_gb + 2.0  # 预留 2GB 给系统
         if total_required > platform_info.ram_gb:
             warnings.append(
-                f"May need {total_required}GB RAM, "
-                f"but only {platform_info.ram_gb:.1f}GB available"
+                f"May need {total_required}GB RAM, but only {platform_info.ram_gb:.1f}GB available"
             )
-    
+
     return {
         "passed": len(warnings) == 0,
         "warnings": warnings,
@@ -491,12 +518,12 @@ if __name__ == "__main__":
     print("\nRecommended LLM Models:")
     for model in info.get_recommended_llm_models():
         print(f"  - {model}")
-    
+
     # 测试启动横幅
     print("\n" + get_startup_banner("Test Service", {"Default Model": "whisper_turbo"}))
-    
+
     # 测试资源检查
     result = check_resource_requirements("whisper_turbo", 3.0)
     print(f"\nResource Check: {'PASSED' if result['passed'] else 'FAILED'}")
-    for w in result['warnings']:
+    for w in result["warnings"]:
         print(f"  Warning: {w}")

@@ -11,9 +11,8 @@
 
 import logging
 import queue
-import threading
 import time
-from typing import Optional, Callable
+from typing import Optional
 
 import numpy as np
 
@@ -28,9 +27,12 @@ AUDIO_CHUNK_SIZE = 1024
 class AudioRecorder:
     """音频录制器 — 封装 sounddevice 录制逻辑"""
 
-    def __init__(self, sample_rate: int = AUDIO_SAMPLE_RATE,
-                 channels: int = AUDIO_CHANNELS,
-                 chunk_size: int = AUDIO_CHUNK_SIZE):
+    def __init__(
+        self,
+        sample_rate: int = AUDIO_SAMPLE_RATE,
+        channels: int = AUDIO_CHANNELS,
+        chunk_size: int = AUDIO_CHUNK_SIZE,
+    ):
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_size = chunk_size
@@ -82,10 +84,11 @@ class AudioRecorder:
         """
         try:
             import sounddevice as sd
+
             devices = sd.query_devices()
             input_devices = {}
             for i, device in enumerate(devices):
-                if device['max_input_channels'] > 0:
+                if device["max_input_channels"] > 0:
                     input_devices[i] = f"{device['name']}"
             return input_devices if input_devices else {-1: "默认设备"}
         except Exception as e:
@@ -131,7 +134,7 @@ class AudioRecorder:
                 device=self._selected_device,
                 samplerate=self.sample_rate,
                 channels=self.channels,
-                dtype='int16',
+                dtype="int16",
                 blocksize=self.chunk_size,
                 callback=callback,
             )
@@ -187,7 +190,7 @@ class AudioRecorder:
             if not self._audio_buffer:
                 return 0, 0
 
-            last_chunk = self._audio_buffer[-1] if self._audio_buffer else b''
+            last_chunk = self._audio_buffer[-1] if self._audio_buffer else b""
             if not last_chunk:
                 return 0, 0
 

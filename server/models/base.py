@@ -14,41 +14,42 @@ logger = logging.getLogger(__name__)
 
 class STTEngineError(Exception):
     """STT 引擎相关错误"""
+
     pass
 
 
 class BaseSTTEngine(ABC):
     """
     STT 引擎抽象基类
-    
+
     所有 STT 模型实现必须继承此类并实现其方法。
     """
-    
+
     def __init__(self, model_name: str, device: str = "auto"):
         self.model_name = model_name
         self.device = device
         self._model = None
         self._is_loaded = False
         self._lock = asyncio.Lock()
-        
+
         # 如果 device 是 "auto"，自动检测最优设备
         if device == "auto":
             self.device = self.detect_device()
-    
+
     @property
     def is_loaded(self) -> bool:
         return self._is_loaded
-    
+
     @abstractmethod
     async def load(self) -> None:
         """加载模型"""
         pass
-    
+
     @abstractmethod
     async def unload(self) -> None:
         """卸载模型"""
         pass
-    
+
     @abstractmethod
     async def transcribe(
         self,
@@ -58,7 +59,7 @@ class BaseSTTEngine(ABC):
     ) -> "TranscriptionResult":
         """转写音频数据"""
         pass
-    
+
     @abstractmethod
     async def transcribe_stream(
         self,
@@ -68,7 +69,7 @@ class BaseSTTEngine(ABC):
     ) -> AsyncIterator["TranscriptionResult"]:
         """流式转写音频流"""
         pass
-    
+
     async def transcribe_with_lock(
         self,
         audio_data: bytes,
@@ -80,22 +81,23 @@ class BaseSTTEngine(ABC):
             if not self._is_loaded:
                 await self.load()
             return await self.transcribe(audio_data, language, sample_rate)
-    
+
     @staticmethod
     def detect_device() -> str:
         """自动检测可用设备
-        
+
         使用统一平台检测模块，返回最优设备:
         - "cuda": NVIDIA GPU
         - "mps": Apple Silicon GPU (Metal Performance Shaders)
         - "cpu": CPU (无 GPU 加速)
-        
+
         注意: MLX 引擎不使用此方法，它们有自己的加载逻辑
         """
         try:
             from shared.platform_detector import detect_platform
+
             platform_info = detect_platform()
-            
+
             if platform_info.has_cuda:
                 return "cuda"
             elif platform_info.has_mps:
@@ -106,20 +108,22 @@ class BaseSTTEngine(ABC):
             # 降级到 torch 检测
             try:
                 import torch
+
                 if torch.cuda.is_available():
                     return "cuda"
-                elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                     return "mps"
                 else:
                     return "cpu"
             except ImportError:
                 return "cpu"
-    
+
     @staticmethod
     def get_platform_info() -> dict:
         """获取平台信息（用于日志和调试）"""
         try:
             from shared.platform_detector import detect_platform
+
             platform_info = detect_platform()
             return {
                 "system": platform_info.system,
@@ -132,7 +136,7 @@ class BaseSTTEngine(ABC):
             }
         except ImportError:
             return {"error": "platform_detector not available"}
-    
+
     def get_model_info(self) -> dict:
         """获取模型信息"""
         return {
