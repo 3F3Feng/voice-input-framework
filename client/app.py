@@ -274,8 +274,18 @@ class VoiceInputApp:
 
         # 热键
         self.hotkey_manager.set_hotkey(self.config.hotkey)
-        self.hotkey_manager.on_press = lambda: self._async_task(self._start_recording())
-        self.hotkey_manager.on_release = lambda: self._async_task(self._stop_recording())
+        self.hotkey_manager.start_listener(
+            on_press=lambda: self._async_task(self._start_recording()),
+            on_release=lambda: self._async_task(self._stop_recording()),
+        )
+
+    def _on_hotkey_recorded(self, hotkey: str, window):
+        """快捷键录制完成后的回调"""
+        window["-HOTKEY-"].update(hotkey)
+        self.config.hotkey = hotkey
+        self.config.save()
+        self.hotkey_manager.set_hotkey(hotkey)
+        self.window.log(f"快捷键已录制并应用: {hotkey}")
 
         # 自动连接
         self._async_task(self._connect())
@@ -355,18 +365,23 @@ class VoiceInputApp:
             self.window.log(f"快捷键已更新: {hotkey}")
 
         elif event == "-RECORD-HOTKEY-":
-            self.hotkey_manager.start_recording(lambda k: window["-HOTKEY-"].update(k))
+            self.hotkey_manager.start_recording(
+                lambda k: self._on_hotkey_recorded(k, window)
+            )
 
         elif event == "-CLEAR-HOTKEY-":
             window["-HOTKEY-"].update("")
+            self.config.hotkey = ""
+            self.config.save()
+            self.window.log("快捷键已清除")
 
         elif event == "-PRESET-":
             name = values.get("-PRESET-")
             if name:
-                preset = HotkeyPresets.get_hotkey(name)
+                preset = HotkeyPresets.get_preset(name)
                 if preset:
-                    window["-HOTKEY-"].update(preset)
-                    self.window.log(f"预设 {name} 已应用: {preset}")
+                    window["-HOTKEY-"].update(preset["hotkey"])
+                    self.window.log(f"预设 {name} 已应用: {preset['hotkey']}")
 
         elif event == "-APPLY-PRESET-":
             self._handle_event("-UPDATE-HOTKEY-", values, window)
@@ -441,6 +456,9 @@ class VoiceInputApp:
         self.is_running = False
         if self.async_loop:
             self.async_loop.call_soon_threadsafe(self.async_loop.stop)
+        self.hotkey_manager.stop_listener()
+        if hasattr(self, "tray") and self.tray:
+            self.tray.stop()
         if hasattr(self, "window") and self.window and hasattr(self.window, "_window"):
             self.window.close()
         logger.info("客户端已关闭")
