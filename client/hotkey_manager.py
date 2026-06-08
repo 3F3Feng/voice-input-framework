@@ -11,10 +11,28 @@ Voice Input Framework - 快捷键管理模块
 """
 
 import logging
-from typing import Optional, Callable, Set, Dict, List, Tuple
-from pynput import keyboard
+from typing import Any, Optional, Callable, Set, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+# Lazy pynput import - only loaded when needed
+keyboard = None  # Will be lazily initialized
+
+def _get_keyboard():
+    """延迟加载 pynput.keyboard，避免导入失败导致应用崩溃"""
+    global keyboard
+    if keyboard is None:
+        try:
+            import pynput.keyboard as kb
+            keyboard = kb
+        except ImportError:
+            logger.warning("pynput 未安装，快捷键功能不可用")
+            return None
+        except Exception as e:
+            logger.error(f"加载 pynput 失败: {e}")
+            return None
+    return keyboard
 
 
 # 左右修饰键的 KeyCode (跨平台)
@@ -227,6 +245,10 @@ class HotkeyManager:
             on_press: 快捷键按下时的回调函数
             on_release: 快捷键释放时的回调函数
         """
+        if not _get_keyboard():
+            logger.warning("pynput 不可用，无法启动快捷键监听器")
+            return
+
         self.on_press_callback = on_press
         self.on_release_callback = on_release
 
@@ -235,12 +257,17 @@ class HotkeyManager:
                 self.listener.stop()
             except Exception:
                 pass
+            self.listener = None
 
-        self.listener = keyboard.Listener(
-            on_press=self._on_key_press, on_release=self._on_key_release
-        )
-        self.listener.start()
-        logger.info("快捷键监听器已启动")
+        try:
+            self.listener = keyboard.Listener(
+                on_press=self._on_key_press, on_release=self._on_key_release
+            )
+            self.listener.start()
+            logger.info("快捷键监听器已启动")
+        except Exception as e:
+            logger.error(f"启动快捷键监听器失败: {e}")
+            self.listener = None
 
     def stop_listener(self):
         """停止快捷键监听器"""
@@ -259,6 +286,9 @@ class HotkeyManager:
         Args:
             callback: 录制完成后的回调函数，参数为快捷键字符串
         """
+        if not _get_keyboard():
+            logger.warning("pynput 不可用，无法录制快捷键")
+            return
         self.is_recording = True
         self.recorded_modifiers = []
         self.recorded_main_key = ""
