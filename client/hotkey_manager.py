@@ -10,6 +10,8 @@ Voice Input Framework - 快捷键管理模块
 - 多套快捷键配置方案
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Any, Optional, Callable, Set, Dict, List, Tuple
 
@@ -17,22 +19,18 @@ logger = logging.getLogger(__name__)
 
 
 # Lazy pynput import - only loaded when needed
-keyboard = None  # Will be lazily initialized
+keyboard = None  # Will be lazily initialized by _load()
 
-def _get_keyboard():
-    """延迟加载 pynput.keyboard，避免导入失败导致应用崩溃"""
+def _load():
+    """延迟加载 pynput.keyboard"""
     global keyboard
-    if keyboard is None:
-        try:
-            import pynput.keyboard as kb
-            keyboard = kb
-        except ImportError:
-            logger.warning("pynput 未安装，快捷键功能不可用")
-            return None
-        except Exception as e:
-            logger.error(f"加载 pynput 失败: {e}")
-            return None
-    return keyboard
+    try:
+        import pynput.keyboard as kb
+        keyboard = kb
+    except ImportError:
+        logger.warning("pynput 未安装，快捷键功能不可用")
+    except Exception as e:
+        logger.error(f"加载 pynput 失败: {e}")
 
 
 # 左右修饰键的 KeyCode (跨平台)
@@ -245,7 +243,8 @@ class HotkeyManager:
             on_press: 快捷键按下时的回调函数
             on_release: 快捷键释放时的回调函数
         """
-        if not _get_keyboard():
+        if keyboard is None: _load()
+        if keyboard is None:
             logger.warning("pynput 不可用，无法启动快捷键监听器")
             return
 
@@ -286,7 +285,8 @@ class HotkeyManager:
         Args:
             callback: 录制完成后的回调函数，参数为快捷键字符串
         """
-        if not _get_keyboard():
+        if keyboard is None: _load()
+        if keyboard is None:
             logger.warning("pynput 不可用，无法录制快捷键")
             return
         self.is_recording = True
