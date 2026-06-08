@@ -176,13 +176,15 @@ class VoiceInputApp:
     async def _start_recording(self):
         self.audio.start_recording(device=self.selected_mic)
         self._hotkey_pressed = True
-        if self.window:
-            self.window.write_event_value("-REC-STARTED-", "")
+        sg_window = self.window.window if self.window else None
+        if sg_window:
+            sg_window.write_event_value("-REC-STARTED-", "")
 
     async def _stop_recording(self):
         self._hotkey_pressed = False
-        if self.window:
-            self.window.write_event_value("-REC-STOPPED-", "")
+        sg_window = self.window.window if self.window else None
+        if sg_window:
+            sg_window.write_event_value("-REC-STOPPED-", "")
 
     def _on_recording_started(self):
         if hasattr(self.window, "floating_indicator") and self.window.floating_indicator:
