@@ -1232,8 +1232,9 @@ async def websocket_stream(websocket: WebSocket):
     )
     logger.info(f"[timing] Ready sent (+{(time.time() - ws_start) * 1000:.0f}ms)")
 
-    try:    audio_queue = asyncio.Queue()
-    asyncio.Event()
+    return_timestamps = False
+    audio_queue = asyncio.Queue()
+    stream_finished = asyncio.Event()
     stream_error = None
     language = "auto"
 
