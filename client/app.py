@@ -283,17 +283,10 @@ class VoiceInputApp:
             TrayMenu(self.window._tray_manager, self._auto_start_manager) if _window else None
         )
 
-        # 热键 (在异步循环启动之后初始化)
-        try:
-            self.hotkey_manager.set_hotkey(self.config.hotkey)
-            self.hotkey_manager.start_listener(
-                on_press=lambda: self._async_task(self._start_recording()),
-                on_release=lambda: self._async_task(self._stop_recording()),
-            )
-            self.window.log("快捷键监听器已启动")
-        except Exception as e:
-            logger.warning(f"快捷键监听器启动失败 (非致命): {e}")
-            self.window.log(f"快捷键不可用: {e}")
+        # 热键 (设置回调但不启动监听器 - pynput 在部分 Windows 环境下会崩溃)
+        self.hotkey_manager.set_hotkey(self.config.hotkey)
+        self.hotkey_manager.on_press = lambda: self._async_task(self._start_recording())
+        self.hotkey_manager.on_release = lambda: self._async_task(self._stop_recording())
 
     def _on_hotkey_recorded(self, hotkey: str, window):
         """快捷键录制完成后的回调"""
