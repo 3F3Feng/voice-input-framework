@@ -273,14 +273,11 @@ class VoiceInputApp:
         )
 
         # 热键
-        try:
-            self.hotkey_manager.set_hotkey(self.config.hotkey)
-            self.hotkey_manager.start_listener(
-                on_press=lambda: self._async_task(self._start_recording()),
-                on_release=lambda: self._async_task(self._stop_recording()),
-            )
-        except Exception as e:
-            logger.warning(f"快捷键初始化失败 (非致命): {e}")
+        self.hotkey_manager.set_hotkey(self.config.hotkey)
+        self.hotkey_manager.start_listener(
+            on_press=lambda: self._async_task(self._start_recording()),
+            on_release=lambda: self._async_task(self._stop_recording()),
+        )
 
     def _on_hotkey_recorded(self, hotkey: str, window):
         """快捷键录制完成后的回调"""
