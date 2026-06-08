@@ -92,6 +92,21 @@ def check_for_updates() -> Optional[VersionInfo]:
     )
 
 
+def format_version_message(version_info: VersionInfo) -> str:
+    """格式化版本信息为可读消息"""
+    lines = [
+        f"当前版本: {version_info.current_version}",
+        f"最新版本: {version_info.latest_version}",
+    ]
+    if version_info.release_notes:
+        lines.append(f"更新内容:\n{version_info.release_notes}")
+    if version_info.download_url:
+        lines.append(f"下载地址: {version_info.download_url}")
+    else:
+        lines.append(f"发布页面: {version_info.release_url}")
+    return "\n".join(lines)
+
+
 class UpdateChecker:
     """后台更新检查器（定时检查 + 回调通知）"""
 
