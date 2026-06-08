@@ -23,6 +23,7 @@ from client.network import SttClient, LlmClient
 from client.ui import MainWindow, TrayMenu, get_input_cursor_position, restore_focus_later
 from client.config_manager import ConfigManager
 from client.hotkey_manager import HotkeyManager, HotkeyPresets
+from client.auto_start import AutoStartManager
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +267,8 @@ class VoiceInputApp:
         time.sleep(0.1)
 
         # 设置托盘
-        self.tray = TrayMenu(self.window._tray_manager) if _window else None
+        self._auto_start_manager = AutoStartManager()
+        self.tray = TrayMenu(self.window._tray_manager, self._auto_start_manager) if _window else None
 
         # 热键
         self.hotkey_manager.set_hotkey(self.config.hotkey)
