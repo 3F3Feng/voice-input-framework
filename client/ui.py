@@ -90,12 +90,17 @@ class MainWindow:
     """主窗口 UI — 负责布局构建和 UI 元素更新"""
 
     def __init__(self, config_manager, audio_devices: dict,
-                 server_host: str, server_port: int):
+                 server_host: str = "localhost", server_port: int = 6544,
+                 audio_level_callback: Callable = None):
         self.config_manager = config_manager
         self.audio_devices = audio_devices
         self.server_host = server_host
         self.server_port = server_port
         self.window: Optional[sg.Window] = None
+        self._tray_manager: Optional[TrayIconManager] = None
+        self.floating_indicator = FloatingIndicator(
+            follow_mouse=False, audio_callback=audio_level_callback or (lambda: (0.0, 0.0))
+        ) if audio_level_callback else None
 
     def build_layout(self) -> list:
         """构建 PySimpleGUI 布局"""
@@ -294,6 +299,9 @@ class MainWindow:
             background_color="#2e2e2e",
             button_color=("white", "#4e4e4e"),
         )
+
+        # 初始化托盘管理器
+        self._tray_manager = TrayIconManager()
 
         return self.window
 
