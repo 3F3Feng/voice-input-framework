@@ -62,7 +62,7 @@ class VoiceInputApp:
         self.hotkey_manager = HotkeyManager()
 
         # UI 回调：音频电平
-        self._get_audio_level = self.audio.get_level
+        self._get_audio_level = self.audio.get_audio_level
 
     def _make_audio_level_callback(self):
         """音量回调包装（兼容悬浮指示器接口）"""
