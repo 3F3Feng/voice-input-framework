@@ -243,6 +243,9 @@ class HotkeyManager:
         except Exception as e:
             logger.error(f"启动快捷键监听器失败: {e}")
             self.listener = None
+        except Exception as e:
+            logger.error(f"启动快捷键监听器失败: {e}")
+            self.listener = None
 
     def stop_listener(self):
         """停止快捷键监听器"""

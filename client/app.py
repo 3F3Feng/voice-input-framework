@@ -8,6 +8,7 @@ Voice Input Framework - 客户端应用控制器
 
 import asyncio
 import logging
+import sys
 import threading
 import time
 from typing import Optional
@@ -22,6 +23,16 @@ from client.hotkey_manager import HotkeyManager, HotkeyPresets
 from client.auto_start import AutoStartManager
 
 logger = logging.getLogger(__name__)
+
+# 全局异常钩子，捕获未处理的异常并记录
+def _global_exception_handler(exc_type, exc_value, exc_traceback):
+    logger.critical(
+        "未处理的异常", exc_info=(exc_type, exc_value, exc_traceback)
+    )
+    import traceback
+    traceback.print_exception(exc_type, exc_value, exc_traceback)
+
+sys.excepthook = _global_exception_handler
 
 # 文本输入方式: True = osascript (macOS), False = pyautogui (cross-platform)
 CLIPBOARD_METHOD = False
@@ -272,12 +283,17 @@ class VoiceInputApp:
             TrayMenu(self.window._tray_manager, self._auto_start_manager) if _window else None
         )
 
-        # 热键
-        self.hotkey_manager.set_hotkey(self.config.hotkey)
-        self.hotkey_manager.start_listener(
-            on_press=lambda: self._async_task(self._start_recording()),
-            on_release=lambda: self._async_task(self._stop_recording()),
-        )
+        # 热键 (在异步循环启动之后初始化)
+        try:
+            self.hotkey_manager.set_hotkey(self.config.hotkey)
+            self.hotkey_manager.start_listener(
+                on_press=lambda: self._async_task(self._start_recording()),
+                on_release=lambda: self._async_task(self._stop_recording()),
+            )
+            self.window.log("快捷键监听器已启动")
+        except Exception as e:
+            logger.warning(f"快捷键监听器启动失败 (非致命): {e}")
+            self.window.log(f"快捷键不可用: {e}")
 
     def _on_hotkey_recorded(self, hotkey: str, window):
         """快捷键录制完成后的回调"""
@@ -449,8 +465,10 @@ class VoiceInputApp:
             self.window.log(f"检查更新失败: {e}")
 
     def _async_task(self, coro):
-        if self.async_loop:
-            asyncio.run_coroutine_threadsafe(coro, self.async_loop)
+        """安全地将协程提交到异步事件循环"""
+        loop = self.async_loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, loop)
 
     def _cleanup(self):
         self.is_running = False
