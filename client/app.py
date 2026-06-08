@@ -180,11 +180,13 @@ class VoiceInputApp:
         if sg_window:
             sg_window.write_event_value("-REC-STARTED-", "")
 
-    async def _stop_recording(self):
+    async def _stop_and_process(self):
+        """停止录音并处理音频"""
         self._hotkey_pressed = False
         sg_window = self.window.window if self.window else None
         if sg_window:
             sg_window.write_event_value("-REC-STOPPED-", "")
+        await self._process_audio()
 
     def _on_recording_started(self):
         if hasattr(self.window, "floating_indicator") and self.window.floating_indicator:
@@ -199,26 +201,24 @@ class VoiceInputApp:
 
     async def _process_audio(self):
         """处理已录制的音频"""
-        audio_data = self.audio.stop_recording()
+        # Get audio data before stopping
+        import copy
+        audio_buffer = copy.copy(self.audio._audio_buffer)
+        self.audio.stop_recording()
         if hasattr(self.window, "processing_indicator") and self.window.processing_indicator:
             self.window.processing_indicator.hide()
-        if not audio_data or len(audio_data) < 320:
+        if not audio_buffer or len(audio_buffer) == 0:
             return
 
-        # 通过 LLM 后处理或直接返回
-        llm_enabled = self.config.llm_enabled
+        # 发送到服务器识别
         self.window.set_status("正在识别...", "yellow")
-        result = await self.stt.transcribe(audio_data, language="auto")
-        text = result.get("text", "")
+        result = await self.stt.send_audio(audio_buffer)
+        text = result or ""
 
-        if text and llm_enabled:
-            self.window.set_status("正在 LLM 后处理...", "cyan")
-            text = await self.llm.process(text)
-
-        # 显示和输入
+        # 显示结果
         if self.window:
-            self.window.update_result(text)
-            self.window.write_event_value("-AUTO-INPUT-", text)
+            if text:
+                self.window.update_result(text)
             self.window.set_status("就绪", "green")
 
     # ── 文本输入 ──
@@ -301,7 +301,7 @@ class VoiceInputApp:
                 if event == "-HOTKEY-PRESS-":
                     self._async_task(self._start_recording())
                 elif event == "-HOTKEY-RELEASE-":
-                    self._async_task(self._stop_recording())
+                    self._async_task(self._stop_and_process())
                 else:
                     self._handle_event(event, values, _window)
             except Exception as e:
