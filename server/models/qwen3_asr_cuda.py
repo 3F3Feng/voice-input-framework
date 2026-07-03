@@ -5,22 +5,30 @@ Voice Input Framework - CUDA Qwen3-ASR 引擎 (优化版)
 性能优化策略:
 1. bfloat16 代替 float16 - 更好的数值稳定性
 2. Flash Attention 2 - 减少 20-30% 推理时间
-3. 模型预热 - 避免首次推理延迟
+3. 模型同步预热 - 避免首次推理延迟 (即使通过 stt_server._load_model_sync 加载)
 4. Greedy decoding - 最快解码策略
-5. torch.compile - 重复调用优化
+5. VAD 静音检测 - 白录音/空音频直接返回不推理
 """
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import AsyncIterator
 
 import numpy as np
 
+# Suppress the harmless 'temperature' warning from qwen_asr package
+# (qwen_asr internally passes temperature to transformers.generate() which ignores it)
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+
 from server.models.base import BaseSTTEngine, STTEngineError
 from shared.data_types import TranscriptionResult
 
 logger = logging.getLogger(__name__)
+
+# Minimum audio RMS threshold to consider as non-silence (VAD)
+_VAD_RMS_THRESHOLD = 0.01
 
 
 class Qwen3ASRCudaEngine(BaseSTTEngine):
@@ -70,10 +78,6 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             self._load_sync()
             self._is_loaded = True
             logger.info(f"Model loaded on {self._device}: {self.model_config['model_id']}")
-
-            # Warmup: run a short inference to initialize CUDA kernels
-            await self._warmup()
-
         except Exception as e:
             raise STTEngineError(f"Failed to load CUDA model: {e}")
 
@@ -132,47 +136,24 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
 
         logger.info(f"Model loaded on {self._device}")
 
-        # Try torch.compile for faster repeated inference
-        if hasattr(torch, "compile") and not quantize:
+        # 同步预热：初始化 CUDA kernels
+        # 注意：预热放在 _load_sync() 而不是 async _warmup() 中，
+        # 因为 stt_server._load_model_sync() 直接调用 _load_sync()，
+        # 跳过了 async load() 的预热步骤（这是之前的 bug）
+        if not self._warmed_up:
+            logger.info("Warming up model (synchronously)...")
+            warmup_start = time.time()
             try:
-                logger.info("Attempting torch.compile optimization...")
-                # Access the inner transformers model
-                if hasattr(self._model, "_model"):
-                    self._model._model = torch.compile(
-                        self._model._model,
-                        mode="reduce-overhead",
-                    )
-                    logger.info("torch.compile enabled (first call will be slow)")
-            except Exception as e:
-                logger.info(f"torch.compile not available: {e}")
-
-    async def _warmup(self):
-        """预热模型，初始化 CUDA kernels"""
-        if self._warmed_up:
-            return
-
-        logger.info("Warming up model...")
-        start = time.time()
-
-        try:
-            # Create a short silence for warmup
-            warmup_audio = np.zeros(16000, dtype=np.float32)  # 1 second silence
-
-            # Run inference in thread pool to not block
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: self._model.transcribe(
+                warmup_audio = np.zeros(16000, dtype=np.float32)  # 1 second silence
+                self._model.transcribe(
                     audio=(warmup_audio, 16000),
                     language=None,
-                ),
-            )
-
-            elapsed = time.time() - start
-            logger.info(f"Warmup complete in {elapsed:.2f}s")
-            self._warmed_up = True
-        except Exception as e:
-            logger.warning(f"Warmup failed (non-fatal): {e}")
+                )
+                elapsed = time.time() - warmup_start
+                logger.info(f"Warmup complete in {elapsed:.2f}s")
+                self._warmed_up = True
+            except Exception as e:
+                logger.warning(f"Warmup failed (non-fatal): {e}")
 
     async def unload(self) -> None:
         if not self._is_loaded:
@@ -220,6 +201,17 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             audio_array = audio[0]
         else:
             audio_array = self._convert_audio(audio_data, sample_rate)
+
+        # VAD：静音检测 - 快速跳过空白录音
+        rms = np.sqrt(np.mean(audio_array ** 2))
+        if rms < _VAD_RMS_THRESHOLD:
+            logger.debug(f"VAD: silence detected (RMS={rms:.5f}), skipping inference")
+            return TranscriptionResult(
+                text="",
+                confidence=1.0,
+                language=language,
+                is_final=True,
+            )
 
         try:
             start_time = time.time()
