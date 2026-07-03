@@ -255,7 +255,7 @@ interface VoiceInputConfig {
   server: { host: string; port: number; history?: string[] };
   hotkey: { key: string; distinguish_left_right: boolean };
   ui: { start_minimized: boolean; use_floating_indicator: boolean; use_tray: boolean; opacity: number; auto_input?: boolean };
-  audio: { device: string | null; language: string };
+  audio: { device: string | null; language: string; use_streaming: boolean };
   llm: { enabled: boolean };
   _version: string;
 }
