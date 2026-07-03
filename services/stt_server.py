@@ -1021,17 +1021,14 @@ async def list_models():
 @app.get("/llm/models")
 async def list_llm_models():
     """转发：获取可用 LLM 模型列表"""
-    # Fast-fail: skip if LLM server is known to be down
-    if not _is_llm_available():
-        return {"models": [], "error": "LLM server not available", "cached": True}
-
+    # 注意：不检查 _is_llm_available()，模型列表只读配置不推理，
+    # 不应该被推理超时影响。即使上一次 LLM 处理超时了，列表也该返回。
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{LLM_SERVER_URL}/models", timeout=_llm_timeout)
             if resp.status_code == 200:
                 _mark_llm_available(True)
                 data = resp.json()
-                # 包装成客户端期望的格式
                 if isinstance(data, list):
                     return {"models": data}
                 return data
