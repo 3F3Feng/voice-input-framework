@@ -130,18 +130,18 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
                     // 流式传输：录音同时建立 WS 连接，开始发 chunk
                     let host = state.stt.lock().map_err(|e| e.to_string())?.stt_url.clone();
                     let language = state.config.lock().map_err(|e| e.to_string())?.audio.language.clone();
-                    let chunk_rx = recorder.take_chunk_receiver();
+                    if let Some(chunk_rx) = recorder.take_chunk_receiver() {
+                        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+                        *state.active_transcription.lock().map_err(|e| e.to_string())? = Some(ActiveTranscription { result_rx });
 
-                    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
-                    *state.active_transcription.lock().map_err(|e| e.to_string())? = Some(ActiveTranscription { result_rx });
-
-                    tauri::async_runtime::spawn(async move {
-                        let client = stt::SttClient::new(&host);
-                        eprintln!("[timing] Streaming task started (WS connect + real-time chunks)...");
-                        let result = client.transcribe_stream(chunk_rx, &language, None).await;
-                        eprintln!("[timing] Streaming task finished");
-                        let _ = result_tx.send(result);
-                    });
+                        tauri::async_runtime::spawn(async move {
+                            let client = stt::SttClient::new(&host);
+                            eprintln!("[timing] Streaming task started (WS connect + real-time chunks)...");
+                            let result = client.transcribe_stream(chunk_rx, &language, None).await;
+                            eprintln!("[timing] Streaming task finished");
+                            let _ = result_tx.send(result);
+                        });
+                    }
                 }
 
                 Ok(())
