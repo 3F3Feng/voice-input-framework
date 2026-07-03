@@ -1,0 +1,24 @@
+# Voice Input Framework - Python Client Dependencies
+# For the Python GUI client (legacy, Tauri client has its own deps)
+# Install: pip install -r requirements/client.txt
+
+# ============== Communication ==============
+websockets>=12.0
+httpx>=0.26.0
+
+# ============== Audio ==============
+sounddevice>=0.4.6
+numpy>=1.26.0
+
+# ============== GUI ==============
+PySimpleGUI>=4.60.0
+pystray>=0.19.0
+Pillow>=10.0.0
+
+# ============== Input ==============
+pynput>=1.7.6
+pyautogui>=0.9.54
+pyperclip>=1.8.2
+
+# ============== Notifications (Windows) ==============
+# winotify>=1.1.0; platform_system=='Windows'

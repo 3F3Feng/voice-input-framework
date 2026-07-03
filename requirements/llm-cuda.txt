@@ -1,10 +1,12 @@
 # Voice Input Framework - LLM Dependencies (NVIDIA CUDA)
 # For Windows/Linux with NVIDIA GPU
 # Install: pip install -r requirements/base.txt -r requirements/llm-cuda.txt
-
-# ============== CUDA PyTorch ==============
-# Install separately with CUDA support:
-# pip install torch --index-url https://download.pytorch.org/whl/cu124
+#
+# PyTorch with CUDA (install separately):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+#
+# For Qwen3.5 models, transformers from PyPI may not support the architecture yet:
+#   pip install git+https://github.com/huggingface/transformers.git
 
 # ============== LLM Models ==============
 transformers>=4.37.0
@@ -14,4 +16,4 @@ accelerate>=0.28.0
 bitsandbytes>=0.43.0
 
 # ============== CUDA Optimization (optional) ==============
-# flash-attn>=2.6.0    # Flash Attention 2 (requires compilation)
+# flash-attn>=2.6.0      # Flash Attention 2 (requires compilation on Windows)

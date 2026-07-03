@@ -1,23 +1,13 @@
 # Voice Input Framework - STT Dependencies (NVIDIA CUDA)
 # For Windows/Linux with NVIDIA GPU
 # Install: pip install -r requirements/base.txt -r requirements/stt-cuda.txt
-
-# ============== CUDA PyTorch ==============
-# Install separately with CUDA support:
-# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+#
+# PyTorch with CUDA (install separately):
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # ============== STT Models ==============
-transformers>=4.37.0,<5.0
 qwen_asr>=0.0.6
+transformers>=4.37.0,<5.0
 
-# ============== CUDA Optimization (recommended for RTX 4090) ==============
-# Flash Attention 2: 20-30% faster inference on long audio
-# Install: pip install flash-attn --no-build-isolation
-# Compatible with CUDA 12.4 + PyTorch 2.4+
-# flash-attn>=2.6.0
-
-# ============== Audio Preprocessing (VAD) ==============
-# noisereduce is in base deps (pyproject.toml)
-
-# ============== Speaker Diarization (optional) ==============
-# pyannote.audio==3.3.3  # Requires HuggingFace token
+# ============== CUDA Optimization (optional) ==============
+# flash-attn>=2.6.0    # ~15% STT inference speedup (requires compilation on Windows)
