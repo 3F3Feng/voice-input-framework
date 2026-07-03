@@ -2,12 +2,17 @@
 REM Voice Input Framework - Server Startup Script (Windows)
 REM Start STT and/or LLM servers
 REM
+REM Supports uv-style venvs: .venv-stt (STT), .venv-llm (LLM)
+REM Falls back to .venv for backward compatibility
+REM
 REM Usage:
 REM   start.bat              REM Start STT server only
 REM   start.bat --all        REM Start both STT and LLM
 REM   start.bat --llm        REM Start LLM server only
-REM   start.bat --bg         REM Start in background
+REM   start.bat --bg         REM Run in background
 REM   start.bat --stop       REM Stop background servers
+REM   start.bat --status     REM Check server status
+REM   start.bat --help       REM Show this help
 
 setlocal enabledelayedexpansion
 
@@ -60,10 +65,20 @@ echo ============================================================
 echo Voice Input Framework - Server (Windows)
 echo ============================================================
 
-REM Activate virtual environment if exists
-if exist ".venv\Scripts\activate.bat" (
-    echo [INFO] Activating virtual environment...
-    call .venv\Scripts\activate.bat
+REM Resolve python path for STT (prefer .venv-stt over .venv)
+set "STT_PYTHON=python"
+if exist ".venv-stt\Scripts\python.exe" (
+    set "STT_PYTHON=.venv-stt\Scripts\python.exe"
+) else if exist ".venv\Scripts\python.exe" (
+    set "STT_PYTHON=.venv\Scripts\python.exe"
+)
+
+REM Resolve python path for LLM (prefer .venv-llm over .venv)
+set "LLM_PYTHON=python"
+if exist ".venv-llm\Scripts\python.exe" (
+    set "LLM_PYTHON=.venv-llm\Scripts\python.exe"
+) else if exist ".venv\Scripts\python.exe" (
+    set "LLM_PYTHON=.venv\Scripts\python.exe"
 )
 
 REM Start servers
@@ -79,11 +94,13 @@ if "%START_LLM%"=="true" (
 
 :start_both
 echo [INFO] Starting both servers...
+echo [INFO] STT: !STT_PYTHON!
+echo [INFO] LLM: !LLM_PYTHON!
 
 if "%BACKGROUND%"=="true" (
-    start "LLM Server" /min python -m services.llm_server
+    start "LLM Server" /min "!LLM_PYTHON!" -m services.llm_server
     timeout /t 2 /nobreak >nul
-    start "STT Server" /min python -m services.stt_server
+    start "STT Server" /min "!STT_PYTHON!" -m services.stt_server
     echo.
     echo [OK] Both servers started in background
     echo [INFO] STT: http://localhost:6544
@@ -92,32 +109,32 @@ if "%BACKGROUND%"=="true" (
     echo [INFO] Use 'start.bat --stop' to stop servers
 ) else (
     REM Start LLM in background, STT in foreground
-    start "LLM Server" python -m services.llm_server
+    start "LLM Server" "!LLM_PYTHON!" -m services.llm_server
     timeout /t 2 /nobreak >nul
     echo [INFO] Starting STT server...
-    python -m services.stt_server
+    "!STT_PYTHON!" -m services.stt_server
 )
 goto :end
 
 :start_stt
-echo [INFO] Starting STT server...
+echo [INFO] Starting STT server using: !STT_PYTHON!
 if "%BACKGROUND%"=="true" (
-    start "STT Server" /min python -m services.stt_server
+    start "STT Server" /min "!STT_PYTHON!" -m services.stt_server
     echo [OK] STT server started in background
     echo [INFO] STT: http://localhost:6544
 ) else (
-    python -m services.stt_server
+    "!STT_PYTHON!" -m services.stt_server
 )
 goto :end
 
 :start_llm
-echo [INFO] Starting LLM server...
+echo [INFO] Starting LLM server using: !LLM_PYTHON!
 if "%BACKGROUND%"=="true" (
-    start "LLM Server" /min python -m services.llm_server
+    start "LLM Server" /min "!LLM_PYTHON!" -m services.llm_server
     echo [OK] LLM server started in background
     echo [INFO] LLM: http://localhost:6545
 ) else (
-    python -m services.llm_server
+    "!LLM_PYTHON!" -m services.llm_server
 )
 goto :end
 
@@ -161,7 +178,7 @@ echo   --help      Show this help
 echo.
 echo Examples:
 echo   %~nx0              REM Start STT in foreground
-echo   %~nx0 --all --bg   REM Start both in background
+echo   %~nx0 --all --bg   REM Start both in background (uv venv)
 echo   %~nx0 --stop       REM Stop all servers
 
 :end
