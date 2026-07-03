@@ -1,6 +1,7 @@
 """
 Tests for STT Server
 """
+
 import pytest
 import sys
 from pathlib import Path
@@ -56,10 +57,7 @@ class TestTranscriptionResult:
             WordTimestamp(word="Hello", start=0.0, end=0.5),
             WordTimestamp(word="world", start=0.5, end=1.0),
         ]
-        result = TranscriptionResult(
-            text="Hello world",
-            timestamps=timestamps
-        )
+        result = TranscriptionResult(text="Hello world", timestamps=timestamps)
         assert result.timestamps is not None
         assert len(result.timestamps) == 2
 
@@ -72,7 +70,14 @@ class TestSTTEngine:
         from services.stt_server import STTEngine
 
         engine = STTEngine()
-        import platform; expected = "qwen_asr_mlx_native_small" if (platform.machine() == "arm64" and platform.system() == "Darwin") else "whisper_turbo"; assert engine.default_model == expected
+        import platform
+
+        expected = (
+            "qwen_asr_mlx_native_small"
+            if (platform.machine() == "arm64" and platform.system() == "Darwin")
+            else "whisper_turbo"
+        )
+        assert engine.default_model == expected
         assert not engine._is_loaded
         assert not engine._aligner_loaded
         assert not engine._loading

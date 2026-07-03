@@ -20,7 +20,7 @@ from shared.data_types import (
 
 class TestTranscriptionResult:
     """TranscriptionResult 测试类"""
-    
+
     def test_create_basic(self):
         """测试创建基本转写结果"""
         result = TranscriptionResult(
@@ -28,12 +28,12 @@ class TestTranscriptionResult:
             confidence=0.95,
             language="en",
         )
-        
+
         assert result.text == "Hello world"
         assert result.confidence == 0.95
         assert result.language == "en"
         assert result.is_final is False  # 默认值
-    
+
     def test_create_full(self):
         """测试创建完整转写结果"""
         result = TranscriptionResult(
@@ -46,14 +46,14 @@ class TestTranscriptionResult:
             words=[{"word": "测试", "start": 0.5, "end": 1.0}],
             metadata={"source": "test"},
         )
-        
+
         assert result.text == "测试文本"
         assert result.is_final is True
         assert result.start_time == 0.5
         assert result.end_time == 2.3
         assert result.words is not None
         assert result.metadata["source"] == "test"
-    
+
     def test_to_dict(self):
         """测试转换为字典"""
         result = TranscriptionResult(
@@ -61,19 +61,19 @@ class TestTranscriptionResult:
             confidence=0.9,
             language="en",
         )
-        
+
         d = result.to_dict()
-        
+
         assert d["text"] == "Hello"
         assert d["confidence"] == 0.9
         assert d["language"] == "en"
         assert d["is_final"] is False
-    
+
     def test_empty_text(self):
         """测试空文本"""
         result = TranscriptionResult(text="")
         assert result.text == ""
-    
+
     def test_default_confidence(self):
         """测试默认置信度"""
         result = TranscriptionResult(text="test")
@@ -82,18 +82,18 @@ class TestTranscriptionResult:
 
 class TestErrorResponse:
     """ErrorResponse 测试类"""
-    
+
     def test_create_error(self):
         """测试创建错误响应"""
         error = ErrorResponse(
             error_code="E1001",
             error_message="Test error",
         )
-        
+
         assert error.error_code == "E1001"
         assert error.error_message == "Test error"
         assert error.timestamp is not None
-    
+
     def test_to_dict(self):
         """测试转换为字典"""
         error = ErrorResponse(
@@ -101,9 +101,9 @@ class TestErrorResponse:
             error_message="Server error",
             details={"line": 42},
         )
-        
+
         d = error.to_dict()
-        
+
         assert d["error_code"] == "E500"
         assert d["error_message"] == "Server error"
         assert d["details"]["line"] == 42
@@ -111,7 +111,7 @@ class TestErrorResponse:
 
 class TestModelInfo:
     """ModelInfo 测试类"""
-    
+
     def test_create_model_info(self):
         """测试创建模型信息"""
         info = ModelInfo(
@@ -123,28 +123,28 @@ class TestModelInfo:
             model_size_mb=3000,
             latency_ms=150,
         )
-        
+
         assert info.name == "whisper-large-v3"
         assert len(info.supported_languages) == 3
         assert info.is_loaded is True
         assert info.model_size_mb == 3000
-    
+
     def test_to_dict(self):
         """测试转换为字典"""
         info = ModelInfo(
             name="test-model",
             is_loaded=False,
         )
-        
+
         d = info.to_dict()
-        
+
         assert d["name"] == "test-model"
         assert d["is_loaded"] is False
 
 
 class TestHealthStatus:
     """HealthStatus 测试类"""
-    
+
     def test_create_health_status(self):
         """测试创建健康状态"""
         status = HealthStatus(
@@ -156,12 +156,12 @@ class TestHealthStatus:
             active_connections=2,
             memory_usage_mb=512.5,
         )
-        
+
         assert status.status == "healthy"
         assert status.uptime_seconds == 3600.0
         assert len(status.loaded_models) == 2
         assert status.active_connections == 2
-    
+
     def test_to_dict(self):
         """测试转换为字典"""
         status = HealthStatus(
@@ -171,16 +171,16 @@ class TestHealthStatus:
             current_model="test",
             loaded_models=[],
         )
-        
+
         d = status.to_dict()
-        
+
         assert d["status"] == "ok"
         assert d["version"] == "1.0.0"
 
 
 class TestAudioChunk:
     """AudioChunk 测试类"""
-    
+
     def test_create_audio_chunk(self):
         """测试创建音频块"""
         chunk = AudioChunk(
@@ -189,11 +189,11 @@ class TestAudioChunk:
             channels=1,
             sample_width=2,
         )
-        
+
         assert chunk.sample_rate == 16000
         assert chunk.channels == 1
         assert chunk.sample_width == 2
-    
+
     def test_duration_calculation(self):
         """测试时长计算"""
         # 2 bytes per sample, 1 channel, 16000 samples = 1 second
@@ -204,9 +204,9 @@ class TestAudioChunk:
             channels=1,
             sample_width=2,
         )
-        
+
         assert chunk.duration == pytest.approx(1.0, rel=0.01)
-    
+
     def test_duration_with_channels(self):
         """测试多通道时长计算"""
         # 2 bytes per sample, 2 channels, 16000 samples per channel = 0.5 second
@@ -217,7 +217,7 @@ class TestAudioChunk:
             channels=2,
             sample_width=2,
         )
-        
+
         # Duration should still be 1 second (total samples / sample_rate)
         assert chunk.duration == pytest.approx(1.0, rel=0.01)
 

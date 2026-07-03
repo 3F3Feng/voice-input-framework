@@ -10,7 +10,6 @@ Voice Input Framework - CUDA Qwen3-ASR 引擎 (优化版)
 5. VAD 静音检测 - 白录音/空音频直接返回不推理
 """
 
-import asyncio
 import logging
 import os
 import time
@@ -203,7 +202,7 @@ class Qwen3ASRCudaEngine(BaseSTTEngine):
             audio_array = self._convert_audio(audio_data, sample_rate)
 
         # VAD：静音检测 - 快速跳过空白录音
-        rms = np.sqrt(np.mean(audio_array ** 2))
+        rms = np.sqrt(np.mean(audio_array**2))
         if rms < _VAD_RMS_THRESHOLD:
             logger.debug(f"VAD: silence detected (RMS={rms:.5f}), skipping inference")
             return TranscriptionResult(

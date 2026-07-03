@@ -2,13 +2,16 @@
 Tests for STT Server - Model Classes (no external dependencies)
 这些测试不依赖 uvicorn 等外部库，可以独立运行。
 """
+
 import pytest
 from pydantic import BaseModel
 from typing import List, Optional
 
+
 # Define models locally for testing (avoid import issues)
 class WordTimestamp(BaseModel):
     """词级别时间戳"""
+
     word: str
     start: float
     end: float
@@ -16,6 +19,7 @@ class WordTimestamp(BaseModel):
 
 class TranscriptionResult(BaseModel):
     """转写结果"""
+
     text: str
     confidence: float = 1.0
     language: str = "auto"
@@ -27,12 +31,14 @@ class TranscriptionResult(BaseModel):
 
 class TranscriptionRequest(BaseModel):
     """转写请求"""
+
     language: str = "auto"
     return_timestamps: bool = False
 
 
 class ModelInfo(BaseModel):
     """模型信息"""
+
     name: str
     description: str = ""
     is_loaded: bool = False
@@ -41,6 +47,7 @@ class ModelInfo(BaseModel):
 
 class HealthStatus(BaseModel):
     """健康状态"""
+
     status: str
     version: str = "1.1.0"
     uptime_seconds: float
@@ -53,6 +60,7 @@ class HealthStatus(BaseModel):
 
 class ErrorResponse(BaseModel):
     """错误响应"""
+
     error_code: str
     error_message: str
     request_id: str
@@ -110,10 +118,7 @@ class TestTranscriptionResult:
             WordTimestamp(word="Hello", start=0.0, end=0.5),
             WordTimestamp(word="world", start=0.5, end=1.0),
         ]
-        result = TranscriptionResult(
-            text="Hello world",
-            timestamps=timestamps
-        )
+        result = TranscriptionResult(text="Hello world", timestamps=timestamps)
         assert result.timestamps is not None
         assert len(result.timestamps) == 2
 
@@ -126,7 +131,7 @@ class TestTranscriptionResult:
             is_final=True,
             stt_latency_ms=150.5,
             model="qwen_asr_mlx_native_small",
-            timestamps=[WordTimestamp(word="test", start=0.0, end=0.5)]
+            timestamps=[WordTimestamp(word="test", start=0.0, end=0.5)],
         )
         assert result.confidence == 0.95
         assert result.language == "zh"

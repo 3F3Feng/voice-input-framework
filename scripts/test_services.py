@@ -6,10 +6,8 @@ Voice Input Framework - Service Integration Test
 """
 
 import asyncio
-import json
 import sys
 import time
-from pathlib import Path
 
 import aiohttp
 
@@ -74,14 +72,14 @@ async def test_llm_process():
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    print(f"  ✅ Process successful")
+                    print("  ✅ Process successful")
                     print(f"  Input: {test_text}")
                     print(f"  Output: {data['text']}")
                     print(f"  Latency: {data['llm_latency_ms']:.0f}ms")
                     print(f"  Model: {data['model']}")
                     return True
                 elif resp.status == 503:
-                    print(f"  ⏳ Model still loading...")
+                    print("  ⏳ Model still loading...")
                     return False
                 else:
                     print(f"  ❌ Process failed: {resp.status}")
@@ -99,7 +97,7 @@ async def test_stt_models():
             async with session.get(f"{STT_URL}/models") as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    print(f"  ✅ Available models:")
+                    print("  ✅ Available models:")
                     for model in data:
                         status = " (loaded)" if model['is_loaded'] else ""
                         default = " [default]" if model['is_default'] else ""
@@ -121,7 +119,7 @@ async def test_llm_models():
             async with session.get(f"{LLM_URL}/models") as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    print(f"  ✅ Available models:")
+                    print("  ✅ Available models:")
                     for model in data:
                         status = " (loaded)" if model['is_loaded'] else ""
                         current = " [current]" if model['is_current'] else ""
@@ -157,7 +155,7 @@ async def test_integration():
                     print(f"  3. Latency: {data['llm_latency_ms']:.0f}ms")
                     return True
                 elif resp.status == 503:
-                    print(f"  ⏳ Model still loading, retry in 5s...")
+                    print("  ⏳ Model still loading, retry in 5s...")
                     await asyncio.sleep(5)
                     return False
                 else:
@@ -186,7 +184,7 @@ async def wait_for_services(timeout: int = 60):
                             data = await resp.json()
                             if data['status'] == 'ok':
                                 stt_ready = True
-                                print(f"  ✅ STT Service ready")
+                                print("  ✅ STT Service ready")
                 except:
                     pass
             
@@ -198,7 +196,7 @@ async def wait_for_services(timeout: int = 60):
                             data = await resp.json()
                             if data['status'] == 'ok':
                                 llm_ready = True
-                                print(f"  ✅ LLM Service ready")
+                                print("  ✅ LLM Service ready")
                 except:
                     pass
             
@@ -207,7 +205,7 @@ async def wait_for_services(timeout: int = 60):
             
             await asyncio.sleep(2)
     
-    print(f"  ❌ Timeout waiting for services")
+    print("  ❌ Timeout waiting for services")
     return False
 
 

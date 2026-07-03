@@ -1,6 +1,7 @@
 """
 Tests for LLM Server
 """
+
 import pytest
 import sys
 from pathlib import Path
@@ -26,10 +27,7 @@ class TestProcessRequest:
         """Test request with options"""
         from services.llm_server import ProcessRequest
 
-        req = ProcessRequest(
-            text="Test",
-            options={"temperature": 0.7, "max_tokens": 100}
-        )
+        req = ProcessRequest(text="Test", options={"temperature": 0.7, "max_tokens": 100})
         assert req.options["temperature"] == 0.7
         assert req.options["max_tokens"] == 100
 
@@ -45,7 +43,7 @@ class TestProcessResult:
             text="Processed text",
             original_text="Original text",
             llm_latency_ms=100.0,
-            model="Qwen3.5-4B-OptiQ"
+            model="Qwen3.5-4B-OptiQ",
         )
         assert result.text == "Processed text"
         assert result.original_text == "Original text"
@@ -56,11 +54,7 @@ class TestProcessResult:
         from services.llm_server import ProcessResult
 
         result = ProcessResult(
-            text="",
-            original_text="Original",
-            llm_latency_ms=0.0,
-            model="",
-            success=False
+            text="", original_text="Original", llm_latency_ms=0.0, model="", success=False
         )
         assert result.success is False
 
@@ -76,7 +70,7 @@ class TestModelInfo:
             name="Qwen3.5-4B-OptiQ",
             description="Fast optimization model",
             is_loaded=True,
-            is_current=True
+            is_current=True,
         )
         assert info.name == "Qwen3.5-4B-OptiQ"
         assert info.is_loaded is True
@@ -95,7 +89,7 @@ class TestHealthStatus:
             current_model="Qwen3.5-4B-OptiQ",
             loaded_models=["Qwen3.5-4B-OptiQ"],
             active_connections=5,
-            is_processing=False
+            is_processing=False,
         )
         assert health.status == "ok"
         assert health.uptime_seconds == 3600.0
@@ -107,68 +101,32 @@ class TestLLMEngine:
 
     def test_init(self):
         """Test engine initialization"""
-        from services.llm_server import LLMEngine
+        from server.llm_engine import LLMEngine
 
         engine = LLMEngine()
-        assert engine.default_model == "Qwen3.5-4B-OptiQ"
-        assert not engine._is_loaded
-        assert not engine._loading
+        # After refactoring: default model depends on platform
+        default = engine.get_default_model()
+        assert isinstance(default, str)
+        assert not engine.is_loaded
+        assert not engine.is_processing
 
-    def test_available_models(self):
-        """Test available models list"""
-        from services.llm_server import LLMEngine
-
-        assert "Qwen3.5-4B-OptiQ" in LLMEngine.AVAILABLE_MODELS
-        assert "Qwen3.5-2B-OptiQ" in LLMEngine.AVAILABLE_MODELS
-        assert "Qwen3.5-4B-OptiQ" in LLMEngine.AVAILABLE_MODELS
-
-    def test_model_ids_mapping(self):
-        """Test model IDs mapping"""
-        from services.llm_server import LLMEngine
-
-        assert LLMEngine.MODEL_IDS["Qwen3.5-4B-OptiQ"] == "mlx-community/Qwen3.5-4B-OptiQ-4bit"
-        assert LLMEngine.MODEL_IDS["Qwen3.5-2B-OptiQ"] == "mlx-community/Qwen3.5-2B-OptiQ-4bit"
-
-    def test_is_loading(self):
-        """Test loading state"""
-        from services.llm_server import LLMEngine
+    def test_get_default_model(self):
+        """Test get_default_model returns a string"""
+        from server.llm_engine import LLMEngine
 
         engine = LLMEngine()
-        assert not engine.is_loading()
+        model = engine.get_default_model()
+        assert isinstance(model, str)
 
-        engine._loading = True
-        assert engine.is_loading()
-
-    def test_is_model_loaded(self):
-        """Test model loaded state"""
-        from services.llm_server import LLMEngine
+    def test_get_available_models(self):
+        """Test available models"""
+        from server.llm_engine import LLMEngine
 
         engine = LLMEngine()
-        assert not engine.is_model_loaded()
-
-        engine._is_loaded = True
-        assert engine.is_model_loaded()
-
-    def test_invalid_model_name(self):
-        """Test invalid model name handling"""
-        from services.llm_server import LLMEngine
-
-        engine = LLMEngine(default_model="invalid_model")
-        # Should fall back to default
-        assert engine.default_model == "invalid_model"
-        # But MODEL_IDS won't have it
-        assert "invalid_model" not in LLMEngine.MODEL_IDS
-
-    @pytest.mark.asyncio
-    async def test_load_returns_true_when_already_loaded(self):
-        """Test that load returns quickly if already loaded"""
-        from services.llm_server import LLMEngine
-
-        engine = LLMEngine()
-        engine._is_loaded = True
-
-        result = await engine.load()
-        assert result is True
+        models = engine.get_available_models()
+        assert isinstance(models, dict)
+        # Should return at least the models compatible with this platform
+        assert len(models) > 0
 
 
 class TestPromptTemplates:
@@ -206,7 +164,8 @@ class TestProcessingLogic:
             if "<think>" in cleaned:
                 # Remove think tags
                 import re
-                cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL)
+
+                cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
             assert cleaned == expected
 
 
@@ -238,21 +197,21 @@ class TestLLMEngineIntegration:
     @pytest.mark.skip(reason="Requires model download")
     async def test_actual_load(self):
         """Test actual model loading (requires download)"""
-        from services.llm_server import LLMEngine
+        from server.llm_engine import LLMEngine
 
         engine = LLMEngine()
-        result = await engine.load()
-        assert result is True
-        assert engine.is_model_loaded()
+        success = await engine.load_model("Qwen3.5-4B-OptiQ")
+        assert success is True
+        assert engine.is_loaded
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="Requires model download")
     async def test_actual_process(self):
         """Test actual text processing (requires download)"""
-        from services.llm_server import LLMEngine
+        from server.llm_engine import LLMEngine
 
         engine = LLMEngine()
-        await engine.load()
+        await engine.load_model("Qwen3.5-4B-OptiQ")
 
         result = await engine.process("你好世界")
         assert result.success is True

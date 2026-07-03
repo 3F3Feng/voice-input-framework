@@ -6,13 +6,19 @@ Voice Input Framework - 离线音频转写 GUI (流式输出)
 依赖: pip install httpx numpy websocket-client
        (音频解码) pip install pydub 或 soundfile
 """
-import os, sys, json, threading, time, base64, math, tempfile
+import os
+import sys
+import json
+import threading
+import time
+import base64
+import tempfile
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, messagebox, ttk
 
 import httpx
 import numpy as np
-import tempfile, os.path
+import os.path
 
 # ── 配置 ──
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audiogui_config.json")
@@ -39,7 +45,6 @@ def save_config(server_url, num_speakers=0):
 
 def load_audio(path: str) -> np.ndarray:
     """加载音频文件，返回 16kHz mono float32 数组"""
-    import io
     # pydub (支持 MP3/M4A/WAV/FLAC/OGG)
     try:
         from pydub import AudioSegment
@@ -278,7 +283,7 @@ class AudioTranscriberGUI:
                 else:
                     self.window.after(0, lambda: self.model_name.set(f"❌ HTTP {r.status_code}"))
                     self.window.after(0, lambda: self.model_label.config(fg="#f38ba8"))
-            except Exception as e:
+            except Exception:
                 self.window.after(0, lambda: self.model_name.set(f"❌ {str(e)[:40]}"))
                 self.window.after(0, lambda: self.model_label.config(fg="#f38ba8"))
 
@@ -299,7 +304,7 @@ class AudioTranscriberGUI:
                     self.window.after(0, lambda: self.model_label.config(fg="#a6e3a1"))
                 else:
                     self.window.after(0, lambda: self.model_name.set(f"❌ {r.text[:40]}"))
-            except Exception as e:
+            except Exception:
                 self.window.after(0, lambda: self.model_name.set(f"❌ {str(e)[:40]}"))
                 self.window.after(0, lambda: self.model_label.config(fg="#f38ba8"))
         threading.Thread(target=switch, daemon=True).start()
@@ -496,7 +501,6 @@ class AudioTranscriberGUI:
         # ── 回退：静音检测分段（自适应阈值）──
         if not segments:
             self.window.after(0, lambda: self.diarize_status.config(text="使用静音分段", fg="#a6adc8"))
-            import struct as _struct
             rms = np.sqrt(np.mean(audio**2))
             silence_thresh = max(rms * 0.15, 0.005)
             min_silence_ms = self.silence_ms.get()
