@@ -27,7 +27,9 @@ from shared.data_types import TranscriptionResult
 logger = logging.getLogger(__name__)
 
 # Minimum audio RMS threshold to consider as non-silence (VAD)
-_VAD_RMS_THRESHOLD = 0.01
+# Can be overridden via VIF_VAD_RMS_THRESHOLD env var (default 0.01)
+# Lower = more sensitive (catch quieter audio), higher = more aggressive (filter more)
+_VAD_RMS_THRESHOLD = float(os.environ.get("VIF_VAD_RMS_THRESHOLD", "0.01"))
 
 
 class Qwen3ASRCudaEngine(BaseSTTEngine):

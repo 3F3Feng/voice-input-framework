@@ -160,6 +160,21 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
 /// In batch mode: collect audio and transcribe.
 /// Extracted so both Tauri commands and the hotkey thread use the same code path.
 pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<String, String> {
+    // Guard: 如果 active_transcription 已经被取走，说明 stop 已被调用过
+    // （例如双击 hotkey 或重复调用），直接返回空结果防止误导性错误
+    {
+        let active = state.active_transcription.lock().map_err(|e| e.to_string())?;
+        if active.is_none() {
+            // Check recorder state to distinguish "already stopped" from "never started"
+            if let Ok(recorder) = state.recorder.lock() {
+                if !recorder.is_recording() {
+                    eprintln!("[timing] Stop ignored: not recording or already stopping");
+                    return Ok(String::new());
+                }
+            }
+        }
+    }
+
     let stop_start = std::time::Instant::now();
 
     // 1. Stop recorder (drops audio stream → channel sender drops → WS gets end signal)

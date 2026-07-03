@@ -304,6 +304,10 @@ impl AudioRecorder {
         *self.samples.lock().unwrap() = Vec::new();
     }
 
+    pub fn is_recording(&self) -> bool {
+        self.is_recording.load(Ordering::SeqCst)
+    }
+
     pub fn get_level(&self) -> f32 {
         self.peak_level.load(Ordering::SeqCst) as f32 / 1000.0
     }
