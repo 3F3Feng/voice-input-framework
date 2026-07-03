@@ -70,11 +70,16 @@ macro_rules! log_error {
     }};
 }
 
+pub struct ActiveTranscription {
+    pub result_rx: tokio::sync::oneshot::Receiver<Result<String, String>>,
+}
+
 pub struct AppState {
     pub stt: Mutex<stt::SttClient>,
     pub recorder: Mutex<audio::AudioRecorder>,
     pub config: Mutex<config::VoiceInputConfig>,
     pub indicator_status: std::sync::Arc<Mutex<String>>,
+    pub active_transcription: Mutex<Option<ActiveTranscription>>,
 }
 
 #[tauri::command]
@@ -104,12 +109,15 @@ async fn set_server_host(
 }
 
 /// Start recording: acquire device, create stream, begin capture, show indicator.
+/// If streaming mode is on, also connect WebSocket and start forwarding audio chunks.
 /// Extracted so both Tauri commands and the hotkey thread can call the same logic.
 pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
     let device;
+    let use_streaming;
     {
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
         device = cfg.audio.device.clone();
+        use_streaming = cfg.audio.use_streaming;
     }
     {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
@@ -117,6 +125,25 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
         match recorder.start(device) {
             Ok(()) => {
                 let _ = indicator::show(app);
+
+                if use_streaming {
+                    // 流式传输：录音同时建立 WS 连接，开始发 chunk
+                    let host = state.stt.lock().map_err(|e| e.to_string())?.stt_url.clone();
+                    let language = state.config.lock().map_err(|e| e.to_string())?.audio.language.clone();
+                    let chunk_rx = recorder.take_chunk_receiver();
+
+                    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+                    *state.active_transcription.lock().map_err(|e| e.to_string())? = Some(ActiveTranscription { result_rx });
+
+                    tauri::async_runtime::spawn(async move {
+                        let client = stt::SttClient::new(&host);
+                        eprintln!("[timing] Streaming task started (WS connect + real-time chunks)...");
+                        let result = client.transcribe_stream(chunk_rx, &language, None).await;
+                        eprintln!("[timing] Streaming task finished");
+                        let _ = result_tx.send(result);
+                    });
+                }
+
                 Ok(())
             }
             Err(e) => {
@@ -127,48 +154,90 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
     }
 }
 
-/// Stop recording: capture samples, hide indicator, spawn transcription.
+/// Stop recording: stop audio capture, wait for transcription result.
+/// In streaming mode: the WS task already started during recording,
+/// just close the channel (stop drops stream → sender drops) and wait.
+/// In batch mode: collect audio and transcribe.
 /// Extracted so both Tauri commands and the hotkey thread use the same code path.
 pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<String, String> {
     let stop_start = std::time::Instant::now();
-    
-    let (chunk_rx, fallback_samples, src_rate) = {
+
+    // 1. Stop recorder (drops audio stream → channel sender drops → WS gets end signal)
+    let (fallback_samples, src_rate) = {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
-        let chunk_rx = recorder.take_chunk_receiver();
         let (samples, rate) = recorder.stop()?;
-        (chunk_rx, samples, rate)
+        (samples, rate)
     };
     eprintln!("[timing] Audio stopped: {}ms", stop_start.elapsed().as_millis());
 
-    let has_window = app.get_webview_window(indicator::INDICATOR_LABEL).is_some();
+    // 2. Take the streaming result receiver (if streaming was active)
+    let result_rx = {
+        let mut active = state.active_transcription.lock().map_err(|e| e.to_string())?;
+        active.take().map(|a| a.result_rx)
+    };
+
+    let use_streaming = {
+        let cfg = state.config.lock().map_err(|e| e.to_string())?;
+        cfg.audio.use_streaming
+    };
 
     {
         let mut status = state.indicator_status.lock().map_err(|e| e.to_string())?;
         *status = "识别中...".to_string();
     }
 
-    let (host, language, use_streaming) = {
+    let (host, language) = {
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
-        (stt_client.stt_url.clone(), cfg.audio.language.clone(), cfg.audio.use_streaming)
+        (stt_client.stt_url.clone(), cfg.audio.language.clone())
     };
 
     let indicator_status = state.indicator_status.clone();
     let app_handle = app.clone();
 
-    // Use tauri::async_runtime::spawn to run transcription from any thread.
     tauri::async_runtime::spawn(async move {
         let total_start = std::time::Instant::now();
-        eprintln!("[timing] Transcription task started");
-        
-        let result = run_transcription(&app_handle, &indicator_status, &host, &language, use_streaming, chunk_rx, fallback_samples, src_rate).await;
+
+        let result = if let Some(rx) = result_rx {
+            // ── 真正的边录边发：WS 已在录音期间运行，只需等结果 ──
+            eprintln!("[timing] Streaming transcript: waiting for result...");
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(600),
+                rx,
+            ).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err("转录取消 (channel dropped)".to_string()),
+                Err(_) => Err("转录超时".to_string()),
+            }
+        } else if use_streaming {
+            // 理论上不会走到这里（start 时设了 active_transcription）
+            Err("流式传输未启动 (audio too short?)".to_string())
+        } else {
+            // ── Batch 模式：收集一次性发 ──
+            eprintln!("[timing] Batch transcription...");
+            let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
+            if wav.is_empty() {
+                Err("No audio captured".to_string())
+            } else {
+                let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" {
+                    wav[44..].to_vec()
+                } else {
+                    wav
+                };
+                let client = stt::SttClient::new(&host);
+                let t_ws = std::time::Instant::now();
+                let result = client.transcribe_ws(pcm, &language).await;
+                eprintln!("[timing] Batch result: {}ms", t_ws.elapsed().as_millis());
+                result
+            }
+        };
+
         let elapsed_ms = total_start.elapsed().as_millis() as u64;
 
         match result {
             Ok(text) => {
                 eprintln!("[timing] TOTAL client: {}ms, result: {} chars", elapsed_ms, text.len());
                 indicator::show_result(&app_handle, elapsed_ms);
-                // Reduced delay from 500ms to 200ms
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
                 let _ = indicator::hide(&app_handle);
@@ -194,70 +263,6 @@ async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> R
 #[tauri::command]
 async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     stop_recording_internal(&app, &state)
-}
-
-async fn run_transcription(
-    app_handle: &tauri::AppHandle,
-    _indicator_status: &std::sync::Arc<Mutex<String>>,
-    host: &str,
-    language: &str,
-    use_streaming: bool,
-    chunk_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
-    fallback_samples: Vec<f32>,
-    src_rate: u32,
-) -> Result<String, String> {
-    let t0 = std::time::Instant::now();
-    let client = stt::SttClient::new(host);
-
-    let result = if use_streaming {
-        if let Some(rx) = chunk_rx {
-            // 边录边发: WebSocket 在录音期间持续接收音频块
-            // IPv6 已修复 (127.0.0.1)，无 localhost 延迟问题
-            eprintln!("[timing] Using STREAMING transcription (边录边发)...");
-            let t_ws = std::time::Instant::now();
-            let result = client.transcribe_stream(rx, language, None).await;
-            eprintln!("[timing] Streaming result: {}ms", t_ws.elapsed().as_millis());
-            result
-        } else {
-            eprintln!("[timing] Streaming enabled but no chunk channel, falling back to batch");
-            // No chunk channel - use legacy samples path as batch
-            let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-            if wav.is_empty() { return Err("No audio captured".to_string()); }
-            let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
-            let t_ws = std::time::Instant::now();
-            let result = client.transcribe_ws(pcm, language).await;
-            eprintln!("[timing] Batch result: {}ms", t_ws.elapsed().as_millis());
-            result
-        }
-    } else {
-        // Batch mode: 收集全部音频，一次性发送
-        eprintln!("[timing] Using BATCH transcription (一次性)...");
-        if let Some(mut rx) = chunk_rx {
-            // 从 channel 收集所有 chunk
-            let mut all_chunks = Vec::new();
-            while let Some(chunk) = rx.recv().await {
-                all_chunks.extend_from_slice(&chunk);
-            }
-            eprintln!("[timing] Collected {} chunks, {} bytes", all_chunks.len() / 1024, all_chunks.len());
-            let t_ws = std::time::Instant::now();
-            let result = client.transcribe_ws(all_chunks, language).await;
-            eprintln!("[timing] Batch result: {}ms", t_ws.elapsed().as_millis());
-            result
-        } else {
-            // Legacy samples fallback
-            eprintln!("[timing] Encoding {} samples at {}Hz (batch)...", fallback_samples.len(), src_rate);
-            let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-            if wav.is_empty() { return Err("No audio captured".to_string()); }
-            let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
-            let t_ws = std::time::Instant::now();
-            let result = client.transcribe_ws(pcm, language).await;
-            eprintln!("[timing] Batch result: {}ms", t_ws.elapsed().as_millis());
-            result
-        }
-    };
-
-    eprintln!("[timing] run_transcription total: {}ms", t0.elapsed().as_millis());
-    result
 }
 
 // ── Audio device commands ──
@@ -435,6 +440,7 @@ pub fn run() {
                 recorder: Mutex::new(audio::AudioRecorder::new()),
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
+                active_transcription: Mutex::new(None),
             });
 
             log::init(app.handle());
