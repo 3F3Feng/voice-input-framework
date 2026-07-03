@@ -2,8 +2,8 @@
 REM Voice Input Framework - Server Startup Script (Windows)
 REM Start STT and/or LLM servers
 REM
-REM Supports uv-style venvs: .venv-stt (STT), .venv-llm (LLM)
-REM Falls back to .venv for backward compatibility
+REM Requires separate venvs: .venv-stt (STT) and .venv-llm (LLM)
+REM STT and LLM have conflicting transformers versions, cannot share one venv.
 REM
 REM Usage:
 REM   start.bat              REM Start STT server only
@@ -65,20 +65,20 @@ echo ============================================================
 echo Voice Input Framework - Server (Windows)
 echo ============================================================
 
-REM Resolve python path for STT (prefer .venv-stt over .venv)
-set "STT_PYTHON=python"
-if exist ".venv-stt\Scripts\python.exe" (
-    set "STT_PYTHON=.venv-stt\Scripts\python.exe"
-) else if exist ".venv\Scripts\python.exe" (
-    set "STT_PYTHON=.venv\Scripts\python.exe"
+REM Resolve python path for STT
+set "STT_PYTHON=.venv-stt\Scripts\python.exe"
+if not exist "!STT_PYTHON!" (
+    echo [ERROR] STT venv not found: .venv-stt\. Create it first:
+    echo   uv venv .venv-stt
+    exit /b 1
 )
 
-REM Resolve python path for LLM (prefer .venv-llm over .venv)
-set "LLM_PYTHON=python"
-if exist ".venv-llm\Scripts\python.exe" (
-    set "LLM_PYTHON=.venv-llm\Scripts\python.exe"
-) else if exist ".venv\Scripts\python.exe" (
-    set "LLM_PYTHON=.venv\Scripts\python.exe"
+REM Resolve python path for LLM
+set "LLM_PYTHON=.venv-llm\Scripts\python.exe"
+if not exist "!LLM_PYTHON!" (
+    echo [ERROR] LLM venv not found: .venv-llm\. Create it first:
+    echo   uv venv .venv-llm
+    exit /b 1
 )
 
 REM Start servers
