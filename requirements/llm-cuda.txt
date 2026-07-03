@@ -17,3 +17,11 @@ bitsandbytes>=0.43.0
 
 # ============== CUDA Optimization (optional) ==============
 # flash-attn>=2.6.0      # Flash Attention 2 (requires compilation on Windows)
+
+# ============== Qwen3.5 MLA Attention Acceleration ==============
+# Qwen3.5 uses Multi-head Latent Attention (MLA). Without these,
+# the model falls back to slow PyTorch implementation (~27s per request):
+#   The fast path is not available... Falling back to torch implementation.
+#
+# Install (may need compilation tools on Windows):
+#   pip install flash-linear-attention causal-conv1d
