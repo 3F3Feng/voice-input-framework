@@ -198,7 +198,7 @@ async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
 
 async fn run_transcription(
     app_handle: &tauri::AppHandle,
-    indicator_status: &std::sync::Arc<Mutex<String>>,
+    _indicator_status: &std::sync::Arc<Mutex<String>>,
     host: &str,
     language: &str,
     chunk_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
@@ -208,40 +208,28 @@ async fn run_transcription(
     let t0 = std::time::Instant::now();
     let client = stt::SttClient::new(host);
 
-    // Collect all audio into PCM bytes
-    eprintln!("[timing] Collecting audio...");
-    let t_collect = std::time::Instant::now();
-    
-    let pcm_data = if let Some(mut rx) = chunk_rx {
-        // Collect chunks from channel
-        let mut all_chunks = Vec::new();
-        while let Some(chunk) = rx.recv().await {
-            all_chunks.extend_from_slice(&chunk);
-        }
-        eprintln!("[timing] Collected {} chunks, {} bytes", all_chunks.len() / 1024, all_chunks.len());
-        all_chunks
+    let result = if let Some(rx) = chunk_rx {
+        // 边录边发 (streaming): WebSocket 在录音期间持续接收音频块
+        // IPv6 解析已修复 (127.0.0.1)，不会再有 localhost 延迟问题
+        eprintln!("[timing] Using STREAMING transcription (边录边发)...");
+        let t_ws = std::time::Instant::now();
+        let result = client.transcribe_stream(rx, language, None).await;
+        eprintln!("[timing] Streaming result: {}ms", t_ws.elapsed().as_millis());
+        result
     } else {
-        // Encode from samples
-        eprintln!("[timing] Encoding {} samples at {}Hz...", fallback_samples.len(), src_rate);
+        // Fallback: batch mode from fallback_samples (legacy path)
+        eprintln!("[timing] Encoding {} samples at {}Hz (batch fallback)...", fallback_samples.len(), src_rate);
         let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
         if wav.is_empty() {
             return Err("No audio captured".to_string());
         }
-        // Skip WAV header
-        if wav.len() > 44 && &wav[..4] == b"RIFF" {
-            wav[44..].to_vec()
-        } else {
-            wav
-        }
+        let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
+        eprintln!("[timing] PCM bytes: {}", pcm.len());
+        let t_ws = std::time::Instant::now();
+        let result = client.transcribe_ws(pcm, language).await;
+        eprintln!("[timing] Batch result: {}ms", t_ws.elapsed().as_millis());
+        result
     };
-    
-    eprintln!("[timing] Audio ready: {}ms, {} bytes", t_collect.elapsed().as_millis(), pcm_data.len());
-
-    // Use simple batch mode - connect, send all, get result
-    let t_ws = std::time::Instant::now();
-    eprintln!("[timing] Connecting to {}...", host);
-    let result = client.transcribe_ws(pcm_data, language).await;
-    eprintln!("[timing] WebSocket round-trip: {}ms", t_ws.elapsed().as_millis());
 
     eprintln!("[timing] run_transcription total: {}ms", t0.elapsed().as_millis());
     result
