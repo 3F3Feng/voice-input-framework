@@ -237,12 +237,13 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
         match result {
             Ok(text) => {
                 eprintln!("[timing] TOTAL client: {}ms, result: {} chars", elapsed_ms, text.len());
+                // 先发结果——文字立刻显示到文本框
+                let _ = app_handle.emit("transcribe-done", text);
+                // 胶囊显示处理耗时，保持 2.5s 让用户看到
                 indicator::show_result(&app_handle, elapsed_ms);
-                // 保持显示 2.5s 让用户看到处理时间
                 tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
                 if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
                 let _ = indicator::hide(&app_handle);
-                let _ = app_handle.emit("transcribe-done", text);
             }
             Err(e) => {
                 eprintln!("[timing] Error after {}ms: {}", elapsed_ms, e);
