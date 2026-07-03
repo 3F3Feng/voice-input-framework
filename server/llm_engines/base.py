@@ -117,8 +117,10 @@ class BaseLLMEngine(ABC):
                     )
 
             # 构建完整提示
+            # 注意: CUDA/MFX 引擎的 _generate_sync 内部使用 tokenizer.apply_chat_template，
+            # 不需要手动添加 chat format prefix。传入纯文本作为 user message 即可。
             if system_prompt:
-                full_prompt = f"System: {system_prompt}\n\nUser: {text}\n\nAssistant:"
+                full_prompt = f"{system_prompt}\n\n{text}"
             else:
                 full_prompt = text
 

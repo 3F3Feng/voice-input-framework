@@ -218,8 +218,16 @@ class CUDALLMEngine(BaseLLMEngine):
         """同步生成文本"""
         import torch
 
-        # 编码输入
-        inputs = self._tokenizer(prompt, return_tensors="pt").to(self._device)
+        # 使用 chat_template 构造对话，确保模型能正确理解指令
+        # 对于不支持 chat_template 的模型（如续写模型），fallback 到裸文本
+        if hasattr(self._tokenizer, "apply_chat_template"):
+            messages = [{"role": "user", "content": prompt}]
+            formatted = self._tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            inputs = self._tokenizer(formatted, return_tensors="pt").to(self._device)
+        else:
+            inputs = self._tokenizer(prompt, return_tensors="pt").to(self._device)
 
         # 生成
         with torch.no_grad():
@@ -228,14 +236,13 @@ class CUDALLMEngine(BaseLLMEngine):
                 max_new_tokens=max_tokens,
                 do_sample=False,
                 temperature=0.0,
+                pad_token_id=self._tokenizer.eos_token_id,
             )
 
-        # 解码输出
-        response = self._tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-        # 移除输入提示
-        if response.startswith(prompt):
-            response = response[len(prompt) :]
+        # 只解码新生成的 token（跳过 input_ids）
+        input_len = inputs["input_ids"].shape[1]
+        new_tokens = outputs[0][input_len:]
+        response = self._tokenizer.decode(new_tokens, skip_special_tokens=True)
 
         return response.strip()
 
