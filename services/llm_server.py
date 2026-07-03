@@ -159,18 +159,17 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"⚠️  {warning}")
 
     # 预加载配置
-    preload = os.getenv("VIF_PRELOAD_MODELS", "stt").lower()
-    if preload == "none" or preload == "stt":
-        logger.info(f"LLM preload skipped (VIF_PRELOAD_MODELS={preload})")
+    # 默认预加载 LLM 模型，消除首次请求的冷启动延迟
+    preload = os.getenv("VIF_PRELOAD_MODELS", "all").lower()
+    if preload == "none":
+        logger.info("LLM preload disabled (VIF_PRELOAD_MODELS=none)")
         logger.info("LLM will load on first request")
-    elif preload == "all":
+    else:
         if default_model:
-            logger.info("Preloading LLM model...")
+            logger.info(f"Preloading LLM model: {default_model}...")
             asyncio.create_task(engine.load_model(default_model))
         else:
             logger.warning("No default LLM model available for this platform")
-    else:
-        logger.info(f"Unknown preload option: {preload}, skipping LLM preload")
 
     yield
 

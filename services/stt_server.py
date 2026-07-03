@@ -1044,9 +1044,8 @@ async def list_llm_models():
 @app.post("/llm/models/select")
 async def select_llm_model(request: Request):
     """转发：选择 LLM 模型"""
-    if not _is_llm_available():
-        return {"error": "LLM server not available"}
-
+    # 不检查 _is_llm_available() —— 切换模型可能加载一个新模型，
+    # 不应被上一次推理超时影响
     try:
         body = await request.json()
         model_name = body.get("model_name", "")
