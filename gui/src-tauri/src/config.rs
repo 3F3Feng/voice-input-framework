@@ -41,7 +41,11 @@ pub struct UiConfig {
 pub struct AudioConfig {
     pub device: Option<String>,
     pub language: String,
+    #[serde(default = "default_true")]
+    pub use_streaming: bool,
 }
+
+fn default_true() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
@@ -112,6 +116,7 @@ impl Default for VoiceInputConfig {
             audio: AudioConfig {
                 device: None,
                 language: "auto".into(),
+                use_streaming: true,
             },
             llm: LlmConfig { enabled: true },
             _version: "2.0".into(),
@@ -237,6 +242,7 @@ impl VoiceInputConfig {
                     .as_ref()
                     .and_then(|a| a.language.clone())
                     .unwrap_or_else(|| "auto".into()),
+                use_streaming: true,
             },
             llm: LlmConfig {
                 enabled: old.llm.as_ref().and_then(|l| l.enabled).unwrap_or(true),

@@ -147,10 +147,10 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
         *status = "识别中...".to_string();
     }
 
-    let (host, language) = {
+    let (host, language, use_streaming) = {
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
-        (stt_client.stt_url.clone(), cfg.audio.language.clone())
+        (stt_client.stt_url.clone(), cfg.audio.language.clone(), cfg.audio.use_streaming)
     };
 
     let indicator_status = state.indicator_status.clone();
@@ -161,7 +161,7 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
         let total_start = std::time::Instant::now();
         eprintln!("[timing] Transcription task started");
         
-        let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
+        let result = run_transcription(&app_handle, &indicator_status, &host, &language, use_streaming, chunk_rx, fallback_samples, src_rate).await;
         let elapsed_ms = total_start.elapsed().as_millis() as u64;
 
         match result {
@@ -201,6 +201,7 @@ async fn run_transcription(
     _indicator_status: &std::sync::Arc<Mutex<String>>,
     host: &str,
     language: &str,
+    use_streaming: bool,
     chunk_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
     fallback_samples: Vec<f32>,
     src_rate: u32,
@@ -208,27 +209,51 @@ async fn run_transcription(
     let t0 = std::time::Instant::now();
     let client = stt::SttClient::new(host);
 
-    let result = if let Some(rx) = chunk_rx {
-        // 边录边发 (streaming): WebSocket 在录音期间持续接收音频块
-        // IPv6 解析已修复 (127.0.0.1)，不会再有 localhost 延迟问题
-        eprintln!("[timing] Using STREAMING transcription (边录边发)...");
-        let t_ws = std::time::Instant::now();
-        let result = client.transcribe_stream(rx, language, None).await;
-        eprintln!("[timing] Streaming result: {}ms", t_ws.elapsed().as_millis());
-        result
-    } else {
-        // Fallback: batch mode from fallback_samples (legacy path)
-        eprintln!("[timing] Encoding {} samples at {}Hz (batch fallback)...", fallback_samples.len(), src_rate);
-        let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-        if wav.is_empty() {
-            return Err("No audio captured".to_string());
+    let result = if use_streaming {
+        if let Some(rx) = chunk_rx {
+            // 边录边发: WebSocket 在录音期间持续接收音频块
+            // IPv6 已修复 (127.0.0.1)，无 localhost 延迟问题
+            eprintln!("[timing] Using STREAMING transcription (边录边发)...");
+            let t_ws = std::time::Instant::now();
+            let result = client.transcribe_stream(rx, language, None).await;
+            eprintln!("[timing] Streaming result: {}ms", t_ws.elapsed().as_millis());
+            result
+        } else {
+            eprintln!("[timing] Streaming enabled but no chunk channel, falling back to batch");
+            // No chunk channel - use legacy samples path as batch
+            let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
+            if wav.is_empty() { return Err("No audio captured".to_string()); }
+            let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
+            let t_ws = std::time::Instant::now();
+            let result = client.transcribe_ws(pcm, language).await;
+            eprintln!("[timing] Batch result: {}ms", t_ws.elapsed().as_millis());
+            result
         }
-        let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
-        eprintln!("[timing] PCM bytes: {}", pcm.len());
-        let t_ws = std::time::Instant::now();
-        let result = client.transcribe_ws(pcm, language).await;
-        eprintln!("[timing] Batch result: {}ms", t_ws.elapsed().as_millis());
-        result
+    } else {
+        // Batch mode: 收集全部音频，一次性发送
+        eprintln!("[timing] Using BATCH transcription (一次性)...");
+        if let Some(mut rx) = chunk_rx {
+            // 从 channel 收集所有 chunk
+            let mut all_chunks = Vec::new();
+            while let Some(chunk) = rx.recv().await {
+                all_chunks.extend_from_slice(&chunk);
+            }
+            eprintln!("[timing] Collected {} chunks, {} bytes", all_chunks.len() / 1024, all_chunks.len());
+            let t_ws = std::time::Instant::now();
+            let result = client.transcribe_ws(all_chunks, language).await;
+            eprintln!("[timing] Batch result: {}ms", t_ws.elapsed().as_millis());
+            result
+        } else {
+            // Legacy samples fallback
+            eprintln!("[timing] Encoding {} samples at {}Hz (batch)...", fallback_samples.len(), src_rate);
+            let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
+            if wav.is_empty() { return Err("No audio captured".to_string()); }
+            let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
+            let t_ws = std::time::Instant::now();
+            let result = client.transcribe_ws(pcm, language).await;
+            eprintln!("[timing] Batch result: {}ms", t_ws.elapsed().as_millis());
+            result
+        }
     };
 
     eprintln!("[timing] run_transcription total: {}ms", t0.elapsed().as_millis());

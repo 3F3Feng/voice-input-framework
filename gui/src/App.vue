@@ -86,6 +86,11 @@
               </select>
               <button class="s-btn" @click="refreshDevices" title="刷新">🔄</button>
             </div>
+            <div class="s-row" style="margin-top:6px">
+              <label class="toggle"><input type="checkbox" v-model="streamingEnabled" @change="onStreamingToggle" /><span class="slider"></span></label>
+              <span class="s-label">流式传输 (边录边发)</span>
+              <span class="s-tip" style="margin-left:auto">{{ streamingEnabled ? '开' : '关' }}</span>
+            </div>
           </div>
 
           <!-- Hotkey -->
@@ -295,6 +300,7 @@ const promptText = ref("");
 const autoInputEnabled = ref(false);
 const autoStart = ref(false);
 const startMinimized = ref(false);
+const streamingEnabled = ref(true);
 
 const elapsedMs = ref(0);
 const processingMs = ref(0);
@@ -417,6 +423,10 @@ async function refreshDevices() {
 function onDeviceChange() {
   saveConfigPatch(cfg => { cfg.audio.device = selectedDevice.value; });
 }
+function onStreamingToggle() {
+  saveConfigPatch(cfg => { cfg.audio.use_streaming = streamingEnabled.value; });
+  toast(`流式传输 ${streamingEnabled.value ? '已启用' : '已禁用'}`, "ok");
+}
 
 // ── Config ──
 async function loadConfig() {
@@ -431,6 +441,7 @@ async function loadConfig() {
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     selectedDevice.value = cfg.audio.device;
+    streamingEnabled.value = cfg.audio.use_streaming ?? true;
   } catch {}
 }
 async function loadAutostart() {
