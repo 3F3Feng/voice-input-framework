@@ -93,8 +93,10 @@ class WhisperCppEngine(BaseSTTEngine):
         try:
             cmd = [
                 str(self.whisper_cli),
-                "-m", self.model_path,
-                "-f", audio_path,
+                "-m",
+                self.model_path,
+                "-f",
+                audio_path,
                 "--no-timestamps",
                 "-otxt",
             ]

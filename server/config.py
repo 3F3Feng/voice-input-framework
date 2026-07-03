@@ -11,6 +11,7 @@ from typing import Optional
 @dataclass
 class ModelConfig:
     """模型配置"""
+
     name: str
     model_path: Optional[str] = None
     device: str = "auto"
@@ -24,6 +25,7 @@ class ModelConfig:
 @dataclass
 class LLMConfig:
     """LLM后处理配置"""
+
     enabled: bool = True
     default_model: str = "Qwen3.5-0.8B-OptiQ"  # MLX 量化模型 (推荐)
     thinking_timeout: float = 5.0  # 思考等待超时（秒）
@@ -33,6 +35,7 @@ class LLMConfig:
 @dataclass
 class ServerConfig:
     """服务端配置"""
+
     host: str = "0.0.0.0"
     port: int = 6544
     debug: bool = False
@@ -86,33 +89,39 @@ def get_default_config() -> ServerConfig:
     config = ServerConfig()
 
     # Whisper 模型
-    config.add_model(ModelConfig(
-        name="whisper",
-        model_path="openai/whisper-large-v3",
-        device="auto",
-        language="auto",
-        compute_type="float16",
-        max_audio_length=300,
-    ))
+    config.add_model(
+        ModelConfig(
+            name="whisper",
+            model_path="openai/whisper-large-v3",
+            device="auto",
+            language="auto",
+            compute_type="float16",
+            max_audio_length=300,
+        )
+    )
 
     # Whisper small
-    config.add_model(ModelConfig(
-        name="whisper-small",
-        model_path="openai/whisper-small",
-        device="auto",
-        language="auto",
-        compute_type="float32",
-        max_audio_length=120,
-    ))
+    config.add_model(
+        ModelConfig(
+            name="whisper-small",
+            model_path="openai/whisper-small",
+            device="auto",
+            language="auto",
+            compute_type="float32",
+            max_audio_length=120,
+        )
+    )
 
     # Qwen3-ASR 1.7B
-    config.add_model(ModelConfig(
-        name="qwen_asr",
-        model_path="Qwen/Qwen3-ASR-1.7B",
-        device="auto",
-        language="zh",
-        compute_type="float16",
-        max_audio_length=60,
-    ))
+    config.add_model(
+        ModelConfig(
+            name="qwen_asr",
+            model_path="Qwen/Qwen3-ASR-1.7B",
+            device="auto",
+            language="zh",
+            compute_type="float16",
+            max_audio_length=60,
+        )
+    )
 
     return config

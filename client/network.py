@@ -27,7 +27,7 @@ DEFAULT_WS_PING_INTERVAL = 20
 DEFAULT_WS_PING_TIMEOUT = 10
 DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_READY_TIMEOUT = 30.0
-DEFAULT_RESULT_TIMEOUT = 300.0   # 5 分钟（大模型如 qwen_asr 需要较长时间）
+DEFAULT_RESULT_TIMEOUT = 300.0  # 5 分钟（大模型如 qwen_asr 需要较长时间）
 DEFAULT_HTTP_TIMEOUT = 10.0
 DEFAULT_MODEL_SWITCH_TIMEOUT = 300.0  # 5 分钟（大模型加载需要时间）
 DEFAULT_POLL_INTERVAL = 2.0
@@ -159,6 +159,61 @@ class SttClient:
         self.is_connected = False
         self.connection_state = ConnectionState.DISCONNECTED
 
+    # ──────────────────── 平台信息 ────────────────────
+
+    async def fetch_platform_info(self) -> dict:
+        """获取服务器平台信息
+
+        Returns:
+            dict: 平台信息，包含 recommended_stt, available_models 等
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
+                url = f"{self.http_url}/platform"
+                self._log(f"正在获取平台信息 from {url}...")
+
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self._log(
+                        f"✓ 获取到平台信息: {data.get('system', 'unknown')} {data.get('arch', 'unknown')}"
+                    )
+                    return data
+                else:
+                    self._log(f"⚠️ 获取平台信息失败: HTTP {resp.status_code}")
+                    return {}
+        except Exception as e:
+            self._log(f"⚠️ 获取平台信息失败: {e}")
+            return {}
+
+    async def get_models(self) -> list[dict]:
+        """获取服务器模型列表（返回原始数据）
+
+        Returns:
+            list[dict]: 模型信息列表，每个模型包含 name, is_loaded, is_available 等字段
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
+                resp = await client.get(f"{self.http_url}/models")
+                if resp.status_code == 200:
+                    response_data = resp.json()
+                    self._parse_models_response(response_data)
+                    return (
+                        response_data
+                        if isinstance(response_data, list)
+                        else response_data.get("models", [])
+                    )
+                else:
+                    self._log(f"✗ 获取模型列表失败: HTTP {resp.status_code}")
+                    return []
+        except Exception as e:
+            self._log(f"✗ 获取模型列表失败: {e}")
+            return []
+
     # ──────────────────── 模型管理 ────────────────────
 
     async def fetch_models(self) -> bool:
@@ -187,7 +242,9 @@ class SttClient:
                                 self._log(f"⚠️ 响应中未找到模型，响应完整内容: {response_data}")
 
                             if self.on_models_updated:
-                                self.on_models_updated(self.available_models, self.current_model or "")
+                                self.on_models_updated(
+                                    self.available_models, self.current_model or ""
+                                )
 
                             return bool(self.available_models)
                         except json.JSONDecodeError as e:
@@ -209,6 +266,8 @@ class SttClient:
     def _parse_models_response(self, response_data: Any):
         """解析模型列表响应（兼容多种格式）"""
         self.available_models = []
+        self.all_models = []  # 所有模型（包括不可用的）
+        self.available_model_names = []  # 当前平台可用的模型名称
 
         if isinstance(response_data, list):
             # 列表格式
@@ -217,21 +276,31 @@ class SttClient:
                     name = m.get("name", "")
                     if name:
                         self.available_models.append(name)
+                        self.all_models.append(name)
+                        # 检查可用性
+                        if m.get("is_available", True):
+                            self.available_model_names.append(name)
                     if m.get("is_loaded", False):
                         self.current_model = name
         elif isinstance(response_data, dict):
             # 字典格式，可能带有 "models" 键
             if "models" in response_data:
-                self.available_models = [
-                    m.get("name", "") for m in response_data.get("models", [])
-                ]
                 for m in response_data.get("models", []):
+                    name = m.get("name", "")
+                    if name:
+                        self.available_models.append(name)
+                        self.all_models.append(name)
+                        # 检查可用性
+                        if m.get("is_available", True):
+                            self.available_model_names.append(name)
                     if m.get("is_loaded", False):
-                        self.current_model = m.get("name", "")
+                        self.current_model = name
                         break
 
         # 过滤空字符串
         self.available_models = [m for m in self.available_models if m]
+        self.all_models = [m for m in self.all_models if m]
+        self.available_model_names = [m for m in self.available_model_names if m]
 
     async def switch_model(self, model_name: str) -> bool:
         """切换 STT 模型
@@ -391,10 +460,14 @@ class SttClient:
             self._log(f"发送 {audio_size_kb:.1f} KB 音频...")
 
             # 发送音频消息
-            await ws.send(json.dumps({
-                "type": "audio",
-                "data": base64.b64encode(full_audio).decode(),
-            }))
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "audio",
+                        "data": base64.b64encode(full_audio).decode(),
+                    }
+                )
+            )
 
             # 发送结束信号
             await ws.send(json.dumps({"type": "end"}))
@@ -441,7 +514,9 @@ class SttClient:
             self._log(f"发送音频失败: {e}")
             return None
 
-    async def stream_audio(self, audio_queue: asyncio.Queue, language: str = "auto") -> Optional[str]:
+    async def stream_audio(
+        self, audio_queue: asyncio.Queue, language: str = "auto"
+    ) -> Optional[str]:
         """流式发送音频到服务器（边录边发）
 
         从 audio_queue 中逐块读取音频数据，通过 WebSocket 实时发送。
@@ -489,10 +564,14 @@ class SttClient:
                             # 收到结束信号
                             break
                         # 发送音频块
-                        await ws.send(json.dumps({
-                            "type": "audio",
-                            "data": base64.b64encode(chunk).decode(),
-                        }))
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "audio",
+                                    "data": base64.b64encode(chunk).decode(),
+                                }
+                            )
+                        )
                     except asyncio.TimeoutError:
                         # 队列为空但可能还在录音，继续等待
                         continue
@@ -518,7 +597,7 @@ class SttClient:
                         if msg_type == "result":
                             result_text = data.get("text", "")
                             llm_latency = data.get("llm_latency_ms")
-                            llm_model = data.get("llm_model", "")
+                            data.get("llm_model", "")
                             if llm_latency is not None:
                                 self._log(f"识别结果: {result_text} (LLM: {llm_latency:.0f}ms)")
                             else:

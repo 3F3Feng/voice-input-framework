@@ -1,0 +1,13 @@
+# Voice Input Framework - STT Dependencies (Apple Silicon MLX)
+# For macOS with Apple Silicon (M1/M2/M3/M4)
+# Install: pip install -r requirements/base.txt -r requirements/stt-mlx.txt
+
+# ============== MLX STT Models ==============
+mlx>=0.31.0
+mlx-audio>=0.4.2
+
+# ============== MLX Whisper (optional) ==============
+mlx-whisper>=0.1.0
+
+# ============== Speaker Diarization (optional) ==============
+# pyannote.audio==3.3.3  # Requires HuggingFace token

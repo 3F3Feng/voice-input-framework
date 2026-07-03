@@ -18,6 +18,8 @@ pub struct VoiceInputConfig {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    #[serde(default)]
+    pub history: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +41,11 @@ pub struct UiConfig {
 pub struct AudioConfig {
     pub device: Option<String>,
     pub language: String,
+    #[serde(default = "default_true")]
+    pub use_streaming: bool,
 }
+
+fn default_true() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
@@ -92,8 +98,9 @@ impl Default for VoiceInputConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig {
-                host: "localhost".into(),
+                host: "127.0.0.1".into(),
                 port: 6544,
+                history: Vec::new(),
             },
             hotkey: HotkeyConfig {
                 key: "left_ctrl+left_alt".into(),
@@ -109,6 +116,7 @@ impl Default for VoiceInputConfig {
             audio: AudioConfig {
                 device: None,
                 language: "auto".into(),
+                use_streaming: true,
             },
             llm: LlmConfig { enabled: true },
             _version: "2.0".into(),
@@ -190,8 +198,9 @@ impl VoiceInputConfig {
                     .server
                     .as_ref()
                     .and_then(|s| s.host.clone())
-                    .unwrap_or_else(|| "localhost".into()),
+                    .unwrap_or_else(|| "127.0.0.1".into()),
                 port: old.server.as_ref().and_then(|s| s.port).unwrap_or(6544),
+                history: Vec::new(),
             },
             hotkey: HotkeyConfig {
                 key: old
@@ -233,6 +242,7 @@ impl VoiceInputConfig {
                     .as_ref()
                     .and_then(|a| a.language.clone())
                     .unwrap_or_else(|| "auto".into()),
+                use_streaming: true,
             },
             llm: LlmConfig {
                 enabled: old.llm.as_ref().and_then(|l| l.enabled).unwrap_or(true),

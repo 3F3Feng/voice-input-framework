@@ -10,8 +10,6 @@ import argparse
 import asyncio
 import base64
 import logging
-import sys
-import wave
 
 import httpx
 

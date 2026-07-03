@@ -1,0 +1,7 @@
+# Voice Input Framework - LLM Dependencies (Apple Silicon MLX)
+# For macOS with Apple Silicon (M1/M2/M3/M4)
+# Install: pip install -r requirements/base.txt -r requirements/llm-mlx.txt
+
+# ============== MLX LLM ==============
+mlx>=0.31.0
+mlx-lm>=0.31.0

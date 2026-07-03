@@ -219,37 +219,44 @@ class HotkeyManager:
     def start_listener(self, on_press: Callable, on_release: Callable):
         """
         启动快捷键监听器
-        
+
         Args:
             on_press: 快捷键按下时的回调函数
             on_release: 快捷键释放时的回调函数
         """
         self.on_press_callback = on_press
         self.on_release_callback = on_release
-        
+
         if self.listener:
             try:
                 self.listener.stop()
-            except:
+            except Exception:
                 pass
-        
-        self.listener = keyboard.Listener(
-            on_press=self._on_key_press,
-            on_release=self._on_key_release
-        )
-        self.listener.start()
-        logger.info("快捷键监听器已启动")
-    
+            self.listener = None
+
+        try:
+            self.listener = keyboard.Listener(
+                on_press=self._on_key_press, on_release=self._on_key_release
+            )
+            self.listener.start()
+            logger.info("快捷键监听器已启动")
+        except Exception as e:
+            logger.error(f"启动快捷键监听器失败: {e}")
+            self.listener = None
+        except Exception as e:
+            logger.error(f"启动快捷键监听器失败: {e}")
+            self.listener = None
+
     def stop_listener(self):
         """停止快捷键监听器"""
         if self.listener:
             try:
                 self.listener.stop()
-            except:
+            except Exception:
                 pass
             self.listener = None
             logger.info("快捷键监听器已停止")
-    
+
     def start_recording(self, callback: Callable[[str], None]):
         """
         开始录制快捷键

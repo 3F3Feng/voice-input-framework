@@ -10,7 +10,6 @@ Voice Input Framework - 流式识别演示
 import argparse
 import asyncio
 import logging
-import sys
 
 from voice_input_framework.client.audio_capture import AudioCapture, AudioCaptureConfig
 from voice_input_framework.client.stt_client import STTClient, STTClientConfig

@@ -25,7 +25,6 @@ Examples:
 import argparse
 import asyncio
 import sys
-from typing import Optional
 
 import httpx
 

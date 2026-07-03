@@ -1,13 +1,13 @@
 name: Build Tauri Client
 on:
   push:
-    branches: [dev/llm-postprocessing-v2, main]
+    branches: [dev/llm-postprocessing-v2, dev/windows-4090-server, main]
     tags-ignore: ['**']
     paths:
       - 'gui/**'
       - '.github/workflows/build.yml'
   pull_request:
-    branches: [dev/llm-postprocessing-v2, main]
+    branches: [dev/llm-postprocessing-v2, dev/windows-4090-server, main]
     paths:
       - 'gui/**'
       - '.github/workflows/build.yml'

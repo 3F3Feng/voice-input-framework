@@ -11,9 +11,8 @@
 
 import logging
 import queue
-import threading
 import time
-from typing import Optional, Callable
+from typing import Optional
 
 import numpy as np
 
@@ -28,9 +27,12 @@ AUDIO_CHUNK_SIZE = 1024
 class AudioRecorder:
     """音频录制器 — 封装 sounddevice 录制逻辑"""
 
-    def __init__(self, sample_rate: int = AUDIO_SAMPLE_RATE,
-                 channels: int = AUDIO_CHANNELS,
-                 chunk_size: int = AUDIO_CHUNK_SIZE):
+    def __init__(
+        self,
+        sample_rate: int = AUDIO_SAMPLE_RATE,
+        channels: int = AUDIO_CHANNELS,
+        chunk_size: int = AUDIO_CHUNK_SIZE,
+    ):
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_size = chunk_size
@@ -82,10 +84,11 @@ class AudioRecorder:
         """
         try:
             import sounddevice as sd
+
             devices = sd.query_devices()
             input_devices = {}
             for i, device in enumerate(devices):
-                if device['max_input_channels'] > 0:
+                if device["max_input_channels"] > 0:
                     input_devices[i] = f"{device['name']}"
             return input_devices if input_devices else {-1: "默认设备"}
         except Exception as e:
@@ -94,11 +97,14 @@ class AudioRecorder:
 
     # ──────────────────── 录制控制 ────────────────────
 
-    def start_recording(self):
+    def start_recording(self, device: Optional[int] = None):
         """开始录音
 
         启动 sounddevice.InputStream，音频数据同时写入 buffer 和 queue。
         queue 用于流式发送，buffer 用于备用整段发送。
+
+        Args:
+            device: 音频设备 ID，None 表示默认设备
         """
         import sounddevice as sd
 
@@ -115,6 +121,9 @@ class AudioRecorder:
             except queue.Empty:
                 break
 
+        # 使用传入的设备 ID 或当前选中的设备
+        dev = device if device is not None else self._selected_device
+
         def callback(indata, frames, time_info, status):
             if status:
                 logger.warning(f"Audio status: {status}")
@@ -128,10 +137,10 @@ class AudioRecorder:
 
         try:
             self._stream = sd.InputStream(
-                device=self._selected_device,
+                device=dev,
                 samplerate=self.sample_rate,
                 channels=self.channels,
-                dtype='int16',
+                dtype="int16",
                 blocksize=self.chunk_size,
                 callback=callback,
             )
@@ -187,7 +196,7 @@ class AudioRecorder:
             if not self._audio_buffer:
                 return 0, 0
 
-            last_chunk = self._audio_buffer[-1] if self._audio_buffer else b''
+            last_chunk = self._audio_buffer[-1] if self._audio_buffer else b""
             if not last_chunk:
                 return 0, 0
 

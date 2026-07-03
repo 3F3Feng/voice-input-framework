@@ -282,15 +282,17 @@ impl AudioRecorder {
             std::thread::sleep(std::time::Duration::from_micros(100));
         }
 
-        let (samples, rate) = {
+        let (samples, _original_rate) = {
             let mut buf = self.samples.lock().map_err(|e| e.to_string())?;
             let result = buf.clone();
             buf.clear();
             (result, self.input_sample_rate)
         };
 
-        eprintln!("[audio] Stopped: {} samples ({:.2}s at {}Hz)", samples.len(), samples.len() as f64 / rate as f64, rate);
-        Ok((samples, rate))
+        // Audio was already resampled to 16kHz during recording
+        // Return 16000 as the rate to avoid double resampling
+        eprintln!("[audio] Stopped: {} samples ({:.2}s at 16kHz)", samples.len(), samples.len() as f64 / 16000.0);
+        Ok((samples, 16000))
     }
 
     pub fn reset(&mut self) {
@@ -300,6 +302,10 @@ impl AudioRecorder {
         self.chunk_sender = None;
         self.chunk_receiver = None;
         *self.samples.lock().unwrap() = Vec::new();
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.is_recording.load(Ordering::SeqCst)
     }
 
     pub fn get_level(&self) -> f32 {

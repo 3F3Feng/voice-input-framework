@@ -5,14 +5,15 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { background: transparent !important; overflow: hidden; border: none; outline: none; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; user-select: none; -webkit-user-select: none; display: flex; align-items: center; justify-content: center; height: 100vh; }
-.indicator { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgb(15, 15, 25); border-radius: 26px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 20px rgba(0,0,0,0.4); width: 200px; }
+.indicator { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgb(15, 15, 25); border-radius: 26px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 20px rgba(0,0,0,0.4); min-width: 200px; max-width: 350px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .dot.recording { background: #e63946; animation: pulse 0.8s infinite; }
 .dot.processing { background: #fbbf24; animation: spin 1s linear infinite; }
-.dot.done { background: #4ade80; }  /* green, no animation — static for the result display */
-.text { color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap; min-width: 70px; }
+.dot.done { background: #4ade80; }
+.text { color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap; }
 .level-bar { flex: 1; height: 4px; background: rgba(255,255,255,0.15); border-radius: 2px; overflow: hidden; }
 .level-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #4ade80, #fbbf24, #f87171); border-radius: 2px; transition: width 0.08s ease; }
+.timing { color: rgba(255,255,255,0.7); font-size: 10px; font-family: monospace; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
@@ -22,6 +23,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; u
   <div class="dot recording" id="dot"></div>
   <span class="text" id="label">🎙️ <span id="timer">0.0s</span></span>
   <div class="level-bar" id="level-bar"><div class="level-fill" id="level"></div></div>
+  <span class="timing" id="timing"></span>
 </div>
 <script>
 const start = Date.now();
@@ -30,10 +32,12 @@ const levelEl = document.getElementById('level');
 const levelBar = document.getElementById('level-bar');
 const dotEl = document.getElementById('dot');
 const labelEl = document.getElementById('label');
+const timingEl = document.getElementById('timing');
 const invoke = window.__TAURI__?.core?.invoke;
 const listen = window.__TAURI__?.event?.listen;
 
 let mode = 'recording'; // 'recording' | 'processing' | 'done'
+let processingStart = null;
 
 // Listen for result time (emitted after transcription completes)
 if (listen) {
@@ -41,10 +45,42 @@ if (listen) {
     const data = event.payload;
     if (data && data.duration_ms != null) {
       mode = 'done';
-      if (labelEl) labelEl.textContent = '';
+      if (labelEl) labelEl.textContent = '✓';
       if (timerEl) timerEl.textContent = data.duration_ms + 'ms';
       if (levelBar) levelBar.style.display = 'none';
       if (dotEl) { dotEl.classList.remove('recording', 'processing'); dotEl.classList.add('done'); }
+      // Show timing breakdown if available
+      if (data.stt_ms != null && timingEl) {
+        timingEl.textContent = `stt:${data.stt_ms}ms`;
+      }
+    }
+  });
+  
+  // Listen for detailed progress events
+  listen('transcribe-progress', (event) => {
+    const data = event.payload;
+    if (!data) return;
+    
+    if (data.type === 'stt_result') {
+      // STT done, show STT time
+      if (timingEl && data.stt_latency_ms) {
+        timingEl.textContent = `stt:${Math.round(data.stt_latency_ms)}ms`;
+      }
+    } else if (data.type === 'llm_start') {
+      // LLM starting
+      if (timingEl) timingEl.textContent = 'llm:...';
+    } else if (data.type === 'result') {
+      // Final result with all timing
+      if (timingEl) {
+        const stt = Math.round(data.stt_latency_ms || 0);
+        const llm = Math.round(data.llm_latency_ms || 0);
+        const total = Math.round(data.total_latency_ms || 0);
+        if (llm > 0) {
+          timingEl.textContent = `stt:${stt} llm:${llm}`;
+        } else {
+          timingEl.textContent = `stt:${stt}ms`;
+        }
+      }
     }
   });
 }
@@ -63,17 +99,27 @@ setInterval(() => {
     }
   } else if (mode === 'processing') {
     const elapsed = ((Date.now() - processingStart) / 1000).toFixed(1);
-    if (timerEl) timerEl.textContent = elapsed + 's';
     if (invoke) {
       invoke('get_indicator_status').then(status => {
-        if (status && labelEl) labelEl.textContent = status;
-      }).catch(() => {});
+        if (status) {
+          // Detect completion status (set by Rust side after transcription)
+          if (status.includes('✓') || status.includes('ms')) {
+            mode = 'done';
+            if (labelEl) labelEl.textContent = status;
+            if (timerEl) timerEl.textContent = status.replace(/[^0-9]/g, '') + 'ms';
+            if (levelBar) levelBar.style.display = 'none';
+            if (dotEl) { dotEl.classList.remove('processing'); dotEl.classList.add('done'); }
+          } else {
+            if (labelEl) labelEl.textContent = status;
+            if (timerEl) timerEl.textContent = elapsed + 's';
+          }
+        }
+      }).catch(() => {
+        if (timerEl) timerEl.textContent = elapsed + 's';
+      });
     }
   }
-  // mode === 'done': timer already shows ms, no further updates needed
 }, 100);
-
-let processingStart = null;
 
 // Check for processing status
 setInterval(() => {

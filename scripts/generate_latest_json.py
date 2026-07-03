@@ -6,7 +6,11 @@ Run during release build after assets are renamed.
 Reads version from RELEASE_TAG env var, finds assets in release-assets/ dir.
 Looks for .sig files alongside assets for signature verification.
 """
-import json, os, glob, re, datetime
+import json
+import os
+import glob
+import re
+import datetime
 
 RELEASE_TAG = os.environ.get("RELEASE_TAG", "")
 REPO = "3F3Feng/voice-input-framework"

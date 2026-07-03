@@ -29,10 +29,21 @@
           <!-- Connection -->
           <div class="s-section">
             <div class="s-title">连接</div>
-            <div class="s-row">
-              <input class="s-input" v-model="serverHost" placeholder="localhost" @keyup.enter="updateServer" @change="onServerSettingChange" />
-              <input class="s-input s-port" v-model.number="serverPort" type="number" @keyup.enter="updateServer" @change="onServerSettingChange" />
-              <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
+            <div class="s-row" style="position:relative">
+              <div class="combobox" style="flex:1">
+                <input class="s-input combobox-input" v-model="serverAddress" placeholder="127.0.0.1:6544 或 192.168.1.100:6544"
+                  @input="onAddressInput" @keyup.enter="connectFromInput" @focus="showHistory = true" @blur="hideHistory" />
+                <div v-if="showHistory && filteredHistory.length > 0" class="combobox-dropdown">
+                  <div v-for="addr in filteredHistory" :key="addr" class="combobox-item" @mousedown.prevent="selectHistory(addr)">
+                    {{ addr }}
+                  </div>
+                </div>
+              </div>
+              <button class="s-btn" @click="connectFromInput" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
+            </div>
+            <div v-if="platformInfo" class="s-tip">
+              服务器: {{ platformInfo.system }} {{ platformInfo.arch }} | 后端: {{ platformInfo.backend }}
+              <span v-if="platformInfo.gpu"> | GPU: {{ platformInfo.gpu.name }}</span>
             </div>
           </div>
 
@@ -40,11 +51,14 @@
           <div class="s-section">
             <div class="s-title">STT 模型</div>
             <select class="s-select" v-model="sttModel" @change="switchStt">
-              <option v-for="m in sttModels" :key="m.name" :value="m.name">
-                {{ m.name }} {{ m.is_loaded ? '✓' : '' }}
+              <option v-for="m in sttModels" :key="m.name" :value="m.name" :disabled="m.is_available === false">
+                {{ m.name }} {{ m.is_loaded ? '✓' : '' }} {{ m.is_available === false ? '(不兼容)' : '' }}
               </option>
             </select>
             <div v-if="sttLoading" class="s-loading">切换中...</div>
+            <div v-if="platformInfo" class="s-tip">
+              推荐: {{ platformInfo.recommended_stt }} | 可用: {{ platformInfo.available_models.length }} 个模型
+            </div>
           </div>
 
           <div class="s-section">
@@ -71,6 +85,11 @@
                 <option v-for="(name, id) in audioDevices" :key="id" :value="name">{{ name }}</option>
               </select>
               <button class="s-btn" @click="refreshDevices" title="刷新">🔄</button>
+            </div>
+            <div class="s-row" style="margin-top:6px">
+              <label class="toggle"><input type="checkbox" v-model="streamingEnabled" @change="onStreamingToggle" /><span class="slider"></span></label>
+              <span class="s-label">流式传输 (边录边发)</span>
+              <span class="s-tip" style="margin-left:auto">{{ streamingEnabled ? '开' : '关' }}</span>
             </div>
           </div>
 
@@ -231,16 +250,24 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 // ── Types ──
-interface ModelInfo { name: string; is_loaded: boolean; }
+interface ModelInfo { name: string; is_loaded: boolean; is_available?: boolean; }
 interface VoiceInputConfig {
-  server: { host: string; port: number };
+  server: { host: string; port: number; history?: string[] };
   hotkey: { key: string; distinguish_left_right: boolean };
   ui: { start_minimized: boolean; use_floating_indicator: boolean; use_tray: boolean; opacity: number; auto_input?: boolean };
-  audio: { device: string | null; language: string };
+  audio: { device: string | null; language: string; use_streaming: boolean };
   llm: { enabled: boolean };
   _version: string;
 }
 interface HistoryItem { text: string; time: string; }
+interface PlatformInfo {
+  system: string;
+  arch: string;
+  backend: string;
+  gpu: { name: string; memory_gb: number } | null;
+  recommended_stt: string;
+  available_models: string[];
+}
 
 // ── State ──
 const recording = ref(false);
@@ -264,11 +291,16 @@ const promptStatus = ref("");
 
 const serverHost = ref("localhost");
 const serverPort = ref(6544);
+const serverAddress = ref("");  // Current input value
+const serverHistory = ref<string[]>([]);
+const showHistory = ref(false);
+const platformInfo = ref<PlatformInfo | null>(null);
 const llmEnabled = ref(true);
 const promptText = ref("");
 const autoInputEnabled = ref(false);
 const autoStart = ref(false);
 const startMinimized = ref(false);
+const streamingEnabled = ref(true);
 
 const elapsedMs = ref(0);
 const processingMs = ref(0);
@@ -391,6 +423,10 @@ async function refreshDevices() {
 function onDeviceChange() {
   saveConfigPatch(cfg => { cfg.audio.device = selectedDevice.value; });
 }
+function onStreamingToggle() {
+  saveConfigPatch(cfg => { cfg.audio.use_streaming = streamingEnabled.value; });
+  toast(`流式传输 ${streamingEnabled.value ? '已启用' : '已禁用'}`, "ok");
+}
 
 // ── Config ──
 async function loadConfig() {
@@ -398,18 +434,18 @@ async function loadConfig() {
     const cfg = await getConfig();
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
+    serverAddress.value = `${cfg.server.host}:${cfg.server.port}`;
+    serverHistory.value = (cfg.server.history || []).slice(0, 5);
     version.value = cfg._version;
     hotkeyStr.value = cfg.hotkey.key;
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     selectedDevice.value = cfg.audio.device;
+    streamingEnabled.value = cfg.audio.use_streaming ?? true;
   } catch {}
 }
 async function loadAutostart() {
   try { autoStart.value = await invoke<boolean>("get_autostart"); } catch {}
-}
-function onServerSettingChange() {
-  saveConfigPatch(cfg => { cfg.server.host = serverHost.value.trim() || "localhost"; cfg.server.port = serverPort.value; });
 }
 async function toggleAutoStart() {
   try { await invoke("set_autostart", { enabled: autoStart.value }); } catch { autoStart.value = !autoStart.value; }
@@ -418,23 +454,95 @@ function toggleStartMinimized() { saveConfigPatch(cfg => { cfg.ui.start_minimize
 function onAutoInputToggle() { saveConfigPatch(cfg => { cfg.ui.auto_input = autoInputEnabled.value; }); }
 
 // ── Connection ──
-async function updateServer() {
+function parseAddress(address: string): { host: string; port: number } {
+  address = address.trim();
+  if (address.includes(':')) {
+    const parts = address.split(':');
+    return { host: parts[0] || 'localhost', port: parseInt(parts[1]) || 6544 };
+  }
+  return { host: address || 'localhost', port: 6544 };
+}
+
+// Computed: filter history based on input
+const filteredHistory = computed(() => {
+  const query = serverAddress.value.toLowerCase().trim();
+  if (!query) return serverHistory.value;
+  return serverHistory.value.filter(addr => addr.toLowerCase().includes(query));
+});
+
+function onAddressInput() {
+  // Show dropdown when typing
+  showHistory.value = true;
+}
+
+function hideHistory() {
+  // Delay hide to allow click on dropdown items
+  setTimeout(() => { showHistory.value = false; }, 150);
+}
+
+function selectHistory(addr: string) {
+  serverAddress.value = addr;
+  showHistory.value = false;
+  const { host, port } = parseAddress(addr);
+  doConnect(host, port);
+}
+
+function connectFromInput() {
+  const address = serverAddress.value.trim();
+  if (!address) return;
+  const { host, port } = parseAddress(address);
+  doConnect(host, port);
+}
+
+async function doConnect(host: string, port: number) {
   connected.value = false;
   connecting.value = true;
-  const host = serverHost.value.trim() || "localhost";
-  const port = serverPort.value || 6544;
+  
   try {
     await invoke("set_server_host", { host, port });
     const ok = await loadModels();
     if (ok) {
       connected.value = true;
       toast("已连接", "ok");
-      saveConfigPatch(cfg => { cfg.server.host = host; cfg.server.port = port; });
+      // Save to history (with port)
+      const fullAddress = `${host}:${port}`;
+      serverAddress.value = fullAddress;
+      if (!serverHistory.value.includes(fullAddress)) {
+        serverHistory.value.unshift(fullAddress);
+        // Limit to 5 history items
+        if (serverHistory.value.length > 5) serverHistory.value = serverHistory.value.slice(0, 5);
+      } else {
+        // Move to top
+        serverHistory.value = [fullAddress, ...serverHistory.value.filter(a => a !== fullAddress)];
+      }
+      saveConfigPatch(cfg => {
+        cfg.server.host = host;
+        cfg.server.port = port;
+        cfg.server.history = serverHistory.value;
+      });
+      // Fetch platform info
+      fetchPlatformInfo();
     } else {
       toast("服务器无响应", "err");
     }
   } catch (e) { toast(`连接失败: ${e}`, "err"); }
   connecting.value = false;
+}
+
+// Keep updateServer for backward compatibility (called by onMounted)
+async function updateServer() {
+  const address = serverAddress.value || serverHost.value;
+  const { host, port } = parseAddress(address);
+  await doConnect(host, port);
+}
+
+async function fetchPlatformInfo() {
+  try {
+    platformInfo.value = await invoke<PlatformInfo>("get_platform_info");
+  } catch (e) {
+    console.error("Failed to fetch platform info:", e);
+    platformInfo.value = null;
+  }
 }
 
 // ── Models ──
@@ -794,4 +902,19 @@ html, body, #app { height: 100%; }
 /* Footer */
 .footer { display: flex; justify-content: center; padding: 6px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .footer-text { font-size: 0.6rem; color: var(--muted); }
+
+/* Combobox */
+.combobox { position: relative; flex: 1; }
+.combobox-input { width: 100%; }
+.combobox-dropdown {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  margin-top: 4px; max-height: 200px; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.combobox-item {
+  padding: 8px 12px; cursor: pointer; font-size: 0.82rem; color: var(--text);
+  transition: background 0.1s;
+}
+.combobox-item:hover { background: var(--card); }
 </style>

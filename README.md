@@ -36,13 +36,88 @@
 
 ## 🚀 快速开始
 
-### 服务端
+### 使用 uv 安装（推荐，最快）
+
+[uv](https://github.com/astral-sh/uv) 是一个超快的 Python 包管理器，比 pip 快 10-100x。
 
 ```bash
 git clone https://github.com/3F3Feng/voice-input-framework.git
 cd voice-input-framework
-pip install -r requirements.txt
 
+# macOS/Linux
+./install-uv.sh
+
+# Windows
+install-uv.bat
+
+# 指定安装选项
+./install-uv.sh --all         # 安装所有依赖
+./install-uv.sh --stt-only    # 只安装 STT
+./install-uv.sh --llm-only    # 只安装 LLM
+./install-uv.sh --dev         # 包含开发工具
+```
+
+### 使用 pip 安装（传统方式）
+
+```bash
+git clone https://github.com/3F3Feng/voice-input-framework.git
+cd voice-input-framework
+
+# 自动检测平台并安装依赖
+./install.sh
+
+# 或手动安装
+pip install -r requirements/base.txt
+pip install -r requirements/stt-cuda.txt   # NVIDIA GPU
+pip install -r requirements/llm-cuda.txt   # NVIDIA GPU (可选)
+```
+
+### 手动安装
+
+根据平台选择对应的依赖文件：
+
+```bash
+# 基础依赖（所有平台）
+pip install -r requirements/base.txt
+
+# STT 依赖（选择一个）
+pip install -r requirements/stt-mlx.txt    # Apple Silicon
+pip install -r requirements/stt-cuda.txt   # NVIDIA GPU
+pip install -r requirements/stt-cpu.txt    # CPU
+
+# LLM 依赖（可选，选择一个）
+pip install -r requirements/llm-mlx.txt    # Apple Silicon
+pip install -r requirements/llm-cuda.txt   # NVIDIA GPU
+```
+
+**NVIDIA GPU 用户**需要额外安装 CUDA PyTorch：
+```bash
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+
+### 启动服务
+
+使用启动脚本（推荐）：
+
+```bash
+# macOS/Linux
+./start.sh              # 启动 STT 服务
+./start.sh --all        # 启动 STT + LLM 服务
+./start.sh --all --bg   # 后台启动所有服务
+./start.sh --stop       # 停止所有服务
+./start.sh --status     # 查看服务状态
+
+# Windows
+start.bat               # 启动 STT 服务
+start.bat --all         # 启动 STT + LLM 服务
+start.bat --all --bg    # 后台启动所有服务
+start.bat --stop        # 停止所有服务
+start.bat --status      # 查看服务状态
+```
+
+手动启动：
+
+```bash
 # 启动 STT 服务 (端口 6544)
 python -m services.stt_server
 

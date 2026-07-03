@@ -12,6 +12,7 @@ from typing import Optional
 @dataclass
 class TranscriptionResult:
     """转写结果"""
+
     text: str
     """识别出的文本"""
     confidence: float = 1.0
@@ -44,6 +45,7 @@ class TranscriptionResult:
 @dataclass
 class ErrorResponse:
     """错误响应"""
+
     error_code: str
     error_message: str
     details: Optional[dict] = None
@@ -61,6 +63,7 @@ class ErrorResponse:
 @dataclass
 class ModelInfo:
     """模型信息"""
+
     name: str
     description: str = ""
     supported_languages: list[str] = field(default_factory=list)
@@ -84,6 +87,7 @@ class ModelInfo:
 @dataclass
 class HealthStatus:
     """健康状态"""
+
     status: str
     version: str
     uptime_seconds: float
@@ -111,6 +115,7 @@ class HealthStatus:
 @dataclass
 class AudioChunk:
     """音频数据块"""
+
     data: bytes
     sample_rate: int = 16000
     channels: int = 1

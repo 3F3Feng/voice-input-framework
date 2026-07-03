@@ -2,6 +2,7 @@
 """
 Voice Input Framework - Pytest 配置
 """
+
 import sys
 from pathlib import Path
 
@@ -15,6 +16,4 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "integration: mark test as integration test (requires conda env)"
     )
-    config.addinivalue_line(
-        "markers", "slow: mark test as slow running"
-    )
+    config.addinivalue_line("markers", "slow: mark test as slow running")

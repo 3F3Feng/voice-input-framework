@@ -9,7 +9,9 @@ Voice Input Framework - 版本检查和更新管理模块
 - 提供更新下载链接和下载进度
 """
 
-import logging, json, threading, time
+import logging
+import json
+import threading
 from dataclasses import dataclass
 from typing import Optional, Callable
 from urllib.request import Request, urlopen
@@ -17,7 +19,7 @@ from urllib.error import URLError
 
 logger = logging.getLogger(__name__)
 
-from . import __version__ as CURRENT_VERSION
+from . import __version__ as CURRENT_VERSION  # noqa: E402
 
 GITHUB_REPO = "3F3Feng/voice-input-framework"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -40,9 +42,11 @@ def parse_version(v: str) -> tuple:
     v = v.lstrip("v")
     parts = v.split(".")
     try:
-        return (int(parts[0]) if len(parts) > 0 else 0,
-                int(parts[1]) if len(parts) > 1 else 0,
-                int(parts[2]) if len(parts) > 2 else 0)
+        return (
+            int(parts[0]) if len(parts) > 0 else 0,
+            int(parts[1]) if len(parts) > 1 else 0,
+            int(parts[2]) if len(parts) > 2 else 0,
+        )
     except ValueError:
         return (0, 0, 0)
 
@@ -55,7 +59,10 @@ def compare_versions(v1: str, v2: str) -> int:
 def check_for_updates() -> Optional[VersionInfo]:
     """检查 GitHub 最新版本（HTTP API，10秒超时）"""
     try:
-        req = Request(GITHUB_API, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "VoiceInput/2.0"})
+        req = Request(
+            GITHUB_API,
+            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "VoiceInput/2.0"},
+        )
         with urlopen(req, timeout=CHECK_TIMEOUT) as r:
             data = json.loads(r.read())
     except URLError as e:
@@ -90,6 +97,21 @@ def check_for_updates() -> Optional[VersionInfo]:
         download_url=download_url,
         release_notes=body or None,
     )
+
+
+def format_version_message(version_info: VersionInfo) -> str:
+    """格式化版本信息为可读消息"""
+    lines = [
+        f"当前版本: {version_info.current_version}",
+        f"最新版本: {version_info.latest_version}",
+    ]
+    if version_info.release_notes:
+        lines.append(f"更新内容:\n{version_info.release_notes}")
+    if version_info.download_url:
+        lines.append(f"下载地址: {version_info.download_url}")
+    else:
+        lines.append(f"发布页面: {version_info.release_url}")
+    return "\n".join(lines)
 
 
 class UpdateChecker:

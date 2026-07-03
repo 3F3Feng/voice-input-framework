@@ -10,8 +10,21 @@ from collections.abc import AsyncIterator
 
 import io
 import numpy as np
-import torch
-from transformers import pipeline
+
+# Lazy imports for optional heavy dependencies
+torch = None
+pipeline = None
+
+
+def _ensure_torch():
+    global torch, pipeline
+    if torch is None:
+        import torch as _torch
+        from transformers import pipeline as _pipeline
+
+        torch = _torch
+        pipeline = _pipeline
+
 
 # 尝试导入音频解码库
 try:
@@ -23,8 +36,8 @@ try:
 except ImportError:
     AudioSegment = None
 
-from server.models.base import BaseSTTEngine, STTEngineError
-from shared.data_types import TranscriptionResult
+from server.models.base import BaseSTTEngine, STTEngineError  # noqa: E402
+from shared.data_types import TranscriptionResult  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +59,9 @@ class WhisperEngine(BaseSTTEngine):
     def __init__(self, model_name: str = "whisper-large-v3", **kwargs):
         super().__init__(model_name, **kwargs)
         self._pipeline = None
-        self.model_config = self.MODEL_CONFIGS.get(model_name, self.MODEL_CONFIGS["whisper-large-v3"])
+        self.model_config = self.MODEL_CONFIGS.get(
+            model_name, self.MODEL_CONFIGS["whisper-large-v3"]
+        )
 
     async def load(self) -> None:
         if self._is_loaded:
@@ -62,6 +77,7 @@ class WhisperEngine(BaseSTTEngine):
             raise STTEngineError(f"Failed to load model: {e}")
 
     def _load_sync(self):
+        _ensure_torch()
         device = self.detect_device()
         dtype = torch.float16 if device == "cuda" else torch.float32
 
@@ -94,6 +110,7 @@ class WhisperEngine(BaseSTTEngine):
                 if sr != target_sr:
                     # 简单重采样（线性插值）
                     from scipy import signal
+
                     data = signal.resample(data, int(len(data) * target_sr / sr))
                 return data.astype(np.float32)
             except Exception:
