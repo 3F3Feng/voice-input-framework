@@ -74,7 +74,7 @@ _last_llm_model = LLM_MODEL  # Cached for WebSocket handler (no blocking)
 _llm_available = True  # Start optimistic - first request will verify
 _llm_last_check = 0.0  # Never checked yet
 _llm_check_interval = 30.0  # Re-check every 30 seconds
-_llm_timeout = 120.0  # LLM 请求超时 (默认 120s，4B 模型首轮推理可能较慢)
+_llm_timeout = 1.0  # Fast timeout for LLM requests (1 second)
 
 
 def _is_llm_available() -> bool:
