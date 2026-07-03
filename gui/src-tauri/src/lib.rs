@@ -243,8 +243,8 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
                 let result_str = format!("✓ {}ms", elapsed_ms);
                 if let Ok(mut status) = indicator_status.lock() { *status = result_str; }
                 indicator::show_result(&app_handle, elapsed_ms);
-                // 保持 2.5s 让用户看到处理耗时
-                tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+                // 保持 1.5s 让用户看到处理耗时
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
                 if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
                 let _ = indicator::hide(&app_handle);
             }
