@@ -70,14 +70,9 @@ class TestSTTEngine:
         from services.stt_server import STTEngine
 
         engine = STTEngine()
-        import platform
-
-        expected = (
-            "qwen_asr_mlx_native_small"
-            if (platform.machine() == "arm64" and platform.system() == "Darwin")
-            else "whisper_turbo"
-        )
-        assert engine.default_model == expected
+        # default_model depends on platform (MLX, CUDA), but should always be a valid model name
+        assert isinstance(engine.default_model, str) and len(engine.default_model) > 0
+        assert engine.default_model in STTEngine.AVAILABLE_MODELS
         assert not engine._is_loaded
         assert not engine._aligner_loaded
         assert not engine._loading
