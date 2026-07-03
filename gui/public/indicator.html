@@ -99,11 +99,24 @@ setInterval(() => {
     }
   } else if (mode === 'processing') {
     const elapsed = ((Date.now() - processingStart) / 1000).toFixed(1);
-    if (timerEl) timerEl.textContent = elapsed + 's';
     if (invoke) {
       invoke('get_indicator_status').then(status => {
-        if (status && labelEl) labelEl.textContent = status;
-      }).catch(() => {});
+        if (status) {
+          // Detect completion status (set by Rust side after transcription)
+          if (status.includes('✓') || status.includes('ms')) {
+            mode = 'done';
+            if (labelEl) labelEl.textContent = status;
+            if (timerEl) timerEl.textContent = status.replace(/[^0-9]/g, '') + 'ms';
+            if (levelBar) levelBar.style.display = 'none';
+            if (dotEl) { dotEl.classList.remove('processing'); dotEl.classList.add('done'); }
+          } else {
+            if (labelEl) labelEl.textContent = status;
+            if (timerEl) timerEl.textContent = elapsed + 's';
+          }
+        }
+      }).catch(() => {
+        if (timerEl) timerEl.textContent = elapsed + 's';
+      });
     }
   }
 }, 100);
