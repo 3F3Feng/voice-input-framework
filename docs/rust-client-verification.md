@@ -8,6 +8,11 @@
 > **Linux/macOS/Windows 任意平台**运行(不链接 tauri,无需 webkit/gtk 系统库),
 > 覆盖 `stt.rs` 纯逻辑:URL 构造、StreamEvent 协议序列化、WS URL 派生。
 > 已在 CI 新增 `rust-logic` job(`cargo test`,ubuntu-latest)。
+>
+> **2026-08-03 更新 2**:完整 Tauri crate 已在 **Linux 上 cargo check + cargo test
+> 通过**(编译/链接/运行)。需要的系统 dev 包:`pkg-config`、`libwebkit2gtk-4.1-dev`、
+> `libgtk-3-dev`、`libsoup-3.0-dev`、`libjavascriptcoregtk-4.1-dev`、`libasound2-dev`
+> (cpal)、`libxdo-dev`(enigo)。`reqwest` 已切到 rustls,**无需 libssl-dev**。
 
 ## 自动化测试(已就绪,Linux 可跑)
 
