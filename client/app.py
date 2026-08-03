@@ -64,12 +64,12 @@ class VoiceInputApp:
         # 热键
         self.hotkey_manager = HotkeyManager()
 
-        # UI 回调：音频电平
-        self._get_audio_level = self.audio.get_level
+        # UI 回调:音频电平(直接透传 get_audio_level 的 (db, db) 二元组)
+        self._get_audio_level = self.audio.get_audio_level
 
     def _make_audio_level_callback(self):
         """音量回调包装（兼容悬浮指示器接口）"""
-        return lambda: (self._get_audio_level(), self._get_audio_level())
+        return lambda: self._get_audio_level()
 
     # ── 服务器连接 ──
 
@@ -103,7 +103,7 @@ class VoiceInputApp:
             self.window.set_status(f"切换模型: {name}...", "yellow")
         ok = await self.stt.switch_model(name)
         if self.window:
-            self.window.set_model_status(
+            self.window.update_model_status(
                 f"切换请求已接受: {name}" if ok else f"切换失败: {name}", "yellow"
             )
         # 轮询加载状态
@@ -114,13 +114,13 @@ class VoiceInputApp:
             status = await self.stt.get_model_status(name)
             if status.get("is_loaded"):
                 if self.window:
-                    self.window.set_model_status(f"模型 {name} 已加载 ✅", "green")
+                    self.window.update_model_status(f"模型 {name} 已加载 ✅", "green")
                 return
             if not status.get("is_loading"):
                 break
             await asyncio.sleep(1)
         if self.window:
-            self.window.set_model_status(f"模型 {name} 加载超时", "red")
+            self.window.update_model_status(f"模型 {name} 加载超时", "red")
 
     # ── LLM 管理 ──
 

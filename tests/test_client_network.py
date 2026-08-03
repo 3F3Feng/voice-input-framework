@@ -193,35 +193,52 @@ class TestLlmClientThinWrappers:
 
 
 class TestAppClientContract:
-    """client/app.py 与 client/network.py 的接口契约(H5)"""
+    """client/app.py 与各 client 模块的接口契约(H5)"""
 
-    def test_all_app_client_calls_resolvable(self):
-        """app.py 中所有 self.stt.* / self.llm.* 调用在 network.py 中均存在"""
+    # app.py 中 self.<attr> → 真实类(模块路径,类名)
+    ATTR_CLASS_MAP = {
+        "audio": ("client.audio", "AudioRecorder"),
+        "stt": ("client.network", "SttClient"),
+        "llm": ("client.network", "LlmClient"),
+        "config": ("client.config_manager", "ConfigManager"),
+        "hotkey_manager": ("client.hotkey_manager", "HotkeyManager"),
+        "window": ("client.ui", "MainWindow"),
+        "tray": ("client.ui", "TrayMenu"),
+    }
+
+    @staticmethod
+    def _class_methods(module: str, cls_name: str) -> set:
         import ast
 
-        network_ast = ast.parse(
-            Path(project_dir / "client" / "network.py").read_text(encoding="utf-8")
-        )
-        methods = {}
-        for node in ast.walk(network_ast):
-            if isinstance(node, ast.ClassDef) and node.name in ("SttClient", "LlmClient"):
-                methods[node.name] = {
+        path = project_dir / (module.replace(".", "/") + ".py")
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == cls_name:
+                return {
                     n.name
                     for n in node.body
                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
                 }
+        return set()
+
+    def test_all_app_client_calls_resolvable(self):
+        """app.py 中所有 self.<attr>.<method> 调用在对应类中均存在"""
+        import ast
 
         app_ast = ast.parse(Path(project_dir / "client" / "app.py").read_text(encoding="utf-8"))
         missing = []
         for node in ast.walk(app_ast):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 recv = node.func.value
-                if isinstance(recv, ast.Attribute) and recv.attr in ("stt", "llm"):
-                    cls = "SttClient" if recv.attr == "stt" else "LlmClient"
-                    if node.func.attr not in methods[cls]:
+                if isinstance(recv, ast.Attribute) and isinstance(recv.value, ast.Name) and recv.value.id == "self":
+                    if recv.attr not in self.ATTR_CLASS_MAP:
+                        continue
+                    module, cls = self.ATTR_CLASS_MAP[recv.attr]
+                    methods = self._class_methods(module, cls)
+                    if node.func.attr not in methods:
                         missing.append(f"{recv.attr}.{node.func.attr}")
 
-        assert missing == [], f"app.py 调用了 network.py 中不存在的方法: {sorted(set(missing))}"
+        assert missing == [], f"app.py 调用了不存在的方法: {sorted(set(missing))}"
 
     def test_all_app_client_imports_resolvable(self):
         """app.py 中所有 from client.X import name 在对应模块中均存在"""
