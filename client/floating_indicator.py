@@ -443,21 +443,10 @@ class FloatingIndicator:
                         if mouse_pos and mouse_pos != self.last_mouse_pos:
                             self.last_mouse_pos = mouse_pos
                             new_pos = self._calculate_window_position(mouse_pos)
-                            with self._window_lock:
-                                if self.window and self.is_visible:
-                                    try:
-                                        if hasattr(self.window, "move"):
-                                            self.window.move(new_pos[0], new_pos[1])
-                                            logger.info(f"[位置跟随] move → {new_pos}")
-                                        elif self.window.TKroot:
-                                            self.window.TKroot.geometry(
-                                                f"+{int(new_pos[0])}+{int(new_pos[1])}"
-                                            )
-                                            logger.info(f"[位置跟随] geometry → {new_pos}")
-                                        if self.window.TKroot:
-                                            self.window.TKroot.update()
-                                    except Exception as e:
-                                        logger.debug(f"更新窗口位置失败: {e}")
+                            # 只写入待更新,由主线程 process_events 执行 window.move
+                            # (tkinter 非线程安全,后台线程直接 move/update 会导致
+                            #  移动不生效甚至卡死)
+                            self._pending_position_update = new_pos
                     except Exception as e:
                         logger.debug(f"跟随鼠标时出错: {e}")
 
