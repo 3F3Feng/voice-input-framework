@@ -157,7 +157,20 @@ class VoiceInputApp:
     async def _start_recording(self):
         if self.selected_mic is not None:
             self.audio.selected_device = self.selected_mic
-        self.audio.start_recording()
+        try:
+            self.audio.start_recording()
+        except Exception as e:
+            # 录音启动失败(常见:macOS 麦克风权限未授权/设备不可用)→ 明确提示而非静默
+            logger.error(f"启动录音失败: {e}")
+            msg = (
+                "❌ 无法开始录音:麦克风可能未授权或不可用。\n"
+                "请到 系统设置 → 隐私与安全性 → 麦克风,\n"
+                "为当前终端/应用开启权限后重启。"
+            )
+            if self.window:
+                self.window.log(msg)
+                self.window.set_status("录音失败", "red")
+            return
         self._hotkey_pressed = True
         if self.window:
             self.window.write_event_value("-REC-STARTED-", "")
@@ -264,6 +277,11 @@ class VoiceInputApp:
         threading.Timer(
             5.5,
             self._check_hotkey_permission,
+        ).start()
+        # 麦克风权限自检:macOS 录音需要"麦克风"权限,提前探测并提示
+        threading.Timer(
+            6.0,
+            self._check_mic_permission,
         ).start()
 
         # 自动连接
@@ -411,6 +429,27 @@ class VoiceInputApp:
     def _async_task(self, coro):
         if self.async_loop:
             asyncio.run_coroutine_threadsafe(coro, self.async_loop)
+
+    def _check_mic_permission(self):
+        """麦克风权限自检(延迟执行,不阻塞启动)
+
+        macOS 录音需要"麦克风"权限(sounddevice 采集);未授权时输入流静音或无数据。
+        """
+        try:
+            perm = self.audio.check_mic_permission()
+            if perm is True:
+                logger.info("麦克风权限正常")
+            elif perm is False:
+                msg = (
+                    "⚠️ 麦克风可能未授权:录音将无声音。\n"
+                    "请到 系统设置 → 隐私与安全性 → 麦克风,\n"
+                    "为当前终端/应用开启权限后重启。"
+                )
+                logger.warning(msg.replace("\n", " "))
+                if self.window:
+                    self.window.log(msg)
+        except Exception as e:
+            logger.debug(f"麦克风权限自检失败: {e}")
 
     def _check_hotkey_permission(self):
         """快捷键监听权限自检(延迟执行,不阻塞启动)

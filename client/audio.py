@@ -11,6 +11,7 @@
 
 import logging
 import queue
+import sys
 import time
 
 import numpy as np
@@ -26,9 +27,12 @@ AUDIO_CHUNK_SIZE = 1024
 class AudioRecorder:
     """音频录制器 — 封装 sounddevice 录制逻辑"""
 
-    def __init__(self, sample_rate: int = AUDIO_SAMPLE_RATE,
-                 channels: int = AUDIO_CHANNELS,
-                 chunk_size: int = AUDIO_CHUNK_SIZE):
+    def __init__(
+        self,
+        sample_rate: int = AUDIO_SAMPLE_RATE,
+        channels: int = AUDIO_CHANNELS,
+        chunk_size: int = AUDIO_CHUNK_SIZE,
+    ):
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_size = chunk_size
@@ -72,6 +76,37 @@ class AudioRecorder:
     # ──────────────────── 设备管理 ────────────────────
 
     @staticmethod
+    def check_mic_permission() -> bool | None:
+        """检测麦克风权限(macOS)
+
+        sounddevice 采集麦克风需要"麦克风"权限(与输入监控/辅助功能不同)。
+        通过短暂打开输入流实测:PortAudioError 提示权限 → 未授权。
+        非 macOS 或无法判定时返回 None。
+
+        Returns:
+            True:可打开输入流(已授权);False:打开失败(疑似权限/设备问题);
+            None:无法判定
+        """
+        if sys.platform != "darwin":
+            return None
+        try:
+            import sounddevice as sd
+
+            # 用默认输入设备短开 50ms 验证权限
+            sd.check_input_settings()
+            stream = sd.InputStream(samplerate=16000, channels=1, dtype="int16")
+            stream.start()
+            import time as _t
+
+            _t.sleep(0.05)
+            stream.stop()
+            stream.close()
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"麦克风输入探测失败(可能未授权): {e}")
+            return False
+
+    @staticmethod
     def get_devices() -> dict:
         """获取系统中可用的音频输入设备
 
@@ -80,10 +115,11 @@ class AudioRecorder:
         """
         try:
             import sounddevice as sd
+
             devices = sd.query_devices()
             input_devices = {}
             for i, device in enumerate(devices):
-                if device['max_input_channels'] > 0:
+                if device["max_input_channels"] > 0:
                     input_devices[i] = f"{device['name']}"
             return input_devices if input_devices else {-1: "默认设备"}
         except Exception as e:
@@ -129,7 +165,7 @@ class AudioRecorder:
                 device=self._selected_device,
                 samplerate=self.sample_rate,
                 channels=self.channels,
-                dtype='int16',
+                dtype="int16",
                 blocksize=self.chunk_size,
                 callback=callback,
             )
@@ -185,7 +221,7 @@ class AudioRecorder:
             if not self._audio_buffer:
                 return 0, 0
 
-            last_chunk = self._audio_buffer[-1] if self._audio_buffer else b''
+            last_chunk = self._audio_buffer[-1] if self._audio_buffer else b""
             if not last_chunk:
                 return 0, 0
 

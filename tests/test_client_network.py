@@ -372,3 +372,14 @@ class TestHotkeyPermissionCheck:
         # 模拟按键事件(用无效 key 也可,计数在 try 前递增)
         m._on_key_press(None)
         assert m.event_count == before + 1
+
+
+class TestMicPermissionCheck:
+    """AudioRecorder 麦克风权限检测"""
+
+    def test_non_macos_returns_none(self, monkeypatch):
+        """非 macOS 平台无法判定 → 返回 None"""
+        from client.audio import AudioRecorder
+
+        monkeypatch.setattr("sys.platform", "linux")
+        assert AudioRecorder.check_mic_permission() is None
