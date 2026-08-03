@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -369,35 +370,33 @@ LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
 # 初始化引擎
 engine = LLMEngine(default_model=LLM_MODEL)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期:启动时后台加载模型,关闭时清理(FastAPI 推荐用法)"""
+    logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
+    logger.info(f"Default model: {LLM_MODEL}")
+    # 后台加载模型(非阻塞)
+    asyncio.create_task(engine.load())
+    yield
+    logger.info("LLM Service shutting down")
+
+
 app = FastAPI(
     title="Voice Input Framework - LLM Service",
     description="独立的文本后处理服务,使用 MLX-LM",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup_event():
-    """启动时加载模型"""
-    logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
-    logger.info(f"Default model: {LLM_MODEL}")
-    # 后台加载模型(非阻塞)
-    asyncio.create_task(engine.load())
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭时清理"""
-    logger.info("LLM Service shutting down")
 
 
 @app.get("/health", response_model=HealthStatus)

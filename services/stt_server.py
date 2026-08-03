@@ -14,6 +14,7 @@ import os
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -192,10 +193,23 @@ diarize_engine = DiarizationEngine() if DIARIZE_ENABLED else None
 # ============== FastAPI App ==============
 engine = STTEngine(default_model=STT_MODEL)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期:启动时后台加载模型,关闭时清理(FastAPI 推荐用法)"""
+    logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
+    logger.info(f"Default model: {STT_MODEL}")
+    # 后台加载模型（非阻塞）
+    asyncio.create_task(engine.load())
+    yield
+    logger.info("STT Service shutting down")
+
+
 app = FastAPI(
     title="Voice Input Framework - STT Service",
     description="独立的语音识别服务，使用 Qwen3-ASR",
     version="1.1.0",
+    lifespan=lifespan,
 )
 
 # CORS
@@ -227,21 +241,6 @@ async def request_id_middleware(request: Request, call_next):
     except Exception as e:
         logger.error(f"Request failed: {e}", extra={"request_id": request_id})
         raise
-
-
-@app.on_event("startup")
-async def startup_event():
-    """启动时加载模型"""
-    logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
-    logger.info(f"Default model: {STT_MODEL}")
-    # 后台加载模型（非阻塞）
-    asyncio.create_task(engine.load())
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭时清理"""
-    logger.info("STT Service shutting down")
 
 
 @app.get("/health", response_model=HealthStatus)
