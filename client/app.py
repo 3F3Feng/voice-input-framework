@@ -38,7 +38,13 @@ class VoiceInputApp:
 
         # 服务客户端
         self.stt = SttClient(self.server_host, self.server_port)
-        self.llm = LlmClient(f"http://{self.server_host}:6545")
+        # LLM:配置管理走 STT 服务(6544)的 /llm/* 转发层;process 直连 LLM 服务(默认 6545)
+        llm_host = os.environ.get("VIF_LLM_HOST", "127.0.0.1")
+        llm_port = os.environ.get("VIF_LLM_PORT", "6545")
+        self.llm = LlmClient(
+            f"http://{self.server_host}:{self.server_port}",
+            llm_url=f"http://{llm_host}:{llm_port}",
+        )
 
         # 音频
         self.audio = AudioRecorder()
@@ -96,9 +102,11 @@ class VoiceInputApp:
     async def _switch_model(self, name: str):
         if self.window:
             self.window.set_status(f"切换模型: {name}...", "yellow")
-        result = await self.stt.switch_model(name)
+        ok = await self.stt.switch_model(name)
         if self.window:
-            self.window.set_model_status(result.get("message", ""), "yellow")
+            self.window.set_model_status(
+                f"切换请求已接受: {name}" if ok else f"切换失败: {name}", "yellow"
+            )
         # 轮询加载状态
         await self._poll_model_loading(name)
 
@@ -127,9 +135,11 @@ class VoiceInputApp:
     async def _switch_llm_model(self, name: str):
         if self.window:
             self.window.update_llm_model_status(f"切换模型: {name}...", "cyan")
-        result = await self.llm.switch_model(name)
+        ok = await self.llm.switch_model(name)
         if self.window:
-            self.window.update_llm_model_status(result.get("message", ""), "cyan")
+            self.window.update_llm_model_status(
+                f"切换成功: {name}" if ok else f"切换失败: {name}", "cyan"
+            )
 
     async def _load_prompt(self):
         prompt = await self.llm.load_prompt()

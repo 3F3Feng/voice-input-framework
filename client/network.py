@@ -14,6 +14,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import time
 from typing import Optional, Callable, Any
 
@@ -233,6 +234,44 @@ class SttClient:
         # 过滤空字符串
         self.available_models = [m for m in self.available_models if m]
 
+    async def get_models(self) -> list[dict]:
+        """获取模型列表（薄封装：返回 [{name, is_loaded, is_current}] 便于 UI 使用）
+
+        Returns:
+            模型列表；失败返回空列表
+        """
+        ok = await self.fetch_models()
+        if not ok:
+            return []
+        return [
+            {
+                "name": m,
+                "is_loaded": m == self.current_model,
+                "is_current": m == self.current_model,
+            }
+            for m in self.available_models
+        ]
+
+    async def get_model_status(self, model_name: str) -> dict:
+        """查询单个模型的加载状态（薄封装：单次查询，不轮询）
+
+        Returns:
+            {"is_loaded": bool, "is_loading": bool, ...}；失败时返回 {"is_loaded": False, "is_loading": False}
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
+                url = f"{self.http_url}/models/status/{model_name}"
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    return resp.json()
+                self._log(f"✗ 查询模型状态失败: HTTP {resp.status_code}")
+                return {"is_loaded": False, "is_loading": False}
+        except Exception as e:
+            self._log(f"✗ 查询模型状态出错: {e}")
+            return {"is_loaded": False, "is_loading": False}
+
     async def switch_model(self, model_name: str) -> bool:
         """切换 STT 模型
 
@@ -441,6 +480,15 @@ class SttClient:
             self._log(f"发送音频失败: {e}")
             return None
 
+    async def transcribe(self, audio_data: bytes, language: str = "auto") -> dict:
+        """转写单段音频（薄封装：包装 send_audio，返回 {"text": ...}）
+
+        Returns:
+            {"text": str}；失败返回 {"text": ""}
+        """
+        text = await self.send_audio([audio_data])
+        return {"text": text or ""}
+
     async def stream_audio(self, audio_queue: asyncio.Queue, language: str = "auto") -> Optional[str]:
         """流式发送音频到服务器（边录边发）
 
@@ -605,13 +653,17 @@ class SttClient:
 class LlmClient:
     """LLM 后处理服务客户端 — 模型切换和提示词管理"""
 
-    def __init__(self, http_url: str):
+    def __init__(self, http_url: str, llm_url: Optional[str] = None):
         """初始化 LLM 客户端
 
         Args:
-            http_url: 服务器 HTTP 基础 URL（与 STT 服务共享同一端口）
+            http_url: STT 服务 HTTP 基础 URL（配置管理走 6544 的 /llm/* 转发层）
+            llm_url: LLM 服务直连 URL（process 文本后处理用；默认 http://127.0.0.1:6545）
         """
         self.http_url = http_url
+        self.llm_url = llm_url or os.environ.get(
+            "VIF_LLM_URL", "http://127.0.0.1:6545"
+        )
         self.available_models: list[str] = []
         self.current_model: Optional[str] = None
 
@@ -625,6 +677,45 @@ class LlmClient:
             self.on_log(msg)
 
     # ──────────────────── 模型管理 ────────────────────
+
+    async def get_models(self) -> list[dict]:
+        """获取 LLM 模型列表（薄封装：返回 [{name, is_current}] 便于 UI 使用）
+
+        Returns:
+            模型列表；失败返回空列表
+        """
+        ok = await self.fetch_models()
+        if not ok:
+            return []
+        return [
+            {"name": m, "is_current": m == self.current_model}
+            for m in self.available_models
+        ]
+
+    async def process(self, text: str) -> str:
+        """LLM 文本后处理（直连 LLM 服务 /process）
+
+        Args:
+            text: 待处理文本
+
+        Returns:
+            处理后的文本；失败时返回原文本
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
+                resp = await client.post(
+                    f"{self.llm_url}/process", json={"text": text}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get("text", text)
+                self._log(f"✗ LLM 处理失败: HTTP {resp.status_code}")
+                return text
+        except Exception as e:
+            self._log(f"✗ LLM 处理出错: {e}")
+            return text
 
     async def fetch_models(self) -> bool:
         """获取可用的 LLM 模型列表
