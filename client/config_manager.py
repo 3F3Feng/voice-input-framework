@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # 默认配置
 DEFAULT_CONFIG = {
-    "server": {"host": "localhost", "port": 6544},
+    "server": {"host": "127.0.0.1", "port": 6544},
     "hotkey": {"key": "left_ctrl+left_alt", "distinguish_left_right": True},
     "ui": {
         "start_minimized": False,

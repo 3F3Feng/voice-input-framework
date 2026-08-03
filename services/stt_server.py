@@ -61,7 +61,8 @@ MAX_RETRIES = int(os.getenv("VIF_MAX_RETRIES", "3"))
 RETRY_DELAY = float(os.getenv("VIF_RETRY_DELAY", "1.0"))
 
 # LLM Server Configuration
-LLM_SERVER_HOST = os.getenv("VIF_LLM_HOST", "localhost")
+# 默认用 127.0.0.1 而非 localhost:避免 Windows 上 IPv6(::1)优先解析导致连接超时回落延迟
+LLM_SERVER_HOST = os.getenv("VIF_LLM_HOST", "127.0.0.1")
 LLM_SERVER_PORT = int(os.getenv("VIF_LLM_PORT", str(DEFAULT_LLM_PORT)))
 LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 

@@ -39,7 +39,7 @@ DEFAULT_MAX_POLLS = 300  # 最多轮询 300 次 × 2 秒 = 10 分钟
 class SttClient:
     """STT 语音识别服务客户端 — 封装 WebSocket/HTTP 通信逻辑"""
 
-    def __init__(self, host: str = "localhost", port: int = 6544):
+    def __init__(self, host: str = "127.0.0.1", port: int = 6544):
         self.host = host
         self.port = port
         self.ws_url = f"ws://{host}:{port}/ws/stream"

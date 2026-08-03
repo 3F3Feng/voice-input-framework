@@ -23,7 +23,7 @@ class TestConfigManager:
         manager = ConfigManager(config_path=str(config_path))
 
         assert manager.config is not None
-        assert manager.config["server"]["host"] == "localhost"
+        assert manager.config["server"]["host"] == "127.0.0.1"
         assert manager.config["server"]["port"] == 6544
         assert manager.config["hotkey"]["key"] == "left_ctrl+left_alt"
         assert manager.config["hotkey"]["distinguish_left_right"] is True
@@ -49,7 +49,7 @@ class TestConfigManager:
         config_path = tmp_path / "test_nested.json"
         manager = ConfigManager(config_path=str(config_path))
 
-        assert manager.get("server.host") == "localhost"
+        assert manager.get("server.host") == "127.0.0.1"
         assert manager.get("hotkey.distinguish_left_right") is True
         assert manager.get("audio.language") == "auto"
 
@@ -80,7 +80,7 @@ class TestConfigManager:
         manager = ConfigManager(config_path=str(config_path))
 
         # 应该回退到默认配置
-        assert manager.config["server"]["host"] == "localhost"
+        assert manager.config["server"]["host"] == "127.0.0.1"
         assert manager.config["server"]["port"] == 6544
 
     def test_load_from_existing_config(self, tmp_path):
@@ -109,7 +109,7 @@ class TestConfigManager:
         manager = ConfigManager(config_path=str(config_path))
 
         # server_host 属性
-        assert manager.server_host == "localhost"
+        assert manager.server_host == "127.0.0.1"
         manager.server_host = "new.host.com"
         assert manager.server_host == "new.host.com"
 
