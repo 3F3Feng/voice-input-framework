@@ -11,7 +11,6 @@ from collections.abc import AsyncIterator
 
 import numpy as np
 import torch
-from transformers import pipeline
 
 # 尝试导入音频解码库
 try:
@@ -64,6 +63,9 @@ class WhisperEngine(BaseSTTEngine):
     def _load_sync(self):
         device = self.detect_device()
         dtype = torch.float16 if device == "cuda" else torch.float32
+
+        # 惰性导入 transformers:MLX 引擎路径不需要它(避免强制加载 scipy 等重型依赖)
+        from transformers import pipeline
 
         self._pipeline = pipeline(
             "automatic-speech-recognition",

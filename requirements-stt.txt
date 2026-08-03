@@ -11,8 +11,9 @@ pydantic>=2.5.0
 httpx>=0.26.0
 
 # 音频处理
-# numpy 上限:mlx-audio 0.4.2 的 numba 依赖要求 <2.1(0.4.7 已移除 numba,但保守锁定)
-numpy>=1.26.0,<2.1
+# numpy 锁定 1.x:numpy 2.x 的 C-API 破坏性变更会与旧编译的二进制
+# (如 conda 的 scipy、为 numpy 1.x 编译的模块)冲突,报 _ARRAY_API not found
+numpy>=1.26.4,<2.0
 
 # MLX 加速 (仅 Apple Silicon;非 Apple 机器可跳过,自动回落 whisper_turbo)
 # 注意:mlx-audio 强制 transformers>=5.0;whisper_turbo 的 pipeline API 在 5.x 兼容
