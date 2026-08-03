@@ -230,7 +230,11 @@ class TestAppClientContract:
         for node in ast.walk(app_ast):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 recv = node.func.value
-                if isinstance(recv, ast.Attribute) and isinstance(recv.value, ast.Name) and recv.value.id == "self":
+                if (
+                    isinstance(recv, ast.Attribute)
+                    and isinstance(recv.value, ast.Name)
+                    and recv.value.id == "self"
+                ):
                     if recv.attr not in self.ATTR_CLASS_MAP:
                         continue
                     module, cls = self.ATTR_CLASS_MAP[recv.attr]
@@ -256,7 +260,11 @@ class TestAppClientContract:
         app_ast = ast.parse(Path(project_dir / "client" / "app.py").read_text(encoding="utf-8"))
         missing = []
         for node in ast.walk(app_ast):
-            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("client."):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.startswith("client.")
+            ):
                 symbols = module_symbols(node.module)
                 for a in node.names:
                     if a.name not in symbols:
@@ -289,11 +297,17 @@ class TestAppClientContract:
         app_ast = ast.parse(Path(project_dir / "client" / "app.py").read_text(encoding="utf-8"))
         problems = []
         for node in ast.walk(app_ast):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in CLASS_MODULE:
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in CLASS_MODULE
+            ):
                 cls = node.func.id
                 pos_params, kwonly = ctor_signature(CLASS_MODULE[cls], cls)
                 if len(node.args) > len(pos_params):
-                    problems.append(f"{cls}: {len(node.args)} 个位置参数,签名最多 {len(pos_params)}")
+                    problems.append(
+                        f"{cls}: {len(node.args)} 个位置参数,签名最多 {len(pos_params)}"
+                    )
                 for k in node.keywords:
                     if k.arg not in (pos_params + kwonly):
                         problems.append(f"{cls}: 未知关键字参数 {k.arg!r}")
