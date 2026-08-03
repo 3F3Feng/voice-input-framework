@@ -277,10 +277,10 @@ class TestModels:
         error = ErrorResponse(
             error_code="E5001",
             error_message="Test error",
-            request_id="test-123",
         )
         assert error.error_code == "E5001"
-        assert error.request_id == "test-123"
+        assert error.error_message == "Test error"
+        assert "error_code" in error.to_dict()
 
 
 class TestTranscriptionRequest:
