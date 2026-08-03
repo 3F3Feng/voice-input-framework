@@ -695,23 +695,26 @@ class ProcessingIndicator:
             f"Tracker 光标(Processing): ({x}, {y}) -> 浮标: ({indicator_x}, {indicator_y})"
         )
 
-    def _calculate_window_position(self, pos: tuple = None) -> tuple:
+    def _calculate_window_position(self, pos: tuple = None, window_size: tuple = None) -> tuple:
         """
         根据光标位置计算窗口位置
 
         Args:
             pos: (x, y) 光标位置
+            window_size: 窗口实际尺寸;None 用 self.size
 
         Returns:
-            (x, y) 窗口位置 - 显示在光标右上方(超出屏幕边缘自动翻转)
+            (x, y) 窗口位置 - 锚点角贴基准点(超出屏幕边缘自动翻转)
         """
+        if window_size is None:
+            window_size = self.size
         if pos:
-            return calculate_indicator_position(pos, window_size=self.size)
+            return calculate_indicator_position(pos, window_size=window_size)
 
         if self.follow_mouse:
             mouse_pos = self._get_mouse_position()
             if mouse_pos:
-                return calculate_indicator_position(mouse_pos, window_size=self.size)
+                return calculate_indicator_position(mouse_pos, window_size=window_size)
 
         return DEFAULT_POSITION
 
