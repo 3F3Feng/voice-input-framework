@@ -23,6 +23,72 @@ import platform
 
 IS_WINDOWS = platform.system() == "Windows"
 
+# ──────────────────── 浮标位置计算(共享) ────────────────────
+# 统一偏移:显示在基准点右上方
+POSITION_OFFSET_X = 10
+POSITION_OFFSET_Y = -50
+# 距屏幕边缘的最小留白(px),避免浮标贴边
+EDGE_MARGIN = 5
+# 默认位置(无法获取鼠标/屏幕尺寸时)
+DEFAULT_POSITION = (1200, 100)
+
+
+def _get_screen_size() -> tuple | None:
+    """获取屏幕尺寸 (width, height);失败返回 None(跳过边缘检测)"""
+    try:
+        if IS_WINDOWS:
+            import ctypes
+
+            w = ctypes.windll.user32.GetSystemMetrics(0)
+            h = ctypes.windll.user32.GetSystemMetrics(1)
+            return (w, h)
+        # macOS/Linux:用 Tk 查询屏幕尺寸(不创建窗口,只读)
+        import tkinter
+
+        root = tkinter.Tk()
+        w, h = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.destroy()
+        return (w, h)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def calculate_indicator_position(
+    pos: tuple | None, window_size: tuple = (100, 40), screen_size: tuple | None = None
+) -> tuple:
+    """计算浮标窗口位置:统一偏移 + 屏幕边缘翻转
+
+    基准点 pos 为鼠标/光标位置。默认显示在其右上方(+10, -50);
+    若超出屏幕右/上边缘,则翻转到左/下方向(仍贴近基准点),避免浮标跑出屏幕。
+
+    Args:
+        pos: 基准点(鼠标/光标)屏幕坐标
+        window_size: 浮标窗口尺寸 (width, height)
+        screen_size: 屏幕尺寸 (width, height);None 时自动检测
+    """
+    if not pos:
+        return DEFAULT_POSITION
+    x, y = pos
+    win_w, win_h = window_size
+
+    # 屏幕尺寸:优先传入,否则自动检测(失败则跳过边缘检测)
+    if screen_size is None:
+        screen_size = _get_screen_size()
+    screen_w = screen_h = None
+    if screen_size:
+        screen_w, screen_h = screen_size
+
+    # 默认方向:右上方
+    dx, dy = POSITION_OFFSET_X, POSITION_OFFSET_Y
+    # 超出右边缘 → 改放左方
+    if screen_w is not None and x + POSITION_OFFSET_X + win_w > screen_w - EDGE_MARGIN:
+        dx = -(win_w + POSITION_OFFSET_X)
+    # 超出上边缘 → 改放下方
+    if screen_h is not None and y + POSITION_OFFSET_Y < EDGE_MARGIN:
+        dy = abs(POSITION_OFFSET_Y) + POSITION_OFFSET_X
+    return (int(x + dx), int(y + dy))
+
+
 # 尝试导入鼠标位置库
 try:
     from pynput import mouse
@@ -148,9 +214,8 @@ class FloatingIndicator:
             x, y: 光标屏幕坐标
             window_title: 当前窗口标题
         """
-        # 计算浮标应该在的位置（光标右上方）
-        indicator_x = x + 10
-        indicator_y = y - 50
+        # 计算浮标应该在的位置(统一偏移 + 屏幕边缘翻转)
+        indicator_x, indicator_y = calculate_indicator_position((x, y), window_size=self.size)
         self._last_tracker_pos = (indicator_x, indicator_y)
         self._pending_position_update = (indicator_x, indicator_y)
         logger.debug(f"Tracker 光标: ({x}, {y}) -> 浮标: ({indicator_x}, {indicator_y})")
@@ -163,23 +228,20 @@ class FloatingIndicator:
             pos: (x, y) 光标位置（优先使用光标位置，其次鼠标位置）
 
         Returns:
-            (x, y) 窗口位置 - 显示在光标右上方
+            (x, y) 窗口位置 - 显示在光标右上方(超出屏幕边缘自动翻转)
         """
         # 优先使用传入的光标位置
         if pos:
-            x, y = pos
-            # 显示在光标右上方，偏移 10 像素
-            return (x + 10, y - 50)
+            return calculate_indicator_position(pos, window_size=self.size)
 
         # 其次使用鼠标位置
         if self.follow_mouse:
             mouse_pos = self._get_mouse_position()
             if mouse_pos:
-                x, y = mouse_pos
-                return (x + 10, y - 50)
+                return calculate_indicator_position(mouse_pos, window_size=self.size)
 
         # 如果都没有，使用默认位置
-        return (1200, 100)
+        return DEFAULT_POSITION
 
     def _create_window(self):
         """创建悬浮窗口"""
@@ -594,8 +656,8 @@ class ProcessingIndicator:
             window_title: 当前窗口标题
         """
         # 计算浮标应该在的位置（光标右上方）
-        indicator_x = x + 10
-        indicator_y = y - 50
+        # 计算浮标应该在的位置(统一偏移 + 屏幕边缘翻转)
+        indicator_x, indicator_y = calculate_indicator_position((x, y), window_size=self.size)
         self._last_tracker_pos = (indicator_x, indicator_y)
         self._pending_position_update = (indicator_x, indicator_y)
         logger.debug(
@@ -610,19 +672,17 @@ class ProcessingIndicator:
             pos: (x, y) 光标位置
 
         Returns:
-            (x, y) 窗口位置 - 显示在光标右上方
+            (x, y) 窗口位置 - 显示在光标右上方(超出屏幕边缘自动翻转)
         """
         if pos:
-            x, y = pos
-            return (x + 10, y - 50)
+            return calculate_indicator_position(pos, window_size=self.size)
 
         if self.follow_mouse:
             mouse_pos = self._get_mouse_position()
             if mouse_pos:
-                x, y = mouse_pos
-                return (x + 10, y - 50)
+                return calculate_indicator_position(mouse_pos, window_size=self.size)
 
-        return (1200, 100)
+        return DEFAULT_POSITION
 
     def _create_window(self) -> sg.Window | None:
         """创建处理中窗口"""
