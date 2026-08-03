@@ -11,6 +11,7 @@ Voice Input Framework - 快捷键管理模块
 """
 
 import logging
+import sys
 import time
 from collections.abc import Callable
 
@@ -267,6 +268,29 @@ class HotkeyManager:
             return True
         # 启动至今不足 quiet_period 秒:给监听器留出事件窗口,暂不判定失败
         return (time.time() - self._listener_started_at) < quiet_period
+
+    @staticmethod
+    def check_macos_permission() -> bool | None:
+        """检测 macOS 输入监控(Input Monitoring)权限(macOS 10.15+)
+
+        pynput 键盘监听需要的是"输入监控"权限(不是"辅助功能"——那用于模拟按键)。
+        macOS 10.15+ 提供 CGPreflightListenEventAccess() 直接查询。
+
+        Returns:
+            True:已授权;False:未授权;None:非 macOS 或 API 不可用(无法检测)
+        """
+        if sys.platform != "darwin":
+            return None
+        try:
+            import ctypes
+
+            cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+            cg.CGPreflightListenEventAccess.restype = ctypes.c_bool
+            cg.CGPreflightListenEventAccess.argtypes = []
+            return bool(cg.CGPreflightListenEventAccess())
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"输入监控权限检测失败: {e}")
+            return None
 
     def stop_listener(self):
         """停止快捷键监听器"""

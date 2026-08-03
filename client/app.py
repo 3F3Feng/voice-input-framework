@@ -415,23 +415,38 @@ class VoiceInputApp:
     def _check_hotkey_permission(self):
         """快捷键监听权限自检(延迟执行,不阻塞启动)
 
-        macOS 上 pynput 全局监听需要"辅助功能"权限;未授权时静默收不到事件。
+        macOS 上 pynput 键盘监听需要"输入监控"(Input Monitoring)权限;
+        未授权时静默收不到事件。优先用系统 API 直接检测,否则回退到事件活动检测。
         """
         try:
+            # 优先:macOS 系统 API 直接查询输入监控权限
+            perm = self.hotkey_manager.check_macos_permission()
+            if perm is False:
+                self._warn_hotkey_permission()
+                return
+            if perm is True:
+                logger.info("输入监控权限已授权")
+                return
+            # 系统 API 不可用(非 macOS/旧系统):回退到事件活动检测
             if self.hotkey_manager.check_listener_activity():
                 logger.info("快捷键监听正常(已收到键盘事件)")
                 return
-            msg = (
-                "⚠️ 未检测到键盘事件:若全局快捷键无反应,\n"
-                "请到 系统设置 → 隐私与安全性 → 辅助功能,\n"
-                "为当前终端/应用授予权限后重启。"
-            )
-            logger.warning(msg.replace("\n", " "))
-            if self.window:
-                self.window.log(msg)
-                self.window.set_status("快捷键未授权", "red")
+            self._warn_hotkey_permission()
         except Exception as e:
             logger.debug(f"快捷键权限自检失败: {e}")
+
+    def _warn_hotkey_permission(self):
+        """提示用户授权 macOS 输入监控权限"""
+        msg = (
+            "⚠️ 快捷键监听未授权:pynput 需要 macOS「输入监控」权限。\n"
+            "请到 系统设置 → 隐私与安全性 → 输入监控,\n"
+            "点 + 添加 终端/应用程序(或 /usr/bin/python3)并开启,\n"
+            "然后重启本程序。"
+        )
+        logger.warning(msg.replace("\n", " "))
+        if self.window:
+            self.window.log(msg)
+            self.window.set_status("快捷键未授权", "red")
 
     def _cleanup(self):
         self.is_running = False
