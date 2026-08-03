@@ -735,10 +735,12 @@ class LlmClient:
                 if resp.status_code == 200:
                     data = resp.json()
 
-                    # 提取模型名称列表
+                    # 提取模型名称列表(过滤 None/空)
                     models = data.get("models", [])
                     self.available_models = [
-                        m.get("name") if isinstance(m, dict) else m for m in models
+                        name
+                        for m in models
+                        if (name := (m.get("name") if isinstance(m, dict) else m))
                     ]
 
                     # 获取当前模型

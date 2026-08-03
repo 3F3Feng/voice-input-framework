@@ -92,3 +92,27 @@ jobs:
         run: |
           cd gui/stt-logic-tests
           cargo test
+
+  pyright:
+    name: Pyright type check (client app contract)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python deps (for import resolution)
+        run: |
+          pip install --upgrade pip
+          pip install PySimpleGUI pynput sounddevice numpy pyautogui
+
+      - name: Run pyright on client app
+        run: |
+          npx -y pyright@latest client/app.py client/network.py 2>&1 \
+            | grep -E "error:" \
+            | grep -vE "reportMissingImports|reportMissingModuleSource|reportOptionalMemberAccess|reportUnknown" \
+            && exit 1 || exit 0

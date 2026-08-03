@@ -32,7 +32,7 @@ CLIPBOARD_METHOD = sys.platform == "darwin"
 class VoiceInputApp:
     """语音输入应用控制器"""
 
-    def __init__(self, server_host: str = None, server_port: int = None):
+    def __init__(self, server_host: str | None = None, server_port: int | None = None):
         self.config = ConfigManager()
         self.server_host = server_host or self.config.server_host
         self.server_port = server_port or self.config.server_port
@@ -145,7 +145,7 @@ class VoiceInputApp:
     async def _load_prompt(self):
         prompt = await self.llm.load_prompt()
         if self.window:
-            self.window.update_prompt(prompt)
+            self.window.update_prompt(prompt or "")
 
     async def _save_prompt(self, text: str):
         await self.llm.save_prompt(text)
@@ -155,7 +155,9 @@ class VoiceInputApp:
     # ── 录音和转录 ──
 
     async def _start_recording(self):
-        self.audio.start_recording(device=self.selected_mic)
+        if self.selected_mic is not None:
+            self.audio.selected_device = self.selected_mic
+        self.audio.start_recording()
         self._hotkey_pressed = True
         if self.window:
             self.window.write_event_value("-REC-STARTED-", "")
@@ -253,8 +255,10 @@ class VoiceInputApp:
 
         # 热键
         self.hotkey_manager.set_hotkey(self.config.hotkey)
-        self.hotkey_manager.on_press = lambda: self._async_task(self._start_recording())
-        self.hotkey_manager.on_release = lambda: self._async_task(self._stop_recording())
+        self.hotkey_manager.start_listener(
+            on_press=lambda: self._async_task(self._start_recording()),
+            on_release=lambda: self._async_task(self._stop_recording()),
+        )
 
         # 自动连接
         self._async_task(self._connect())
@@ -327,10 +331,10 @@ class VoiceInputApp:
         elif event == "-PRESET-":
             name = values.get("-PRESET-")
             if name:
-                preset = HotkeyPresets.get_hotkey(name)
+                preset = HotkeyPresets.get_preset(name)
                 if preset:
-                    window["-HOTKEY-"].update(preset)
-                    self.window.log(f"预设 {name} 已应用: {preset}")
+                    window["-HOTKEY-"].update(preset["hotkey"])
+                    self.window.log(f"预设 {name} 已应用: {preset['hotkey']}")
 
         elif event == "-APPLY-PRESET-":
             self._handle_event("-UPDATE-HOTKEY-", values, window)
@@ -388,7 +392,8 @@ class VoiceInputApp:
         from client.update_checker import check_for_updates, format_version_message
 
         try:
-            result = await check_for_updates()
+            # check_for_updates 是同步函数(内部用 urllib),不可 await
+            result = check_for_updates()
             if result:
                 msg = format_version_message(result)
                 self.window.log(msg)
