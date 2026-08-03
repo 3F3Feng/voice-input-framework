@@ -94,6 +94,21 @@ def check_for_updates() -> VersionInfo | None:
     )
 
 
+def format_version_message(info: VersionInfo | None) -> str:
+    """将版本信息格式化为人类可读消息"""
+    if info is None:
+        return "检查更新失败(GitHub API 不可达)"
+    if not info.is_outdated:
+        return f"已是最新版本 v{info.latest_version}"
+    msg = (
+        f"发现新版本 v{info.latest_version}(当前 v{info.current_version})\n"
+        f"下载: {info.download_url or info.release_url}"
+    )
+    if info.release_notes:
+        msg += f"\n更新说明: {info.release_notes}"
+    return msg
+
+
 class UpdateChecker:
     """后台更新检查器（定时检查 + 回调通知）"""
 

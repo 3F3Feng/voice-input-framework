@@ -222,3 +222,27 @@ class TestAppClientContract:
                         missing.append(f"{recv.attr}.{node.func.attr}")
 
         assert missing == [], f"app.py 调用了 network.py 中不存在的方法: {sorted(set(missing))}"
+
+    def test_all_app_client_imports_resolvable(self):
+        """app.py 中所有 from client.X import name 在对应模块中均存在"""
+        import ast
+
+        def module_symbols(module: str) -> set:
+            path = project_dir / (module.replace(".", "/") + ".py")
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            return {
+                n.name
+                for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            }
+
+        app_ast = ast.parse(Path(project_dir / "client" / "app.py").read_text(encoding="utf-8"))
+        missing = []
+        for node in ast.walk(app_ast):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("client."):
+                symbols = module_symbols(node.module)
+                for a in node.names:
+                    if a.name not in symbols:
+                        missing.append(f"{node.module}.{a.name}")
+
+        assert missing == [], f"app.py 导入了不存在符号: {sorted(set(missing))}"

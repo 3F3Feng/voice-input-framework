@@ -9,6 +9,7 @@ Voice Input Framework - 客户端应用控制器
 import asyncio
 import logging
 import os
+import sys
 import threading
 import time
 
@@ -16,12 +17,14 @@ import PySimpleGUI as sg
 
 from client.audio import AudioRecorder
 from client.config_manager import ConfigManager
-from client.cursor_tracker import CLIPBOARD_METHOD, get_input_cursor_position
 from client.hotkey_manager import HotkeyManager, HotkeyPresets
 from client.network import LlmClient, SttClient
-from client.ui import MainWindow, TrayMenu
+from client.ui import MainWindow, TrayMenu, get_input_cursor_position
 
 logger = logging.getLogger(__name__)
+
+# 自动输入方式:macOS 用 osascript keystroke(无需额外依赖);其他平台用 pyautogui
+CLIPBOARD_METHOD = sys.platform == "darwin"
 
 
 class VoiceInputApp:
