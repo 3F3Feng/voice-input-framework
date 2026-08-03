@@ -343,7 +343,7 @@ class AudioTranscriberGUI:
 
         ws = ws_lib.create_connection(ws_url, timeout=30)
         ws.recv()  # ready
-        ws.send(json.dumps({"type": "config", "language": self.lang.get(), "return_timestamps": False}))
+        ws.send(json.dumps({"type": "config", "language": self.lang.get()}))
         ws.recv()  # config_ack
 
         # 发送音频

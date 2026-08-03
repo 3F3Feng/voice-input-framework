@@ -97,7 +97,6 @@ async def test_websocket_flow():
             # 发送配置
             await ws.send(json.dumps({
                 "type": "config",
-                "return_timestamps": False,
                 "language": "auto"
             }))
             

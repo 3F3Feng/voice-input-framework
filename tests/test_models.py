@@ -7,13 +7,6 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 # Define models locally for testing (avoid import issues)
-class WordTimestamp(BaseModel):
-    """词级别时间戳"""
-    word: str
-    start: float
-    end: float
-
-
 class TranscriptionResult(BaseModel):
     """转写结果"""
     text: str
@@ -22,13 +15,11 @@ class TranscriptionResult(BaseModel):
     is_final: bool = True
     stt_latency_ms: float = 0.0
     model: str = ""
-    timestamps: Optional[List[WordTimestamp]] = None
 
 
 class TranscriptionRequest(BaseModel):
     """转写请求"""
     language: str = "auto"
-    return_timestamps: bool = False
 
 
 class ModelInfo(BaseModel):
@@ -58,40 +49,6 @@ class ErrorResponse(BaseModel):
     request_id: str
 
 
-class TestWordTimestamp:
-    """Test WordTimestamp model"""
-
-    def test_basic_creation(self):
-        """Test basic timestamp creation"""
-        ts = WordTimestamp(word="你好", start=0.0, end=0.5)
-        assert ts.word == "你好"
-        assert ts.start == 0.0
-        assert ts.end == 0.5
-
-    def test_json_serialization(self):
-        """Test JSON serialization"""
-        ts = WordTimestamp(word="test", start=1.0, end=2.0)
-        json_data = ts.model_dump()
-        assert json_data["word"] == "test"
-        assert json_data["start"] == 1.0
-        assert json_data["end"] == 2.0
-
-    def test_negative_values(self):
-        """Test negative time values"""
-        ts = WordTimestamp(word="test", start=-1.0, end=0.0)
-        assert ts.start == -1.0  # Pydantic allows negative values by default
-
-    def test_chinese_characters(self):
-        """Test Chinese character handling"""
-        ts = WordTimestamp(word="你好世界", start=0.0, end=1.0)
-        assert ts.word == "你好世界"
-
-    def test_empty_word(self):
-        """Test empty word handling"""
-        ts = WordTimestamp(word="", start=0.0, end=0.5)
-        assert ts.word == ""
-
-
 class TestTranscriptionResult:
     """Test TranscriptionResult model"""
 
@@ -102,20 +59,6 @@ class TestTranscriptionResult:
         assert result.confidence == 1.0
         assert result.language == "auto"
         assert result.is_final is True
-        assert result.timestamps is None
-
-    def test_result_with_timestamps(self):
-        """Test result with timestamps"""
-        timestamps = [
-            WordTimestamp(word="Hello", start=0.0, end=0.5),
-            WordTimestamp(word="world", start=0.5, end=1.0),
-        ]
-        result = TranscriptionResult(
-            text="Hello world",
-            timestamps=timestamps
-        )
-        assert result.timestamps is not None
-        assert len(result.timestamps) == 2
 
     def test_result_with_all_fields(self):
         """Test result with all fields"""
@@ -126,7 +69,6 @@ class TestTranscriptionResult:
             is_final=True,
             stt_latency_ms=150.5,
             model="qwen_asr_mlx_native_small",
-            timestamps=[WordTimestamp(word="test", start=0.0, end=0.5)]
         )
         assert result.confidence == 0.95
         assert result.language == "zh"
@@ -148,13 +90,11 @@ class TestTranscriptionRequest:
         """Test default values"""
         req = TranscriptionRequest()
         assert req.language == "auto"
-        assert req.return_timestamps is False
 
     def test_custom_values(self):
         """Test custom values"""
-        req = TranscriptionRequest(language="zh", return_timestamps=True)
+        req = TranscriptionRequest(language="zh")
         assert req.language == "zh"
-        assert req.return_timestamps is True
 
     def test_all_languages(self):
         """Test various language codes"""

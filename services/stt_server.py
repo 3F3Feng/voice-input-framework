@@ -139,12 +139,6 @@ else:
 logger = logging.getLogger("stt-server")
 
 # ============== Data Models ==============
-class WordTimestamp(BaseModel):
-    """词级别时间戳"""
-    word: str
-    start: float
-    end: float
-
 class TranscriptionResult(BaseModel):
     """转写结果"""
     text: str
@@ -153,12 +147,10 @@ class TranscriptionResult(BaseModel):
     is_final: bool = True
     stt_latency_ms: float = 0.0
     model: str = ""
-    timestamps: Optional[List[WordTimestamp]] = None
 
 class TranscriptionRequest(BaseModel):
     """转写请求"""
     language: str = "auto"
-    return_timestamps: bool = False
 
 class ModelInfo(BaseModel):
     """模型信息"""
@@ -242,9 +234,7 @@ class STTEngine:
         self.default_model = default_model
         self.current_model_name = default_model
         self._model = None
-        self._aligner = None
         self._is_loaded = False
-        self._aligner_loaded = False
         self._loading = False
         self._load_lock = asyncio.Lock()
         self._model_info = self.AVAILABLE_MODELS.get(
@@ -255,10 +245,10 @@ class STTEngine:
         self.failed_requests = 0
         self._active_connections = 0
 
-    async def load(self, load_aligner: bool = False) -> bool:
+    async def load(self) -> bool:
         """加载模型"""
         async with self._load_lock:
-            if self._is_loaded and (not load_aligner or self._aligner_loaded):
+            if self._is_loaded:
                 return True
 
             if self._loading:
@@ -282,13 +272,6 @@ class STTEngine:
                         await loop.run_in_executor(None, self._load_model_sync)
                     self._is_loaded = True
                     logger.info("STT model loaded successfully")
-
-                # 加载 ForcedAligner（如果需要时间戳功能）
-                if load_aligner and not self._aligner_loaded:
-                    logger.info(f"Loading ForcedAligner: {self._model_info['aligner_id']}")
-                    logger.warning("ForcedAligner not available (deprecated engine removed). Timestamps disabled.")
-                    self._aligner_loaded = True
-                    logger.info("ForcedAligner loaded successfully")
 
                 return True
             except Exception as e:
@@ -353,9 +336,8 @@ class STTEngine:
             logger.info(f"Loading Whisper.cpp model: {whisper_model}...")
             whisper_engine = WhisperCppEngine(model_name=whisper_model)
 
-            # WhisperCppEngine 同步加载
-            import asyncio
-            asyncio.run(whisper_engine.load())
+            # WhisperCppEngine 同步加载(内部无 await,直接调用即可)
+            whisper_engine.load_sync()
             self._model = whisper_engine
             self._model_type = "whisper_cpp"
             return
@@ -408,7 +390,6 @@ class STTEngine:
 
         # 重置状态
         self._is_loaded = False
-        self._aligner_loaded = False
         self._loading = False
 
         # 释放旧模型内存
@@ -425,7 +406,7 @@ class STTEngine:
         # 在后台异步加载新模型
         async def load_in_background():
             try:
-                success = await self.load(load_aligner=False)
+                success = await self.load()
                 if success:
                     logger.info(f"Model {model_name} loaded successfully")
                 else:
@@ -449,7 +430,6 @@ class STTEngine:
         self,
         audio_data: bytes,
         language: str = "auto",
-        return_timestamps: bool = False
     ) -> TranscriptionResult:
         """转写音频"""
         import numpy as np
@@ -460,16 +440,9 @@ class STTEngine:
         try:
             # 确保模型已加载
             if not self._is_loaded:
-                success = await self.load(load_aligner=return_timestamps)
+                success = await self.load()
                 if not success:
                     raise RuntimeError("Failed to load STT model")
-
-            # 如果需要时间戳但 aligner 未加载，尝试加载
-            if return_timestamps and not self._aligner_loaded and getattr(self, "_model_type", None) != "whisper_cpp":
-                success = await self.load(load_aligner=True)
-                if not success:
-                    logger.warning("Failed to load ForcedAligner, returning without timestamps")
-                    return_timestamps = False
 
             # 转换音频
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
@@ -491,6 +464,8 @@ class STTEngine:
                 )
                 text, detected_lang = result.text, result.language
             else:
+                text, detected_lang = "", lang or language
+
                 # ── Whisper MLX 引擎 ──
                 if getattr(self, '_model_type', None) == "whisper_mlx":
                     import mlx_whisper
@@ -501,44 +476,41 @@ class STTEngine:
                         language=lang,
                         return_timestamps=True,
                     )
-                    return result.get("text", "").strip(), result.get("language", lang or "en")
+                    text = result.get("text", "").strip()
+                    detected_lang = result.get("language", lang or "en")
 
                 # ── Whisper.cpp 引擎 ──
-                if getattr(self, '_model_type', None) == "whisper_cpp":
+                elif getattr(self, '_model_type', None) == "whisper_cpp":
                     import numpy as np
                     # whisper.cpp 需要 bytes
                     audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
-                    result = asyncio.run(self._model.transcribe(
+                    result = await self._model.transcribe(
                         audio_data=audio_bytes,
                         language=lang or "auto",
                         sample_rate=sample_rate,
-                    ))
-                    return result.text, result.language
+                    )
+                    text = result.text
+                    detected_lang = result.language
 
                 # ── Whisper Turbo (transformers) ──
-                if getattr(self, '_model_type', None) == "whisper_turbo":
+                elif getattr(self, '_model_type', None) == "whisper_turbo":
                     result = self._model(
                         audio_array,
                         generate_kwargs={"language": lang},
                     )
-                    return result.get("text", "").strip(), lang or "en"
+                    text = result.get("text", "").strip()
+                    detected_lang = lang or "en"
 
                 # ── Qwen3-ASR (transformers 或 MLX 环境) ──
-                results = self._model.transcribe(
-                    audio=(audio_array, sample_rate),
-                    language=lang,
-                )
-                if results and len(results) > 0:
-                    return results[0].text, results[0].language
-                return "", language
+                else:
+                    results = self._model.transcribe(
+                        audio=(audio_array, sample_rate),
+                        language=lang,
+                    )
+                    if results and len(results) > 0:
+                        text = results[0].text
+                        detected_lang = results[0].language
             text = text.strip()
-
-            # 生成时间戳（如果需要）
-            timestamps = None
-            if return_timestamps and text and self._aligner_loaded and getattr(self, "_model_type", None) != "whisper_cpp":
-                timestamps = await self._generate_timestamps(
-                    audio_array, sample_rate, text, detected_lang or language
-                )
 
             latency = (time.time() - start_time) * 1000
             return TranscriptionResult(
@@ -548,75 +520,17 @@ class STTEngine:
                 is_final=True,
                 stt_latency_ms=latency,
                 model=self.current_model_name,
-                timestamps=timestamps,
             )
         except Exception as e:
             self.failed_requests += 1
             logger.error(f"Transcription error: {e}", exc_info=True)
             raise
 
-    async def _generate_timestamps(
-        self,
-        audio_array,
-        sample_rate: int,
-        text: str,
-        language: str
-    ) -> Optional[List[WordTimestamp]]:
-        """使用 ForcedAligner 生成词级别时间戳"""
-        import tempfile
-        import os
-
-        try:
-            # 保存音频到临时文件
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                tmp_path = tmp.name
-                # 使用 soundfile 写入音频
-                import soundfile as sf
-                sf.write(tmp_path, audio_array, sample_rate)
-
-            loop = asyncio.get_event_loop()
-
-            def _do_align():
-                results = self._aligner.align(
-                    audio=tmp_path,
-                    text=text,
-                    language=language if language != "auto" else "Chinese",
-                )
-                return results
-
-            results = await loop.run_in_executor(None, _do_align)
-
-            # 清理临时文件
-            try:
-                os.unlink(tmp_path)
-            except:
-                pass
-
-            # 转换结果格式
-            if results and hasattr(results, 'segments'):
-                timestamps = []
-                for segment in results.segments:
-                    for word_info in segment.get('words', []):
-                        timestamps.append(WordTimestamp(
-                            word=word_info.get('word', ''),
-                            start=word_info.get('start', 0.0),
-                            end=word_info.get('end', 0.0),
-                        ))
-                return timestamps if timestamps else None
-
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to generate timestamps: {e}")
-            return None
-
     def is_loading(self) -> bool:
         return self._loading
 
     def is_model_loaded(self) -> bool:
         return self._is_loaded
-
-    def is_aligner_loaded(self) -> bool:
-        return self._aligner_loaded
 
     def get_stats(self) -> Dict[str, Any]:
         return {
@@ -859,7 +773,6 @@ async def get_model_status(model_name: str):
 async def transcribe(
     file: UploadFile = File(...),
     language: str = Form("auto"),
-    return_timestamps: bool = Form(False),
 ):
     """转写音频文件"""
     req_id = request_id_ctx.get()
@@ -868,7 +781,6 @@ async def transcribe(
         result = await engine.transcribe(
             audio_content,
             language=language,
-            return_timestamps=return_timestamps
         )
         return result
     except Exception as e:
@@ -901,12 +813,10 @@ async def websocket_stream(websocket: WebSocket):
         "type": "ready",
         "model": engine.current_model_name,
         "is_loading": engine.is_loading(),
-        "aligner_loaded": engine.is_aligner_loaded(),
         "llm_enabled": llm_info["llm_enabled"],
         "llm_model": llm_info["llm_model"],
     }))
 
-    return_timestamps = False
     audio_queue = asyncio.Queue()
     stream_finished = asyncio.Event()
     stream_error = None
@@ -941,11 +851,9 @@ async def websocket_stream(websocket: WebSocket):
                         await audio_queue.put(base64.b64decode(audio_b64))
 
                 elif msg_type == "config":
-                    return_timestamps = data.get("return_timestamps", False)
                     language = data.get("language", "auto")
                     await websocket.send_text(json.dumps({
                         "type": "config_ack",
-                        "return_timestamps": return_timestamps,
                         "language": language,
                     }))
 

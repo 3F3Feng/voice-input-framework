@@ -10,7 +10,7 @@ Environment="VIF_PORT=6543"
 Environment="VIF_HOST=0.0.0.0"
 Environment="VIF_LOG_LEVEL=INFO"
 Environment="VIF_DEFAULT_MODEL=qwen_asr"
-ExecStart=/Users/shifengzhang/.openclaw/workspace/.venv/bin/python3 -m voice_input_framework.server.api
+ExecStart=/Users/shifengzhang/.openclaw/workspace/.venv/bin/python3 -m services.stt_server
 Restart=always
 RestartSec=5
 StandardOutput=append:/Users/shifengzhang/voice-input-framework/logs/stdout.log

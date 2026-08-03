@@ -48,6 +48,12 @@ class WhisperCppEngine(BaseSTTEngine):
     async def load(self) -> None:
         if self._is_loaded:
             return
+        self.load_sync()
+
+    def load_sync(self) -> None:
+        """同步加载(无 await,供 executor/同步上下文调用)"""
+        if self._is_loaded:
+            return
 
         logger.info(f"Checking whisper.cpp CLI at: {self.whisper_cli}")
         if not self.whisper_cli.exists():

@@ -19,7 +19,6 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
     "qwen_asr_mlx_native": {
         "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
         "engine": "qwen_asr_mlx_native",
-        "aligner_id": None,
         "memory_gb": 1.0,
         "description": "Qwen3-ASR-1.7B MLX 8bit (MLX原生，推荐)",
         "requires_apple_silicon": True,
@@ -27,7 +26,6 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
     "qwen_asr_mlx_native_small": {
         "model_id": "mlx-community/Qwen3-ASR-0.6B-4bit",
         "engine": "qwen_asr_mlx_native",
-        "aligner_id": None,
         "memory_gb": 0.5,
         "description": "Qwen3-ASR-0.6B MLX 4bit (MLX原生，更快)",
         "requires_apple_silicon": True,
@@ -36,7 +34,6 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
     "whisper_mlx": {
         "model_id": "mlx-community/whisper-large-v3-mlx",
         "engine": "whisper_mlx",
-        "aligner_id": None,
         "memory_gb": 3.0,
         "description": "MLX Whisper Large V3 (Apple Silicon)",
         "requires_apple_silicon": True,
@@ -44,7 +41,6 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
     "whisper_mlx_turbo": {
         "model_id": "mlx-community/whisper-large-v3-turbo-mlx",
         "engine": "whisper_mlx",
-        "aligner_id": None,
         "memory_gb": 2.0,
         "description": "MLX Whisper Large V3 Turbo (快速+准确，Apple Silicon)",
         "requires_apple_silicon": True,
@@ -52,7 +48,6 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
     "whisper_mlx_medium": {
         "model_id": "mlx-community/whisper-medium-mlx",
         "engine": "whisper_mlx",
-        "aligner_id": None,
         "memory_gb": 1.5,
         "description": "MLX Whisper Medium (Apple Silicon)",
         "requires_apple_silicon": True,
@@ -60,7 +55,6 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
     "whisper_mlx_small": {
         "model_id": "mlx-community/whisper-small-mlx",
         "engine": "whisper_mlx",
-        "aligner_id": None,
         "memory_gb": 0.5,
         "description": "MLX Whisper Small (最快，Apple Silicon)",
         "requires_apple_silicon": True,
@@ -70,7 +64,6 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
         "model_id": "whisper_cpp_base",
         "engine": "whisper_cpp",
         "whisper_model": "whisper-v3-base",
-        "aligner_id": None,
         "memory_gb": 1,
         "description": "Whisper V3 Base via whisper.cpp (Metal GPU, fast)",
     },
@@ -78,7 +71,6 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
         "model_id": "whisper_cpp_large",
         "engine": "whisper_cpp",
         "whisper_model": "whisper-v3-large",
-        "aligner_id": None,
         "memory_gb": 3,
         "description": "Whisper V3 Large via whisper.cpp (Metal GPU, accurate)",
     },
@@ -86,7 +78,6 @@ MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
     "whisper_turbo": {
         "model_id": "openai/whisper-large-v3-turbo",
         "engine": "whisper_turbo",
-        "aligner_id": None,
         "memory_gb": 3,
         "description": "Whisper Large V3 Turbo (transformers, fast)",
     },
