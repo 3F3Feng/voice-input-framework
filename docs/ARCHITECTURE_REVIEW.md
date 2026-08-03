@@ -139,3 +139,34 @@ server/models/* 引擎(MLX / whisper.cpp / transformers)
 ## 五、总结
 
 项目架构方向正确(双服务分离解决依赖冲突),`services/` 层是稳定核心;但当前存在**客户端接口脱节(run_client.py 入口不可用)**、**迁移未完成导致的死代码与失效入口**、**STT 引擎多分支返回类型不一致**、**LLM 访问双路径自相矛盾**、**伪流式与文档不符**五处主要风险。建议按 4.1 → 4.2 → 4.3 顺序推进,先修 H1–H5 五个必然出错点(其中 H5 客户端接口脱节优先级最高,它让 `run_client.py` 完全不可用),再做结构清理。
+
+## 六、执行记录(2026-08-03)
+
+全部 18 条(H1–H5、M1–M8、L1–L5)已修复并提交,分支 `review/architecture-notes`,提交 `6aa747a..12f79f2`:
+
+| 条目 | 处理 |
+|------|------|
+| H1 | 重写 `vif-run.py` 指向 `services.stt_server`;修正 `deploy/` 两处入口 |
+| H2 | 统一 `STTEngine.transcribe` 四引擎分支返回 `TranscriptionResult`,补单测 |
+| H3 | `:511` asyncio.run → await;`WhisperCppEngine.load_sync()` 消除嵌套 |
+| H4 | 移除 ForcedAligner/WordTimestamp/时间戳功能及相关参数/字段 |
+| H5 | `SttClient`/`LlmClient` 补 `get_models`/`get_model_status`/`transcribe`/`process` 薄封装;AST 契约测试保证 app.py 调用可解析 |
+| M1 | 按决策只改文档:README 明确"录音结束后统一转写",移除"实时流式"表述 |
+| M2 | 按决策统一走 6544 转发层:`app.py` 的 `LlmClient` 配置管理连 STT 端口,`process` 直连 6545 |
+| M3 | 消除 6545/6544 硬编码(环境变量 + shared/constants);`tools` 默认改 localhost |
+| M4 | 删除 `server/config.py`、`server/llm_engine.py`、`llm_postprocessing/`;`client/gui.py` 因仍为打包入口保留 |
+| M5 | 删除 `shared/protocol.py`,清理 `shared/__init__.py` 导出 |
+| M6 | CORS 去掉无效的 `allow_credentials=True` |
+| M7 | LLM 转发端点统一返回结构化 `ErrorResponse`;测试共用 shared 定义 |
+| M8 | `audio_transcriber_gui.py` 默认服务器改 `localhost` |
+| L1 | 新增 `shared/constants.py`(采样率/端口);替换 `stt_server.py` 魔法数字 |
+| L2 | `STTEngine` + 数据模型拆至 `services/stt_engine.py`(stt_server 1045→约 400 行路由/WS) |
+| L3 | CI 移除 lint `\|\| true`;ruff `--select F` 严格、black 检查核心模块;既有风格债在 pyproject 记录豁免 |
+| L4 | 版本对齐 2.0.10(pyproject/`client/__init__`/CHANGELOG) |
+| L5 | `pytest.ini` testpaths 加入 `client/tests`;删重复的 `scripts/test_services.py`;平台相关测试加 skip |
+
+**额外修复**:`stt_server.py` 模块加载路径的 `logger` 在使用前未定义(F821,持久化状态恢复时会 NameError);`stt_engine.py` 拆分时清除重复的 `AVAILABLE_MODELS`/docstring。
+
+**验证**:`pytest -m "not integration"` 85 passed / 26 skipped / 25 deselected;`ruff --select F` All checks passed;black 核心模块通过;`services.*` 与 `client.network` 冒烟导入 OK。
+
+**遗留(有意保留)**:`client/gui.py`(PyInstaller spec 打包入口)、`server/models/`(仍被服务使用)未删除;`client/tests/test_cursor_tracker.py` 平台相关测试在 Linux 跳过(CI 的 macOS/Windows 会运行);CI 中 `download-models.sh`/`build-release.yml` 的 `\|\| true` 为命令容错,非 lint 逃逸。
