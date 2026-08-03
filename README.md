@@ -166,6 +166,10 @@ npm run tauri build
 | `VIF_LOG_LEVEL` | INFO | 日志级别 |
 
 > 完整模型元数据见 `shared/model_registry.py`(单一来源)。
+>
+> **注意**:客户端与服务端默认使用 `127.0.0.1` 而非 `localhost`——Windows 上
+> `localhost` 会优先解析到 IPv6(`::1`),每次连接先尝试 IPv6 超时再回落 IPv4,
+> 造成数秒延迟。如确需 IPv6 连接,可用环境变量/配置文件显式指定 host。
 
 ### 客户端配置
 
