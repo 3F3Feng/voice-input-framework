@@ -383,3 +383,57 @@ class TestMicPermissionCheck:
 
         monkeypatch.setattr("sys.platform", "linux")
         assert AudioRecorder.check_mic_permission() is None
+
+
+class TestResolveInputDevice:
+    """AudioRecorder._resolve_input_device 设备解析逻辑"""
+
+    class _FakeDev:
+        def __init__(self, name, inn, out):
+            self.name = name
+            self.max_input_channels = inn
+            self.max_output_channels = out
+
+        def get(self, k, default=None):
+            return getattr(self, k, default)
+
+    class _FakeDefault:
+        def __init__(self, device):
+            self.device = device
+
+    def _make_sd(self, default_input):
+        devs = [
+            self._FakeDev("Mic", 1, 0),
+            self._FakeDev("Speakers", 0, 2),
+            self._FakeDev("Teams", 2, 2),
+        ]
+        default = self._FakeDefault((default_input, 0))
+
+        class FakeSD:
+            def query_devices(self, d=None):
+                return devs if d is None else devs[d]
+
+        sd = FakeSD()
+        sd.default = default
+        return sd
+
+    def test_skips_default_with_no_input_channels(self):
+        """默认输入指向 0 输入通道(Speakers)→ 跳过,选第一个有输入的(Mic=0)"""
+        from client.audio import AudioRecorder
+
+        sd = self._make_sd(default_input=1)  # 默认输入=Speakers(0 in)
+        assert AudioRecorder._resolve_input_device(sd) == 0
+
+    def test_uses_default_when_it_has_input(self):
+        """默认输入有输入通道 → 直接用默认"""
+        from client.audio import AudioRecorder
+
+        sd = self._make_sd(default_input=2)  # 默认输入=Teams(2 in)
+        assert AudioRecorder._resolve_input_device(sd) == 2
+
+    def test_default_none_picks_first_input(self):
+        """无默认输入 → 选第一个有输入的(Mic=0)"""
+        from client.audio import AudioRecorder
+
+        sd = self._make_sd(default_input=None)
+        assert AudioRecorder._resolve_input_device(sd) == 0
