@@ -232,25 +232,28 @@ class FloatingIndicator:
         self._pending_position_update = (indicator_x, indicator_y)
         logger.debug(f"Tracker 光标: ({x}, {y}) -> 浮标: ({indicator_x}, {indicator_y})")
 
-    def _calculate_window_position(self, pos: tuple = None) -> tuple:
+    def _calculate_window_position(self, pos: tuple = None, window_size: tuple = None) -> tuple:
         """
         根据光标位置计算窗口位置
 
         Args:
             pos: (x, y) 光标位置（优先使用光标位置，其次鼠标位置）
+            window_size: 窗口实际尺寸;None 用 self.size
 
         Returns:
-            (x, y) 窗口位置 - 显示在光标右上方(超出屏幕边缘自动翻转)
+            (x, y) 窗口位置 - 锚点角贴基准点(超出屏幕边缘自动翻转)
         """
+        if window_size is None:
+            window_size = self.size
         # 优先使用传入的光标位置
         if pos:
-            return calculate_indicator_position(pos, window_size=self.size)
+            return calculate_indicator_position(pos, window_size=window_size)
 
         # 其次使用鼠标位置
         if self.follow_mouse:
             mouse_pos = self._get_mouse_position()
             if mouse_pos:
-                return calculate_indicator_position(mouse_pos, window_size=self.size)
+                return calculate_indicator_position(mouse_pos, window_size=window_size)
 
         # 如果都没有，使用默认位置
         return DEFAULT_POSITION
@@ -332,19 +335,35 @@ class FloatingIndicator:
                 "enable_close_attempted_event": True,  # 允许关闭事件
             }
 
+            # 创建窗口(finalize,先不设 location,拿到实际尺寸后再定位)
+            window = sg.Window("", **window_kwargs)
+
+            # 用实际窗口尺寸计算锚点位置(macOS 上布局实际高度 > size 参数,
+            # 若用假设尺寸计算会让窗口盖住鼠标;优先用 tkinter 请求尺寸)
+            actual_size = self.size
+            try:
+                if window.TKroot:
+                    rw = window.TKroot.winfo_reqwidth()
+                    rh = window.TKroot.winfo_reqheight()
+                    if rw > 0 and rh > 0:
+                        actual_size = (rw, rh)
+                else:
+                    ws = window.size  # PySimpleGUI finalize 后返回实际 (w, h)
+                    if ws and ws[0] > 0 and ws[1] > 0:
+                        actual_size = ws
+            except Exception:  # noqa: BLE001
+                pass
+
             # 确定窗口位置：保存位置 > 光标位置 > 鼠标位置 > 默认位置
-            if self.position:
-                window_kwargs["location"] = self.position
-            else:
-                # 优先使用光标位置（如果有的话）
-                window_pos = self._calculate_window_position(self.cursor_pos)
-                if window_pos:
-                    window_kwargs["location"] = window_pos
-                    logger.debug(f"浮标位置: {window_pos}")
-
-            window = sg.Window("", **window_kwargs)  # title 作为位置参数
-
-            logger.debug("浮标窗口已创建")
+            target = self.position if self.position else None
+            if not target:
+                target = self._calculate_window_position(self.cursor_pos, window_size=actual_size)
+            if target:
+                try:
+                    window.move(target[0], target[1])
+                    logger.debug(f"浮标位置: {target} (尺寸 {actual_size})")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"定位浮标失败: {e}")
 
             return window
         except Exception as e:
@@ -738,19 +757,34 @@ class ProcessingIndicator:
                 "enable_close_attempted_event": True,
             }
 
-            # 确定窗口位置：保存位置 > 鼠标位置 > 默认位置
-            if self.position:
-                window_kwargs["location"] = self.position
-            else:
-                # 优先使用光标位置（如果有的话）
-                window_pos = self._calculate_window_position(self.cursor_pos)
-                if window_pos:
-                    window_kwargs["location"] = window_pos
-                    logger.debug(f"处理指示器位置: {window_pos}")
-
+            # 创建窗口(finalize,先不设 location,拿到实际尺寸后再定位)
             window = sg.Window("", **window_kwargs)
 
-            logger.debug("处理指示器窗口已创建")
+            # 用实际窗口尺寸计算锚点位置(优先用 tkinter 请求尺寸)
+            actual_size = self.size
+            try:
+                if window.TKroot:
+                    rw = window.TKroot.winfo_reqwidth()
+                    rh = window.TKroot.winfo_reqheight()
+                    if rw > 0 and rh > 0:
+                        actual_size = (rw, rh)
+                else:
+                    ws = window.size
+                    if ws and ws[0] > 0 and ws[1] > 0:
+                        actual_size = ws
+            except Exception:  # noqa: BLE001
+                pass
+
+            # 确定窗口位置：保存位置 > 光标位置 > 鼠标位置 > 默认位置
+            target = self.position if self.position else None
+            if not target:
+                target = self._calculate_window_position(self.cursor_pos, window_size=actual_size)
+            if target:
+                try:
+                    window.move(target[0], target[1])
+                    logger.debug(f"处理指示器位置: {target} (尺寸 {actual_size})")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"定位处理指示器失败: {e}")
 
             return window
         except Exception as e:
