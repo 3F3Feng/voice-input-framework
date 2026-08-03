@@ -5,10 +5,10 @@ Voice Input Framework - Whisper STT 引擎实现
 """
 
 import asyncio
+import io
 import logging
 from collections.abc import AsyncIterator
 
-import io
 import numpy as np
 import torch
 from transformers import pipeline

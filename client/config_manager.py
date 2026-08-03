@@ -9,40 +9,29 @@ import copy
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # 默认配置
 DEFAULT_CONFIG = {
-    "server": {
-        "host": "localhost",
-        "port": 6544
-    },
-    "hotkey": {
-        "key": "left_ctrl+left_alt",
-        "distinguish_left_right": True
-    },
+    "server": {"host": "localhost", "port": 6544},
+    "hotkey": {"key": "left_ctrl+left_alt", "distinguish_left_right": True},
     "ui": {
         "start_minimized": False,
         "use_floating_indicator": True,
         "use_tray": True,
-        "opacity": 0.8
+        "opacity": 0.8,
     },
-    "audio": {
-        "device": None,
-        "language": "auto"
-    },
-    "llm": {
-        "enabled": True
-    }
+    "audio": {"device": None, "language": "auto"},
+    "llm": {"enabled": True},
 }
 
 
 class ConfigManager:
     """配置文件管理器"""
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         """
         初始化配置管理器
 
@@ -54,14 +43,14 @@ class ConfigManager:
         else:
             self.config_path = Path.home() / ".voice_input_config.json"
 
-        self.config: Dict[str, Any] = {}
+        self.config: dict[str, Any] = {}
         self._load()
 
     def _load(self) -> None:
         """加载配置文件,如果不存在或损坏则使用默认值"""
         try:
             if self.config_path.exists():
-                with open(self.config_path, 'r', encoding='utf-8') as f:
+                with open(self.config_path, "r", encoding="utf-8") as f:
                     loaded_config = json.load(f)
                 # 验证并合并配置
                 self.config = self._merge_with_defaults(loaded_config)
@@ -78,7 +67,7 @@ class ConfigManager:
             logger.warning(f"加载配置文件失败,使用默认值: {e}")
             self.config = copy.deepcopy(DEFAULT_CONFIG)
 
-    def _merge_with_defaults(self, loaded_config: Dict[str, Any]) -> Dict[str, Any]:
+    def _merge_with_defaults(self, loaded_config: dict[str, Any]) -> dict[str, Any]:
         """
         将加载的配置与默认配置合并,确保所有必需字段存在
 
@@ -91,7 +80,7 @@ class ConfigManager:
         result = copy.deepcopy(DEFAULT_CONFIG)
 
         # 递归合并字典
-        def deep_merge(base: Dict, override: Dict) -> Dict:
+        def deep_merge(base: dict, override: dict) -> dict:
             for key, value in override.items():
                 if key in base and isinstance(base[key], dict) and isinstance(value, dict):
                     base[key] = deep_merge(base[key], value)
@@ -112,7 +101,7 @@ class ConfigManager:
             # 确保父目录存在
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(self.config_path, 'w', encoding='utf-8') as f:
+            with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=2, ensure_ascii=False)
 
             logger.info(f"配置已保存到: {self.config_path}")
@@ -132,7 +121,7 @@ class ConfigManager:
         Returns:
             配置值
         """
-        keys = key.split('.')
+        keys = key.split(".")
         value = self.config
 
         try:
@@ -151,7 +140,7 @@ class ConfigManager:
             value: 配置值
             save_immediately: 是否立即保存到文件
         """
-        keys = key.split('.')
+        keys = key.split(".")
         config = self.config
 
         # 导航到目标位置
@@ -171,101 +160,103 @@ class ConfigManager:
     @property
     def server_host(self) -> str:
         """服务器地址"""
-        return self.get('server.host', DEFAULT_CONFIG['server']['host'])
+        return self.get("server.host", DEFAULT_CONFIG["server"]["host"])
 
     @server_host.setter
     def server_host(self, value: str) -> None:
-        self.set('server.host', value)
+        self.set("server.host", value)
 
     @property
     def server_port(self) -> int:
         """服务器端口"""
-        return self.get('server.port', DEFAULT_CONFIG['server']['port'])
+        return self.get("server.port", DEFAULT_CONFIG["server"]["port"])
 
     @server_port.setter
     def server_port(self, value: int) -> None:
-        self.set('server.port', value)
+        self.set("server.port", value)
 
     @property
     def hotkey(self) -> str:
         """快捷键"""
-        return self.get('hotkey.key', DEFAULT_CONFIG['hotkey']['key'])
+        return self.get("hotkey.key", DEFAULT_CONFIG["hotkey"]["key"])
 
     @hotkey.setter
     def hotkey(self, value: str) -> None:
-        self.set('hotkey.key', value)
+        self.set("hotkey.key", value)
 
     @property
     def distinguish_left_right(self) -> bool:
         """是否区分左右修饰键"""
-        return self.get('hotkey.distinguish_left_right', DEFAULT_CONFIG['hotkey']['distinguish_left_right'])
+        return self.get(
+            "hotkey.distinguish_left_right", DEFAULT_CONFIG["hotkey"]["distinguish_left_right"]
+        )
 
     @distinguish_left_right.setter
     def distinguish_left_right(self, value: bool) -> None:
-        self.set('hotkey.distinguish_left_right', value)
+        self.set("hotkey.distinguish_left_right", value)
 
     @property
     def start_minimized(self) -> bool:
         """启动时最小化"""
-        return self.get('ui.start_minimized', DEFAULT_CONFIG['ui']['start_minimized'])
+        return self.get("ui.start_minimized", DEFAULT_CONFIG["ui"]["start_minimized"])
 
     @start_minimized.setter
     def start_minimized(self, value: bool) -> None:
-        self.set('ui.start_minimized', value)
+        self.set("ui.start_minimized", value)
 
     @property
     def use_floating_indicator(self) -> bool:
         """使用悬浮指示器"""
-        return self.get('ui.use_floating_indicator', DEFAULT_CONFIG['ui']['use_floating_indicator'])
+        return self.get("ui.use_floating_indicator", DEFAULT_CONFIG["ui"]["use_floating_indicator"])
 
     @use_floating_indicator.setter
     def use_floating_indicator(self, value: bool) -> None:
-        self.set('ui.use_floating_indicator', value)
+        self.set("ui.use_floating_indicator", value)
 
     @property
     def use_tray(self) -> bool:
         """使用系统托盘"""
-        return self.get('ui.use_tray', DEFAULT_CONFIG['ui']['use_tray'])
+        return self.get("ui.use_tray", DEFAULT_CONFIG["ui"]["use_tray"])
 
     @use_tray.setter
     def use_tray(self, value: bool) -> None:
-        self.set('ui.use_tray', value)
+        self.set("ui.use_tray", value)
 
     @property
     def opacity(self) -> float:
         """浮标透明度"""
-        return self.get('ui.opacity', DEFAULT_CONFIG['ui']['opacity'])
+        return self.get("ui.opacity", DEFAULT_CONFIG["ui"]["opacity"])
 
     @opacity.setter
     def opacity(self, value: float) -> None:
-        self.set('ui.opacity', value)
+        self.set("ui.opacity", value)
 
     @property
-    def selected_device(self) -> Optional[int]:
+    def selected_device(self) -> int | None:
         """麦克风设备"""
-        return self.get('audio.device', DEFAULT_CONFIG['audio']['device'])
+        return self.get("audio.device", DEFAULT_CONFIG["audio"]["device"])
 
     @selected_device.setter
-    def selected_device(self, value: Optional[int]) -> None:
-        self.set('audio.device', value)
+    def selected_device(self, value: int | None) -> None:
+        self.set("audio.device", value)
 
     @property
     def language(self) -> str:
         """识别语言"""
-        return self.get('audio.language', DEFAULT_CONFIG['audio']['language'])
+        return self.get("audio.language", DEFAULT_CONFIG["audio"]["language"])
 
     @language.setter
     def language(self, value: str) -> None:
-        self.set('audio.language', value)
+        self.set("audio.language", value)
 
     @property
     def llm_enabled(self) -> bool:
         """LLM后处理是否启用"""
-        return self.get('llm.enabled', DEFAULT_CONFIG['llm']['enabled'])
+        return self.get("llm.enabled", DEFAULT_CONFIG["llm"]["enabled"])
 
     @llm_enabled.setter
     def llm_enabled(self, value: bool) -> None:
-        self.set('llm.enabled', value)
+        self.set("llm.enabled", value)
 
     def validate(self) -> bool:
         """
@@ -276,7 +267,11 @@ class ConfigManager:
         """
         try:
             # 验证服务器配置
-            if not isinstance(self.server_port, int) or self.server_port < 1 or self.server_port > 65535:
+            if (
+                not isinstance(self.server_port, int)
+                or self.server_port < 1
+                or self.server_port > 65535
+            ):
                 logger.warning(f"无效的端口号: {self.server_port}")
                 return False
 
@@ -296,6 +291,6 @@ class ConfigManager:
         self.save()
         logger.info("配置已重置为默认值")
 
-    def get_all(self) -> Dict[str, Any]:
+    def get_all(self) -> dict[str, Any]:
         """获取完整配置"""
         return self.config.copy()

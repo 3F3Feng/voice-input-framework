@@ -13,15 +13,16 @@ macOS: 使用 Accessibility API (ctypes 调用 ApplicationServices)
 - Windows: 需要管理员权限
 - macOS: 需要在系统设置中启用辅助功能权限
 """
-import time
-import threading
 import logging
-from typing import Optional, Tuple, Callable
+import threading
+import time
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
 # Platform detection
 import platform
+
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
 
@@ -45,11 +46,11 @@ if IS_WINDOWS:
             self.poll_interval = poll_interval
             self._running = False
             self._thread = None
-            self._last_caret_pos: Optional[Tuple[int, int]] = None
+            self._last_caret_pos: tuple[int, int] | None = None
             self._last_window_title: str = ""
-            self._callback: Optional[Callable] = None
+            self._callback: Callable | None = None
         
-        def start(self, callback: Optional[Callable] = None) -> bool:
+        def start(self, callback: Callable | None = None) -> bool:
             """启动追踪"""
             if not AUTO_AVAILABLE:
                 logger.error("uiautomation 未安装")
@@ -90,7 +91,7 @@ if IS_WINDOWS:
                     pass
                 time.sleep(self.poll_interval)
         
-        def _get_caret_position(self) -> Optional[Tuple[int, int]]:
+        def _get_caret_position(self) -> tuple[int, int] | None:
             """获取当前前景窗口的文本控件光标位置"""
             try:
                 foreground = auto.GetForegroundControl()
@@ -129,7 +130,7 @@ if IS_WINDOWS:
                 pass
             return None
         
-        def get_current_position(self) -> Optional[Tuple[int, int]]:
+        def get_current_position(self) -> tuple[int, int] | None:
             """获取当前光标位置"""
             return self._get_caret_position()
 
@@ -201,7 +202,7 @@ elif IS_MACOS:
         """检查辅助功能权限"""
         return _AXIsProcessTrusted()
     
-    def get_text_cursor_position() -> Optional[Tuple[int, int]]:
+    def get_text_cursor_position() -> tuple[int, int] | None:
         """
         获取当前文本光标位置 (macOS)
         
@@ -266,7 +267,7 @@ elif IS_MACOS:
         
         return None
     
-    def _get_element_bounds(element: AXUIElement) -> Optional[Tuple[int, int]]:
+    def _get_element_bounds(element: AXUIElement) -> tuple[int, int] | None:
         """获取元素边界"""
         try:
             # 尝试获取 AXBoundsForRange 使用整个文本范围
@@ -276,7 +277,7 @@ elif IS_MACOS:
             pass
         return None
     
-    def get_screen_height() -> Optional[float]:
+    def get_screen_height() -> float | None:
         """获取主屏幕高度"""
         try:
             # 使用 CGMainDisplayID 和 CGDisplayBounds
@@ -336,11 +337,11 @@ elif IS_MACOS:
             self.poll_interval = poll_interval
             self._running = False
             self._thread = None
-            self._last_caret_pos: Optional[Tuple[int, int]] = None
+            self._last_caret_pos: tuple[int, int] | None = None
             self._last_window_title: str = ""
-            self._callback: Optional[Callable] = None
+            self._callback: Callable | None = None
         
-        def start(self, callback: Optional[Callable] = None) -> bool:
+        def start(self, callback: Callable | None = None) -> bool:
             """启动追踪"""
             if not check_accessibility_permissions():
                 logger.error("macOS 辅助功能权限未启用，请在系统设置中授权")
@@ -378,7 +379,7 @@ elif IS_MACOS:
                 
                 time.sleep(self.poll_interval)
         
-        def get_current_position(self) -> Optional[Tuple[int, int]]:
+        def get_current_position(self) -> tuple[int, int] | None:
             """获取当前光标位置"""
             return get_text_cursor_position()
 
@@ -399,7 +400,7 @@ else:
         def stop(self):
             pass
         
-        def get_current_position(self) -> Optional[Tuple[int, int]]:
+        def get_current_position(self) -> tuple[int, int] | None:
             return None
 
 

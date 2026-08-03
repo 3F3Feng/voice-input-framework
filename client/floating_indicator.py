@@ -15,12 +15,12 @@ Voice Input Framework - 悬浮录音指示器
 import logging
 import threading
 import time
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # 平台检测
 import platform
+
 IS_WINDOWS = platform.system() == "Windows"
 
 # 尝试导入鼠标位置库
@@ -88,7 +88,7 @@ class FloatingIndicator:
         self.follow_mouse = follow_mouse
         self.audio_callback = audio_callback
 
-        self.window: Optional[sg.Window] = None
+        self.window: sg.Window | None = None
         self.is_visible = False
         self.is_recording = False
         
@@ -96,11 +96,11 @@ class FloatingIndicator:
         self._window_lock = threading.Lock()
 
         # 录音计时
-        self.recording_start_time: Optional[float] = None
+        self.recording_start_time: float | None = None
         self.recording_duration = 0.0
 
         # 更新线程
-        self.update_thread: Optional[threading.Thread] = None
+        self.update_thread: threading.Thread | None = None
         self.stop_update = False
 
         # 窗口位置(记住用户拖动)
@@ -117,11 +117,11 @@ class FloatingIndicator:
         self.peak_level = 0     # 峰值音量级别 (0-100)
         
         # 待处理的更新(线程安全)
-        self._pending_timer_update: Optional[str] = None
-        self._pending_volume_update: Optional[tuple] = None  # (current, peak)
-        self._pending_position_update: Optional[tuple] = None  # (x, y) - 窗口位置更新
+        self._pending_timer_update: str | None = None
+        self._pending_volume_update: tuple | None = None  # (current, peak)
+        self._pending_position_update: tuple | None = None  # (x, y) - 窗口位置更新
 
-    def _get_mouse_position(self) -> Optional[tuple]:
+    def _get_mouse_position(self) -> tuple | None:
         """获取鼠标当前位置"""
         try:
             if PYNPUT_MOUSE_AVAILABLE:
@@ -501,17 +501,17 @@ class ProcessingIndicator:
         self.opacity = opacity
         self.size = size
         self.follow_mouse = follow_mouse
-        self.window: Optional[sg.Window] = None
+        self.window: sg.Window | None = None
         self.is_visible = False
         self.animation_frame = 0
-        self.animation_thread: Optional[threading.Thread] = None
+        self.animation_thread: threading.Thread | None = None
         self.stop_animation = False
         
         # Thread safety lock for window operations
         self._window_lock = threading.Lock()
         
         # 待处理的图标更新(线程安全)
-        self._pending_icon_update: Optional[str] = None
+        self._pending_icon_update: str | None = None
         self.position = None  # (x, y)
         self.last_mouse_pos = None  # (x, y)
         self.cursor_pos = None  # (x, y) - 光标位置
@@ -519,9 +519,9 @@ class ProcessingIndicator:
         # CursorTracker（仅 Windows，自动跟踪输入光标）
         self._cursor_tracker = None
         self._last_tracker_pos = None  # tracker 返回的最新位置
-        self._pending_position_update: Optional[tuple] = None  # (x, y) - 窗口位置更新
+        self._pending_position_update: tuple | None = None  # (x, y) - 窗口位置更新
 
-    def _get_mouse_position(self) -> Optional[tuple]:
+    def _get_mouse_position(self) -> tuple | None:
         """获取鼠标当前位置"""
         try:
             if PYNPUT_MOUSE_AVAILABLE:
@@ -570,7 +570,7 @@ class ProcessingIndicator:
         
         return (1200, 100)
 
-    def _create_window(self) -> Optional[sg.Window]:
+    def _create_window(self) -> sg.Window | None:
         """创建处理中窗口"""
         if not PYSIMPLEGUI_AVAILABLE:
             return None

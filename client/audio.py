@@ -11,9 +11,7 @@
 
 import logging
 import queue
-import threading
 import time
-from typing import Optional, Callable
 
 import numpy as np
 
@@ -39,8 +37,8 @@ class AudioRecorder:
         self._recording = False
         self._audio_buffer: list[bytes] = []
         self._audio_queue: queue.Queue = queue.Queue()
-        self._record_start_time: Optional[float] = None
-        self._selected_device: Optional[int] = None  # None = 默认设备
+        self._record_start_time: float | None = None
+        self._selected_device: int | None = None  # None = 默认设备
 
     # ──────────────────── 属性 ────────────────────
 
@@ -64,11 +62,11 @@ class AudioRecorder:
         return 0.0
 
     @property
-    def selected_device(self) -> Optional[int]:
+    def selected_device(self) -> int | None:
         return self._selected_device
 
     @selected_device.setter
-    def selected_device(self, device_id: Optional[int]):
+    def selected_device(self, device_id: int | None):
         self._selected_device = device_id
 
     # ──────────────────── 设备管理 ────────────────────

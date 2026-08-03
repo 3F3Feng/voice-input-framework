@@ -10,18 +10,17 @@
 """
 
 import logging
-import time
 import threading
+import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Optional, Callable
 
 import PySimpleGUI as sg
 
+from .auto_start import AutoStartManager
+from .floating_indicator import FloatingIndicator, ProcessingIndicator
 from .hotkey_manager import HotkeyPresets
 from .tray_manager import TrayIconManager, TrayStatus
-from .floating_indicator import FloatingIndicator, ProcessingIndicator
-from .auto_start import AutoStartManager
-from .update_checker import check_for_updates, format_version_message
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +35,8 @@ BUTTON_COLOR = ("white", "gray")
 
 # 焦点管理函数（Windows）
 try:
-    import win32gui
     import win32con
+    import win32gui
     WINAPI_AVAILABLE = True
 except ImportError:
     WINAPI_AVAILABLE = False
@@ -95,7 +94,7 @@ class MainWindow:
         self.audio_devices = audio_devices
         self.server_host = server_host
         self.server_port = server_port
-        self.window: Optional[sg.Window] = None
+        self.window: sg.Window | None = None
 
     def build_layout(self) -> list:
         """构建 PySimpleGUI 布局"""

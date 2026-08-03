@@ -16,9 +16,10 @@ import json
 import logging
 import os
 import time
-from typing import Optional, Callable, Any
+from collections.abc import Callable
+from typing import Any
 
-from .websocket_keepalive import WebSocketKeepAlive, ConnectionState
+from .websocket_keepalive import ConnectionState, WebSocketKeepAlive
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ DEFAULT_WS_PING_INTERVAL = 20
 DEFAULT_WS_PING_TIMEOUT = 10
 DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_READY_TIMEOUT = 30.0
-DEFAULT_RESULT_TIMEOUT = 300.0   # 5 分钟（大模型如 qwen_asr 需要较长时间）
+DEFAULT_RESULT_TIMEOUT = 300.0  # 5 分钟（大模型如 qwen_asr 需要较长时间）
 DEFAULT_HTTP_TIMEOUT = 10.0
 DEFAULT_MODEL_SWITCH_TIMEOUT = 300.0  # 5 分钟（大模型加载需要时间）
 DEFAULT_POLL_INTERVAL = 2.0
@@ -46,24 +47,24 @@ class SttClient:
 
         # 连接状态
         self.ws = None
-        self.keepalive: Optional[WebSocketKeepAlive] = None
+        self.keepalive: WebSocketKeepAlive | None = None
         self.connection_state = ConnectionState.DISCONNECTED
         self.is_connected = False
 
         # 模型信息
         self.available_models: list[str] = []
-        self.current_model: Optional[str] = None
+        self.current_model: str | None = None
 
         # 流式传输结果
-        self.stream_result: Optional[str] = None
-        self.stream_error: Optional[str] = None
+        self.stream_result: str | None = None
+        self.stream_error: str | None = None
 
         # 回调（GUI 集成用）
-        self.on_log: Optional[Callable[[str], None]] = None
-        self.on_status: Optional[Callable[[str, str], None]] = None
-        self.on_error: Optional[Callable[[str], None]] = None
-        self.on_models_updated: Optional[Callable[[list, str], None]] = None
-        self.on_llm_start: Optional[Callable[[str], None]] = None
+        self.on_log: Callable[[str], None] | None = None
+        self.on_status: Callable[[str, str], None] | None = None
+        self.on_error: Callable[[str], None] | None = None
+        self.on_models_updated: Callable[[list, str], None] | None = None
+        self.on_llm_start: Callable[[str], None] | None = None
 
     def _log(self, msg: str):
         """统一日志输出"""
@@ -138,7 +139,7 @@ class SttClient:
                 self.ws = None
                 return False
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._log("✗ 连接超时")
             if self.on_status:
                 self.on_status("连接超时", "red")
@@ -188,7 +189,9 @@ class SttClient:
                                 self._log(f"⚠️ 响应中未找到模型，响应完整内容: {response_data}")
 
                             if self.on_models_updated:
-                                self.on_models_updated(self.available_models, self.current_model or "")
+                                self.on_models_updated(
+                                    self.available_models, self.current_model or ""
+                                )
 
                             return bool(self.available_models)
                         except json.JSONDecodeError as e:
@@ -223,9 +226,7 @@ class SttClient:
         elif isinstance(response_data, dict):
             # 字典格式，可能带有 "models" 键
             if "models" in response_data:
-                self.available_models = [
-                    m.get("name", "") for m in response_data.get("models", [])
-                ]
+                self.available_models = [m.get("name", "") for m in response_data.get("models", [])]
                 for m in response_data.get("models", []):
                     if m.get("is_loaded", False):
                         self.current_model = m.get("name", "")
@@ -371,7 +372,7 @@ class SttClient:
 
     # ──────────────────── 音频转写 ────────────────────
 
-    async def send_audio(self, audio_buffer: list[bytes]) -> Optional[str]:
+    async def send_audio(self, audio_buffer: list[bytes]) -> str | None:
         """发送完整音频到服务器并获取识别结果（备用模式：录完再发）
 
         Args:
@@ -430,10 +431,14 @@ class SttClient:
             self._log(f"发送 {audio_size_kb:.1f} KB 音频...")
 
             # 发送音频消息
-            await ws.send(json.dumps({
-                "type": "audio",
-                "data": base64.b64encode(full_audio).decode(),
-            }))
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "audio",
+                        "data": base64.b64encode(full_audio).decode(),
+                    }
+                )
+            )
 
             # 发送结束信号
             await ws.send(json.dumps({"type": "end"}))
@@ -468,12 +473,12 @@ class SttClient:
                         await ws.close()
                         return None
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self._log("识别超时（5分钟） - 模型可能还在加载中")
                     await ws.close()
                     return None
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._log("连接超时")
             return None
         except Exception as e:
@@ -489,7 +494,7 @@ class SttClient:
         text = await self.send_audio([audio_data])
         return {"text": text or ""}
 
-    async def stream_audio(self, audio_queue: asyncio.Queue, language: str = "auto") -> Optional[str]:
+    async def stream_audio(self, audio_queue: asyncio.Queue, language: str = "auto") -> str | None:
         """流式发送音频到服务器（边录边发）
 
         从 audio_queue 中逐块读取音频数据，通过 WebSocket 实时发送。
@@ -525,7 +530,7 @@ class SttClient:
                     else:
                         self._log(f"服务器响应异常: {data}")
                         return None
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self._log("等待服务器准备超时")
                     return None
 
@@ -537,11 +542,15 @@ class SttClient:
                             # 收到结束信号
                             break
                         # 发送音频块
-                        await ws.send(json.dumps({
-                            "type": "audio",
-                            "data": base64.b64encode(chunk).decode(),
-                        }))
-                    except asyncio.TimeoutError:
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "audio",
+                                    "data": base64.b64encode(chunk).decode(),
+                                }
+                            )
+                        )
+                    except TimeoutError:
                         # 队列为空但可能还在录音，继续等待
                         continue
                     except Exception as e:
@@ -566,7 +575,6 @@ class SttClient:
                         if msg_type == "result":
                             result_text = data.get("text", "")
                             llm_latency = data.get("llm_latency_ms")
-                            llm_model = data.get("llm_model", "")
                             if llm_latency is not None:
                                 self._log(f"识别结果: {result_text} (LLM: {llm_latency:.0f}ms)")
                             else:
@@ -592,7 +600,7 @@ class SttClient:
                             self.stream_error = error_msg
                             return None
 
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self._log("等待结果超时")
                         self.stream_error = "等待结果超时"
                         return None
@@ -653,7 +661,7 @@ class SttClient:
 class LlmClient:
     """LLM 后处理服务客户端 — 模型切换和提示词管理"""
 
-    def __init__(self, http_url: str, llm_url: Optional[str] = None):
+    def __init__(self, http_url: str, llm_url: str | None = None):
         """初始化 LLM 客户端
 
         Args:
@@ -661,14 +669,12 @@ class LlmClient:
             llm_url: LLM 服务直连 URL（process 文本后处理用；默认 http://127.0.0.1:6545）
         """
         self.http_url = http_url
-        self.llm_url = llm_url or os.environ.get(
-            "VIF_LLM_URL", "http://127.0.0.1:6545"
-        )
+        self.llm_url = llm_url or os.environ.get("VIF_LLM_URL", "http://127.0.0.1:6545")
         self.available_models: list[str] = []
-        self.current_model: Optional[str] = None
+        self.current_model: str | None = None
 
         # 回调
-        self.on_log: Optional[Callable[[str], None]] = None
+        self.on_log: Callable[[str], None] | None = None
 
     def _log(self, msg: str):
         """统一日志输出"""
@@ -687,10 +693,7 @@ class LlmClient:
         ok = await self.fetch_models()
         if not ok:
             return []
-        return [
-            {"name": m, "is_current": m == self.current_model}
-            for m in self.available_models
-        ]
+        return [{"name": m, "is_current": m == self.current_model} for m in self.available_models]
 
     async def process(self, text: str) -> str:
         """LLM 文本后处理（直连 LLM 服务 /process）
@@ -705,9 +708,7 @@ class LlmClient:
 
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
-                resp = await client.post(
-                    f"{self.llm_url}/process", json={"text": text}
-                )
+                resp = await client.post(f"{self.llm_url}/process", json={"text": text})
                 if resp.status_code == 200:
                     data = resp.json()
                     return data.get("text", text)
@@ -802,7 +803,7 @@ class LlmClient:
 
     # ──────────────────── 提示词管理 ────────────────────
 
-    async def load_prompt(self) -> Optional[str]:
+    async def load_prompt(self) -> str | None:
         """加载 LLM 提示词
 
         Returns:

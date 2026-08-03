@@ -6,14 +6,14 @@ Voice Input Framework - 共享模块
 
 from .data_types import (
     AudioChunk,
-    TranscriptionResult,
-    ModelInfo,
     HealthStatus,
+    ModelInfo,
+    TranscriptionResult,
 )
 
 __all__ = [
     "AudioChunk",
-    "TranscriptionResult",
-    "ModelInfo",
     "HealthStatus",
+    "ModelInfo",
+    "TranscriptionResult",
 ]

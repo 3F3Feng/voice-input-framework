@@ -8,8 +8,8 @@ Requires servers running:
   - Main: localhost:6544
 """
 
-import pytest
 import httpx
+import pytest
 
 STT_URL = "http://localhost:6544"
 LLM_URL = "http://localhost:6545"

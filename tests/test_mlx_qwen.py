@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 MLX-Audio Qwen3-ASR API test script.
@@ -6,14 +5,15 @@ Tests loading, transcription, streaming, and various input formats.
 """
 
 import pytest
+
 pytestmark = pytest.mark.integration
 
 import time
-import numpy as np
 
 try:
     import mlx.core as mx
     from mlx_audio.stt import load
+
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
@@ -22,11 +22,12 @@ except ImportError:
 
 # Skip all tests if mlx is not available
 if not MLX_AVAILABLE:
-    pytest.skip('mlx not available (requires Apple Silicon)', allow_module_level=True)
+    pytest.skip("mlx not available (requires Apple Silicon)", allow_module_level=True)
 
 # ──────────────────────────────────────────────
 # 1. Model Loading
 # ──────────────────────────────────────────────
+
 
 def test_load_model(model_name="mlx-community/Qwen3-ASR-0.6B-4bit"):
     """Test loading model from HuggingFace."""
@@ -46,6 +47,7 @@ def test_load_model(model_name="mlx-community/Qwen3-ASR-0.6B-4bit"):
 # 2. Transcription (non-streaming)
 # ──────────────────────────────────────────────
 
+
 def test_transcribe_file(model, audio_path, language="English"):
     """Test transcription from file path."""
     print(f"\n=== Transcribe from file: {audio_path} ===")
@@ -63,8 +65,9 @@ def test_transcribe_file(model, audio_path, language="English"):
 
 def test_transcribe_numpy(model, audio_path, language="English"):
     """Test transcription from numpy/mx.array input."""
-    print(f"\n=== Transcribe from mx.array ===")
+    print("\n=== Transcribe from mx.array ===")
     from mlx_audio.stt.utils import load_audio
+
     audio = load_audio(audio_path)
     print(f"  Audio shape: {audio.shape}, dtype: {audio.dtype}")
     start = time.time()
@@ -77,7 +80,7 @@ def test_transcribe_numpy(model, audio_path, language="English"):
 
 def test_transcribe_auto_language(model, audio_path):
     """Test auto language detection."""
-    print(f"\n=== Auto language detection ===")
+    print("\n=== Auto language detection ===")
     result = model.generate(audio_path)
     print(f"  ✓ Text: {result.text!r}")
     print(f"  Detected language: {result.language}")
@@ -88,9 +91,10 @@ def test_transcribe_auto_language(model, audio_path):
 # 3. Streaming transcription
 # ──────────────────────────────────────────────
 
+
 def test_stream_transcribe(model, audio_path, language="English"):
     """Test streaming transcription token-by-token."""
-    print(f"\n=== Streaming transcription ===")
+    print("\n=== Streaming transcription ===")
     start = time.time()
     full_text = ""
     token_count = 0
@@ -99,7 +103,9 @@ def test_stream_transcribe(model, audio_path, language="English"):
             full_text += result.text
             token_count += 1
         if result.is_final:
-            print(f"  [FINAL] prompt_tokens={result.prompt_tokens} gen_tokens={result.generation_tokens}")
+            print(
+                f"  [FINAL] prompt_tokens={result.prompt_tokens} gen_tokens={result.generation_tokens}"
+            )
     elapsed = time.time() - start
     print(f"  ✓ Full text: {full_text!r}")
     print(f"  Tokens streamed: {token_count}")
@@ -111,9 +117,10 @@ def test_stream_transcribe(model, audio_path, language="English"):
 # 4. High-level API (generate_transcription)
 # ──────────────────────────────────────────────
 
+
 def test_high_level_api(model_name, audio_path, language="English"):
     """Test the high-level generate_transcription function."""
-    print(f"\n=== High-level API (generate_transcription) ===")
+    print("\n=== High-level API (generate_transcription) ===")
     from mlx_audio.stt.generate import generate_transcription
 
     start = time.time()

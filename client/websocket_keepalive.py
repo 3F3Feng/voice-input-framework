@@ -9,8 +9,8 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import Callable, Optional, Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,8 @@ class WebSocketKeepAlive:
         ping_interval: float = DEFAULT_PING_INTERVAL,
         pong_timeout: float = DEFAULT_PONG_TIMEOUT,
         max_missed_pongs: int = DEFAULT_MAX_MISSED_PONGS,
-        on_state_change: Optional[Callable[[ConnectionState], None]] = None,
-        on_reconnect: Optional[Callable[[], Awaitable[None]]] = None,
+        on_state_change: Callable[[ConnectionState], None] | None = None,
+        on_reconnect: Callable[[], Awaitable[None]] | None = None,
     ):
         """
         初始化保活管理器
@@ -71,7 +71,7 @@ class WebSocketKeepAlive:
         self._last_ping_time = 0
         self._last_pong_time = 0
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
         # 重连退避
         self._reconnect_delay = self.DEFAULT_RECONNECT_DELAY

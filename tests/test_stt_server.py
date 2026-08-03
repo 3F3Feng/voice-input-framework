@@ -1,11 +1,12 @@
 """
 Tests for STT Server
 """
-import pytest
+
 import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 # Add project path
 project_dir = Path(__file__).parent.parent
@@ -35,7 +36,14 @@ class TestSTTEngine:
         from services.stt_server import STTEngine
 
         engine = STTEngine()
-        import platform; expected = "qwen_asr_mlx_native_small" if (platform.machine() == "arm64" and platform.system() == "Darwin") else "whisper_turbo"; assert engine.default_model == expected
+        import platform
+
+        expected = (
+            "qwen_asr_mlx_native_small"
+            if (platform.machine() == "arm64" and platform.system() == "Darwin")
+            else "whisper_turbo"
+        )
+        assert engine.default_model == expected
         assert not engine._is_loaded
         assert not engine._loading
 
@@ -214,9 +222,10 @@ class TestStructuredLogging:
 
     def test_log_formatter(self):
         """Test StructuredLogFormatter"""
-        import logging
-        from services.stt_server import StructuredLogFormatter
         import json
+        import logging
+
+        from services.stt_server import StructuredLogFormatter
 
         formatter = StructuredLogFormatter()
         record = logging.LogRecord(

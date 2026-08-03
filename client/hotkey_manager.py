@@ -11,7 +11,8 @@ Voice Input Framework - 快捷键管理模块
 """
 
 import logging
-from typing import Optional, Callable, Set, Dict, List, Tuple
+from collections.abc import Callable
+
 from pynput import keyboard
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ class ModifierKey:
     RIGHT_ALT_WIN = 0xA5
     
     @classmethod
-    def get_modifier_keys(cls) -> Dict[str, List[keyboard.KeyCode]]:
+    def get_modifier_keys(cls) -> dict[str, list[keyboard.KeyCode]]:
         """获取所有修饰键的映射"""
         return {
             # macOS
@@ -79,7 +80,7 @@ class HotkeyParser:
     }
     
     @classmethod
-    def parse(cls, hotkey_str: str, distinguish_left_right: bool = False) -> Tuple[List[str], Optional[str]]:
+    def parse(cls, hotkey_str: str, distinguish_left_right: bool = False) -> tuple[list[str], str | None]:
         """
         解析快捷键字符串
         
@@ -138,7 +139,7 @@ class HotkeyParser:
         return modifiers, main_key
     
     @classmethod
-    def to_string(cls, modifiers: List[str], main_key: Optional[str] = None) -> str:
+    def to_string(cls, modifiers: list[str], main_key: str | None = None) -> str:
         """
         将修饰键和主键转换为字符串（可被 parse 解析的格式）
         
@@ -176,22 +177,22 @@ class HotkeyManager:
             distinguish_left_right: 是否区分左右修饰键
         """
         self.distinguish_left_right = distinguish_left_right
-        self.listener: Optional[keyboard.Listener] = None
-        self.pressed_keys: Set[keyboard.KeyCode] = set()
+        self.listener: keyboard.Listener | None = None
+        self.pressed_keys: set[keyboard.KeyCode] = set()
         
         # 当前快捷键配置
-        self.current_modifiers: List[str] = []
+        self.current_modifiers: list[str] = []
         self.current_main_key: str = ''
         
         # 回调函数
-        self.on_press_callback: Optional[Callable] = None
-        self.on_release_callback: Optional[Callable] = None
+        self.on_press_callback: Callable | None = None
+        self.on_release_callback: Callable | None = None
         
         # 录制模式
         self.is_recording = False
-        self.recorded_modifiers: List[str] = []
+        self.recorded_modifiers: list[str] = []
         self.recorded_main_key: str = ''
-        self.on_record_callback: Optional[Callable] = None
+        self.on_record_callback: Callable | None = None
         
         # 快捷键状态追踪
         self._hotkey_triggered = False  # 快捷键是否已触发
@@ -420,7 +421,7 @@ class HotkeyManager:
         
         return key_name in modifier_names
     
-    def _get_modifier_name(self, key, key_name: str) -> Optional[str]:
+    def _get_modifier_name(self, key, key_name: str) -> str | None:
         """获取修饰键名称"""
         # 首先尝试使用 pynput 标准对象匹配
         modifier_map = {
@@ -535,7 +536,7 @@ class HotkeyManager:
         
         return False
     
-    def _get_generic_modifier_keys(self, mod_name: str) -> List:
+    def _get_generic_modifier_keys(self, mod_name: str) -> list:
         """获取通用修饰键的所有可能键对象"""
         result = []
         
@@ -618,11 +619,11 @@ class HotkeyPresets:
     }
     
     @classmethod
-    def get_preset_names(cls) -> List[str]:
+    def get_preset_names(cls) -> list[str]:
         """获取所有预设方案名称"""
         return list(cls.PRESETS.keys())
     
     @classmethod
-    def get_preset(cls, name: str) -> Optional[dict]:
+    def get_preset(cls, name: str) -> dict | None:
         """获取预设方案"""
         return cls.PRESETS.get(name)

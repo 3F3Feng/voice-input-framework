@@ -2,15 +2,17 @@
 Tests for STT Server - Model Classes (no external dependencies)
 这些测试不依赖 uvicorn 等外部库，可以独立运行。
 """
+
 import pytest
 from pydantic import BaseModel
-from typing import List, Optional
 
 from shared.data_types import ErrorResponse
+
 
 # Define models locally for testing (avoid import issues)
 class TranscriptionResult(BaseModel):
     """转写结果"""
+
     text: str
     confidence: float = 1.0
     language: str = "auto"
@@ -21,11 +23,13 @@ class TranscriptionResult(BaseModel):
 
 class TranscriptionRequest(BaseModel):
     """转写请求"""
+
     language: str = "auto"
 
 
 class ModelInfo(BaseModel):
     """模型信息"""
+
     name: str
     description: str = ""
     is_loaded: bool = False
@@ -34,11 +38,12 @@ class ModelInfo(BaseModel):
 
 class HealthStatus(BaseModel):
     """健康状态"""
+
     status: str
     version: str = "1.1.0"
     uptime_seconds: float
     current_model: str
-    loaded_models: List[str]
+    loaded_models: list[str]
     active_connections: int = 0
     total_requests: int = 0
     failed_requests: int = 0

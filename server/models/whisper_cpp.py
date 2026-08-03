@@ -12,7 +12,6 @@ import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-
 from server.models.base import BaseSTTEngine, STTEngineError
 from shared.data_types import TranscriptionResult
 

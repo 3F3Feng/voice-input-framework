@@ -7,14 +7,14 @@ Voice Input Framework - 共享模型注册表
 """
 
 import platform
-from typing import Dict, Any
+from typing import Any
 
 # Apple Silicon 检测
 IS_APPLE_SILICON = platform.machine() == "arm64" and platform.system() == "Darwin"
 
 # 模型配置：名称 → 元数据
 # engine_type 必须与 services/stt_server.py 和 server/models/base.py 中的加载代码匹配
-MODELS_CONFIG: Dict[str, Dict[str, Any]] = {
+MODELS_CONFIG: dict[str, dict[str, Any]] = {
     # ── MLX 原生模型 (mlx-audio，Apple Silicon 优化，推荐) ──
     "qwen_asr_mlx_native": {
         "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",

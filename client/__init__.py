@@ -23,4 +23,4 @@ except ImportError:
     HotkeyVoiceInputV2 = None
     HotkeyVoiceInput = None
 
-__all__ = ["VoiceInputApp", "HotkeyVoiceInput", "HotkeyVoiceInputV2"]
+__all__ = ["HotkeyVoiceInput", "HotkeyVoiceInputV2", "VoiceInputApp"]

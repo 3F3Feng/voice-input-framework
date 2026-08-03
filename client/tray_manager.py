@@ -11,12 +11,13 @@ Voice Input Framework - 系统托盘模块
 """
 
 import logging
-from typing import Optional, Callable, Dict
+from collections.abc import Callable
 from enum import Enum
+
+from .notifier import get_notifier_backend, is_notification_available
 
 # 导入通知模块
 from .notifier import send_notification as _send_platform_notification
-from .notifier import is_notification_available, get_notifier_backend
 
 logger = logging.getLogger(__name__)
 
@@ -47,15 +48,15 @@ class TrayIconManager:
 
     def __init__(self):
         """初始化托盘管理器"""
-        self.icon: Optional[pystray.Icon] = None
+        self.icon: pystray.Icon | None = None
         self.status = TrayStatus.DISCONNECTED
         self.is_visible = False
 
         # 回调函数
-        self.callbacks: Dict[str, Callable] = {}
+        self.callbacks: dict[str, Callable] = {}
 
         # 托盘图标
-        self._icons: Dict[TrayStatus, Image.Image] = {}
+        self._icons: dict[TrayStatus, Image.Image] = {}
         self._create_icons()
 
         # 当前模型

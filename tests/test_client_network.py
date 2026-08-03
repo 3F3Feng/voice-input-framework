@@ -5,11 +5,10 @@
      LlmClient.get_models / process / llm_url 默认值,
 以及 app.py 中所有 self.stt.* / self.llm.* 调用均可解析。
 """
+
 import asyncio
 import sys
 from pathlib import Path
-
-import pytest
 
 # Add project path
 project_dir = Path(__file__).parent.parent
@@ -205,7 +204,8 @@ class TestAppClientContract:
         for node in ast.walk(network_ast):
             if isinstance(node, ast.ClassDef) and node.name in ("SttClient", "LlmClient"):
                 methods[node.name] = {
-                    n.name for n in node.body
+                    n.name
+                    for n in node.body
                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
                 }
 

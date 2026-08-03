@@ -5,9 +5,16 @@ cursor_tracker 单元测试
 运行: pytest client/tests/test_cursor_tracker.py -v
 Coverage: pytest client/tests/test_cursor_tracker.py --cov=client.cursor_tracker --cov-report=term-missing
 """
-import pytest
 import platform
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+# cursor_tracker 的 macOS/Windows 实现依赖平台 API,Linux 上无法运行
+pytestmark = pytest.mark.skipif(
+    platform.system() not in ("Darwin", "Windows"),
+    reason="cursor_tracker tests require macOS or Windows platform APIs",
+)
 
 
 # ============================================================================

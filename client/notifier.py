@@ -203,10 +203,10 @@ def is_notification_available() -> bool:
 
 # 导出
 __all__ = [
-    "send_notification",
+    "IS_LINUX",
+    "IS_MACOS",
+    "IS_WINDOWS",
     "get_notifier_backend",
     "is_notification_available",
-    "IS_WINDOWS",
-    "IS_MACOS",
-    "IS_LINUX"
+    "send_notification"
 ]
