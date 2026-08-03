@@ -19,7 +19,9 @@ from client.audio import AudioRecorder
 from client.config_manager import ConfigManager
 from client.hotkey_manager import HotkeyManager, HotkeyPresets
 from client.network import LlmClient, SttClient
-from client.ui import MainWindow, TrayMenu, get_input_cursor_position
+from client.ui import IndicatorManager, MainWindow, TrayMenu
+from client.tray_manager import TrayIconManager
+from client.auto_start import AutoStartManager
 
 logger = logging.getLogger(__name__)
 
@@ -164,21 +166,19 @@ class VoiceInputApp:
             self.window.write_event_value("-REC-STOPPED-", "")
 
     def _on_recording_started(self):
-        if hasattr(self.window, "floating_indicator") and self.window.floating_indicator:
-            pos = get_input_cursor_position()
-            self.window.floating_indicator.show(pos)
+        if getattr(self, "indicators", None):
+            self.indicators.show_recording()
 
     def _on_recording_stopped(self):
-        if hasattr(self.window, "floating_indicator") and self.window.floating_indicator:
-            self.window.floating_indicator.hide()
-        if hasattr(self.window, "processing_indicator") and self.window.processing_indicator:
-            self.window.processing_indicator.show()
+        if getattr(self, "indicators", None):
+            self.indicators.hide_recording()
+            self.indicators.show_processing()
 
     async def _process_audio(self):
         """处理已录制的音频"""
         audio_data = self.audio.stop_recording()
-        if hasattr(self.window, "processing_indicator") and self.window.processing_indicator:
-            self.window.processing_indicator.hide()
+        if getattr(self, "indicators", None):
+            self.indicators.hide_processing()
         if not audio_data or len(audio_data) < 320:
             return
 
@@ -235,8 +235,10 @@ class VoiceInputApp:
         self.window = MainWindow(
             config_manager=self.config,
             audio_devices=devices,
-            audio_level_callback=self._make_audio_level_callback(),
+            server_host=self.server_host,
+            server_port=self.server_port,
         )
+        self.indicators = IndicatorManager(self._make_audio_level_callback())
         _window = self.window.create_window(start_minimized=self.config.start_minimized)
         self.is_running = True
 
@@ -246,7 +248,8 @@ class VoiceInputApp:
         time.sleep(0.1)
 
         # 设置托盘
-        self.tray = TrayMenu(self.window._tray_manager) if _window else None
+        if _window:
+            self.tray = TrayMenu(TrayIconManager(), AutoStartManager())
 
         # 热键
         self.hotkey_manager.set_hotkey(self.config.hotkey)

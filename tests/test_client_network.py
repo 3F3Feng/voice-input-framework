@@ -263,3 +263,39 @@ class TestAppClientContract:
                         missing.append(f"{node.module}.{a.name}")
 
         assert missing == [], f"app.py 导入了不存在符号: {sorted(set(missing))}"
+
+    def test_app_constructor_calls_match_signatures(self):
+        """app.py 中 MainWindow/TrayMenu/IndicatorManager 构造参数与真实签名匹配"""
+        import ast
+
+        def ctor_signature(module: str, cls: str) -> tuple[list, list]:
+            path = project_dir / (module.replace(".", "/") + ".py")
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and node.name == cls:
+                    for n in node.body:
+                        if isinstance(n, ast.FunctionDef) and n.name == "__init__":
+                            pos = [a.arg for a in n.args.args if a.arg != "self"]
+                            return pos, [a.arg for a in n.args.kwonlyargs]
+            return [], []
+
+        # 类名 → 定义模块
+        CLASS_MODULE = {
+            "MainWindow": "client.ui",
+            "TrayMenu": "client.ui",
+            "IndicatorManager": "client.ui",
+        }
+
+        app_ast = ast.parse(Path(project_dir / "client" / "app.py").read_text(encoding="utf-8"))
+        problems = []
+        for node in ast.walk(app_ast):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in CLASS_MODULE:
+                cls = node.func.id
+                pos_params, kwonly = ctor_signature(CLASS_MODULE[cls], cls)
+                if len(node.args) > len(pos_params):
+                    problems.append(f"{cls}: {len(node.args)} 个位置参数,签名最多 {len(pos_params)}")
+                for k in node.keywords:
+                    if k.arg not in (pos_params + kwonly):
+                        problems.append(f"{cls}: 未知关键字参数 {k.arg!r}")
+
+        assert problems == [], f"构造函数调用与签名不匹配: {problems}"
