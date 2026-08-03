@@ -164,3 +164,8 @@ class TestWebSocketContract:
                     break
             # 已知消息类型集合(无模型:error;有模型:stt_result/result)
             assert seen[-1] in ("done", "error")
+            if seen[-1] == "error":
+                # 竞态回归防护:error 是终态,其后不得再有 done(否则客户端断开后
+                # 服务端 send 会抛 Unexpected ASGI message)
+                with pytest.raises(Exception):
+                    ws.receive_text()

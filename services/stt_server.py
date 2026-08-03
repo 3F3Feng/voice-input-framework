@@ -456,6 +456,14 @@ async def websocket_stream(websocket: WebSocket):
     engine.increment_connections()
     logger.info("WebSocket connection accepted")
 
+    async def _safe_send(payload: dict) -> bool:
+        """发送消息;客户端已断开时返回 False(不抛异常)"""
+        try:
+            await websocket.send_text(json.dumps(payload))
+            return True
+        except (RuntimeError, WebSocketDisconnect, Exception):  # noqa: BLE001
+            return False
+
     # 获取 LLM 服务器状态
     llm_info = {"llm_enabled": LLM_ENABLED, "llm_model": None}
     try:
@@ -471,16 +479,14 @@ async def websocket_stream(websocket: WebSocket):
         logger.debug(f"Failed to get LLM status: {e}")
 
     # 发送就绪消息
-    await websocket.send_text(
-        json.dumps(
-            {
-                "type": "ready",
-                "model": engine.current_model_name,
-                "is_loading": engine.is_loading(),
-                "llm_enabled": llm_info["llm_enabled"],
-                "llm_model": llm_info["llm_model"],
-            }
-        )
+    await _safe_send(
+        {
+            "type": "ready",
+            "model": engine.current_model_name,
+            "is_loading": engine.is_loading(),
+            "llm_enabled": llm_info["llm_enabled"],
+            "llm_model": llm_info["llm_model"],
+        }
     )
 
     audio_queue = asyncio.Queue()
@@ -517,13 +523,11 @@ async def websocket_stream(websocket: WebSocket):
 
                 elif msg_type == "config":
                     language = data.get("language", "auto")
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "type": "config_ack",
-                                "language": language,
-                            }
-                        )
+                    await _safe_send(
+                        {
+                            "type": "config_ack",
+                            "language": language,
+                        }
                     )
 
                 elif msg_type in ("end", "stop"):
@@ -551,6 +555,7 @@ async def websocket_stream(websocket: WebSocket):
             all_audio.extend(chunk)
 
     if all_audio:
+        error_sent = False
         try:
             result = await asyncio.wait_for(
                 engine.transcribe(
@@ -561,72 +566,67 @@ async def websocket_stream(websocket: WebSocket):
             )
 
             # 发送 STT 结果
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "stt_result",
-                        "text": result.text,
-                        "stt_latency_ms": result.stt_latency_ms,
-                        "confidence": result.confidence,
-                        "language": result.language,
-                        "model": result.model,
-                    }
-                )
+            await _safe_send(
+                {
+                    "type": "stt_result",
+                    "text": result.text,
+                    "stt_latency_ms": result.stt_latency_ms,
+                    "confidence": result.confidence,
+                    "language": result.language,
+                    "model": result.model,
+                }
             )
 
             # LLM 后处理
             if result.text.strip() and LLM_ENABLED:
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "llm_start",
-                            "text": result.text[:50],
-                        }
-                    )
+                await _safe_send(
+                    {
+                        "type": "llm_start",
+                        "text": result.text[:50],
+                    }
                 )
                 processed_text, llm_latency = await call_llm_server(result.text)
             else:
                 processed_text = result.text
                 llm_latency = 0
 
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "result",
-                        "text": processed_text,
-                        "confidence": result.confidence,
-                        "language": result.language,
-                        "is_final": True,
-                        "stt_latency_ms": result.stt_latency_ms,
-                        "llm_latency_ms": llm_latency,
-                        "model": result.model,
-                    }
-                )
+            await _safe_send(
+                {
+                    "type": "result",
+                    "text": processed_text,
+                    "confidence": result.confidence,
+                    "language": result.language,
+                    "is_final": True,
+                    "stt_latency_ms": result.stt_latency_ms,
+                    "llm_latency_ms": llm_latency,
+                    "model": result.model,
+                }
             )
 
         except TimeoutError:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "error_code": "E5002",
-                        "error_message": "转写超时",
-                    }
-                )
+            error_sent = True
+            await _safe_send(
+                {
+                    "type": "error",
+                    "error_code": "E5002",
+                    "error_message": "转写超时",
+                }
             )
         except Exception as e:
             logger.error(f"Transcription error: {e}")
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "error_code": "E5001",
-                        "error_message": str(e),
-                    }
-                )
+            error_sent = True
+            await _safe_send(
+                {
+                    "type": "error",
+                    "error_code": "E5001",
+                    "error_message": str(e),
+                }
             )
 
-    await websocket.send_text(json.dumps({"type": "done"}))
+    # 已发送 error 视为终态,不再发 done(避免客户端断开后 send 报错);
+    # all_audio 为空时也照常发 done(与旧行为一致)
+    if not (all_audio and error_sent):
+        await _safe_send({"type": "done"})
 
     try:
         await websocket.close()
