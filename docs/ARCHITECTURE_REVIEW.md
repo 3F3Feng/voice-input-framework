@@ -185,8 +185,8 @@ server/models/* 引擎(MLX / whisper.cpp / transformers)
 ### 第 2 层:真实模型集成(需模型环境)
 `scripts/run_integration.sh`:启动 STT(6544)+ LLM(6545)后运行 `tests/test_e2e.py`、`tests/test_api_endpoints.py`。验证真实推理链路(录音→转写→LLM 后处理)与 WS 全流程。
 
-### 第 3 层:Rust 客户端验证(需 macOS/Windows)
-`docs/rust-client-verification.md`:人工验证清单(A 服务端连通 / B 录音转写 / C LLM 后处理 / D 平台功能)。`gui/src-tauri` 目前零自动化测试,清单为首要保障。
+### 第 3 层:Rust 客户端验证(纯逻辑已自动化,完整集成需平台环境)
+`gui/stt-logic-tests` 轻量测试 crate(不链接 tauri、rustls 免系统 openssl):在 Linux/macOS/Windows 均可 `cargo test` 验证 `stt.rs` 纯逻辑(URL 构造、StreamEvent 序列化、WS URL 派生),已入 CI `rust-logic` job。完整 Tauri 集成(录音/快捷键/托盘)仍需 macOS/Windows 手工验证,清单见 `docs/rust-client-verification.md`。为支持测试,`stt.rs` 的 `tauri::async_runtime::spawn` 改为功能等价的 `tokio::spawn`。
 
 ### 持久化契约测试(已入 CI)
 `tests/test_contract.py`(9 个用例):用 TestClient 断言当前端点契约与基线等价,已知有意变更以显式断言锁定(H4 字段移除、M7 错误结构)。`pytest -m "not integration"` 现为 **94 passed**。

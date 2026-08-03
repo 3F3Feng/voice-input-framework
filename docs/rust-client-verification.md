@@ -1,9 +1,29 @@
 # Rust 客户端(gui/)等价性验证清单(第 3 层)
 
-> 背景:`gui/src-tauri` 目前无任何自动化测试(`#[cfg(test)]` 与 `tests/` 均无)。
-> 本次 review 修复主要涉及 Python 服务端/客户端;Rust 客户端仅 `stt.rs` 的
-> 6544 端口硬编码经确认是兜底默认(调用方总传完整 URL),未改动逻辑。
-> 以下清单用于在 macOS/Windows 上人工验证 Tauri 客户端功能未回归。
+> 背景:`gui/src-tauri` 原本无自动化测试;本次 review 修复主要涉及 Python
+> 服务端/客户端。Rust 客户端仅 `stt.rs` 的 6544 端口硬编码经确认是兜底默认
+> (调用方总传完整 URL),未改动逻辑。
+>
+> **2026-08-03 更新**:新增 `gui/stt-logic-tests` 轻量测试 crate,可在
+> **Linux/macOS/Windows 任意平台**运行(不链接 tauri,无需 webkit/gtk 系统库),
+> 覆盖 `stt.rs` 纯逻辑:URL 构造、StreamEvent 协议序列化、WS URL 派生。
+> 已在 CI 新增 `rust-logic` job(`cargo test`,ubuntu-latest)。
+
+## 自动化测试(已就绪,Linux 可跑)
+
+```bash
+cd gui/stt-logic-tests && cargo test
+# 9 passed:SttClient::new URL 构造 / StreamEvent JSON 序列化 / WS URL 派生
+```
+
+- 通过 `#[path = "../../src-tauri/src/stt.rs"]` 复用生产源码(单一来源,不复制)
+- 依赖用 rustls 替代 openssl,无 root 环境可编译
+- 为支持该测试,`stt.rs` 的 `tauri::async_runtime::spawn` 改为功能等价的 `tokio::spawn`
+  (tauri 2 底层即 tokio runtime),使 stt.rs 彻底平台无关
+
+## 手工验证清单(完整 Tauri 集成,需 macOS/Windows)
+
+以下仍需要真实平台环境(录音设备、全局快捷键、托盘):
 
 ## 前置
 
