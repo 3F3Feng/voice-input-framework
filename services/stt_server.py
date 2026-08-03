@@ -722,6 +722,9 @@ async def diarize(
 
 def main():
     """主函数"""
+    from shared.version_check import check_python_version
+
+    check_python_version()
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
     uvicorn.run(
         app,

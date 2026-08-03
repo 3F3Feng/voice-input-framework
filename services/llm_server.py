@@ -487,6 +487,9 @@ async def update_prompt(request: Request):
 
 def main():
     """主函数"""
+    from shared.version_check import check_python_version
+
+    check_python_version()
     logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
     uvicorn.run(
         app,

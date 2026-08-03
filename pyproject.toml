@@ -8,7 +8,7 @@ version = "2.0.10"
 description = "Voice Input Framework - MLX 原生语音识别"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 authors = [
     {name = "OpenClaw", email = "openclaw@example.com"}
 ]
