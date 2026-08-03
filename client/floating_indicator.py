@@ -24,9 +24,8 @@ import platform
 IS_WINDOWS = platform.system() == "Windows"
 
 # ──────────────────── 浮标位置计算(共享) ────────────────────
-# 统一偏移:显示在基准点右上方
+# 浮标与基准点(鼠标/光标)的统一间隙(px);方位见 calculate_indicator_position
 POSITION_OFFSET_X = 10
-POSITION_OFFSET_Y = -50
 # 距屏幕边缘的最小留白(px),避免浮标贴边
 EDGE_MARGIN = 5
 # 默认位置(无法获取鼠标/屏幕尺寸时)
@@ -56,10 +55,15 @@ def _get_screen_size() -> tuple | None:
 def calculate_indicator_position(
     pos: tuple | None, window_size: tuple = (100, 40), screen_size: tuple | None = None
 ) -> tuple:
-    """计算浮标窗口位置:统一偏移 + 屏幕边缘翻转
+    """计算浮标窗口位置:锚点角贴基准点 + 屏幕边缘翻转
 
-    基准点 pos 为鼠标/光标位置。默认显示在其右上方(+10, -50);
-    若超出屏幕右/上边缘,则翻转到左/下方向(仍贴近基准点),避免浮标跑出屏幕。
+    锚点语义:浮标生成在基准点(鼠标/光标)的哪个方位,就用窗口的**对侧角**
+    贴近基准点(统一 gap=10px),窗口整体朝向基准点外侧:
+      - 右上方:窗口左下角贴基准点(左上角 = x+gap, y-gap-h)
+      - 左上方:窗口右下角贴基准点(左上角 = x-gap-w, y-gap-h)
+      - 右下方:窗口左上角贴基准点(左上角 = x+gap, y+gap)
+      - 左下方:窗口右上角贴基准点(左上角 = x-gap-w, y+gap)
+    基准点靠近屏幕右/上边缘时翻转到对侧方位,窗口始终不超出屏幕。
 
     Args:
         pos: 基准点(鼠标/光标)屏幕坐标
@@ -70,23 +74,31 @@ def calculate_indicator_position(
         return DEFAULT_POSITION
     x, y = pos
     win_w, win_h = window_size
+    gap = POSITION_OFFSET_X  # 统一间隙 10px(与基准点的间距)
 
-    # 屏幕尺寸:优先传入,否则自动检测(失败则跳过边缘检测)
+    # 屏幕尺寸:优先传入,否则自动检测(失败则按默认右上方,不翻转)
     if screen_size is None:
         screen_size = _get_screen_size()
-    screen_w = screen_h = None
+    flip_left = flip_down = False
     if screen_size:
         screen_w, screen_h = screen_size
+        # 默认右上方时窗口左上角 = (x+gap, y-gap-win_h);检查是否溢出
+        if x + gap + win_w > screen_w - EDGE_MARGIN:
+            flip_left = True
+        if y - gap - win_h < EDGE_MARGIN:
+            flip_down = True
 
-    # 默认方向:右上方
-    dx, dy = POSITION_OFFSET_X, POSITION_OFFSET_Y
-    # 超出右边缘 → 改放左方
-    if screen_w is not None and x + POSITION_OFFSET_X + win_w > screen_w - EDGE_MARGIN:
-        dx = -(win_w + POSITION_OFFSET_X)
-    # 超出上边缘 → 改放下方
-    if screen_h is not None and y + POSITION_OFFSET_Y < EDGE_MARGIN:
-        dy = abs(POSITION_OFFSET_Y) + POSITION_OFFSET_X
-    return (int(x + dx), int(y + dy))
+    if not flip_left and not flip_down:
+        # 右上方:窗口左下角贴基准点
+        return (int(x + gap), int(y - gap - win_h))
+    if flip_left and not flip_down:
+        # 左上方:窗口右下角贴基准点
+        return (int(x - gap - win_w), int(y - gap - win_h))
+    if not flip_left and flip_down:
+        # 右下方:窗口左上角贴基准点
+        return (int(x + gap), int(y + gap))
+    # 左下方:窗口右上角贴基准点
+    return (int(x - gap - win_w), int(y + gap))
 
 
 # 尝试导入鼠标位置库

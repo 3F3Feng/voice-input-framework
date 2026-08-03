@@ -457,16 +457,16 @@ class TestIndicatorPosition:
         assert f((1900, 540), (100, 40), self.SS) == (1790, 490)
 
     def test_flip_down_at_top_edge(self):
-        """靠上边缘 → 翻到下方"""
+        """靠上边缘 → 翻到下方(窗口左上角贴基准点右下方)"""
         from client.floating_indicator import calculate_indicator_position as f
 
-        assert f((960, 20), (100, 40), self.SS) == (970, 80)
+        assert f((960, 20), (100, 40), self.SS) == (970, 30)
 
     def test_flip_both_at_corner(self):
-        """右上角 → 左+下 双翻转"""
+        """右上角 → 左+下 双翻转(窗口右上角贴基准点左下方)"""
         from client.floating_indicator import calculate_indicator_position as f
 
-        assert f((1900, 20), (100, 40), self.SS) == (1790, 80)
+        assert f((1900, 20), (100, 40), self.SS) == (1790, 30)
 
     def test_no_screen_size_no_flip(self):
         """无屏幕尺寸信息 → 不翻转(保守偏移)"""
