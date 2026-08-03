@@ -292,6 +292,8 @@ class FloatingIndicator:
             return
 
         # 保存光标位置;未指定时用当前鼠标位置(生成时定位,之后固定不动)
+        # 并清除上次记住的位置,确保每次都在当前鼠标位置重新定位
+        self.position = None
         if cursor_pos:
             self.cursor_pos = cursor_pos
         else:
