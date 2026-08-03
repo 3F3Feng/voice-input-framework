@@ -259,6 +259,12 @@ class VoiceInputApp:
             on_press=lambda: self._async_task(self._start_recording()),
             on_release=lambda: self._async_task(self._stop_recording()),
         )
+        # 权限自检:启动 5.5 秒后若无任何键盘事件,提示 macOS 辅助功能授权
+        # (pynput 在未授权时静默失败,不报错也不收事件;自检窗口 5 秒)
+        threading.Timer(
+            5.5,
+            self._check_hotkey_permission,
+        ).start()
 
         # 自动连接
         self._async_task(self._connect())
@@ -405,6 +411,27 @@ class VoiceInputApp:
     def _async_task(self, coro):
         if self.async_loop:
             asyncio.run_coroutine_threadsafe(coro, self.async_loop)
+
+    def _check_hotkey_permission(self):
+        """快捷键监听权限自检(延迟执行,不阻塞启动)
+
+        macOS 上 pynput 全局监听需要"辅助功能"权限;未授权时静默收不到事件。
+        """
+        try:
+            if self.hotkey_manager.check_listener_activity():
+                logger.info("快捷键监听正常(已收到键盘事件)")
+                return
+            msg = (
+                "⚠️ 未检测到键盘事件:若全局快捷键无反应,\n"
+                "请到 系统设置 → 隐私与安全性 → 辅助功能,\n"
+                "为当前终端/应用授予权限后重启。"
+            )
+            logger.warning(msg.replace("\n", " "))
+            if self.window:
+                self.window.log(msg)
+                self.window.set_status("快捷键未授权", "red")
+        except Exception as e:
+            logger.debug(f"快捷键权限自检失败: {e}")
 
     def _cleanup(self):
         self.is_running = False

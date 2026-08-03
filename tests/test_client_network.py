@@ -10,6 +10,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add project path
 project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
@@ -313,3 +315,60 @@ class TestAppClientContract:
                         problems.append(f"{cls}: 未知关键字参数 {k.arg!r}")
 
         assert problems == [], f"构造函数调用与签名不匹配: {problems}"
+
+
+class TestHotkeyPermissionCheck:
+    """HotkeyManager 权限自检逻辑(macOS 辅助功能权限缺失检测)"""
+
+    def _make_manager(self):
+        from client.hotkey_manager import HotkeyManager
+
+        m = HotkeyManager()
+        m._listener_started_at = 1000.0  # mock 启动时间
+        return m
+
+    def _require_pynput(self):
+        pytest.importorskip("pynput")
+
+    def test_no_events_within_quiet_period_returns_false(self, monkeypatch):
+        """窗口内零事件 → 判定权限异常(返回 False)"""
+        self._require_pynput()
+        m = self._make_manager()
+        m.event_count = 0
+        monkeypatch.setattr("time.time", lambda: 1006.0)  # 启动后 6s(>5s 窗口)
+        assert m.check_listener_activity(quiet_period=5.0) is False
+
+    def test_events_received_returns_true(self):
+        """收到过事件 → 监听正常(返回 True)"""
+        self._require_pynput()
+        m = self._make_manager()
+        m.event_count = 3
+        assert m.check_listener_activity(quiet_period=5.0) is True
+
+    def test_within_quiet_period_no_events_is_ok(self, monkeypatch):
+        """窗口内无事件但未超时 → 暂不判定异常(返回 True)"""
+        self._require_pynput()
+        m = self._make_manager()
+        m.event_count = 0
+        monkeypatch.setattr("time.time", lambda: 1002.0)  # 启动后 2s(<5s 窗口)
+        assert m.check_listener_activity(quiet_period=5.0) is True
+
+    def test_listener_never_started_returns_false(self):
+        """监听器从未启动 → 判定异常(返回 False)"""
+        self._require_pynput()
+        from client.hotkey_manager import HotkeyManager
+
+        m = HotkeyManager()
+        m._listener_started_at = None
+        assert m.check_listener_activity() is False
+
+    def test_event_count_increments_on_press(self):
+        """_on_key_press 递增 event_count(自检数据源)"""
+        self._require_pynput()
+        from client.hotkey_manager import HotkeyManager
+
+        m = HotkeyManager()
+        before = m.event_count
+        # 模拟按键事件(用无效 key 也可,计数在 try 前递增)
+        m._on_key_press(None)
+        assert m.event_count == before + 1
