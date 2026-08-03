@@ -169,4 +169,26 @@ server/models/* 引擎(MLX / whisper.cpp / transformers)
 
 **验证**:`pytest -m "not integration"` 85 passed / 26 skipped / 25 deselected;`ruff --select F` All checks passed;black 核心模块通过;`services.*` 与 `client.network` 冒烟导入 OK。
 
+## 七、等价性验证(2026-08-03)
+
+三层验证方案,确认修复未改变服务端/客户端功能(除有意变更):
+
+### 第 1 层:端点级对比 ✅(本环境完成)
+`scripts/compare_endpoints.py --baseline <基线目录>`:用 git worktree 检出修复前基线 `a279c8e`,对基线 vs 当前 HEAD 分别用 FastAPI TestClient 打全部 HTTP 端点 + WS 消息序列,归一化动态字段后对比。
+
+**结论:无意外回归。** 全部差异均为已知有意变更:
+- `GET /llm/models`、`/llm/health`、`/llm/prompt`(LLM 未启动时):错误体 `{"error":...}` → `{error_code,error_message,details}`(**M7**)
+- `GET /models/status/{m}`:`model_info` 移除 `aligner_id` 字段(**H4**)
+- WS `/ws/stream`:ready 消息移除 `aligner_loaded`、config_ack 移除 `return_timestamps`(**H4**);消息序列 `ready→config_ack→done` 与基线一致
+- 其余端点(`/health`、`/models`、`/llm/enabled`、`/diarize/models`、404 处理)响应与基线**完全一致**
+
+### 第 2 层:真实模型集成(需模型环境)
+`scripts/run_integration.sh`:启动 STT(6544)+ LLM(6545)后运行 `tests/test_e2e.py`、`tests/test_api_endpoints.py`。验证真实推理链路(录音→转写→LLM 后处理)与 WS 全流程。
+
+### 第 3 层:Rust 客户端验证(需 macOS/Windows)
+`docs/rust-client-verification.md`:人工验证清单(A 服务端连通 / B 录音转写 / C LLM 后处理 / D 平台功能)。`gui/src-tauri` 目前零自动化测试,清单为首要保障。
+
+### 持久化契约测试(已入 CI)
+`tests/test_contract.py`(9 个用例):用 TestClient 断言当前端点契约与基线等价,已知有意变更以显式断言锁定(H4 字段移除、M7 错误结构)。`pytest -m "not integration"` 现为 **94 passed**。
+
 **遗留(有意保留)**:`client/gui.py`(PyInstaller spec 打包入口)、`server/models/`(仍被服务使用)未删除;`client/tests/test_cursor_tracker.py` 平台相关测试在 Linux 跳过(CI 的 macOS/Windows 会运行);CI 中 `download-models.sh`/`build-release.yml` 的 `\|\| true` 为命令容错,非 lint 逃逸。
