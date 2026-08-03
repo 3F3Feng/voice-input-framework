@@ -18,11 +18,13 @@ import numpy as np
 import pytest
 import websockets
 
-# 配置
-STT_HOST = "localhost"
-STT_PORT = 6544
-LLM_HOST = "localhost"
-LLM_PORT = 6545
+# 配置(环境变量可覆盖;默认 127.0.0.1 避免 Windows/macOS IPv6 解析延迟)
+import os
+
+STT_HOST = os.getenv("STT_HOST", "127.0.0.1")
+STT_PORT = int(os.getenv("STT_PORT", "6544"))
+LLM_HOST = os.getenv("LLM_HOST", "127.0.0.1")
+LLM_PORT = int(os.getenv("LLM_PORT", "6545"))
 
 
 def generate_test_audio():

@@ -35,8 +35,8 @@ STT_PID=$!
 # 3. 等待就绪
 echo "[3/4] 等待服务就绪(最多 180s)..."
 for i in $(seq 1 36); do
-    if curl -sf "http://localhost:${STT_PORT}/health" >/dev/null 2>&1 \
-       && curl -sf "http://localhost:${LLM_PORT}/health" >/dev/null 2>&1; then
+    if curl -sf "http://127.0.0.1:${STT_PORT}/health" >/dev/null 2>&1 \
+       && curl -sf "http://127.0.0.1:${LLM_PORT}/health" >/dev/null 2>&1; then
         break
     fi
     if ! kill -0 $STT_PID 2>/dev/null || ! kill -0 $LLM_PID 2>/dev/null; then
@@ -48,7 +48,7 @@ done
 
 # 4. 运行集成测试
 echo "[4/4] 运行集成测试..."
-STT_HOST=localhost STT_PORT=$STT_PORT LLM_HOST=localhost LLM_PORT=$LLM_PORT \
+STT_HOST=127.0.0.1 STT_PORT=$STT_PORT LLM_HOST=127.0.0.1 LLM_PORT=$LLM_PORT \
     python -m pytest tests/test_e2e.py tests/test_api_endpoints.py \
     -v -m integration --tb=short
 
