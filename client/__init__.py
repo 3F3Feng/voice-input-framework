@@ -5,7 +5,7 @@ Voice Input Framework - Client Library
 """
 
 # 单一版本定义来源 - 其他模块从这里导入
-__version__ = "2.0.0"
+__version__ = "2.0.10"
 __author__ = "Voice Input Framework"
 
 # 重构后的应用控制器（推荐）

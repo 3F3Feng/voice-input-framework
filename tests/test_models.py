@@ -6,6 +6,8 @@ import pytest
 from pydantic import BaseModel
 from typing import List, Optional
 
+from shared.data_types import ErrorResponse
+
 # Define models locally for testing (avoid import issues)
 class TranscriptionResult(BaseModel):
     """转写结果"""
@@ -40,13 +42,6 @@ class HealthStatus(BaseModel):
     active_connections: int = 0
     total_requests: int = 0
     failed_requests: int = 0
-
-
-class ErrorResponse(BaseModel):
-    """错误响应"""
-    error_code: str
-    error_message: str
-    request_id: str
 
 
 class TestTranscriptionResult:
@@ -171,29 +166,26 @@ class TestHealthStatus:
 
 
 class TestErrorResponse:
-    """Test ErrorResponse model"""
+    """Test shared.data_types.ErrorResponse"""
 
     def test_error_response(self):
         """Test ErrorResponse creation"""
         error = ErrorResponse(
             error_code="E5001",
             error_message="Model loading failed",
-            request_id="test-123",
         )
         assert error.error_code == "E5001"
         assert error.error_message == "Model loading failed"
-        assert error.request_id == "test-123"
 
-    def test_error_json(self):
-        """Test error JSON serialization"""
+    def test_error_to_dict(self):
+        """Test error serialization"""
         error = ErrorResponse(
             error_code="E5002",
             error_message="Timeout",
-            request_id="abc-def",
         )
-        json_data = error.model_dump()
+        json_data = error.to_dict()
         assert json_data["error_code"] == "E5002"
-        assert json_data["request_id"] == "abc-def"
+        assert json_data["error_message"] == "Timeout"
 
 
 class TestSTTEngineConstants:

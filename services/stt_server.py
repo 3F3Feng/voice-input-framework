@@ -25,6 +25,8 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 from shared.model_registry import MODELS_CONFIG, get_default_model, get_apple_silicon_only_models, IS_APPLE_SILICON
+from shared.data_types import ErrorResponse
+from shared.constants import AUDIO_SAMPLE_RATE, DEFAULT_STT_PORT, DEFAULT_LLM_PORT
 from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
 
 import uvicorn
@@ -34,7 +36,7 @@ from pydantic import BaseModel
 
 # ============== Configuration ==============
 STT_HOST = os.getenv("VIF_STT_HOST", "0.0.0.0")
-STT_PORT = int(os.getenv("VIF_STT_PORT", "6544"))
+STT_PORT = int(os.getenv("VIF_STT_PORT", str(DEFAULT_STT_PORT)))
 STT_MODEL = os.getenv(
     "VIF_STT_MODEL",
     get_default_model(),
@@ -46,7 +48,7 @@ RETRY_DELAY = float(os.getenv("VIF_RETRY_DELAY", "1.0"))
 
 # LLM Server Configuration
 LLM_SERVER_HOST = os.getenv("VIF_LLM_HOST", "localhost")
-LLM_SERVER_PORT = int(os.getenv("VIF_LLM_PORT", "6545"))
+LLM_SERVER_PORT = int(os.getenv("VIF_LLM_PORT", str(DEFAULT_LLM_PORT)))
 LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 
 # LLM Processing Toggle
@@ -305,7 +307,7 @@ class STTEngine:
 
             logger.info(f"Loading MLX Whisper model: {model_id}...")
             # 触发预加载
-            test_audio = np.zeros(16000, dtype=np.float32)
+            test_audio = np.zeros(AUDIO_SAMPLE_RATE, dtype=np.float32)
             mlx_whisper.transcribe(test_audio, path_or_hf_repo=model_id)
             self._model = {"model_id": model_id, "type": "whisper_mlx"}
             self._model_type = "whisper_mlx"
@@ -447,7 +449,7 @@ class STTEngine:
             # 转换音频
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
             audio_array = audio_array.astype(np.float32) / 32768.0
-            sample_rate = 16000
+            sample_rate = AUDIO_SAMPLE_RATE
 
             # 执行转写
             loop = asyncio.get_event_loop()
@@ -561,7 +563,6 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -630,6 +631,13 @@ async def list_models():
 
 # ============== LLM 转发 API ==============
 
+def _llm_error(message: str) -> dict:
+    """构造结构化 LLM 转发错误响应(M7:统一错误模型)"""
+    return ErrorResponse(
+        error_code="LLM_PROXY_ERROR",
+        error_message=message,
+    ).to_dict()
+
 @app.get("/llm/models")
 async def list_llm_models():
     """转发：获取可用 LLM 模型列表"""
@@ -643,10 +651,10 @@ async def list_llm_models():
                     return {"models": data}
                 return data
             else:
-                return {"error": f"LLM server returned {resp.status_code}"}
+                return _llm_error(f"LLM server returned {resp.status_code}")
     except Exception as e:
         logger.error(f"Failed to get LLM models: {e}")
-        return {"error": str(e)}
+        return _llm_error(str(e))
 
 @app.post("/llm/models/select")
 async def select_llm_model(request: Request):
@@ -668,10 +676,10 @@ async def select_llm_model(request: Request):
                 logger.info(f"LLM model saved to state: {model_name}")
                 return resp.json()
             else:
-                return {"error": f"LLM server returned {resp.status_code}"}
+                return _llm_error(f"LLM server returned {resp.status_code}")
     except Exception as e:
         logger.error(f"Failed to select LLM model: {e}")
-        return {"error": str(e)}
+        return _llm_error(str(e))
 
 @app.get("/llm/health")
 async def llm_health():
@@ -681,7 +689,8 @@ async def llm_health():
             resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
             return resp.json()
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error(f"LLM health check failed: {e}")
+        return _llm_error(str(e))
 
 @app.get("/llm/enabled")
 async def get_llm_enabled():
@@ -711,9 +720,9 @@ async def get_llm_prompt():
             resp = await client.get(f"{LLM_SERVER_URL}/prompt", timeout=5.0)
             if resp.status_code == 200:
                 return resp.json()
-            return {"error": f"LLM server returned {resp.status_code}"}
+            return _llm_error(f"LLM server returned {resp.status_code}")
     except Exception as e:
-        return {"error": str(e)}
+        return _llm_error(str(e))
 
 @app.put("/llm/prompt")
 async def update_llm_prompt(request: Request):
@@ -728,9 +737,9 @@ async def update_llm_prompt(request: Request):
             )
             if resp.status_code == 200:
                 return resp.json()
-            return {"error": f"LLM server returned {resp.status_code}"}
+            return _llm_error(f"LLM server returned {resp.status_code}")
     except Exception as e:
-        return {"error": str(e)}
+        return _llm_error(str(e))
 
 @app.post("/models/select")
 async def select_stt_model(model_name: str = Form(...)):

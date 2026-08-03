@@ -1,0 +1,2 @@
+[permissions]
+allow = ["Bash=cd /home/shifengzhang/projects/vif-repo && git status && git branch -a && git log --oneline -5 2>/dev/null | head -20", "explore", "Bash=cd /home/shifengzhang/projects/vif-repo && git checkout -b review/architecture-notes 2>&1"]
