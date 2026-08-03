@@ -191,7 +191,8 @@ class VoiceInputApp:
 
     async def _process_audio(self):
         """处理已录制的音频"""
-        audio_data = self.audio.stop_recording()
+        self.audio.stop_recording()
+        audio_data = self.audio.get_full_audio()
         if getattr(self, "indicators", None):
             self.indicators.hide_processing()
         if not audio_data or len(audio_data) < 320:
