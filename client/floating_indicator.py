@@ -291,9 +291,11 @@ class FloatingIndicator:
             logger.warning("PySimpleGUI 不可用,无法显示悬浮指示器")
             return
 
-        # 保存光标位置
+        # 保存光标位置;未指定时用当前鼠标位置(生成时定位,之后固定不动)
         if cursor_pos:
             self.cursor_pos = cursor_pos
+        else:
+            self.cursor_pos = self._get_mouse_position()
 
         with self._window_lock:
             # 创建窗口
@@ -404,7 +406,6 @@ class FloatingIndicator:
     def _update_loop(self):
         """更新循环(在后台线程中运行)"""
         last_duration = -1
-        mouse_update_counter = 0
 
         while not self.stop_update and self.is_visible:
             try:
@@ -433,22 +434,6 @@ class FloatingIndicator:
                             )
                     except Exception as e:
                         logger.debug(f"获取音量失败: {e}")
-
-                # 跟随鼠标位置(每 5 次迭代检查一次;macOS 无 CursorTracker,靠此轮询)
-                mouse_update_counter += 1
-                if mouse_update_counter >= 5:
-                    mouse_update_counter = 0
-                    try:
-                        mouse_pos = self._get_mouse_position()
-                        if mouse_pos and mouse_pos != self.last_mouse_pos:
-                            self.last_mouse_pos = mouse_pos
-                            new_pos = self._calculate_window_position(mouse_pos)
-                            # 只写入待更新,由主线程 process_events 执行 window.move
-                            # (tkinter 非线程安全,后台线程直接 move/update 会导致
-                            #  移动不生效甚至卡死)
-                            self._pending_position_update = new_pos
-                    except Exception as e:
-                        logger.debug(f"跟随鼠标时出错: {e}")
 
                 time.sleep(0.05)  # 50ms 更新间隔（更频繁以显示实时音量）
 
