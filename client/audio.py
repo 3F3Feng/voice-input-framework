@@ -107,6 +107,31 @@ class AudioRecorder:
             return False
 
     @staticmethod
+    def _resolve_input_device(sd) -> int | None:
+        """解析实际输入设备:优先系统默认输入(若有输入通道),否则第一个有输入的设备
+
+        修复 macOS 上系统默认输入可能错乱指向 0 输入通道设备(如 Speakers)导致静音。
+
+        Returns:
+            设备 id;无可用输入设备时返回 None(交给 sounddevice 报错)
+        """
+        try:
+            default_input = (
+                sd.default.device[0] if isinstance(sd.default.device, tuple) else sd.default.device
+            )
+            if default_input is not None:
+                info = sd.query_devices(default_input)
+                if info.get("max_input_channels", 0) > 0:
+                    return int(default_input)
+            # 回退:第一个有输入通道的设备
+            for i, dev in enumerate(sd.query_devices()):
+                if dev.get("max_input_channels", 0) > 0:
+                    return i
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"解析输入设备失败: {e}")
+        return None
+
+    @staticmethod
     def get_devices() -> dict:
         """获取系统中可用的音频输入设备
 
@@ -149,6 +174,14 @@ class AudioRecorder:
             except queue.Empty:
                 break
 
+        # 解析实际使用的输入设备:
+        # - 用户显式选择 → 用之
+        # - 未选择(None)→ 不信任系统默认输入(可能指向 0 输入通道的设备,如
+        #   macOS 上默认输入错乱为 Speakers),改为选第一个有输入通道的设备
+        device = self._selected_device
+        if device is None:
+            device = self._resolve_input_device(sd)
+
         def callback(indata, frames, time_info, status):
             if status:
                 logger.warning(f"Audio status: {status}")
@@ -162,7 +195,7 @@ class AudioRecorder:
 
         try:
             self._stream = sd.InputStream(
-                device=self._selected_device,
+                device=device,
                 samplerate=self.sample_rate,
                 channels=self.channels,
                 dtype="int16",
