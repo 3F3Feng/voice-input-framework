@@ -199,7 +199,9 @@ class TestAppClientContract:
         """app.py 中所有 self.stt.* / self.llm.* 调用在 network.py 中均存在"""
         import ast
 
-        network_ast = ast.parse(Path(project_dir / "client" / "network.py").read_text())
+        network_ast = ast.parse(
+            Path(project_dir / "client" / "network.py").read_text(encoding="utf-8")
+        )
         methods = {}
         for node in ast.walk(network_ast):
             if isinstance(node, ast.ClassDef) and node.name in ("SttClient", "LlmClient"):
@@ -209,7 +211,7 @@ class TestAppClientContract:
                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
                 }
 
-        app_ast = ast.parse(Path(project_dir / "client" / "app.py").read_text())
+        app_ast = ast.parse(Path(project_dir / "client" / "app.py").read_text(encoding="utf-8"))
         missing = []
         for node in ast.walk(app_ast):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
