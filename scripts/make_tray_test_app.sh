@@ -46,19 +46,22 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# 3. 启动脚本 —— 调 python 显示 status item
+# 3. 启动脚本 —— 调 python 显示 status item(输出写日志便于排查)
 cat > "$APP_DIR/Contents/MacOS/run.sh" <<EOF
 #!/bin/bash
-exec "$VENV_PY" - <<'PYEOF'
+LOG=/tmp/vif_tray_test.log
+exec "$VENV_PY" - >"\$LOG" 2>&1 <<'PYEOF'
 import sys, threading
 sys.path.insert(0, "$(pwd)")
 
 from AppKit import (
     NSApplication, NSImage, NSStatusBar, NSVariableStatusItemLength,
-    NSApplicationActivationPolicyAccessory,
+    NSApplicationActivationPolicyAccessory, NSScreen,
 )
 from PIL import Image, ImageDraw
 import io, os
+
+print("bundle 测试启动", flush=True)
 
 # 紫色圆形图标
 img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
@@ -67,6 +70,7 @@ draw.ellipse((8, 8, 56, 56), fill=(150, 50, 200, 255))
 buf = io.BytesIO()
 img.save(buf, "PNG")
 nsimage = NSImage.alloc().initWithData_(buf.getvalue())
+print(f"NSImage isValid: {nsimage.isValid()}", flush=True)
 
 app = NSApplication.sharedApplication()
 app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
@@ -76,6 +80,8 @@ item = status_bar.statusItemWithLength_(NSVariableStatusItemLength)
 item.setHighlightMode_(True)
 item.setImage_(nsimage)
 item.setToolTip_("VIF bundle 测试")
+print(f"status item 已创建: {item}", flush=True)
+print(f"当前屏幕数: {NSScreen.screens()}", flush=True)
 
 # 10 秒后退出
 def _quit():
@@ -89,6 +95,6 @@ EOF
 chmod +x "$APP_DIR/Contents/MacOS/run.sh"
 
 echo "=== .app bundle 已生成: $APP_DIR ==="
-echo ">>> 现在用 open 启动,看菜单栏是否有紫色圆形图标(10 秒自动退出)<<<"
+echo ">>> 用 open 启动,看菜单栏是否有紫色圆形图标(10 秒自动退出)<<<"
 open "$APP_DIR"
-echo ">>> 已启动,请观察菜单栏(右上角)<<<"
+echo ">>> 已启动。10 秒后查看日志: cat /tmp/vif_tray_test.log <<<"
