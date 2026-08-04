@@ -408,6 +408,17 @@ class VoiceInputApp:
                     self.selected_mic = None
                 logger.info(f"选择麦克风: {name} -> id={self.selected_mic}")
 
+        elif event == "-MODEL-SELECT-":
+            # 下拉选择模型后立即切换(enable_events 让 PySimpleGUI 正确处理焦点)
+            name = values.get("-MODEL-SELECT-")
+            if name:
+                self._async_task(self._switch_model(name))
+
+        elif event == "-LLM-MODEL-SELECT-":
+            name = values.get("-LLM-MODEL-SELECT-")
+            if name:
+                self._async_task(self._switch_llm_model(name))
+
         elif event == "-CONNECT-":
             self.server_host = values.get("-HOST-") or self.server_host
             port_str = values.get("-PORT-") or str(self.server_port)

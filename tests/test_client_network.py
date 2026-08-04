@@ -496,8 +496,6 @@ class TestUIEventContract:
             "-HOST-",
             "-PORT-",
             "-HOTKEY-",
-            "-MODEL-SELECT-",
-            "-LLM-MODEL-SELECT-",
             "-LLM-PROMPT-",
             # 纯显示元素(仅被 update,不发事件)
             "-STATUS-",
