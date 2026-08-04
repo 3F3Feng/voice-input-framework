@@ -157,6 +157,7 @@ class MainWindow:
                                 default=self.config_manager.distinguish_left_right,
                                 key="-DISTINGUISH-LR-",
                                 enable_events=True,
+                                disabled=(sys.platform == "darwin"),
                                 background_color=BACKGROUND_COLOR,
                                 text_color=TEXT_COLOR,
                             )

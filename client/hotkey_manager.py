@@ -206,13 +206,17 @@ class HotkeyManager:
     支持区分左右修饰键、快捷键录制、冲突检测
     """
 
-    def __init__(self, distinguish_left_right: bool = True):
+    def __init__(self, distinguish_left_right: bool | None = None):
         """
         初始化快捷键管理器
 
         Args:
-            distinguish_left_right: 是否区分左右修饰键
+            distinguish_left_right: 是否区分左右修饰键。
+                None 时按平台默认:macOS 上 CGEventTap 的 flagsChanged
+                键码不可靠,无法区分左右 → False;其他平台 True。
         """
+        if distinguish_left_right is None:
+            distinguish_left_right = sys.platform != "darwin"
         self.distinguish_left_right = distinguish_left_right
         self.listener: keyboard.Listener | None = None
         self.pressed_keys: set[keyboard.KeyCode] = set()
@@ -647,11 +651,13 @@ class HotkeyManager:
             if hasattr(keyboard.Key, "cmd"):
                 modifier_key_mappings["cmd"].insert(0, keyboard.Key.cmd)
 
-        # 检查是否有对应的修饰键被按下
+        # 检查是否有对应的修饰键被按下(按虚拟键码比较,不依赖 pynput __eq__,
+        # 兼容 CGEventTap 的 _TapKey 与 pynput KeyCode)
         if mod_lower in modifier_key_mappings:
-            target_keys = modifier_key_mappings[mod_lower]
+            target_vks = {getattr(k, "vk", None) for k in modifier_key_mappings[mod_lower]}
             for pressed_key in self.pressed_keys:
-                if pressed_key in target_keys:
+                vk = getattr(pressed_key, "vk", None)
+                if vk is not None and vk in target_vks:
                     return True
 
         return False
@@ -885,30 +891,54 @@ class _MacOSEventTapListener:
             elif event_type == kCGEventKeyUp:
                 self.on_release(key)
             elif event_type == kCGEventFlagsChanged:
-                # 修饰键事件:flagsChanged 的键码字段不可靠(常为 0xFF),
-                # 比较 flags 变化推演每个修饰键的按下/释放
+                # 修饰键事件:键码字段标识"哪个修饰键变化"(0x3B=左ctrl等,
+                # 可区分左右);flags 判断该键当前按下还是释放。
+                # 注意:CGEventGetFlags 的掩码不区分左右,所以必须用键码。
                 flags = CGEventGetFlags(event)
-                mod_states = [
-                    (0x37, kCGEventFlagMaskCommand),  # cmd_l
-                    (0x36, kCGEventFlagMaskCommand),  # cmd_r
-                    (0x38, kCGEventFlagMaskShift),  # shift_l
-                    (0x3C, kCGEventFlagMaskShift),  # shift_r
-                    (0x3A, kCGEventFlagMaskAlternate),  # alt_l
-                    (0x3D, kCGEventFlagMaskAlternate),  # alt_r
-                    (0x3B, kCGEventFlagMaskControl),  # ctrl_l
-                    (0x3E, kCGEventFlagMaskControl),  # ctrl_r
-                ]
-                for mod_vk, mask in mod_states:
-                    mod_key = self._key_from_vk(mod_vk)
-                    now_pressed = bool(flags & mask)
-                    was_pressed = bool(self._last_flags & mask)
-                    if now_pressed and not was_pressed:
-                        self.on_press(mod_key)
-                    elif was_pressed and not now_pressed:
-                        self.on_release(mod_key)
-                self._last_flags = flags
+                mod_flag_map = {
+                    0x37: kCGEventFlagMaskCommand,  # cmd_l
+                    0x36: kCGEventFlagMaskCommand,  # cmd_r
+                    0x38: kCGEventFlagMaskShift,  # shift_l
+                    0x3C: kCGEventFlagMaskShift,  # shift_r
+                    0x3A: kCGEventFlagMaskAlternate,  # alt_l
+                    0x3D: kCGEventFlagMaskAlternate,  # alt_r
+                    0x3B: kCGEventFlagMaskControl,  # ctrl_l
+                    0x3E: kCGEventFlagMaskControl,  # ctrl_r
+                }
+                mask = mod_flag_map.get(vk)
+                if mask is None:
+                    # 键码不可用(个别情况为 0xFF):回退到 flags diff
+                    # (此时无法区分左右,按通用掩码同时处理左右)
+                    self._handle_modifier_flags_diff(flags)
+                elif flags & mask:
+                    self.on_press(key)
+                else:
+                    self.on_release(key)
         except Exception as e:  # noqa: BLE001
             logger.debug(f"CGEventTap 回调异常: {e}")
+
+    def _handle_modifier_flags_diff(self, flags):
+        """flagsChanged 键码不可用时的回退:按 flags diff 推演修饰键状态
+
+        无法区分左右(掩码合一),同时 press/release 左右两侧;仅用于
+        键码字段异常(0xFF)的兜底。
+        """
+        mod_states = [
+            (0x37, 0x36, kCGEventFlagMaskCommand),
+            (0x38, 0x3C, kCGEventFlagMaskShift),
+            (0x3A, 0x3D, kCGEventFlagMaskAlternate),
+            (0x3B, 0x3E, kCGEventFlagMaskControl),
+        ]
+        for left_vk, right_vk, mask in mod_states:
+            now_pressed = bool(flags & mask)
+            was_pressed = bool(self._last_flags & mask)
+            if now_pressed and not was_pressed:
+                self.on_press(self._key_from_vk(left_vk))
+                self.on_press(self._key_from_vk(right_vk))
+            elif was_pressed and not now_pressed:
+                self.on_release(self._key_from_vk(left_vk))
+                self.on_release(self._key_from_vk(right_vk))
+        self._last_flags = flags
 
     def _key_from_vk(self, vk: int) -> _TapKey:
         """虚拟键码 → _TapKey(带 pynput 风格名称)"""
