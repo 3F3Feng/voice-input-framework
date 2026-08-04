@@ -476,21 +476,30 @@ class MainWindow:
         sg.theme("DarkBlue3")
         layout = self.build_layout()
 
+        # macOS:用标准窗口(no_titlebar=False)。no_titlebar 在 macOS 由
+        # PySimpleGUI 用 wm_overrideredirect 实现,override-redirect 窗口
+        # 无法 iconify(最小化)→ Dock 点击无法恢复。标准窗口原生支持
+        # 最小化 + Dock 恢复。
+        use_no_titlebar = sys.platform != "darwin"
+
         self.window = sg.Window(
             "🎤 Voice Input Framework v1.1",
             layout,
             finalize=True,
             keep_on_top=True,
-            no_titlebar=True,
+            no_titlebar=use_no_titlebar,
             grab_anywhere=True,
             background_color="#2e2e2e",
             button_color=("white", "#4e4e4e"),
         )
 
-        # 启动时最小化:统一用 hide(无边框窗口不能 iconify;
-        # macOS 的 Dock 点击恢复由 NSApp delegate 处理)
+        # 启动时最小化:macOS 标准窗口可 iconify(最小化到 Dock,原生恢复);
+        # 其他平台无边框窗口用 hide(配合托盘)
         if start_minimized:
-            self.window.hide()
+            if sys.platform == "darwin":
+                self.window.minimize()
+            else:
+                self.window.hide()
 
         return self.window
 

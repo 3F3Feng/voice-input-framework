@@ -566,9 +566,8 @@ class VoiceInputApp:
 
         elif event == "-MINIMIZE-TRAY-":
             if sys.platform == "darwin":
-                # macOS:无边框窗口不能 iconify,用 hide 隐藏;
-                # Dock 点击恢复由 NSApp delegate 处理
-                window.hide()
+                # macOS:标准窗口可最小化(iconify),Dock 点击原生恢复
+                window.minimize()
             else:
                 # Windows/Linux:最小化到系统托盘
                 window.hide()
