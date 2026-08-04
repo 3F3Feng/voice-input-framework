@@ -165,6 +165,11 @@ class VoiceInputApp:
         self._frontmost_app = None
         if self.selected_mic is not None:
             self.audio.selected_device = self.selected_mic
+        # 先发"录音开始"事件(立即显示指示器),再启动音频流——
+        # sounddevice InputStream 初始化在 macOS 上可能耗时数秒,
+        # 若先启动录音再发事件,指示器会延迟出现。
+        if self.window:
+            self.window.write_event_value("-REC-STARTED-", "")
         try:
             self.audio.start_recording()
         except Exception as e:
@@ -178,10 +183,8 @@ class VoiceInputApp:
             if self.window:
                 self.window.log(msg)
                 self.window.set_status("录音失败", "red")
+                self.window.write_event_value("-REC-STOPPED-", "")  # 收起指示器
             self._hotkey_pressed = False  # 启动失败,复位去抖状态
-            return
-        if self.window:
-            self.window.write_event_value("-REC-STARTED-", "")
 
     async def _stop_recording(self):
         if not self._hotkey_pressed:
