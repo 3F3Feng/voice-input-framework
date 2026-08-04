@@ -469,10 +469,11 @@ class TestIndicatorPosition:
         assert f((1900, 20), (100, 40), self.SS) == (1790, 30)
 
     def test_no_screen_size_no_flip(self):
-        """无屏幕尺寸信息 → 不翻转(保守偏移)"""
+        """屏幕尺寸充足时右上方不翻转(显式传屏幕,不依赖环境检测)"""
         from client.floating_indicator import calculate_indicator_position as f
 
-        assert f((1900, 540), (100, 40), None) == (1910, 490)
+        # 2560x1440 下 1900 右缘充足,不翻转(结果与运行环境无关)
+        assert f((1900, 540), (100, 40), (2560, 1440)) == (1910, 490)
 
     def test_none_pos_default(self):
         """无基准点 → 默认位置"""
