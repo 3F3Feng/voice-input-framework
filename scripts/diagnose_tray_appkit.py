@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Voice Input Framework - AppKit runloop 诊断脚本 v2
-纯 AppKit(无 tkinter)。v1 显示图标不出现,此版检查:
-1. NSImage 是否有效(isValid/size)
-2. status item 是否创建成功
-3. 用文字 title 代替 image(排除 image 问题)
-4. 修复 3 秒自动退出(postEvent 唤醒 runloop)
+Voice Input Framework - AppKit runloop 诊断脚本 v3
+参考 rumps(成熟 macOS 菜单栏库)的关键实现:
+- status item button 设 setHighlightMode_(True)
+- app.activateIgnoringOtherApps_(True)
+- 用 PyObjCTools.AppHelper.runEventLoop() 而非裸 app.run()
+验证这些是否是图标不显示的原因。
 
 用法:
     python scripts/diagnose_tray_appkit.py
@@ -28,15 +28,18 @@ try:
         NSApplicationDefined,
         NSApplicationActivationPolicyAccessory,
     )
+    from PyObjCTools import AppHelper
     from PIL import Image, ImageDraw
 
-    print("[OK] AppKit + PIL 可用")
+    print("[OK] AppKit + PyObjCTools + PIL 可用")
 except ImportError as e:
     print(f"[FAIL] 依赖导入失败: {e}")
+    print("       → python -m pip install 'pyobjc-framework-Cocoa>=9.0' Pillow")
     sys.exit(1)
 
 print()
-print("=== 诊断 1:NSImage 有效性 ===")
+print("=== rumps 式 status item(3 秒)===")
+print(">>> 请在菜单栏(屏幕右上角)查看是否有绿色圆形图标 <<<")
 
 try:
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
@@ -47,55 +50,24 @@ try:
 
     buf = io.BytesIO()
     img.save(buf, "PNG")
-    data = buf.getvalue()
-    print(f"[INFO] PNG 字节数: {len(data)}")
+    nsimage = NSImage.alloc().initWithData_(buf.getvalue())
+    print(f"[INFO] NSImage isValid: {nsimage.isValid()}")
 
-    nsimage = NSImage.alloc().initWithData_(data)
-    print(f"[INFO] NSImage: {nsimage}")
-    print(f"[INFO] isValid: {nsimage.isValid()}")
-    print(f"[INFO] size: {nsimage.size()}")
-    if not nsimage.isValid():
-        print("[FAIL] NSImage 无效!PNG → NSImage 转换失败")
-except Exception as e:
-    print(f"[FAIL] NSImage 创建失败: {e}")
-    import traceback
-
-    traceback.print_exc()
-    sys.exit(1)
-
-print()
-print("=== 诊断 2:status item(先试 image,再试 title)===")
-print(">>> 请在菜单栏(屏幕右上角)查看 <<<")
-
-try:
     app = NSApplication.sharedApplication()
-    # 终端启动的无 bundle 进程默认 activation policy 可能禁止菜单栏显示,
-    # 显式设为 Accessory(仅菜单栏图标,不占 Dock)
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    print("[INFO] activationPolicy 已设为 Accessory")
+    app.activateIgnoringOtherApps_(True)  # rumps 关键点
+
     status_bar = NSStatusBar.systemStatusBar()
-
-    # 方式 A:image
-    item_a = status_bar.statusItemWithLength_(NSVariableStatusItemLength)
-    item_a.button().setImage_(nsimage)
-    item_a.button().setToolTip_("VIF image 测试")
-    print(f"[INFO] item A(带 image)已创建: {item_a}")
-    print(f"[INFO]   button: {item_a.button()}")
-    print(f"[INFO]   button.image: {item_a.button().image()}")
-
-    # 方式 B:纯文字 title(不依赖 image)
-    item_b = status_bar.statusItemWithLength_(NSVariableStatusItemLength)
-    item_b.button().setTitle_("VIF")
-    item_b.button().setToolTip_("VIF title 测试")
-    print("[INFO] item B(纯文字 'VIF')已创建")
-
-    print()
-    print(">>> 3 秒内若看到 'VIF' 文字 → 是 image 问题;若全无 → 更深层 <<<")
+    item = status_bar.statusItemWithLength_(NSVariableStatusItemLength)
+    item.setHighlightMode_(True)  # rumps 关键点
+    item.setImage_(nsimage)
+    item.setToolTip_("VIF rumps 式测试")
+    item.button().setImage_(nsimage)
+    print("[OK] status item 已创建(rumps 式,highlight+activate)")
 
     # 3 秒后停止并唤醒 runloop
     def _stop():
         app.stop_(app)
-        # postEvent 唤醒 runloop(仅设置 flag 不会退出,需事件)
         event = NSEvent.otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_(
             NSApplicationDefined,
             NSPoint(0, 0),
@@ -111,13 +83,14 @@ try:
 
     threading.Timer(3.0, _stop).start()
 
-    app.run()
+    # rumps 用 AppHelper.runEventLoop() 而非裸 app.run()
+    AppHelper.runEventLoop()
     print("=== runloop 结束(3 秒)===")
-    status_bar.removeStatusItem_(item_a)
-    status_bar.removeStatusItem_(item_b)
-    print(">>> 结果判断:看到文字=image问题;都看到=之前是时序;都没看到=更深层 <<<")
+    status_bar.removeStatusItem_(item)
+    print(">>> 若看到绿圆 → highlight/activate/AppHelper 是关键,照此修客户端 <<<")
+    print(">>> 若没看到 → 与 rumps 无关,需查最新 macOS 或环境 <<<")
 except Exception as e:
-    print(f"[FAIL] status item 测试失败: {e}")
+    print(f"[FAIL] 测试失败: {e}")
     import traceback
 
     traceback.print_exc()
