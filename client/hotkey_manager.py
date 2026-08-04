@@ -489,36 +489,7 @@ class HotkeyManager:
         return "unknown"
 
     def _is_modifier_key(self, key, key_name: str) -> bool:
-        """判断是否是修饰键 - 优先使用 pynput 内置对象"""
-        # 首先检查是否是 pynput 的标准修饰键对象
-        standard_modifiers = [
-            keyboard.Key.shift_l,
-            keyboard.Key.shift_r,
-            keyboard.Key.ctrl_l,
-            keyboard.Key.ctrl_r,
-            keyboard.Key.alt_l,
-            keyboard.Key.alt_r,
-        ]
-
-        # 添加通用修饰键对象（如果存在）
-        if hasattr(keyboard.Key, "shift"):
-            standard_modifiers.append(keyboard.Key.shift)
-        if hasattr(keyboard.Key, "ctrl"):
-            standard_modifiers.append(keyboard.Key.ctrl)
-        if hasattr(keyboard.Key, "alt"):
-            standard_modifiers.append(keyboard.Key.alt)
-
-        # 添加 Cmd 键支持
-        if hasattr(keyboard.Key, "cmd_l"):
-            standard_modifiers.extend([keyboard.Key.cmd_l, keyboard.Key.cmd_r])
-            if hasattr(keyboard.Key, "cmd"):
-                standard_modifiers.append(keyboard.Key.cmd)
-
-        if key in standard_modifiers:
-            return True
-
-        # 对于名称识别，只检查完整的修饰键名称，不检查别名
-        # 这避免了字母键被误识别的问题
+        """判断是否是修饰键 - 按键名判断(跨 _TapKey 与 pynput KeyCode)"""
         modifier_names = {
             "shift",
             "shift_l",
@@ -625,43 +596,27 @@ class HotkeyManager:
         # 标准化修饰键名称
         mod_lower = mod_name.lower()
 
-        # 定义修饰键的所有可能形式
-        modifier_key_mappings = {
-            "left_shift": [keyboard.Key.shift_l],
-            "right_shift": [keyboard.Key.shift_r],
-            "left_ctrl": [keyboard.Key.ctrl_l],
-            "right_ctrl": [keyboard.Key.ctrl_r],
-            "left_alt": [keyboard.Key.alt_l],
-            "right_alt": [keyboard.Key.alt_r],
-            # 通用修饰键（匹配任意左右）
-            "shift": [keyboard.Key.shift_l, keyboard.Key.shift_r],
-            "ctrl": [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r],
-            "alt": [keyboard.Key.alt_l, keyboard.Key.alt_r],
+        # 检查是否有对应的修饰键被按下(硬编码键名集合,完全不依赖 pynput
+        # 对象属性/__eq__/vk,兼容 CGEventTap 的 _TapKey 与 pynput KeyCode)
+        name_sets = {
+            "left_shift": {"shift_l"},
+            "right_shift": {"shift_r"},
+            "left_ctrl": {"ctrl_l"},
+            "right_ctrl": {"ctrl_r"},
+            "left_alt": {"alt_l"},
+            "right_alt": {"alt_r"},
+            "left_cmd": {"cmd_l"},
+            "right_cmd": {"cmd_r"},
+            "shift": {"shift_l", "shift_r", "shift"},
+            "ctrl": {"ctrl_l", "ctrl_r", "ctrl"},
+            "alt": {"alt_l", "alt_r", "alt"},
+            "cmd": {"cmd_l", "cmd_r", "cmd"},
         }
-
-        # 添加通用修饰键对象（如果存在）
-        if hasattr(keyboard.Key, "shift"):
-            modifier_key_mappings["shift"].insert(0, keyboard.Key.shift)
-        if hasattr(keyboard.Key, "ctrl"):
-            modifier_key_mappings["ctrl"].insert(0, keyboard.Key.ctrl)
-        if hasattr(keyboard.Key, "alt"):
-            modifier_key_mappings["alt"].insert(0, keyboard.Key.alt)
-
-        # 为 Cmd 键添加支持
-        if hasattr(keyboard.Key, "cmd_l"):
-            modifier_key_mappings["left_cmd"] = [keyboard.Key.cmd_l]
-            modifier_key_mappings["right_cmd"] = [keyboard.Key.cmd_r]
-            modifier_key_mappings["cmd"] = [keyboard.Key.cmd_l, keyboard.Key.cmd_r]
-            if hasattr(keyboard.Key, "cmd"):
-                modifier_key_mappings["cmd"].insert(0, keyboard.Key.cmd)
-
-        # 检查是否有对应的修饰键被按下(按虚拟键码比较,不依赖 pynput __eq__,
-        # 兼容 CGEventTap 的 _TapKey 与 pynput KeyCode)
-        if mod_lower in modifier_key_mappings:
-            target_vks = {getattr(k, "vk", None) for k in modifier_key_mappings[mod_lower]}
+        target_names = name_sets.get(mod_lower)
+        if target_names is not None:
             for pressed_key in self.pressed_keys:
-                vk = getattr(pressed_key, "vk", None)
-                if vk is not None and vk in target_vks:
+                name = getattr(pressed_key, "name", None)
+                if name and name in target_names:
                     return True
 
         return False
