@@ -536,8 +536,8 @@ class VoiceInputApp:
 
         elif event == "-MINIMIZE-TRAY-":
             if sys.platform == "darwin":
-                # macOS:隐藏窗口,应用保留在 Dock,可从 Dock 恢复
-                window.hide()
+                # macOS:最小化到 Dock(iconify,点击 Dock 图标原生恢复)
+                window.minimize()
             else:
                 # Windows/Linux:最小化到系统托盘
                 window.hide()

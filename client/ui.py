@@ -487,6 +487,14 @@ class MainWindow:
             button_color=("white", "#4e4e4e"),
         )
 
+        # 启动时最小化:macOS 用 iconify(最小化到 Dock,点击 Dock 恢复);
+        # 其他平台用 hide(配合托盘)
+        if start_minimized:
+            if sys.platform == "darwin":
+                self.window.minimize()
+            else:
+                self.window.hide()
+
         return self.window
 
     # ──────────────────── UI 更新方法 ────────────────────
@@ -576,7 +584,11 @@ class MainWindow:
     def hide(self):
         """隐藏窗口"""
         if self.window:
-            self.window.hide()
+            if sys.platform == "darwin":
+                # macOS:最小化到 Dock(点击 Dock 图标可恢复,原生行为)
+                self.window.minimize()
+            else:
+                self.window.hide()
 
     def un_hide(self):
         """取消隐藏窗口"""
