@@ -49,6 +49,7 @@ class VoiceInputApp:
         # 音频
         self.audio = AudioRecorder()
         self.selected_mic: int | None = None
+        self._frontmost_app: str | None = None  # 录音时的前台应用(粘贴前激活)
 
         # UI
         self.window: MainWindow | None = None
@@ -154,6 +155,8 @@ class VoiceInputApp:
     # ── 录音和转录 ──
 
     async def _start_recording(self):
+        # 记录当前前台应用(macOS:粘贴前需先激活它,否则 Cmd+V 进的是客户端自己)
+        self._frontmost_app = self._get_frontmost_app()
         if self.selected_mic is not None:
             self.audio.selected_device = self.selected_mic
         try:
@@ -216,6 +219,43 @@ class VoiceInputApp:
     # ── 文本输入 ──
 
     @staticmethod
+    def _get_frontmost_app() -> str | None:
+        """获取当前前台应用名称(macOS;供粘贴前激活)"""
+        if sys.platform != "darwin":
+            return None
+        try:
+            import subprocess
+
+            out = subprocess.check_output(
+                [
+                    "osascript",
+                    "-e",
+                    'tell application "System Events" to get name of first application process whose frontmost is true',
+                ],
+                timeout=3,
+            )
+            return out.decode("utf-8", errors="ignore").strip()
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _activate_frontmost_app(name: str | None) -> bool:
+        """激活指定应用(macOS);失败返回 False"""
+        if not name or sys.platform != "darwin":
+            return False
+        try:
+            import subprocess
+
+            subprocess.run(
+                ["osascript", "-e", f'tell application "{name}" to activate'],
+                check=True,
+                timeout=5,
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    @staticmethod
     def _copy_to_clipboard(text: str) -> bool:
         """将文本复制到系统剪贴板"""
         if not text:
@@ -242,8 +282,25 @@ class VoiceInputApp:
             return
         try:
             if sys.platform == "darwin":
-                # macOS:剪贴板 + Cmd+V 粘贴(对中文/特殊字符可靠);
-                # osascript keystroke 对非 ASCII 字符不可靠,仅作回退
+                # macOS:剪贴板 + Cmd+V 粘贴(对中文/特殊字符可靠)。
+                # 先激活录音时的前台应用,否则 Cmd+V 进的是客户端自己的窗口。
+                self._activate_frontmost_app(getattr(self, "_frontmost_app", None))
+                try:
+                    import subprocess
+
+                    self._copy_to_clipboard(text)
+                    subprocess.run(
+                        [
+                            "osascript",
+                            "-e",
+                            'tell application "System Events" to keystroke "v" using command down',
+                        ],
+                        check=True,
+                        timeout=5,
+                    )
+                    return
+                except Exception:  # noqa: BLE001
+                    pass
                 try:
                     import pyautogui
 
