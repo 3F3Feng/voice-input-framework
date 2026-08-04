@@ -25,8 +25,7 @@ from client.auto_start import AutoStartManager
 
 logger = logging.getLogger(__name__)
 
-# 自动输入方式:macOS 用 osascript keystroke(无需额外依赖);其他平台用 pyautogui
-CLIPBOARD_METHOD = sys.platform == "darwin"
+# 自动输入:macOS 用剪贴板 + Cmd+V(见 _auto_input_text)
 
 
 class VoiceInputApp:
@@ -216,11 +215,43 @@ class VoiceInputApp:
 
     # ── 文本输入 ──
 
+    @staticmethod
+    def _copy_to_clipboard(text: str) -> bool:
+        """将文本复制到系统剪贴板"""
+        if not text:
+            return False
+        try:
+            import pyperclip
+
+            pyperclip.copy(text)
+            return True
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            import subprocess
+
+            cmd = ["pbcopy"] if sys.platform == "darwin" else ["xclip", "-selection", "clipboard"]
+            subprocess.run(cmd, input=text.encode("utf-8"), check=True)
+            return True
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
     def _auto_input_text(self, text: str):
         if not text:
             return
         try:
-            if CLIPBOARD_METHOD:
+            if sys.platform == "darwin":
+                # macOS:剪贴板 + Cmd+V 粘贴(对中文/特殊字符可靠);
+                # osascript keystroke 对非 ASCII 字符不可靠,仅作回退
+                try:
+                    import pyautogui
+
+                    self._copy_to_clipboard(text)
+                    pyautogui.hotkey("cmd", "v")
+                    return
+                except Exception:  # noqa: BLE001
+                    pass
                 import subprocess
 
                 process = subprocess.Popen(
@@ -381,6 +412,13 @@ class VoiceInputApp:
 
                 subprocess.run(["pbcopy"], input=result.encode("utf-8"))
                 self.window.log("已复制到剪贴板")
+
+        elif event == "-AUTO-INPUT-":
+            # 识别结果自动输入:先复制到剪贴板,再粘贴回原输入框
+            text = values.get("-AUTO-INPUT-") or ""
+            if text:
+                self._copy_to_clipboard(text)
+                self._auto_input_text(text)
 
         elif event == "-CLEAR-":
             window["-RESULT-"].update("")
