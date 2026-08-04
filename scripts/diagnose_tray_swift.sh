@@ -9,6 +9,7 @@
 #   bash scripts/diagnose_tray_swift.sh
 
 set -e
+set -o pipefail
 cd "$(dirname "$0")/.."
 
 SWIFT_SRC="/tmp/vif_tray_swift.swift"
@@ -25,7 +26,7 @@ item.button?.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescript
 item.button?.title = "VIF"
 item.button?.toolTip = "VIF Swift 测试"
 
-print("Swift status item 已创建", flush: true)
+print("Swift status item 已创建")
 
 // 10 秒后退出
 DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
