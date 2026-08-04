@@ -49,6 +49,7 @@ class VoiceInputApp:
         # 音频
         self.audio = AudioRecorder()
         self.selected_mic: int | None = None
+        self._audio_devices: dict = {}  # 设备名 → 设备 id(macOS UI 用名称选择)
         self._frontmost_app: str | None = None  # 录音时的前台应用(粘贴前激活)
 
         # UI
@@ -336,6 +337,7 @@ class VoiceInputApp:
     def run(self):
         """主事件循环"""
         devices = AudioRecorder.get_devices()
+        self._audio_devices = devices  # {id: name},供 -MICROPHONE- 反查
         self.window = MainWindow(
             config_manager=self.config,
             audio_devices=devices,
@@ -394,7 +396,19 @@ class VoiceInputApp:
         self._cleanup()
 
     def _handle_event(self, event, values, window):
-        if event == "-CONNECT-":
+        if event == "-MICROPHONE-":
+            # 用户选择麦克风(Combo 值是设备名 → 反查设备 id)
+            name = values.get("-MICROPHONE-")
+            if name:
+                for dev_id, dev_name in self._audio_devices.items():
+                    if dev_name == name:
+                        self.selected_mic = int(dev_id) if dev_id != -1 else None
+                        break
+                else:
+                    self.selected_mic = None
+                logger.info(f"选择麦克风: {name} -> id={self.selected_mic}")
+
+        elif event == "-CONNECT-":
             self.server_host = values.get("-HOST-") or self.server_host
             port_str = values.get("-PORT-") or str(self.server_port)
             try:
@@ -404,19 +418,19 @@ class VoiceInputApp:
             self.stt = SttClient(self.server_host, self.server_port)
             self._async_task(self._connect())
 
-        elif event == "-REFRESH-":
+        elif event == "-REFRESH-MODELS-":
             self._async_task(self._fetch_models())
 
-        elif event == "-SWITCH-":
-            name = values.get("-MODEL-")
+        elif event == "-SWITCH-MODEL-":
+            name = values.get("-MODEL-SELECT-")
             if name:
                 self._async_task(self._switch_model(name))
 
-        elif event == "-REFRESH-LLM-":
+        elif event == "-REFRESH-LLM-MODELS-":
             self._async_task(self._fetch_llm_models())
 
-        elif event == "-SWITCH-LLM-":
-            name = values.get("-LLM-MODEL-")
+        elif event == "-SWITCH-LLM-MODEL-":
+            name = values.get("-LLM-MODEL-SELECT-")
             if name:
                 self._async_task(self._switch_llm_model(name))
 
@@ -428,7 +442,7 @@ class VoiceInputApp:
             self._async_task(self._load_prompt())
 
         elif event == "-SAVE-PROMPT-":
-            self._async_task(self._save_prompt(values.get("-PROMPT-", "")))
+            self._async_task(self._save_prompt(values.get("-LLM-PROMPT-", "")))
 
         elif event == "-UPDATE-HOTKEY-":
             hotkey = values.get("-HOTKEY-") or self.config.hotkey
@@ -444,8 +458,8 @@ class VoiceInputApp:
         elif event == "-CLEAR-HOTKEY-":
             window["-HOTKEY-"].update("")
 
-        elif event == "-PRESET-":
-            name = values.get("-PRESET-")
+        elif event == "-HOTKEY-PRESET-":
+            name = values.get("-HOTKEY-PRESET-")
             if name:
                 preset = HotkeyPresets.get_preset(name)
                 if preset:
@@ -480,25 +494,25 @@ class VoiceInputApp:
         elif event == "-CLEAR-":
             window["-RESULT-"].update("")
 
-        elif event == "-INPUT-":
+        elif event == "-PASTE-":
             text = window["-RESULT-"].get()
             self._auto_input_text(text)
 
-        elif event == "-HIDE-":
+        elif event == "-MINIMIZE-TRAY-":
             window.hide()
             if self.tray:
                 self.tray.start()
 
-        elif event == "-SHOW-":
+        elif event == "-SHOW-WINDOW-":
             window.un_hide()
 
-        elif event == "-DISTINGUISH-":
-            val = values.get("-DISTINGUISH-")
+        elif event == "-DISTINGUISH-LR-":
+            val = values.get("-DISTINGUISH-LR-")
             self.config.distinguish_left_right = val
             self.config.save()
 
-        elif event == "-FLOATING-INDICATOR-":
-            val = values.get("-FLOATING-INDICATOR-")
+        elif event == "-USE-INDICATOR-":
+            val = values.get("-USE-INDICATOR-")
             self.config.use_floating_indicator = val
             self.config.save()
 

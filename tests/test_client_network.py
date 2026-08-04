@@ -479,3 +479,39 @@ class TestIndicatorPosition:
         from client.floating_indicator import calculate_indicator_position as f
 
         assert f(None, (100, 40), self.SS) == (1200, 100)
+
+
+class TestUIEventContract:
+    """UI 布局 key 与 app.py 事件处理一致性(防拆分脱节)"""
+
+    def test_interactive_keys_have_handlers(self):
+        """UI 中所有可交互 key(Button/Checkbox/带事件的控件)在 app.py 有处理"""
+        import re
+
+        ui_src = Path(project_dir / "client" / "ui.py").read_text(encoding="utf-8")
+        app_src = Path(project_dir / "client" / "app.py").read_text(encoding="utf-8")
+
+        # 纯显示/输入控件(值由其他事件读取,无需独立分支)
+        value_only = {
+            "-HOST-",
+            "-PORT-",
+            "-HOTKEY-",
+            "-MODEL-SELECT-",
+            "-LLM-MODEL-SELECT-",
+            "-LLM-PROMPT-",
+            # 纯显示元素(仅被 update,不发事件)
+            "-STATUS-",
+            "-CONN-STATUS-",
+            "-ERROR-",
+            "-LOG-",
+            "-RESULT-",
+            "-MODEL-STATUS-",
+            "-LLM-MODEL-STATUS-",
+            "-PROMPT-STATUS-",
+        }
+        app_events = set(re.findall(r'event == "(-[A-Z0-9-]+)"', app_src))
+        ui_keys = set(re.findall(r'key="(-[A-Z0-9-]+)"', ui_src))
+        interactive = ui_keys - value_only
+
+        missing = sorted(k for k in interactive if k not in app_events)
+        assert missing == [], f"UI key 无对应事件处理: {missing}"
