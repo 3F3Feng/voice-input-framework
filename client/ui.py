@@ -687,23 +687,27 @@ class IndicatorManager:
         """显示录音指示器"""
         if not self.use_floating_indicator:
             return
-        focus_hwnd = get_foreground_window()
-        if cursor_pos is None:
-            cursor_pos = get_input_cursor_position()
-        self.floating_indicator.show(cursor_pos=cursor_pos)
-        if focus_hwnd:
-            restore_focus_later(focus_hwnd, delay_ms=50)
+        try:
+            focus_hwnd = get_foreground_window()
+            # cursor_pos 不传时由指示器内部用 pynput 取鼠标位置
+            # (macOS 上 pyautogui.position() 首次调用可能慢/需权限,易卡住主循环)
+            self.floating_indicator.show(cursor_pos=cursor_pos)
+            if focus_hwnd:
+                restore_focus_later(focus_hwnd, delay_ms=50)
+        except Exception as e:
+            logger.warning(f"显示录音指示器失败: {e}")
 
     def show_processing(self, cursor_pos=None):
         """显示处理中指示器"""
         if not self.use_floating_indicator:
             return
-        focus_hwnd = get_foreground_window()
-        if cursor_pos is None:
-            cursor_pos = get_input_cursor_position()
-        self.processing_indicator.show(cursor_pos=cursor_pos)
-        if focus_hwnd:
-            restore_focus_later(focus_hwnd, delay_ms=50)
+        try:
+            focus_hwnd = get_foreground_window()
+            self.processing_indicator.show(cursor_pos=cursor_pos)
+            if focus_hwnd:
+                restore_focus_later(focus_hwnd, delay_ms=50)
+        except Exception as e:
+            logger.warning(f"显示处理中指示器失败: {e}")
 
     def set_processing_status(self, text: str, color: str):
         """更新处理中指示器状态"""
