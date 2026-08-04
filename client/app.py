@@ -160,8 +160,9 @@ class VoiceInputApp:
         if self._hotkey_pressed:
             return  # 去抖:已处于录音状态,忽略重复触发
         self._hotkey_pressed = True
-        # 记录当前前台应用(macOS:粘贴前需先激活它,否则 Cmd+V 进的是客户端自己)
-        self._frontmost_app = self._get_frontmost_app()
+        # 注意:不在此处同步获取前台应用——osascript/System Events 可能
+        # 因无辅助功能权限而挂起数秒,阻塞录音启动。改为自动输入时才获取。
+        self._frontmost_app = None
         if self.selected_mic is not None:
             self.audio.selected_device = self.selected_mic
         try:
@@ -227,9 +228,27 @@ class VoiceInputApp:
 
     @staticmethod
     def _get_frontmost_app() -> str | None:
-        """获取当前前台应用名称(macOS;供粘贴前激活)"""
+        """获取当前前台应用名称(macOS;供粘贴前激活)
+
+        注意:osascript/System Events 需要"辅助功能"权限;未授权时
+        osascript 可能挂起(而非立即报错)。调用前先查权限,未授权直接返回
+        None,避免阻塞数秒。
+        """
         if sys.platform != "darwin":
             return None
+        try:
+            # 辅助功能权限预检(AXIsProcessTrusted)
+            import ctypes
+
+            hiservices = ctypes.CDLL(
+                "/System/Library/Frameworks/ApplicationServices.framework/" "ApplicationServices"
+            )
+            hiservices.AXIsProcessTrusted.restype = ctypes.c_bool
+            if not hiservices.AXIsProcessTrusted():
+                logger.debug("辅助功能未授权,跳过前台应用获取")
+                return None
+        except Exception:  # noqa: BLE001
+            pass
         try:
             import subprocess
 
@@ -239,7 +258,7 @@ class VoiceInputApp:
                     "-e",
                     'tell application "System Events" to get name of first application process whose frontmost is true',
                 ],
-                timeout=3,
+                timeout=1.5,  # 缩短超时,失败就放弃
             )
             return out.decode("utf-8", errors="ignore").strip()
         except Exception:  # noqa: BLE001
@@ -290,8 +309,11 @@ class VoiceInputApp:
         try:
             if sys.platform == "darwin":
                 # macOS:剪贴板 + Cmd+V 粘贴(对中文/特殊字符可靠)。
-                # 先激活录音时的前台应用,否则 Cmd+V 进的是客户端自己的窗口。
-                self._activate_frontmost_app(getattr(self, "_frontmost_app", None))
+                # 此时才获取前台应用(录音开始时不取,避免阻塞启动);
+                # 先激活它,否则 Cmd+V 进的是客户端自己的窗口。
+                if self._frontmost_app is None:
+                    self._frontmost_app = self._get_frontmost_app()
+                self._activate_frontmost_app(self._frontmost_app)
                 try:
                     import subprocess
 
