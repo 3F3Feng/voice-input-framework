@@ -351,7 +351,10 @@ class VoiceInputApp:
             server_port=self.server_port,
         )
         self.indicators = IndicatorManager(self._make_audio_level_callback())
-        _window = self.window.create_window(start_minimized=self.config.start_minimized)
+        # 先创建但隐藏,完成权限检测后再显示(保证 GUI 出现时一切就绪)
+        _window = self.window.create_window(
+            start_minimized=self.config.start_minimized, visible=False
+        )
         self.is_running = True
 
         # macOS:Dock 点击恢复窗口(无边框窗口被 hide 后,Dock 点击只激活
@@ -384,23 +387,21 @@ class VoiceInputApp:
             )
             self.tray.start()
 
-        # 热键
+        # 热键(先启动监听器,权限检测的"事件活动"回退需要它已运行)
         self.hotkey_manager.set_hotkey(self.config.hotkey)
         self.hotkey_manager.start_listener(
             on_press=lambda: self._async_task(self._start_recording()),
             on_release=lambda: self._async_task(self._stop_recording()),
         )
-        # 权限自检:启动 5.5 秒后若无任何键盘事件,提示 macOS 辅助功能授权
-        # (pynput 在未授权时静默失败,不报错也不收事件;自检窗口 5 秒)
-        threading.Timer(
-            5.5,
-            self._check_hotkey_permission,
-        ).start()
-        # 麦克风权限自检:macOS 录音需要"麦克风"权限,提前探测并提示
-        threading.Timer(
-            6.0,
-            self._check_mic_permission,
-        ).start()
+
+        # GUI 出现前同步完成权限检测(输入监控 + 麦克风),避免启动后
+        # 录音指示器因权限未确认而异常
+        self._check_hotkey_permission()
+        self._check_mic_permission()
+
+        # 权限检测完成,显示窗口(除非用户选择启动时最小化)
+        if _window and not self.config.start_minimized:
+            _window.un_hide()
 
         # 自动连接
         self._async_task(self._connect())

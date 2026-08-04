@@ -472,8 +472,13 @@ class MainWindow:
         ]
         return layout
 
-    def create_window(self, start_minimized: bool = False) -> sg.Window:
-        """创建并返回主窗口"""
+    def create_window(self, start_minimized: bool = False, visible: bool = True) -> sg.Window:
+        """创建并返回主窗口
+
+        Args:
+            start_minimized: 启动即最小化
+            visible: False 时创建后立即隐藏(供"先做权限检测再显示"的启动流程)
+        """
         sg.theme("DarkBlue3")
         layout = self.build_layout()
 
@@ -501,6 +506,9 @@ class MainWindow:
                 self.window.minimize()
             else:
                 self.window.hide()
+        elif not visible:
+            # 先隐藏,完成权限检测后再显示
+            self.window.hide()
 
         return self.window
 
