@@ -12,10 +12,42 @@ Voice Input Framework - 快捷键管理模块
 
 import logging
 import sys
+import threading
 import time
 from collections.abc import Callable
 
 from pynput import keyboard
+
+# Quartz(CGEventTap)仅 macOS 需要;导入失败不影响其他平台
+try:
+    from Quartz import (
+        CFMachPortCreateRunLoopSource,
+        CFRunLoopAddSource,
+        CFRunLoopGetCurrent,
+        CFRunLoopRun,
+        CFRunLoopStop,
+        CGEventGetFlags,
+        CGEventGetIntegerValueField,
+        CGEventMaskBit,
+        CGEventTapCreate,
+        CGEventTapEnable,
+        kCGEventFlagMaskAlternate,
+        kCGEventFlagMaskCommand,
+        kCGEventFlagMaskControl,
+        kCGEventFlagMaskShift,
+        kCGEventFlagsChanged,
+        kCGEventKeyDown,
+        kCGEventKeyUp,
+        kCGKeyboardEventKeycode,
+        kCGSessionEventTap,
+        kCGHeadInsertEventTap,
+        kCGEventTapOptionListenOnly,
+        kCFRunLoopDefaultMode,
+    )
+
+    QUARTZ_AVAILABLE = True
+except ImportError:
+    QUARTZ_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -243,9 +275,16 @@ class HotkeyManager:
             except:
                 pass
 
-        self.listener = keyboard.Listener(
-            on_press=self._on_key_press, on_release=self._on_key_release
-        )
+        if sys.platform == "darwin":
+            # macOS:pynput 的 keyboard.Listener 启动时调用 keycode_context()
+            # (TextServices 输入源 API),在完整 NSApplication 主循环下必崩
+            # (dispatch_assert_queue,SIGTRAP)。改用 Quartz CGEventTap:
+            # 纯 C API,不碰 TextServices,事件转 KeyCode 喂给现有匹配逻辑。
+            self.listener = _MacOSEventTapListener(self._on_key_press, self._on_key_release)
+        else:
+            self.listener = keyboard.Listener(
+                on_press=self._on_key_press, on_release=self._on_key_release
+            )
         self.listener.start()
         self._listener_started_at = time.time()
         logger.info("快捷键监听器已启动")
@@ -708,3 +747,171 @@ class HotkeyPresets:
     def get_preset(cls, name: str) -> dict | None:
         """获取预设方案"""
         return cls.PRESETS.get(name)
+
+
+class _TapKey:
+    """CGEventTap 回调产生的键对象(兼容 HotkeyManager 的 key 接口)
+
+    提供 pynput KeyCode 风格的 name/vk/char 属性,_get_key_name /
+    _is_modifier_key 等现有逻辑无需改动即可使用。
+    """
+
+    __slots__ = ("name", "vk", "char")
+
+    def __init__(self, name: str, vk: int | None = None, char: str | None = None):
+        self.name = name
+        self.vk = vk
+        self.char = char
+
+    def __eq__(self, other):
+        if isinstance(other, _TapKey):
+            return self.vk == other.vk
+        # 与 pynput Key/KeyCode 按虚拟键码比较(macOS 键码一致)
+        vk = getattr(other, "vk", None)
+        if vk is not None:
+            return self.vk == vk
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(self.vk)
+
+    def __repr__(self):
+        return f"_TapKey(name={self.name!r}, vk={self.vk!r})"
+
+
+class _MacOSEventTapListener:
+    """macOS 专用快捷键监听器 —— Quartz CGEventTap 实现
+
+    为什么不用 pynput keyboard.Listener:
+      pynput 的 darwin 后端在监听线程启动时调用 keycode_context()
+      (TextServices 输入源 API TISGetInputSourceProperty)。当进程运行
+      完整 NSApplication 主循环(标准窗口)时,该调用触发
+      _dispatch_assert_queue_fail → SIGTRAP 崩溃(macOS 15+ 必现)。
+
+    本实现直接用 CGEventTapCreate(纯 C API),不调用任何 TextServices
+    接口,从 CGEvent 取虚拟键码构造 _TapKey 喂给回调。
+
+    注意:监听线程仅做事件收集,不碰 AppKit/tkinter(线程安全)。
+    """
+
+    # macOS 虚拟键码 → 名称(与 ModifierKey 常量一致)
+    _KEY_NAMES = {
+        0x37: "cmd_l",
+        0x36: "cmd_r",
+        0x38: "shift_l",
+        0x3C: "shift_r",
+        0x3A: "alt_l",
+        0x3D: "alt_r",
+        0x3B: "ctrl_l",
+        0x3E: "ctrl_r",
+        0x31: "space",
+        0x30: "tab",
+        0x24: "enter",
+        0x33: "backspace",
+        0x35: "esc",
+        0x7E: "up",
+        0x7D: "down",
+        0x7B: "left",
+        0x7C: "right",
+        0x73: "home",
+        0x77: "end",
+    }
+
+    def __init__(self, on_press: Callable, on_release: Callable):
+        self.on_press = on_press
+        self.on_release = on_release
+        self._tap = None
+        self._loop_source = None
+        self._runloop = None
+        self._thread: "threading.Thread | None" = None
+        self._running = False
+
+    def start(self):
+        """在独立线程启动 CGEventTap runloop"""
+        if not QUARTZ_AVAILABLE:
+            logger.error("macOS 快捷键监听需要 pyobjc-framework-Cocoa(Quartz)")
+            return
+
+        def _run():
+            self._tap = CGEventTapCreate(
+                kCGSessionEventTap,
+                kCGHeadInsertEventTap,
+                kCGEventTapOptionListenOnly,
+                CGEventMaskBit(kCGEventKeyDown)
+                | CGEventMaskBit(kCGEventKeyUp)
+                | CGEventMaskBit(kCGEventFlagsChanged),
+                self._callback,
+                None,
+            )
+            if self._tap is None:
+                logger.warning(
+                    "CGEventTap 创建失败:未授予「输入监控」权限,"
+                    "请在 系统设置→隐私与安全性→输入监控 授权后重启"
+                )
+                return
+            self._loop_source = CFMachPortCreateRunLoopSource(None, self._tap, 0)
+            self._runloop = CFRunLoopGetCurrent()
+            CFRunLoopAddSource(self._runloop, self._loop_source, kCFRunLoopDefaultMode)
+            CGEventTapEnable(self._tap, True)
+            self._running = True
+            logger.info("macOS CGEventTap 快捷键监听已启动")
+            CFRunLoopRun()
+            self._running = False
+
+        self._thread = threading.Thread(target=_run, daemon=True, name="hotkey-tap")
+        self._thread.start()
+
+    def stop(self):
+        """停止监听"""
+        self._running = False
+        if self._runloop is not None:
+            try:
+                CFRunLoopStop(self._runloop)
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"停止 CGEventTap runloop 失败: {e}")
+        if self._thread:
+            self._thread.join(timeout=2)
+            self._thread = None
+
+    def _callback(self, proxy, event_type, event, refcon):
+        """CGEventTap 回调(在监听线程执行,不碰 tkinter)"""
+        try:
+            vk = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+            key = self._key_from_vk(vk)
+
+            if event_type == kCGEventKeyDown:
+                self.on_press(key)
+            elif event_type == kCGEventKeyUp:
+                self.on_release(key)
+            elif event_type == kCGEventFlagsChanged:
+                # 修饰键事件:flagsChanged 只发一次,用 flags 判断按下/释放
+                flags = CGEventGetFlags(event)
+                pressed = {
+                    0x37: bool(flags & kCGEventFlagMaskCommand),  # cmd_l
+                    0x36: bool(flags & kCGEventFlagMaskCommand),  # cmd_r
+                    0x38: bool(flags & kCGEventFlagMaskShift),  # shift_l
+                    0x3C: bool(flags & kCGEventFlagMaskShift),  # shift_r
+                    0x3A: bool(flags & kCGEventFlagMaskAlternate),  # alt_l
+                    0x3D: bool(flags & kCGEventFlagMaskAlternate),  # alt_r
+                    0x3B: bool(flags & kCGEventFlagMaskControl),  # ctrl_l
+                    0x3E: bool(flags & kCGEventFlagMaskControl),  # ctrl_r
+                }
+                if pressed.get(vk, False):
+                    self.on_press(key)
+                else:
+                    self.on_release(key)
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"CGEventTap 回调异常: {e}")
+
+    def _key_from_vk(self, vk: int) -> _TapKey:
+        """虚拟键码 → _TapKey(带 pynput 风格名称)"""
+        name = self._KEY_NAMES.get(vk)
+        if name:
+            return _TapKey(name, vk)
+        # 字母/数字键
+        if 0x41 <= vk <= 0x5A:  # A-Z
+            return _TapKey(chr(vk).lower(), vk, char=chr(vk).lower())
+        if 0x30 <= vk <= 0x39:  # 0-9
+            return _TapKey(chr(vk), vk, char=chr(vk))
+        # 其他特殊键
+        return _TapKey(f"vk_{vk}", vk)
