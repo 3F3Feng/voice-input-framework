@@ -157,6 +157,9 @@ class VoiceInputApp:
     # ── 录音和转录 ──
 
     async def _start_recording(self):
+        if self._hotkey_pressed:
+            return  # 去抖:已处于录音状态,忽略重复触发
+        self._hotkey_pressed = True
         # 记录当前前台应用(macOS:粘贴前需先激活它,否则 Cmd+V 进的是客户端自己)
         self._frontmost_app = self._get_frontmost_app()
         if self.selected_mic is not None:
@@ -174,12 +177,14 @@ class VoiceInputApp:
             if self.window:
                 self.window.log(msg)
                 self.window.set_status("录音失败", "red")
+            self._hotkey_pressed = False  # 启动失败,复位去抖状态
             return
-        self._hotkey_pressed = True
         if self.window:
             self.window.write_event_value("-REC-STARTED-", "")
 
     async def _stop_recording(self):
+        if not self._hotkey_pressed:
+            return  # 去抖:未在录音,忽略
         self._hotkey_pressed = False
         if self.window:
             self.window.write_event_value("-REC-STOPPED-", "")

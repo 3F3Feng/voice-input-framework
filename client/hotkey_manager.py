@@ -576,7 +576,7 @@ class HotkeyManager:
         # 检查所有修饰键是否按下
         for mod in self.current_modifiers:
             pressed = self._is_modifier_pressed(mod)
-            logger.info(
+            logger.debug(
                 f"修饰键检查 '{mod}': {pressed}, pressed_keys={[getattr(k,'name',k) for k in self.pressed_keys]}"
             )
             if not pressed:
@@ -791,6 +791,7 @@ class _MacOSEventTapListener:
         self._thread: "threading.Thread | None" = None
         self._running = False
         self._last_flags = 0  # 上一个 flagsChanged 的 flags(修饰键 diff 用)
+        self._mod_state: dict = {}  # 修饰键 vk → 是否按下(flagsChanged 翻转用)
 
     def start(self):
         """在独立线程启动 CGEventTap runloop"""
@@ -850,11 +851,10 @@ class _MacOSEventTapListener:
             elif event_type == kCGEventKeyUp:
                 self.on_release(key)
             elif event_type == kCGEventFlagsChanged:
-                # 修饰键事件:键码字段标识"哪个修饰键变化"(0x3B=左ctrl等,
-                # 可区分左右);flags 判断该键当前按下还是释放。
-                # 注意:CGEventGetFlags 的掩码不区分左右,所以必须用键码。
-                flags = CGEventGetFlags(event)
-                logger.info(f"CGEventTap flagsChanged: vk={vk:#x} flags={flags:#x}")
+                # 修饰键事件:每次按下/释放各发一次 flagsChanged。
+                # 注意:CGEventGetFlags 在释放事件里仍可能含该键掩码
+                # (macOS 记录的是按下时状态),所以**不能**用 flags 判断
+                # 按下/释放——必须用状态翻转(每收到一次事件切换一次)。
                 mod_flag_map = {
                     0x37: kCGEventFlagMaskCommand,  # cmd_l
                     0x36: kCGEventFlagMaskCommand,  # cmd_r
@@ -865,17 +865,18 @@ class _MacOSEventTapListener:
                     0x3B: kCGEventFlagMaskControl,  # ctrl_l
                     0x3E: kCGEventFlagMaskControl,  # ctrl_r
                 }
-                mask = mod_flag_map.get(vk)
-                if mask is None:
-                    # 键码不可用(个别情况为 0xFF):回退到 flags diff
-                    # (此时无法区分左右,按通用掩码同时处理左右)
-                    self._handle_modifier_flags_diff(flags)
-                elif flags & mask:
-                    logger.info(f"CGEventTap 修饰键按下: {key}")
-                    self.on_press(key)
+                if vk in mod_flag_map:
+                    was_pressed = self._mod_state.get(vk, False)
+                    if was_pressed:
+                        logger.debug(f"CGEventTap 修饰键释放: {key}")
+                        self.on_release(key)
+                    else:
+                        logger.debug(f"CGEventTap 修饰键按下: {key}")
+                        self.on_press(key)
+                    self._mod_state[vk] = not was_pressed
                 else:
-                    logger.info(f"CGEventTap 修饰键释放: {key}")
-                    self.on_release(key)
+                    # 键码不可用(个别情况为 0xFF):回退到 flags diff
+                    self._handle_modifier_flags_diff(CGEventGetFlags(event))
         except Exception as e:  # noqa: BLE001
             logger.debug(f"CGEventTap 回调异常: {e}")
 
