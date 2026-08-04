@@ -604,7 +604,11 @@ class HotkeyManager:
 
         # 检查所有修饰键是否按下
         for mod in self.current_modifiers:
-            if not self._is_modifier_pressed(mod):
+            pressed = self._is_modifier_pressed(mod)
+            logger.info(
+                f"修饰键检查 '{mod}': {pressed}, pressed_keys={[getattr(k,'name',k) for k in self.pressed_keys]}"
+            )
+            if not pressed:
                 logger.debug(f"修饰键 '{mod}' 未按下，快捷键不匹配")
                 return False
 
@@ -895,6 +899,7 @@ class _MacOSEventTapListener:
                 # 可区分左右);flags 判断该键当前按下还是释放。
                 # 注意:CGEventGetFlags 的掩码不区分左右,所以必须用键码。
                 flags = CGEventGetFlags(event)
+                logger.info(f"CGEventTap flagsChanged: vk={vk:#x} flags={flags:#x}")
                 mod_flag_map = {
                     0x37: kCGEventFlagMaskCommand,  # cmd_l
                     0x36: kCGEventFlagMaskCommand,  # cmd_r
@@ -911,8 +916,10 @@ class _MacOSEventTapListener:
                     # (此时无法区分左右,按通用掩码同时处理左右)
                     self._handle_modifier_flags_diff(flags)
                 elif flags & mask:
+                    logger.info(f"CGEventTap 修饰键按下: {key}")
                     self.on_press(key)
                 else:
+                    logger.info(f"CGEventTap 修饰键释放: {key}")
                     self.on_release(key)
         except Exception as e:  # noqa: BLE001
             logger.debug(f"CGEventTap 回调异常: {e}")
