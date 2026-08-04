@@ -353,9 +353,23 @@ class VoiceInputApp:
         self.loop_thread.start()
         time.sleep(0.1)
 
-        # 设置托盘
+        # 设置托盘(启动即显示菜单栏图标,常驻)
         if _window:
             self.tray = TrayMenu(TrayIconManager(), AutoStartManager())
+            self.tray.setup(
+                {
+                    # 通过主循环事件驱动(与 UI 按钮共用处理路径)
+                    "show_window": lambda: _window.write_event_value("-SHOW-WINDOW-", None),
+                    "hide_window": lambda: _window.write_event_value("-MINIMIZE-TRAY-", None),
+                    "start_recording": lambda: self._async_task(self._start_recording()),
+                    "stop_recording": lambda: self._async_task(self._stop_recording()),
+                    "refresh_models": lambda: self._async_task(self._fetch_models()),
+                    "check_update": lambda: self._async_task(self._check_update()),
+                    "toggle_auto_start": self._toggle_auto_start,
+                    "quit": lambda: _window.write_event_value("-EXIT-", None),
+                }
+            )
+            self.tray.start()
 
         # 热键
         self.hotkey_manager.set_hotkey(self.config.hotkey)
@@ -394,6 +408,15 @@ class VoiceInputApp:
                 logger.error(f"Main loop error: {e}")
 
         self._cleanup()
+
+    def _toggle_auto_start(self):
+        """切换开机自启动(托盘菜单项)"""
+        try:
+            if self.tray and self.tray.auto_start_manager:
+                enabled = self.tray.auto_start_manager.toggle()
+                self.tray.set_auto_start(enabled)
+        except Exception as e:
+            logger.warning(f"切换开机自启动失败: {e}")
 
     def _handle_event(self, event, values, window):
         if event == "-MICROPHONE-":
@@ -613,6 +636,11 @@ class VoiceInputApp:
 
     def _cleanup(self):
         self.is_running = False
+        if self.tray:
+            try:
+                self.tray.stop()
+            except Exception:
+                pass
         if self.async_loop:
             self.async_loop.call_soon_threadsafe(self.async_loop.stop)
         if hasattr(self, "window") and self.window and hasattr(self.window, "_window"):

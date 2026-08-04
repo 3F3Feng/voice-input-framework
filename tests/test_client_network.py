@@ -513,3 +513,25 @@ class TestUIEventContract:
 
         missing = sorted(k for k in interactive if k not in app_events)
         assert missing == [], f"UI key 无对应事件处理: {missing}"
+
+
+class TestTrayCallbackContract:
+    """托盘菜单回调与 app.py 接线一致性(防托盘菜单点了没反应)"""
+
+    def test_tray_callbacks_match_setup(self):
+        """create_menu 引用的回调 key 都应在 app.py 的 tray.setup 中提供"""
+        import re
+
+        tray_src = Path(project_dir / "client" / "tray_manager.py").read_text(encoding="utf-8")
+        app_src = Path(project_dir / "client" / "app.py").read_text(encoding="utf-8")
+
+        menu_cb = set(re.findall(r'_call_callback\("([a-z_]+)"\)', tray_src))
+        setup_cb = set(
+            re.findall(
+                r'"(show_window|hide_window|start_recording|stop_recording|refresh_models|check_update|toggle_auto_start|quit)"\s*:',
+                app_src,
+            )
+        )
+
+        missing = sorted(menu_cb - setup_cb)
+        assert missing == [], f"托盘菜单回调未在 app.py setup 中提供: {missing}"
