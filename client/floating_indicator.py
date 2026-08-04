@@ -530,7 +530,7 @@ class FloatingIndicator:
                     except Exception as e:
                         logger.debug(f"获取音量失败: {e}")
 
-                time.sleep(0.05)  # 50ms 更新间隔（更频繁以显示实时音量）
+                time.sleep(0.03)  # 30ms 更新间隔(~33fps,与主循环刷新率匹配)
 
             except Exception as e:
                 logger.error(f"更新线程出错: {e}")
@@ -937,7 +937,7 @@ class ProcessingIndicator:
                     except Exception as e:
                         logger.debug(f"跟随鼠标时出错: {e}")
 
-                time.sleep(0.5)
+                time.sleep(0.15)  # 150ms 动画帧间隔(沙漏切换更流畅)
             except Exception as e:
                 logger.error(f"动画循环出错: {e}")
                 break
