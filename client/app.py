@@ -55,6 +55,7 @@ class VoiceInputApp:
         # UI
         self.window: MainWindow | None = None
         self.tray: TrayMenu | None = None
+        self._macos_delegate = None  # 保持 NSApp delegate 引用,防 GC
 
         # 状态
         self.is_running = False
@@ -348,6 +349,11 @@ class VoiceInputApp:
         _window = self.window.create_window(start_minimized=self.config.start_minimized)
         self.is_running = True
 
+        # macOS:Dock 点击恢复窗口(无边框窗口被 hide 后,Dock 点击只激活
+        # 应用不弹窗,需 NSApp delegate 处理 reopen 事件主动 un_hide)
+        if sys.platform == "darwin" and _window:
+            self._setup_macos_dock_reopen(_window)
+
         # 启动异步线程
         self.loop_thread = threading.Thread(target=self._run_async_loop, daemon=True)
         self.loop_thread.start()
@@ -419,6 +425,30 @@ class VoiceInputApp:
                 self.tray.set_auto_start(enabled)
         except Exception as e:
             logger.warning(f"切换开机自启动失败: {e}")
+
+    def _setup_macos_dock_reopen(self, window):
+        """macOS:Dock 点击图标时恢复被 hide 的窗口。
+
+        无边框窗口(override-redirect)hide 后,Dock 点击默认只激活应用;
+        注册 NSApplicationDelegate 处理 applicationShouldHandleReopen,
+        在其中主动 un_hide 窗口。
+        """
+        try:
+            from AppKit import NSApplication, NSObject
+
+            class _DockReopenDelegate(NSObject):
+                def applicationShouldHandleReopen_hasVisibleWindows_(self, app, flag):
+                    try:
+                        window.un_hide()
+                    except Exception as e:
+                        logger.warning(f"Dock 恢复窗口失败: {e}")
+                    return True
+
+            self._macos_delegate = _DockReopenDelegate.alloc().init()
+            NSApplication.sharedApplication().setDelegate_(self._macos_delegate)
+            logger.info("macOS Dock 点击恢复已启用")
+        except Exception as e:
+            logger.warning(f"设置 Dock 恢复失败: {e}")
 
     def _handle_event(self, event, values, window):
         if event == "-MICROPHONE-":
@@ -536,8 +566,9 @@ class VoiceInputApp:
 
         elif event == "-MINIMIZE-TRAY-":
             if sys.platform == "darwin":
-                # macOS:最小化到 Dock(iconify,点击 Dock 图标原生恢复)
-                window.minimize()
+                # macOS:无边框窗口不能 iconify,用 hide 隐藏;
+                # Dock 点击恢复由 NSApp delegate 处理
+                window.hide()
             else:
                 # Windows/Linux:最小化到系统托盘
                 window.hide()
