@@ -173,7 +173,7 @@ class FloatingIndicator:
         self.follow_mouse = follow_mouse
         self.audio_callback = audio_callback
 
-        self.window: sg.Window | None = None
+        self.window: "sg.Window | None" = None
         self.is_visible = False
         self.is_recording = False
 
@@ -646,7 +646,7 @@ class ProcessingIndicator:
         self.opacity = opacity
         self.size = size
         self.follow_mouse = follow_mouse
-        self.window: sg.Window | None = None
+        self.window: "sg.Window | None" = None
         self.is_visible = False
         self.animation_frame = 0
         self.animation_thread: threading.Thread | None = None
@@ -718,7 +718,7 @@ class ProcessingIndicator:
 
         return DEFAULT_POSITION
 
-    def _create_window(self) -> sg.Window | None:
+    def _create_window(self) -> "sg.Window | None":
         """创建处理中窗口"""
         if not PYSIMPLEGUI_AVAILABLE:
             return None
