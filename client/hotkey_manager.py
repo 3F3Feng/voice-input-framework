@@ -825,6 +825,7 @@ class _MacOSEventTapListener:
         self._runloop = None
         self._thread: "threading.Thread | None" = None
         self._running = False
+        self._last_flags = 0  # 上一个 flagsChanged 的 flags(修饰键 diff 用)
 
     def start(self):
         """在独立线程启动 CGEventTap runloop"""
@@ -884,22 +885,28 @@ class _MacOSEventTapListener:
             elif event_type == kCGEventKeyUp:
                 self.on_release(key)
             elif event_type == kCGEventFlagsChanged:
-                # 修饰键事件:flagsChanged 只发一次,用 flags 判断按下/释放
+                # 修饰键事件:flagsChanged 的键码字段不可靠(常为 0xFF),
+                # 比较 flags 变化推演每个修饰键的按下/释放
                 flags = CGEventGetFlags(event)
-                pressed = {
-                    0x37: bool(flags & kCGEventFlagMaskCommand),  # cmd_l
-                    0x36: bool(flags & kCGEventFlagMaskCommand),  # cmd_r
-                    0x38: bool(flags & kCGEventFlagMaskShift),  # shift_l
-                    0x3C: bool(flags & kCGEventFlagMaskShift),  # shift_r
-                    0x3A: bool(flags & kCGEventFlagMaskAlternate),  # alt_l
-                    0x3D: bool(flags & kCGEventFlagMaskAlternate),  # alt_r
-                    0x3B: bool(flags & kCGEventFlagMaskControl),  # ctrl_l
-                    0x3E: bool(flags & kCGEventFlagMaskControl),  # ctrl_r
-                }
-                if pressed.get(vk, False):
-                    self.on_press(key)
-                else:
-                    self.on_release(key)
+                mod_states = [
+                    (0x37, kCGEventFlagMaskCommand),  # cmd_l
+                    (0x36, kCGEventFlagMaskCommand),  # cmd_r
+                    (0x38, kCGEventFlagMaskShift),  # shift_l
+                    (0x3C, kCGEventFlagMaskShift),  # shift_r
+                    (0x3A, kCGEventFlagMaskAlternate),  # alt_l
+                    (0x3D, kCGEventFlagMaskAlternate),  # alt_r
+                    (0x3B, kCGEventFlagMaskControl),  # ctrl_l
+                    (0x3E, kCGEventFlagMaskControl),  # ctrl_r
+                ]
+                for mod_vk, mask in mod_states:
+                    mod_key = self._key_from_vk(mod_vk)
+                    now_pressed = bool(flags & mask)
+                    was_pressed = bool(self._last_flags & mask)
+                    if now_pressed and not was_pressed:
+                        self.on_press(mod_key)
+                    elif was_pressed and not now_pressed:
+                        self.on_release(mod_key)
+                self._last_flags = flags
         except Exception as e:  # noqa: BLE001
             logger.debug(f"CGEventTap 回调异常: {e}")
 
