@@ -387,17 +387,19 @@ class VoiceInputApp:
             )
             self.tray.start()
 
-        # 热键(先启动监听器,权限检测的"事件活动"回退需要它已运行)
-        self.hotkey_manager.set_hotkey(self.config.hotkey)
-        self.hotkey_manager.start_listener(
-            on_press=lambda: self._async_task(self._start_recording()),
-            on_release=lambda: self._async_task(self._stop_recording()),
-        )
-
-        # GUI 出现前同步完成权限检测(输入监控 + 麦克风),避免启动后
-        # 录音指示器因权限未确认而异常
-        self._check_hotkey_permission()
+        # GUI 显示前同步权限预检(输入监控 + 麦克风)
+        hotkey_ok = self._check_hotkey_permission()
         self._check_mic_permission()
+
+        # 权限确认后才启动快捷键监听(未授权则不启动,避免"看似可用实无响应")
+        self.hotkey_manager.set_hotkey(self.config.hotkey)
+        if hotkey_ok:
+            self.hotkey_manager.start_listener(
+                on_press=lambda: self._async_task(self._start_recording()),
+                on_release=lambda: self._async_task(self._stop_recording()),
+            )
+        else:
+            logger.warning("输入监控未授权,快捷键监听未启动;授权后请重启程序")
 
         # 权限检测完成,显示窗口(除非用户选择启动时最小化)
         if _window and not self.config.start_minimized:
@@ -641,28 +643,33 @@ class VoiceInputApp:
         except Exception as e:
             logger.debug(f"麦克风权限自检失败: {e}")
 
-    def _check_hotkey_permission(self):
-        """快捷键监听权限自检(延迟执行,不阻塞启动)
+    def _check_hotkey_permission(self) -> bool:
+        """快捷键监听权限预检(GUI 显示前、监听启动前同步执行)
 
-        macOS 上 pynput 键盘监听需要"输入监控"(Input Monitoring)权限;
-        未授权时静默收不到事件。优先用系统 API 直接检测,否则回退到事件活动检测。
+        macOS 上 pynput/CGEventTap 键盘监听需要"输入监控"(Input Monitoring)
+        权限。在启动监听器**之前**用系统 API 直接查询;未授权则不启动监听,
+        避免"看似可用实则收不到事件"。
+
+        Returns:
+            True:已授权(或非 macOS 无需该权限)→ 可启动监听;
+            False:未授权 → 不启动监听,提示用户授权后重启
         """
+        if sys.platform != "darwin":
+            return True  # 非 macOS 无输入监控权限概念
         try:
-            # 优先:macOS 系统 API 直接查询输入监控权限
             perm = self.hotkey_manager.check_macos_permission()
             if perm is False:
                 self._warn_hotkey_permission()
-                return
+                return False
             if perm is True:
                 logger.info("输入监控权限已授权")
-                return
-            # 系统 API 不可用(非 macOS/旧系统):回退到事件活动检测
-            if self.hotkey_manager.check_listener_activity():
-                logger.info("快捷键监听正常(已收到键盘事件)")
-                return
-            self._warn_hotkey_permission()
+            else:
+                # API 不可用(罕见):保守允许启动,监听器会自行处理
+                logger.info("输入监控权限:系统 API 不可用,允许启动监听")
+            return True
         except Exception as e:
-            logger.debug(f"快捷键权限自检失败: {e}")
+            logger.debug(f"快捷键权限预检失败: {e}")
+            return True
 
     def _warn_hotkey_permission(self):
         """提示用户授权 macOS 输入监控权限"""
