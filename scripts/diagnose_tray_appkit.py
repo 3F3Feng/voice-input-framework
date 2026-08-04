@@ -72,7 +72,7 @@ try:
     # 终端启动的无 bundle 进程默认 activation policy 可能禁止菜单栏显示,
     # 显式设为 Accessory(仅菜单栏图标,不占 Dock)
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    print(f"[INFO] activationPolicy 已设为 Accessory")
+    print("[INFO] activationPolicy 已设为 Accessory")
     status_bar = NSStatusBar.systemStatusBar()
 
     # 方式 A:image
