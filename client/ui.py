@@ -10,6 +10,7 @@
 """
 
 import logging
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -354,7 +355,11 @@ class MainWindow:
                     [
                         [
                             sg.Checkbox(
-                                "启动时最小化到托盘",
+                                (
+                                    "启动时最小化"
+                                    if sys.platform == "darwin"
+                                    else "启动时最小化到托盘"
+                                ),
                                 default=self.config_manager.start_minimized,
                                 key="-START-MINIMIZED-",
                                 enable_events=True,
@@ -456,7 +461,11 @@ class MainWindow:
             [
                 sg.Push(background_color=BACKGROUND_COLOR),
                 sg.Button("退出", key="-EXIT-", button_color=("white", "gray"), size=(10, 1)),
-                sg.Button("最小化到托盘", key="-MINIMIZE-TRAY-", size=(15, 1)),
+                sg.Button(
+                    "最小化到Dock" if sys.platform == "darwin" else "最小化到托盘",
+                    key="-MINIMIZE-TRAY-",
+                    size=(15, 1),
+                ),
                 sg.Push(background_color=BACKGROUND_COLOR),
             ],
         ]

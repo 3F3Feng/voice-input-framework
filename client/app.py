@@ -353,8 +353,10 @@ class VoiceInputApp:
         self.loop_thread.start()
         time.sleep(0.1)
 
-        # 设置托盘(启动即显示菜单栏图标,常驻)
-        if _window:
+        # 设置托盘:仅 Windows/Linux(macOS 上系统菜单栏对 Python 进程的
+        # NSStatusItem 支持受限,已实测 pystray/原生/rumps/Swift 均无法显示,
+        # 故 macOS 用"最小化到 Dock"替代)
+        if _window and sys.platform != "darwin":
             self.tray = TrayMenu(TrayIconManager(), AutoStartManager())
             self.tray.setup(
                 {
@@ -533,9 +535,14 @@ class VoiceInputApp:
             self._auto_input_text(text)
 
         elif event == "-MINIMIZE-TRAY-":
-            window.hide()
-            if self.tray:
-                self.tray.start()
+            if sys.platform == "darwin":
+                # macOS:隐藏窗口,应用保留在 Dock,可从 Dock 恢复
+                window.hide()
+            else:
+                # Windows/Linux:最小化到系统托盘
+                window.hide()
+                if self.tray:
+                    self.tray.start()
 
         elif event == "-SHOW-WINDOW-":
             window.un_hide()
