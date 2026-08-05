@@ -492,8 +492,11 @@ class MainWindow:
             "🎤 Voice Input Framework v1.1",
             layout,
             finalize=True,
-            # 不置顶:主窗口置顶会与浮标指示器(录音中/处理中)的 topmost
-            # 层级冲突,把浮标盖住;浮标自己保持置顶即可
+            # 保持置顶:实测去掉 keep_on_top 会导致 macOS 启动卡死(原因未明,
+            # PySimpleGUI hide/un_hide 不依赖该参数)。浮标显示时会把主窗口
+            # 临时降级为非 topmost(见 app._lower_main_window_for_indicator),
+            # 因此主窗口置顶不会盖住浮标。
+            keep_on_top=True,
             no_titlebar=use_no_titlebar,
             grab_anywhere=True,
             background_color="#2e2e2e",

@@ -193,14 +193,32 @@ class VoiceInputApp:
         if self.window:
             self.window.write_event_value("-REC-STOPPED-", "")
 
+    def _lower_main_window(self):
+        """浮标显示期间把主窗口降级为非 topmost,保证浮标在最上方
+
+        主窗口保持 keep_on_top=True(去掉会导致 macOS 启动卡死,原因未明);
+        浮标也是 topmost,同层窗口按 raise 顺序堆叠,主窗口会把浮标盖住。
+        浮标显示时把主窗口降级为普通窗口 → 浮标(仍 topmost)必然在最上。
+        """
+        if sys.platform != "darwin":
+            return
+        try:
+            if self.window and self.window.window and self.window.window.TKroot:
+                self.window.window.TKroot.wm_attributes("-topmost", False)
+                logger.debug("主窗口已降级为非 topmost(浮标显示期间)")
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"主窗口降级失败: {e}")
+
     def _on_recording_started(self):
         if getattr(self, "indicators", None):
             self.indicators.show_recording()
+        self._lower_main_window()
 
     def _on_recording_stopped(self):
         if getattr(self, "indicators", None):
             self.indicators.hide_recording()
             self.indicators.show_processing()
+        self._lower_main_window()
 
     async def _process_audio(self):
         """处理已录制的音频(在 asyncio 线程运行,不直接碰 Tk)"""
