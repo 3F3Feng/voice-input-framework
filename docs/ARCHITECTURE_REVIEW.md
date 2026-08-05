@@ -192,3 +192,23 @@ server/models/* 引擎(MLX / whisper.cpp / transformers)
 `tests/test_contract.py`(9 个用例):用 TestClient 断言当前端点契约与基线等价,已知有意变更以显式断言锁定(H4 字段移除、M7 错误结构)。`pytest -m "not integration"` 现为 **94 passed**。
 
 **遗留(有意保留)**:`client/gui.py`(PyInstaller spec 打包入口)、`server/models/`(仍被服务使用)未删除;`client/tests/test_cursor_tracker.py` 平台相关测试在 Linux 跳过(CI 的 macOS/Windows 会运行);CI 中 `download-models.sh`/`build-release.yml` 的 `\|\| true` 为命令容错,非 lint 逃逸。
+
+## 八、补充执行记录(macOS 客户端专项修复,2026-08-03 ~ 08-05)
+
+PR #7 合并前,针对 Python 客户端在 macOS(M3 Max + macOS 15)上的实测问题追加修复:
+
+| 问题 | 修复 |
+|------|------|
+| macOS 启动闪退 | pynput 键盘监听在 macOS 15 的 TextServices 线程崩溃 → 改用 Quartz CGEventTap(`_MacOSEventTapListener`) |
+| 快捷键字母/数字主键不触发 | CGEventTap 键码是 macOS HID 键码(字母 A=0x00,非 Windows VK 0x41)→ `_MAC_HID_TO_CHAR` 映射表 + F 键键码 |
+| 修饰键释放死锁 | flagsChanged 用 `flags & mask` 判断按下/释放(不依赖事件计数;`kCGEventFlagMaskControl=0x40000`) |
+| 主线程卡顿(彩虹指针) | ① osascript 自动输入移入 `asyncio.to_thread`;② 浮标 read 改非阻塞;③ 移除 show() 的 `TKroot.update()`;④ 浮标窗口复用(不再每次重建/销毁) |
+| 处理中指示器卡住 | asyncio 线程不再直接调 Tk,统一 `write_event_value` 事件投递(`-STATUS-`/`-RESULT-READY-`) |
+| 浮标被主窗口覆盖 | 主窗口保持 `keep_on_top`(去掉会导致 macOS 启动卡死,原因未明);浮标显示时把主窗口降级为非 topmost |
+| 自动粘贴失败 | 浮标(no_titlebar)finalize 时 `focus_force()` 抢焦点 → **先记录前台应用再显示浮标**,并用 NSRunningApplication 把焦点还给原应用 |
+| 粘贴延迟(数秒) | `NSWorkspace`/`NSRunningApplication` 替代 osascript 查询/激活(毫秒级);osascript 仅作后台线程兜底 |
+| macOS 托盘不显示 | macOS 实测 pystray/原生 NSStatusItem/rumps/Swift 均不显示 → 放弃托盘,改"最小化到 Dock" |
+
+**线程契约(防回归)**:主线程 = AppKit(NSWorkspace/NSRunningApplication)/全部 Tk;后台线程 = osascript 子进程/网络;跨线程 UI 一律 `write_event_value`。AppKit 在后台线程首次初始化会死锁(等待主线程 runloop)。
+
+**验证**:`pytest -m "not integration"` **116 passed** / 31 skipped / 25 deselected;ruff `--select F`、black 核心路径干净;契约测试新增:macOS HID 键码映射、`_process_audio` 无直接 Tk 调用(AST)、异步事件齐全性(`-STATUS-`/`-RESULT-READY-`/`-AUTO-INPUT-`)。

@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 class ConnectionState(Enum):
     """连接状态枚举"""
+
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
     CONNECTED = "connected"
@@ -36,7 +37,7 @@ class WebSocketKeepAlive:
 
     # 心跳配置
     DEFAULT_PING_INTERVAL = 30.0  # 每30秒发送一次ping
-    DEFAULT_PONG_TIMEOUT = 10.0   # 等待pong响应超时时间
+    DEFAULT_PONG_TIMEOUT = 10.0  # 等待pong响应超时时间
     DEFAULT_MAX_MISSED_PONGS = 3  # 最大允许错过的pong次数
     DEFAULT_RECONNECT_DELAY = 1.0  # 重连延迟（秒）
     DEFAULT_MAX_RECONNECT_DELAY = 30.0  # 最大重连延迟（秒）
@@ -241,10 +242,10 @@ class ConnectionIndicator:
 
     STATE_COLORS = {
         ConnectionState.DISCONNECTED: "#888888",  # 灰色
-        ConnectionState.CONNECTING: "#ffcc66",    # 黄色
-        ConnectionState.CONNECTED: "#66cc66",     # 绿色
+        ConnectionState.CONNECTING: "#ffcc66",  # 黄色
+        ConnectionState.CONNECTED: "#66cc66",  # 绿色
         ConnectionState.RECONNECTING: "#ff9944",  # 橙色
-        ConnectionState.ERROR: "#ff4444",         # 红色
+        ConnectionState.ERROR: "#ff4444",  # 红色
     }
 
     STATE_TEXTS = {

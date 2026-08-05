@@ -18,6 +18,7 @@ except ImportError:
 # 旧版 GUI 类（兼容性保留，需要 PySimpleGUI）
 try:
     from .gui import HotkeyVoiceInputV2
+
     HotkeyVoiceInput = HotkeyVoiceInputV2
 except ImportError:
     HotkeyVoiceInputV2 = None
