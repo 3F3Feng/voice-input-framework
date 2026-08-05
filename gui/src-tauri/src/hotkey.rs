@@ -16,6 +16,17 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{Emitter, Manager};
 
+// Windows branch (raw Win32 polling) uses these bare names; other
+// platforms reference them fully-qualified.
+#[cfg(target_os = "windows")]
+use std::sync::atomic::AtomicBool;
+#[cfg(target_os = "windows")]
+use std::sync::Arc;
+#[cfg(target_os = "windows")]
+use std::time::{Duration, Instant};
+#[cfg(target_os = "windows")]
+use crate::AppState;
+
 /// Global generation counter. Incremented each time `start_listener` is called.
 /// Old poller threads check this and exit when they detect a newer generation.
 static LISTENER_GEN: AtomicU64 = AtomicU64::new(0);
@@ -519,7 +530,8 @@ mod mac_tap {
                 match tap.mach_port.create_runloop_source(0) {
                     Ok(source) => {
                         let current = CFRunLoop::get_current();
-                        current.add_source(&source, kCFRunLoopCommonModes);
+                        // kCFRunLoopCommonModes is an extern static — reading it is unsafe
+                        current.add_source(&source, unsafe { kCFRunLoopCommonModes });
                         eprintln!("[hotkey] CGEventTap listening");
                         CFRunLoop::run_current();
                     }
