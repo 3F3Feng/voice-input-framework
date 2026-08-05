@@ -160,9 +160,14 @@ class VoiceInputApp:
         if self._hotkey_pressed:
             return  # 去抖:已处于录音状态,忽略重复触发
         self._hotkey_pressed = True
-        # 注意:不在此处同步获取前台应用——osascript/System Events 可能
-        # 因无辅助功能权限而挂起数秒,阻塞录音启动。改为自动输入时才获取。
+        # 预取前台应用:NSWorkspace 公共 API 毫秒级(不阻塞录音启动);
+        # 粘贴时直接用,省去 osascript 查询(1.5s+)的等待。
         self._frontmost_app = None
+        if sys.platform == "darwin":
+            try:
+                self._frontmost_app = self._get_frontmost_app_fast()
+            except Exception:  # noqa: BLE001
+                self._frontmost_app = None
         if self.selected_mic is not None:
             self.audio.selected_device = self.selected_mic
         # 先发"录音开始"事件(立即显示指示器),再启动音频流——
@@ -249,15 +254,33 @@ class VoiceInputApp:
     # ── 文本输入 ──
 
     @staticmethod
+    def _get_frontmost_app_fast() -> str | None:
+        """NSWorkspace 直达前台应用名(毫秒级,无需辅助功能权限)
+
+        osascript/System Events 查询需要辅助功能权限且慢(可挂起 1.5s+);
+        NSWorkspace.frontmostApplication() 是公共 API,毫秒级返回。
+        """
+        try:
+            from AppKit import NSWorkspace
+
+            app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            name = app.localizedName() if app else None
+            return name or None
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
     def _get_frontmost_app() -> str | None:
         """获取当前前台应用名称(macOS;供粘贴前激活)
 
-        注意:osascript/System Events 需要"辅助功能"权限;未授权时
-        osascript 可能挂起(而非立即报错)。调用前先查权限,未授权直接返回
-        None,避免阻塞数秒。
+        优先 NSWorkspace(快);回退 osascript/System Events(需辅助功能权限,
+        未授权时可能挂起 → 直接返回 None 避免阻塞数秒)。
         """
         if sys.platform != "darwin":
             return None
+        name = VoiceInputApp._get_frontmost_app_fast()
+        if name:
+            return name
         try:
             # 辅助功能权限预检(AXIsProcessTrusted)
             import ctypes
@@ -288,9 +311,22 @@ class VoiceInputApp:
 
     @staticmethod
     def _activate_frontmost_app(name: str | None) -> bool:
-        """激活指定应用(macOS);失败返回 False"""
+        """激活指定应用(macOS);失败返回 False
+
+        优先 NSRunningApplication.activateWithOptions_(毫秒级,无需
+        Apple Events 权限);回退 osascript(慢,可能阻塞数秒)。
+        """
         if not name or sys.platform != "darwin":
             return False
+        try:
+            from AppKit import NSApplicationActivateIgnoringOtherApps, NSWorkspace
+
+            for app in NSWorkspace.sharedWorkspace().runningApplications():
+                if app.localizedName() == name:
+                    app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+                    return True
+        except Exception:  # noqa: BLE001
+            pass
         try:
             import subprocess
 
