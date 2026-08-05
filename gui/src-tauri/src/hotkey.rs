@@ -394,10 +394,9 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
 #[cfg(target_os = "macos")]
 mod mac_tap {
     use super::*;
-    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+    use core_foundation::runloop::*;
     use core_graphics::event::{
-        CGEvent, CGEventFlagAlternate, CGEventFlagCommand, CGEventFlagControl,
-        CGEventFlagShift, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
+        CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
         CGEventTapPlacement, CGEventType, EventField,
     };
 
@@ -459,10 +458,10 @@ mod mac_tap {
     // is gone, so flags&mask is reliable — no event-count toggling).
     fn mod_flag(vk: i64) -> Option<CGEventFlags> {
         Some(match vk {
-            0x37 | 0x36 => CGEventFlagCommand,
-            0x38 | 0x3C => CGEventFlagShift,
-            0x3A | 0x3D => CGEventFlagAlternate,
-            0x3B | 0x3E => CGEventFlagControl,
+            0x37 | 0x36 => CGEventFlags::CGEventFlagCommand,
+            0x38 | 0x3C => CGEventFlags::CGEventFlagShift,
+            0x3A | 0x3D => CGEventFlags::CGEventFlagAlternate,
+            0x3B | 0x3E => CGEventFlags::CGEventFlagControl,
             _ => return None,
         })
     }
@@ -474,8 +473,13 @@ mod mac_tap {
     /// otherwise CGEventTapCreate fails and we log and return.
     pub fn run<F>(handler: F)
     where
-        F: Fn(HotkeyKey, bool) + 'static,
+        F: FnMut(HotkeyKey, bool) + 'static,
     {
+        // CGEventTap::new's callback is `Fn` (immutable), but our handler
+        // mutates the matcher — RefCell gives interior mutability; the
+        // tap callback runs on this same (listener) thread, so no
+        // cross-thread access and no Send requirement.
+        let handler = std::cell::RefCell::new(handler);
         let events = vec![
             CGEventType::KeyDown,
             CGEventType::KeyUp,
@@ -487,11 +491,12 @@ mod mac_tap {
             CGEventTapOptions::ListenOnly,
             events,
             move |_proxy, etype, event| {
+                let mut h = handler.borrow_mut();
                 match etype {
                     CGEventType::KeyDown | CGEventType::KeyUp => {
                         let vk = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
                         if let Some(k) = hid_to_hotkey(vk) {
-                            handler(k, etype == CGEventType::KeyDown);
+                            h(k, matches!(etype, CGEventType::KeyDown));
                         }
                     }
                     CGEventType::FlagsChanged => {
@@ -499,7 +504,7 @@ mod mac_tap {
                         let flags = event.get_flags();
                         if let Some(mask) = mod_flag(vk) {
                             if let Some(k) = hid_to_hotkey(vk) {
-                                handler(k, flags.contains(mask));
+                                h(k, flags.contains(mask));
                             }
                         }
                     }
