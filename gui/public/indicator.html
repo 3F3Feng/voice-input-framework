@@ -34,6 +34,9 @@ const labelEl = document.getElementById('label');
 const invoke = window.__TAURI__?.core?.invoke;
 const listen = window.__TAURI__?.event?.listen;
 
+// 诊断信号:页面加载成功后改窗口标题(主进程 1s 后读标题判断加载状态)
+try { window.__TAURI__?.window?.getCurrentWindow()?.setTitle('indicator-loaded'); } catch (_) {}
+
 let mode = 'recording'; // 'recording' | 'processing' | 'done'
 
 // Window reused across recordings — reset timer/mode on each show

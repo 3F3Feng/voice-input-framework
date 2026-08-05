@@ -37,6 +37,24 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
     #[cfg(not(any(not(target_os = "macos"), feature = "macos-private-api")))]
     { let _ = window.set_background_color(Some(Color(15, 15, 25, 255))); }
 
+    let _ = window.show();
+    let _ = window.set_focus();
+    eprintln!(
+        "[indicator] built: screen=({},{}) pos=({},{}), url={:?}",
+        sw, sh, x, y, tauri::WebviewUrl::App("indicator.html".into())
+    );
+
+    // 诊断:1s 后读窗口标题,判断 indicator.html 是否成功加载
+    // (页面加载后会把标题改成 "indicator-loaded")
+    let probe = window.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        match probe.title() {
+            Ok(t) => eprintln!("[indicator] title after 1s: {:?}", t),
+            Err(e) => eprintln!("[indicator] title probe failed: {:?}", e),
+        }
+    });
+
     Ok(())
 }
 
