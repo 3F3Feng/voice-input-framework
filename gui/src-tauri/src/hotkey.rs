@@ -414,6 +414,14 @@ mod mac_tap {
     // macOS HID keycode → HotkeyKey (ANSI layout; letters A=0x00, not Windows VK).
     fn hid_to_hotkey(vk: i64) -> Option<HotkeyKey> {
         Some(match vk {
+            // 修饰键(flagsChanged 事件经 mod_flag + flags 判断按下/释放)
+            0x3B => HotkeyKey::ControlLeft,
+            0x3E => HotkeyKey::ControlRight,
+            0x3A => HotkeyKey::Alt,
+            0x3D => HotkeyKey::AltGr,
+            0x38 => HotkeyKey::ShiftLeft,
+            0x3C => HotkeyKey::ShiftRight,
+            // 0x37/0x36 (Command) 未在 HotkeyKey 枚举中,不支持
             0x00 => HotkeyKey::KeyA,
             0x01 => HotkeyKey::KeyS,
             0x02 => HotkeyKey::KeyD,
