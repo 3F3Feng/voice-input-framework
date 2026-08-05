@@ -492,7 +492,8 @@ class MainWindow:
             "🎤 Voice Input Framework v1.1",
             layout,
             finalize=True,
-            keep_on_top=True,
+            # 不置顶:主窗口置顶会与浮标指示器(录音中/处理中)的 topmost
+            # 层级冲突,把浮标盖住;浮标自己保持置顶即可
             no_titlebar=use_no_titlebar,
             grab_anywhere=True,
             background_color="#2e2e2e",

@@ -351,7 +351,7 @@ class HotkeyVoiceInputV2:
         ]
 
         self.window = sg.Window("🎤 Voice Input Framework v1.1", layout,
-                               finalize=True, keep_on_top=True, no_titlebar=True, grab_anywhere=True,
+                               finalize=True, no_titlebar=True, grab_anywhere=True,
                                background_color="#2e2e2e", button_color=("white", "#4e4e4e")
                                )
         
