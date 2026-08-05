@@ -48,8 +48,8 @@ jobs:
       - name: Run linting
         run: |
           pip install black ruff
-          black --check client/ server/ shared/ tests/ || true
-          ruff check client/ server/ shared/ tests/ || true
+          # F 类(未定义/未使用等真实错误)严格;扩展风格规则为既有债务,渐进清理
+          ruff check client/ server/ shared/ tests/ services/ --select F
 
   lint:
     name: Lint
@@ -70,8 +70,49 @@ jobs:
 
       - name: Run black
         run: |
-          black --check client/ server/ shared/ tests/ || true
+          # 核心模块格式检查(既有旧客户端文件债务待后续清理)
+          black --check services/ shared/ tests/ client/network.py client/app.py client/config_manager.py
 
       - name: Run ruff
         run: |
-          ruff check client/ server/ shared/ tests/ || true
+          # F 类真实错误严格(无 || true);风格规则为既有债务
+          ruff check client/ server/ shared/ tests/ services/ --select F
+
+  rust-logic:
+    name: Rust STT client logic tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run stt-logic-tests (no tauri/system deps needed)
+        run: |
+          cd gui/stt-logic-tests
+          cargo test
+
+  pyright:
+    name: Pyright type check (client app contract)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python deps (for import resolution)
+        run: |
+          pip install --upgrade pip
+          pip install PySimpleGUI pynput sounddevice numpy pyautogui
+
+      - name: Run pyright on client app
+        run: |
+          npx -y pyright@latest client/app.py client/network.py 2>&1 \
+            | grep -E "error:" \
+            | grep -vE "reportMissingImports|reportMissingModuleSource|reportOptionalMemberAccess|reportUnknown" \
+            && exit 1 || exit 0

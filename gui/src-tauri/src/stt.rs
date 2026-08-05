@@ -86,7 +86,7 @@ impl SttClient {
         let ws_sender = Arc::new(tokio::sync::Mutex::new(ws));
 
         let ws_clone = ws_sender.clone();
-        let stream_task = tauri::async_runtime::spawn(async move {
+        let stream_task = tokio::spawn(async move {
             let mut chunk_count: u64 = 0;
             let mut byte_count: u64 = 0;
             while let Some(chunk) = chunk_rx.recv().await {

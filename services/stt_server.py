@@ -5,18 +5,18 @@ Voice Input Framework - STT Service
 运行在独立的 conda 环境: vif-stt (MLX + transformers 5.x)
 Port: 6544
 """
+
 import asyncio
 import base64
 import json
 import logging
 import os
-import platform
 import sys
 import time
 import uuid
-from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from pathlib import Path
 
 import httpx
 
@@ -24,17 +24,34 @@ import httpx
 project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
-from shared.model_registry import MODELS_CONFIG, get_default_model, get_apple_silicon_only_models, IS_APPLE_SILICON
-from services.diarize_engine import DiarizationEngine, DIARIZE_ENABLED
-
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Request
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+
+from services.diarize_engine import DIARIZE_ENABLED, DiarizationEngine
+from services.stt_engine import (
+    HealthStatus,
+    ModelInfo,
+    STTEngine,
+    TranscriptionRequest,
+    TranscriptionResult,
+)
+from shared.constants import DEFAULT_LLM_PORT, DEFAULT_STT_PORT
+from shared.data_types import ErrorResponse
+from shared.model_registry import MODELS_CONFIG, get_default_model
 
 # ============== Configuration ==============
 STT_HOST = os.getenv("VIF_STT_HOST", "0.0.0.0")
-STT_PORT = int(os.getenv("VIF_STT_PORT", "6544"))
+STT_PORT = int(os.getenv("VIF_STT_PORT", str(DEFAULT_STT_PORT)))
 STT_MODEL = os.getenv(
     "VIF_STT_MODEL",
     get_default_model(),
@@ -45,8 +62,9 @@ MAX_RETRIES = int(os.getenv("VIF_MAX_RETRIES", "3"))
 RETRY_DELAY = float(os.getenv("VIF_RETRY_DELAY", "1.0"))
 
 # LLM Server Configuration
-LLM_SERVER_HOST = os.getenv("VIF_LLM_HOST", "localhost")
-LLM_SERVER_PORT = int(os.getenv("VIF_LLM_PORT", "6545"))
+# 默认用 127.0.0.1 而非 localhost:避免 Windows 上 IPv6(::1)优先解析导致连接超时回落延迟
+LLM_SERVER_HOST = os.getenv("VIF_LLM_HOST", "127.0.0.1")
+LLM_SERVER_PORT = int(os.getenv("VIF_LLM_PORT", str(DEFAULT_LLM_PORT)))
 LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 
 # LLM Processing Toggle
@@ -58,6 +76,7 @@ LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
 持久化最后使用的 STT 模型和 LLM 开关状态，
 避免服务器重启后需要重新设置。
 """
+logger = logging.getLogger("stt-server")
 STATE_DIR = Path.home() / ".config" / "voice-input-framework"
 STATE_FILE = STATE_DIR / "stt_state.json"
 
@@ -88,6 +107,7 @@ _persisted_state = load_state()
 if "VIF_STT_MODEL" not in os.environ:
     if saved_model := _persisted_state.get("stt_model"):
         from shared.model_registry import MODELS_CONFIG
+
         if saved_model in MODELS_CONFIG:
             logger.info(f"Restoring STT model from saved state: {saved_model}")
             STT_MODEL = saved_model
@@ -106,9 +126,11 @@ if "VIF_LLM_MODEL" not in os.environ:
 # ============== Context Variables ==============
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
 
+
 # ============== Structured Logging ==============
 class StructuredLogFormatter(logging.Formatter):
     """结构化日志格式化器"""
+
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
             "timestamp": self.formatTime(record),
@@ -128,6 +150,7 @@ class StructuredLogFormatter(logging.Formatter):
             log_data["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_data, ensure_ascii=False, default=str)
 
+
 # 配置日志
 _log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 if os.getenv("VIF_LOG_JSON", "").lower() == "true":
@@ -136,81 +159,12 @@ if os.getenv("VIF_LOG_JSON", "").lower() == "true":
     logging.basicConfig(level=LOG_LEVEL, handlers=[handler])
 else:
     logging.basicConfig(level=LOG_LEVEL, format=_log_format)
-logger = logging.getLogger("stt-server")
-
-# ============== Data Models ==============
-class WordTimestamp(BaseModel):
-    """词级别时间戳"""
-    word: str
-    start: float
-    end: float
-
-class TranscriptionResult(BaseModel):
-    """转写结果"""
-    text: str
-    confidence: float = 1.0
-    language: str = "auto"
-    is_final: bool = True
-    stt_latency_ms: float = 0.0
-    model: str = ""
-    timestamps: Optional[List[WordTimestamp]] = None
-
-class TranscriptionRequest(BaseModel):
-    """转写请求"""
-    language: str = "auto"
-    return_timestamps: bool = False
-
-class ModelInfo(BaseModel):
-    """模型信息"""
-    name: str
-    description: str = ""
-    is_loaded: bool = False
-    is_default: bool = False
-
-class HealthStatus(BaseModel):
-    """健康状态"""
-    status: str
-    version: str = "1.1.0"
-    uptime_seconds: float
-    current_model: str
-    loaded_models: List[str]
-    active_connections: int = 0
-    total_requests: int = 0
-    failed_requests: int = 0
-    diarize: Optional[Dict[str, Any]] = None
-
-class ErrorResponse(BaseModel):
-    """错误响应"""
-    error_code: str
-    error_message: str
-    request_id: str
-
-# ============== Retry Decorator ==============
-def with_retry(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
-    """重试装饰器"""
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
-            last_exception = None
-            for attempt in range(max_retries + 1):
-                try:
-                    return await func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    if attempt < max_retries:
-                        logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {delay}s...")
-                        await asyncio.sleep(delay * (2 ** attempt))  # 指数退避
-                    else:
-                        logger.error(f"Failed after {max_retries + 1} attempts: {e}")
-                        raise
-            raise last_exception
-        return wrapper
-    return decorator
 
 
 # ============== LLM Client ==============
-async def call_llm_server(text: str, request_id: str = "") -> Tuple[str, float]:
+async def call_llm_server(text: str, request_id: str = "") -> tuple[str, float]:
     """调用 LLM 服务器进行后处理
-    
+
     Returns:
         tuple: (processed_text, latency_ms)
     """
@@ -220,7 +174,7 @@ async def call_llm_server(text: str, request_id: str = "") -> Tuple[str, float]:
                 f"{LLM_SERVER_URL}/process",
                 json={"text": text, "options": {}},
                 headers={"X-Request-ID": request_id},
-                timeout=30.0
+                timeout=30.0,
             )
             if response.status_code == 200:
                 data = response.json()
@@ -232,404 +186,6 @@ async def call_llm_server(text: str, request_id: str = "") -> Tuple[str, float]:
         logger.error(f"Failed to call LLM server: {e}")
         return text, 0
 
-# ============== STT Engine ==============
-class STTEngine:
-    """STT 引擎管理器"""
-    AVAILABLE_MODELS = MODELS_CONFIG
-
-
-    def __init__(self, default_model: str = get_default_model()):
-        self.default_model = default_model
-        self.current_model_name = default_model
-        self._model = None
-        self._aligner = None
-        self._is_loaded = False
-        self._aligner_loaded = False
-        self._loading = False
-        self._load_lock = asyncio.Lock()
-        self._model_info = self.AVAILABLE_MODELS.get(
-            default_model, self.AVAILABLE_MODELS["qwen_asr_mlx_native_small"]
-        )
-        self.start_time = time.time()
-        self.total_requests = 0
-        self.failed_requests = 0
-        self._active_connections = 0
-
-    async def load(self, load_aligner: bool = False) -> bool:
-        """加载模型"""
-        async with self._load_lock:
-            if self._is_loaded and (not load_aligner or self._aligner_loaded):
-                return True
-
-            if self._loading:
-                logger.info("Model is loading, waiting...")
-                while self._loading:
-                    await asyncio.sleep(0.5)
-                return self._is_loaded
-
-            self._loading = True
-            try:
-                logger.info(f"Loading STT model: {self._model_info['model_id']}")
-                loop = asyncio.get_event_loop()
-
-                # 加载主模型
-                if not self._is_loaded:
-                    engine_type = self._model_info.get("engine", "")
-                    if engine_type == "qwen_asr_mlx_native":
-                        # MLX 原生引擎：Metal stream 是 thread-local，必须在主线程加载
-                        self._load_model_sync()
-                    else:
-                        await loop.run_in_executor(None, self._load_model_sync)
-                    self._is_loaded = True
-                    logger.info("STT model loaded successfully")
-
-                # 加载 ForcedAligner（如果需要时间戳功能）
-                if load_aligner and not self._aligner_loaded:
-                    logger.info(f"Loading ForcedAligner: {self._model_info['aligner_id']}")
-                    logger.warning("ForcedAligner not available (deprecated engine removed). Timestamps disabled.")
-                    self._aligner_loaded = True
-                    logger.info("ForcedAligner loaded successfully")
-
-                return True
-            except Exception as e:
-                logger.error(f"Failed to load STT model: {e}", exc_info=True)
-                self.failed_requests += 1
-                return False
-            finally:
-                self._loading = False
-
-    def _load_model_sync(self):
-        """同步加载主模型"""
-        import torch
-
-        model_id = self._model_info["model_id"]
-        engine_type = self._model_info.get("engine", "qwen_asr_mlx_native")
-
-        # 检测设备
-        if torch.backends.mps.is_available():
-            device = "mps"
-        elif torch.cuda.is_available():
-            device = "cuda"
-        else:
-            device = "cpu"
-
-        # ── Whisper MLX 引擎 ──
-        if engine_type == "whisper_mlx":
-            if not IS_APPLE_SILICON:
-                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS)")
-            import mlx_whisper
-            import numpy as np
-
-            logger.info(f"Loading MLX Whisper model: {model_id}...")
-            # 触发预加载
-            test_audio = np.zeros(16000, dtype=np.float32)
-            mlx_whisper.transcribe(test_audio, path_or_hf_repo=model_id)
-            self._model = {"model_id": model_id, "type": "whisper_mlx"}
-            self._model_type = "whisper_mlx"
-            return
-
-        # ── Qwen3-ASR MLX 原生引擎 (mlx-audio) ──
-        if engine_type == "qwen_asr_mlx_native":
-            if not IS_APPLE_SILICON:
-                raise RuntimeError("MLX models require Apple Silicon (ARM64 + macOS)")
-            from server.models.qwen3_asr_mlx_native import Qwen3ASRMLXNativeEngine
-            model_name = self.current_model_name
-            logger.info(f"Loading Qwen3-ASR MLX native model: {model_name}")
-            native_engine = Qwen3ASRMLXNativeEngine(model_name=model_name)
-            # 同步加载（MLX Metal 必须在本线程执行）
-            native_engine._load_sync()
-            native_engine._is_loaded = True
-            self._model = native_engine
-            self._model_type = "qwen_asr_mlx_native"
-            return
-
-
-
-        # ── Whisper.cpp 引擎 ──
-        if engine_type == "whisper_cpp":
-            from server.models.whisper_cpp import WhisperCppEngine
-
-            whisper_model = self._model_info.get("whisper_model", "whisper-v3-base")
-            logger.info(f"Loading Whisper.cpp model: {whisper_model}...")
-            whisper_engine = WhisperCppEngine(model_name=whisper_model)
-
-            # WhisperCppEngine 同步加载
-            import asyncio
-            asyncio.run(whisper_engine.load())
-            self._model = whisper_engine
-            self._model_type = "whisper_cpp"
-            return
-
-        # ── Whisper Turbo (transformers) ──
-        if engine_type == "whisper_turbo":
-            from transformers import pipeline
-
-            logger.info(f"Loading Whisper turbo on {device}...")
-            self._model = pipeline(
-                "automatic-speech-recognition",
-                model=model_id,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                device=device,
-            )
-            self._model_type = "whisper_turbo"
-            return
-
-        # ── 未匹配引擎 ──
-        raise ValueError(f"Unknown engine type: {engine_type} for model: {model_id}")
-    async def switch_model(self, model_name: str) -> dict:
-        """
-        切换到指定的 STT 模型
-
-        Args:
-            model_name: 模型名称 (如 "qwen_asr_mlx_native_small", "whisper_turbo")
-
-        Returns:
-            dict: 包含切换状态的字典
-        """
-        if model_name not in self.AVAILABLE_MODELS:
-            raise ValueError(f"Unknown model: {model_name}. Available: {list(self.AVAILABLE_MODELS.keys())}")
-
-        # 如果已经是当前模型且已加载，直接返回
-        if model_name == self.current_model_name and self._is_loaded:
-            logger.info(f"Model {model_name} is already loaded")
-            return {
-                "status": "success",
-                "message": f"Model {model_name} is already loaded",
-                "current_model": self.current_model_name,
-                "is_loaded": True,
-                "is_loading": False,
-            }
-
-        logger.info(f"Switching from {self.current_model_name} to {model_name}")
-
-        # 更新模型信息
-        self.current_model_name = model_name
-        self._model_info = self.AVAILABLE_MODELS[model_name]
-
-        # 重置状态
-        self._is_loaded = False
-        self._aligner_loaded = False
-        self._loading = False
-
-        # 释放旧模型内存
-        if self._model is not None:
-            import gc
-            import torch
-            del self._model
-            self._model = None
-            if torch.backends.mps.is_available():
-                torch.mps.empty_cache()
-            gc.collect()
-            logger.info("Old model memory released")
-
-        # 在后台异步加载新模型
-        async def load_in_background():
-            try:
-                success = await self.load(load_aligner=False)
-                if success:
-                    logger.info(f"Model {model_name} loaded successfully")
-                else:
-                    logger.error(f"Failed to load model {model_name}")
-            except Exception as e:
-                logger.error(f"Error loading model {model_name}: {e}")
-
-        # 启动后台加载任务
-        asyncio.create_task(load_in_background())
-
-        return {
-            "status": "success",
-            "message": f"Switching to {model_name}",
-            "current_model": self.current_model_name,
-            "is_loaded": False,
-            "is_loading": True,
-            "note": "Model is loading in background",
-        }
-
-    async def transcribe(
-        self,
-        audio_data: bytes,
-        language: str = "auto",
-        return_timestamps: bool = False
-    ) -> TranscriptionResult:
-        """转写音频"""
-        import numpy as np
-
-        start_time = time.time()
-        self.total_requests += 1
-
-        try:
-            # 确保模型已加载
-            if not self._is_loaded:
-                success = await self.load(load_aligner=return_timestamps)
-                if not success:
-                    raise RuntimeError("Failed to load STT model")
-
-            # 如果需要时间戳但 aligner 未加载，尝试加载
-            if return_timestamps and not self._aligner_loaded and getattr(self, "_model_type", None) != "whisper_cpp":
-                success = await self.load(load_aligner=True)
-                if not success:
-                    logger.warning("Failed to load ForcedAligner, returning without timestamps")
-                    return_timestamps = False
-
-            # 转换音频
-            audio_array = np.frombuffer(audio_data, dtype=np.int16)
-            audio_array = audio_array.astype(np.float32) / 32768.0
-            sample_rate = 16000
-
-            # 执行转写
-            loop = asyncio.get_event_loop()
-            lang = None if language == "auto" else language
-
-            # ── MLX 原生引擎 (mlx-audio) ── 必须在加载模型的同一线程执行
-            model_type = getattr(self, '_model_type', None)
-            if model_type == "qwen_asr_mlx_native":
-                import server.models.qwen3_asr_mlx_native as _mlx_engine
-                result = await self._model.transcribe(
-                    audio=(audio_array, sample_rate),
-                    language=lang or "auto",
-                    sample_rate=sample_rate,
-                )
-                text, detected_lang = result.text, result.language
-            else:
-                # ── Whisper MLX 引擎 ──
-                if getattr(self, '_model_type', None) == "whisper_mlx":
-                    import mlx_whisper
-                    model_id = self._model["model_id"]
-                    result = mlx_whisper.transcribe(
-                        audio_array,
-                        path_or_hf_repo=model_id,
-                        language=lang,
-                        return_timestamps=True,
-                    )
-                    return result.get("text", "").strip(), result.get("language", lang or "en")
-
-                # ── Whisper.cpp 引擎 ──
-                if getattr(self, '_model_type', None) == "whisper_cpp":
-                    import numpy as np
-                    # whisper.cpp 需要 bytes
-                    audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
-                    result = asyncio.run(self._model.transcribe(
-                        audio_data=audio_bytes,
-                        language=lang or "auto",
-                        sample_rate=sample_rate,
-                    ))
-                    return result.text, result.language
-
-                # ── Whisper Turbo (transformers) ──
-                if getattr(self, '_model_type', None) == "whisper_turbo":
-                    result = self._model(
-                        audio_array,
-                        generate_kwargs={"language": lang},
-                    )
-                    return result.get("text", "").strip(), lang or "en"
-
-                # ── Qwen3-ASR (transformers 或 MLX 环境) ──
-                results = self._model.transcribe(
-                    audio=(audio_array, sample_rate),
-                    language=lang,
-                )
-                if results and len(results) > 0:
-                    return results[0].text, results[0].language
-                return "", language
-            text = text.strip()
-
-            # 生成时间戳（如果需要）
-            timestamps = None
-            if return_timestamps and text and self._aligner_loaded and getattr(self, "_model_type", None) != "whisper_cpp":
-                timestamps = await self._generate_timestamps(
-                    audio_array, sample_rate, text, detected_lang or language
-                )
-
-            latency = (time.time() - start_time) * 1000
-            return TranscriptionResult(
-                text=text,
-                confidence=1.0,
-                language=detected_lang or language,
-                is_final=True,
-                stt_latency_ms=latency,
-                model=self.current_model_name,
-                timestamps=timestamps,
-            )
-        except Exception as e:
-            self.failed_requests += 1
-            logger.error(f"Transcription error: {e}", exc_info=True)
-            raise
-
-    async def _generate_timestamps(
-        self,
-        audio_array,
-        sample_rate: int,
-        text: str,
-        language: str
-    ) -> Optional[List[WordTimestamp]]:
-        """使用 ForcedAligner 生成词级别时间戳"""
-        import tempfile
-        import os
-
-        try:
-            # 保存音频到临时文件
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                tmp_path = tmp.name
-                # 使用 soundfile 写入音频
-                import soundfile as sf
-                sf.write(tmp_path, audio_array, sample_rate)
-
-            loop = asyncio.get_event_loop()
-
-            def _do_align():
-                results = self._aligner.align(
-                    audio=tmp_path,
-                    text=text,
-                    language=language if language != "auto" else "Chinese",
-                )
-                return results
-
-            results = await loop.run_in_executor(None, _do_align)
-
-            # 清理临时文件
-            try:
-                os.unlink(tmp_path)
-            except:
-                pass
-
-            # 转换结果格式
-            if results and hasattr(results, 'segments'):
-                timestamps = []
-                for segment in results.segments:
-                    for word_info in segment.get('words', []):
-                        timestamps.append(WordTimestamp(
-                            word=word_info.get('word', ''),
-                            start=word_info.get('start', 0.0),
-                            end=word_info.get('end', 0.0),
-                        ))
-                return timestamps if timestamps else None
-
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to generate timestamps: {e}")
-            return None
-
-    def is_loading(self) -> bool:
-        return self._loading
-
-    def is_model_loaded(self) -> bool:
-        return self._is_loaded
-
-    def is_aligner_loaded(self) -> bool:
-        return self._aligner_loaded
-
-    def get_stats(self) -> Dict[str, Any]:
-        return {
-            "total_requests": self.total_requests,
-            "failed_requests": self.failed_requests,
-            "active_connections": self._active_connections,
-        }
-
-    def increment_connections(self):
-        self._active_connections += 1
-
-    def decrement_connections(self):
-        self._active_connections = max(0, self._active_connections - 1)
 
 # ============== Diarization Engine ==============
 diarize_engine = DiarizationEngine() if DIARIZE_ENABLED else None
@@ -637,20 +193,33 @@ diarize_engine = DiarizationEngine() if DIARIZE_ENABLED else None
 # ============== FastAPI App ==============
 engine = STTEngine(default_model=STT_MODEL)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期:启动时后台加载模型,关闭时清理(FastAPI 推荐用法)"""
+    logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
+    logger.info(f"Default model: {STT_MODEL}")
+    # 后台加载模型（非阻塞）
+    asyncio.create_task(engine.load())
+    yield
+    logger.info("STT Service shutting down")
+
+
 app = FastAPI(
     title="Voice Input Framework - STT Service",
     description="独立的语音识别服务，使用 Qwen3-ASR",
     version="1.1.0",
+    lifespan=lifespan,
 )
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # 请求ID中间件
 @app.middleware("http")
@@ -666,25 +235,13 @@ async def request_id_middleware(request: Request, call_next):
         duration = (time.time() - start_time) * 1000
         logger.info(
             f"{request.method} {request.url.path} - {response.status_code} - {duration:.2f}ms",
-            extra={"request_id": request_id, "duration_ms": duration}
+            extra={"request_id": request_id, "duration_ms": duration},
         )
         return response
     except Exception as e:
         logger.error(f"Request failed: {e}", extra={"request_id": request_id})
         raise
 
-@app.on_event("startup")
-async def startup_event():
-    """启动时加载模型"""
-    logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
-    logger.info(f"Default model: {STT_MODEL}")
-    # 后台加载模型（非阻塞）
-    asyncio.create_task(engine.load())
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭时清理"""
-    logger.info("STT Service shutting down")
 
 @app.get("/health", response_model=HealthStatus)
 async def health_check():
@@ -701,20 +258,33 @@ async def health_check():
         diarize=diarize_engine.get_health() if diarize_engine else {"status": "disabled"},
     )
 
-@app.get("/models", response_model=List[ModelInfo])
+
+@app.get("/models", response_model=list[ModelInfo])
 async def list_models():
     """获取可用 STT 模型列表"""
     models = []
     for name, info in STTEngine.AVAILABLE_MODELS.items():
-        models.append(ModelInfo(
-            name=name,
-            description=f"STT model: {info['model_id']}",
-            is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
-            is_default=(name == engine.default_model),
-        ))
+        models.append(
+            ModelInfo(
+                name=name,
+                description=f"STT model: {info['model_id']}",
+                is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
+                is_default=(name == engine.default_model),
+            )
+        )
     return models
 
+
 # ============== LLM 转发 API ==============
+
+
+def _llm_error(message: str) -> dict:
+    """构造结构化 LLM 转发错误响应(M7:统一错误模型)"""
+    return ErrorResponse(
+        error_code="LLM_PROXY_ERROR",
+        error_message=message,
+    ).to_dict()
+
 
 @app.get("/llm/models")
 async def list_llm_models():
@@ -729,10 +299,11 @@ async def list_llm_models():
                     return {"models": data}
                 return data
             else:
-                return {"error": f"LLM server returned {resp.status_code}"}
+                return _llm_error(f"LLM server returned {resp.status_code}")
     except Exception as e:
         logger.error(f"Failed to get LLM models: {e}")
-        return {"error": str(e)}
+        return _llm_error(str(e))
+
 
 @app.post("/llm/models/select")
 async def select_llm_model(request: Request):
@@ -742,9 +313,7 @@ async def select_llm_model(request: Request):
         model_name = body.get("model_name", "")
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{LLM_SERVER_URL}/models/select",
-                data={"model_name": model_name},
-                timeout=30.0
+                f"{LLM_SERVER_URL}/models/select", data={"model_name": model_name}, timeout=30.0
             )
             if resp.status_code == 200:
                 # 持久化 LLM 模型选择
@@ -754,10 +323,11 @@ async def select_llm_model(request: Request):
                 logger.info(f"LLM model saved to state: {model_name}")
                 return resp.json()
             else:
-                return {"error": f"LLM server returned {resp.status_code}"}
+                return _llm_error(f"LLM server returned {resp.status_code}")
     except Exception as e:
         logger.error(f"Failed to select LLM model: {e}")
-        return {"error": str(e)}
+        return _llm_error(str(e))
+
 
 @app.get("/llm/health")
 async def llm_health():
@@ -767,12 +337,15 @@ async def llm_health():
             resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
             return resp.json()
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error(f"LLM health check failed: {e}")
+        return _llm_error(str(e))
+
 
 @app.get("/llm/enabled")
 async def get_llm_enabled():
     """获取 LLM 后处理是否启用"""
     return {"enabled": LLM_ENABLED}
+
 
 @app.put("/llm/enabled")
 async def set_llm_enabled(request: Request):
@@ -788,6 +361,7 @@ async def set_llm_enabled(request: Request):
     logger.info(f"LLM enabled set to {LLM_ENABLED} (persisted)")
     return {"enabled": LLM_ENABLED}
 
+
 # ============== LLM Prompt API ==============
 @app.get("/llm/prompt")
 async def get_llm_prompt():
@@ -797,9 +371,10 @@ async def get_llm_prompt():
             resp = await client.get(f"{LLM_SERVER_URL}/prompt", timeout=5.0)
             if resp.status_code == 200:
                 return resp.json()
-            return {"error": f"LLM server returned {resp.status_code}"}
+            return _llm_error(f"LLM server returned {resp.status_code}")
     except Exception as e:
-        return {"error": str(e)}
+        return _llm_error(str(e))
+
 
 @app.put("/llm/prompt")
 async def update_llm_prompt(request: Request):
@@ -807,16 +382,13 @@ async def update_llm_prompt(request: Request):
     try:
         body = await request.json()
         async with httpx.AsyncClient() as client:
-            resp = await client.put(
-                f"{LLM_SERVER_URL}/prompt",
-                json=body,
-                timeout=10.0
-            )
+            resp = await client.put(f"{LLM_SERVER_URL}/prompt", json=body, timeout=10.0)
             if resp.status_code == 200:
                 return resp.json()
-            return {"error": f"LLM server returned {resp.status_code}"}
+            return _llm_error(f"LLM server returned {resp.status_code}")
     except Exception as e:
-        return {"error": str(e)}
+        return _llm_error(str(e))
+
 
 @app.post("/models/select")
 async def select_stt_model(model_name: str = Form(...)):
@@ -835,7 +407,8 @@ async def select_stt_model(model_name: str = Form(...)):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error switching model: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e!s}")
+
 
 @app.get("/models/status/{model_name}")
 async def get_model_status(model_name: str):
@@ -855,11 +428,11 @@ async def get_model_status(model_name: str):
         "model_info": engine.AVAILABLE_MODELS.get(model_name, {}),
     }
 
+
 @app.post("/transcribe", response_model=TranscriptionResult)
 async def transcribe(
     file: UploadFile = File(...),
     language: str = Form("auto"),
-    return_timestamps: bool = Form(False),
 ):
     """转写音频文件"""
     req_id = request_id_ctx.get()
@@ -868,12 +441,12 @@ async def transcribe(
         result = await engine.transcribe(
             audio_content,
             language=language,
-            return_timestamps=return_timestamps
         )
         return result
     except Exception as e:
         logger.error(f"Transcription error: {e}", extra={"request_id": req_id})
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
@@ -881,6 +454,14 @@ async def websocket_stream(websocket: WebSocket):
     await websocket.accept()
     engine.increment_connections()
     logger.info("WebSocket connection accepted")
+
+    async def _safe_send(payload: dict) -> bool:
+        """发送消息;客户端已断开时返回 False(不抛异常)"""
+        try:
+            await websocket.send_text(json.dumps(payload))
+            return True
+        except (RuntimeError, WebSocketDisconnect, Exception):  # noqa: BLE001
+            return False
 
     # 获取 LLM 服务器状态
     llm_info = {"llm_enabled": LLM_ENABLED, "llm_model": None}
@@ -891,24 +472,23 @@ async def websocket_stream(websocket: WebSocket):
                 llm_data = llm_resp.json()
                 llm_info = {
                     "llm_enabled": LLM_ENABLED,
-                    "llm_model": llm_data.get("current_model", "unknown")
+                    "llm_model": llm_data.get("current_model", "unknown"),
                 }
     except Exception as e:
         logger.debug(f"Failed to get LLM status: {e}")
 
     # 发送就绪消息
-    await websocket.send_text(json.dumps({
-        "type": "ready",
-        "model": engine.current_model_name,
-        "is_loading": engine.is_loading(),
-        "aligner_loaded": engine.is_aligner_loaded(),
-        "llm_enabled": llm_info["llm_enabled"],
-        "llm_model": llm_info["llm_model"],
-    }))
+    await _safe_send(
+        {
+            "type": "ready",
+            "model": engine.current_model_name,
+            "is_loading": engine.is_loading(),
+            "llm_enabled": llm_info["llm_enabled"],
+            "llm_model": llm_info["llm_model"],
+        }
+    )
 
-    return_timestamps = False
     audio_queue = asyncio.Queue()
-    stream_finished = asyncio.Event()
     stream_error = None
     language = "auto"
 
@@ -921,7 +501,7 @@ async def websocket_stream(websocket: WebSocket):
                 if chunk is None:  # 结束标记
                     break
                 yield chunk
-        except asyncio.TimeoutError:
+        except TimeoutError:
             stream_error = "Audio receive timeout"
         except Exception as e:
             stream_error = str(e)
@@ -941,18 +521,18 @@ async def websocket_stream(websocket: WebSocket):
                         await audio_queue.put(base64.b64decode(audio_b64))
 
                 elif msg_type == "config":
-                    return_timestamps = data.get("return_timestamps", False)
                     language = data.get("language", "auto")
-                    await websocket.send_text(json.dumps({
-                        "type": "config_ack",
-                        "return_timestamps": return_timestamps,
-                        "language": language,
-                    }))
+                    await _safe_send(
+                        {
+                            "type": "config_ack",
+                            "language": language,
+                        }
+                    )
 
                 elif msg_type in ("end", "stop"):
                     await audio_queue.put(None)  # 通知 stream 结束
                     break
-        except asyncio.TimeoutError:
+        except TimeoutError:
             stream_error = "WebSocket receive timeout"
         except WebSocketDisconnect:
             await audio_queue.put(None)
@@ -974,59 +554,78 @@ async def websocket_stream(websocket: WebSocket):
             all_audio.extend(chunk)
 
     if all_audio:
+        error_sent = False
         try:
             result = await asyncio.wait_for(
                 engine.transcribe(
                     bytes(all_audio),
                     language=language,
                 ),
-                timeout=600.0
+                timeout=600.0,
             )
 
             # 发送 STT 结果
-            await websocket.send_text(json.dumps({
-                "type": "stt_result",
-                "text": result.text,
-                "stt_latency_ms": result.stt_latency_ms,
-                "confidence": result.confidence,
-                "language": result.language,
-                "model": result.model,
-            }))
+            await _safe_send(
+                {
+                    "type": "stt_result",
+                    "text": result.text,
+                    "stt_latency_ms": result.stt_latency_ms,
+                    "confidence": result.confidence,
+                    "language": result.language,
+                    "model": result.model,
+                }
+            )
 
             # LLM 后处理
             if result.text.strip() and LLM_ENABLED:
-                await websocket.send_text(json.dumps({
-                    "type": "llm_start", "text": result.text[:50],
-                }))
+                await _safe_send(
+                    {
+                        "type": "llm_start",
+                        "text": result.text[:50],
+                    }
+                )
                 processed_text, llm_latency = await call_llm_server(result.text)
             else:
                 processed_text = result.text
                 llm_latency = 0
 
-            await websocket.send_text(json.dumps({
-                "type": "result",
-                "text": processed_text,
-                "confidence": result.confidence,
-                "language": result.language,
-                "is_final": True,
-                "stt_latency_ms": result.stt_latency_ms,
-                "llm_latency_ms": llm_latency,
-                "model": result.model,
-            }))
+            await _safe_send(
+                {
+                    "type": "result",
+                    "text": processed_text,
+                    "confidence": result.confidence,
+                    "language": result.language,
+                    "is_final": True,
+                    "stt_latency_ms": result.stt_latency_ms,
+                    "llm_latency_ms": llm_latency,
+                    "model": result.model,
+                }
+            )
 
-        except asyncio.TimeoutError:
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "error_code": "E5002", "error_message": "转写超时",
-            }))
+        except TimeoutError:
+            error_sent = True
+            await _safe_send(
+                {
+                    "type": "error",
+                    "error_code": "E5002",
+                    "error_message": "转写超时",
+                }
+            )
         except Exception as e:
             logger.error(f"Transcription error: {e}")
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "error_code": "E5001", "error_message": str(e),
-            }))
+            error_sent = True
+            await _safe_send(
+                {
+                    "type": "error",
+                    "error_code": "E5001",
+                    "error_message": str(e),
+                }
+            )
 
-    await websocket.send_text(json.dumps({"type": "done"}))
+    # 已发送 error 视为终态,不再发 done(避免客户端断开后 send 报错);
+    # all_audio 为空时也照常发 done(与旧行为一致)
+    if not (all_audio and error_sent):
+        await _safe_send({"type": "done"})
 
     try:
         await websocket.close()
@@ -1036,6 +635,7 @@ async def websocket_stream(websocket: WebSocket):
 
 
 # ============== Diarization API ==============
+
 
 @app.get("/diarize/models")
 async def list_diarize_models():
@@ -1059,9 +659,9 @@ async def list_diarize_models():
 @app.post("/diarize")
 async def diarize(
     file: UploadFile = File(...),
-    num_speakers: Optional[int] = Form(None),
-    min_speakers: Optional[int] = Form(None),
-    max_speakers: Optional[int] = Form(None),
+    num_speakers: int | None = Form(None),
+    min_speakers: int | None = Form(None),
+    max_speakers: int | None = Form(None),
 ):
     """对上传的音频文件进行说话人分离"""
     if not diarize_engine:
@@ -1069,6 +669,7 @@ async def diarize(
 
     req_id = request_id_ctx.get()
     import tempfile
+
     import aiofiles
 
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
@@ -1080,8 +681,10 @@ async def diarize(
         async with aiofiles.open(tmp_path, "wb") as f:
             await f.write(content)
 
-        logger.info(f"Starting diarization: {file.filename} ({len(content)} bytes)",
-                    extra={"request_id": req_id})
+        logger.info(
+            f"Starting diarization: {file.filename} ({len(content)} bytes)",
+            extra={"request_id": req_id},
+        )
 
         result = await diarize_engine.diarize(
             audio_path=tmp_path,
@@ -1093,16 +696,18 @@ async def diarize(
         result["filename"] = file.filename
         result["file_size"] = len(content)
 
-        logger.info(f"Diarization complete: {result['num_speakers']} speakers, "
-                    f"{result['duration']:.0f}s, {result['inference_latency_ms']:.0f}ms",
-                    extra={"request_id": req_id})
+        logger.info(
+            f"Diarization complete: {result['num_speakers']} speakers, "
+            f"{result['duration']:.0f}s, {result['inference_latency_ms']:.0f}ms",
+            extra={"request_id": req_id},
+        )
 
         return result
 
     except ImportError as e:
         raise HTTPException(
             status_code=501,
-            detail=f"pyannote.audio not installed: {e}. Run: pip install pyannote.audio==3.3.3"
+            detail=f"pyannote.audio not installed: {e}. Run: pip install pyannote.audio==3.3.3",
         )
     except Exception as e:
         logger.error(f"Diarization error: {e}", exc_info=True, extra={"request_id": req_id})
@@ -1116,6 +721,9 @@ async def diarize(
 
 def main():
     """主函数"""
+    from shared.version_check import check_python_version
+
+    check_python_version()
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
     uvicorn.run(
         app,
@@ -1123,6 +731,7 @@ def main():
         port=STT_PORT,
         log_level=LOG_LEVEL.lower(),
     )
+
 
 if __name__ == "__main__":
     main()

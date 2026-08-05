@@ -5,7 +5,14 @@ use tauri::{window::Color, Emitter, Manager, WebviewWindowBuilder};
 pub const INDICATOR_LABEL: &str = "indicator";
 
 pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
-    let _ = hide(app);
+    // 复用已存在的窗口:close 是异步的,close 后立刻同 label 重建会
+    // "window already exists" 静默失败 → 胶囊不显示。复用 + 重置页面。
+    if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("indicator-reset", ());
+        return Ok(());
+    }
     let (sw, sh) = screen_center_bottom(app);
     let x = sw - 110;
     let y = sh - 100;
@@ -20,15 +27,40 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
         .shadow(false)
         .title("");
 
-    #[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]
-    let window = builder.transparent(true).build().map_err(|e| format!("Indicator failed: {}", e))?;
-    #[cfg(not(any(not(target_os = "macos"), feature = "macos-private-api")))]
+    // macOS 用不透明深色窗口:透明窗口(Tauri 2 + WKWebView)内容经常
+    // 不渲染(已知问题),导致全透明空窗口完全不可见。胶囊 HTML 的背景
+    // 色与窗口背景色一致(rgb(15,15,25)),视觉上等同圆角胶囊。
+    #[cfg(target_os = "macos")]
     let window = builder.build().map_err(|e| format!("Indicator failed: {}", e))?;
+    #[cfg(not(target_os = "macos"))]
+    let window = builder.transparent(true).build().map_err(|e| format!("Indicator failed: {}", e))?;
 
-    #[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]
-    { let _ = window.set_background_color(Some(Color(0, 0, 0, 0))); }
-    #[cfg(not(any(not(target_os = "macos"), feature = "macos-private-api")))]
+    #[cfg(target_os = "macos")]
     { let _ = window.set_background_color(Some(Color(15, 15, 25, 255))); }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = window.set_background_color(Some(Color(0, 0, 0, 0))); }
+
+    let _ = window.show();
+    let _ = window.set_focus();
+    eprintln!(
+        "[indicator] built: screen=({},{}) pos=({},{}), url={:?}",
+        sw, sh, x, y, tauri::WebviewUrl::App("indicator.html".into())
+    );
+
+    // 诊断:1s 后读窗口标题 + 实际 URL,判断 indicator.html 是否成功加载
+    // (页面加载后会把标题改成 "indicator-loaded")
+    let probe = window.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        match probe.title() {
+            Ok(t) => eprintln!("[indicator] title after 1s: {:?}", t),
+            Err(e) => eprintln!("[indicator] title probe failed: {:?}", e),
+        }
+        match probe.url() {
+            Ok(u) => eprintln!("[indicator] url: {}", u),
+            Err(e) => eprintln!("[indicator] url probe failed: {:?}", e),
+        }
+    });
 
     Ok(())
 }

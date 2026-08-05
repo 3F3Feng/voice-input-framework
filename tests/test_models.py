@@ -2,37 +2,34 @@
 Tests for STT Server - Model Classes (no external dependencies)
 这些测试不依赖 uvicorn 等外部库，可以独立运行。
 """
+
 import pytest
 from pydantic import BaseModel
-from typing import List, Optional
+
+from shared.data_types import ErrorResponse
+
 
 # Define models locally for testing (avoid import issues)
-class WordTimestamp(BaseModel):
-    """词级别时间戳"""
-    word: str
-    start: float
-    end: float
-
-
 class TranscriptionResult(BaseModel):
     """转写结果"""
+
     text: str
     confidence: float = 1.0
     language: str = "auto"
     is_final: bool = True
     stt_latency_ms: float = 0.0
     model: str = ""
-    timestamps: Optional[List[WordTimestamp]] = None
 
 
 class TranscriptionRequest(BaseModel):
     """转写请求"""
+
     language: str = "auto"
-    return_timestamps: bool = False
 
 
 class ModelInfo(BaseModel):
     """模型信息"""
+
     name: str
     description: str = ""
     is_loaded: bool = False
@@ -41,55 +38,15 @@ class ModelInfo(BaseModel):
 
 class HealthStatus(BaseModel):
     """健康状态"""
+
     status: str
     version: str = "1.1.0"
     uptime_seconds: float
     current_model: str
-    loaded_models: List[str]
+    loaded_models: list[str]
     active_connections: int = 0
     total_requests: int = 0
     failed_requests: int = 0
-
-
-class ErrorResponse(BaseModel):
-    """错误响应"""
-    error_code: str
-    error_message: str
-    request_id: str
-
-
-class TestWordTimestamp:
-    """Test WordTimestamp model"""
-
-    def test_basic_creation(self):
-        """Test basic timestamp creation"""
-        ts = WordTimestamp(word="你好", start=0.0, end=0.5)
-        assert ts.word == "你好"
-        assert ts.start == 0.0
-        assert ts.end == 0.5
-
-    def test_json_serialization(self):
-        """Test JSON serialization"""
-        ts = WordTimestamp(word="test", start=1.0, end=2.0)
-        json_data = ts.model_dump()
-        assert json_data["word"] == "test"
-        assert json_data["start"] == 1.0
-        assert json_data["end"] == 2.0
-
-    def test_negative_values(self):
-        """Test negative time values"""
-        ts = WordTimestamp(word="test", start=-1.0, end=0.0)
-        assert ts.start == -1.0  # Pydantic allows negative values by default
-
-    def test_chinese_characters(self):
-        """Test Chinese character handling"""
-        ts = WordTimestamp(word="你好世界", start=0.0, end=1.0)
-        assert ts.word == "你好世界"
-
-    def test_empty_word(self):
-        """Test empty word handling"""
-        ts = WordTimestamp(word="", start=0.0, end=0.5)
-        assert ts.word == ""
 
 
 class TestTranscriptionResult:
@@ -102,20 +59,6 @@ class TestTranscriptionResult:
         assert result.confidence == 1.0
         assert result.language == "auto"
         assert result.is_final is True
-        assert result.timestamps is None
-
-    def test_result_with_timestamps(self):
-        """Test result with timestamps"""
-        timestamps = [
-            WordTimestamp(word="Hello", start=0.0, end=0.5),
-            WordTimestamp(word="world", start=0.5, end=1.0),
-        ]
-        result = TranscriptionResult(
-            text="Hello world",
-            timestamps=timestamps
-        )
-        assert result.timestamps is not None
-        assert len(result.timestamps) == 2
 
     def test_result_with_all_fields(self):
         """Test result with all fields"""
@@ -126,7 +69,6 @@ class TestTranscriptionResult:
             is_final=True,
             stt_latency_ms=150.5,
             model="qwen_asr_mlx_native_small",
-            timestamps=[WordTimestamp(word="test", start=0.0, end=0.5)]
         )
         assert result.confidence == 0.95
         assert result.language == "zh"
@@ -148,13 +90,11 @@ class TestTranscriptionRequest:
         """Test default values"""
         req = TranscriptionRequest()
         assert req.language == "auto"
-        assert req.return_timestamps is False
 
     def test_custom_values(self):
         """Test custom values"""
-        req = TranscriptionRequest(language="zh", return_timestamps=True)
+        req = TranscriptionRequest(language="zh")
         assert req.language == "zh"
-        assert req.return_timestamps is True
 
     def test_all_languages(self):
         """Test various language codes"""
@@ -231,29 +171,26 @@ class TestHealthStatus:
 
 
 class TestErrorResponse:
-    """Test ErrorResponse model"""
+    """Test shared.data_types.ErrorResponse"""
 
     def test_error_response(self):
         """Test ErrorResponse creation"""
         error = ErrorResponse(
             error_code="E5001",
             error_message="Model loading failed",
-            request_id="test-123",
         )
         assert error.error_code == "E5001"
         assert error.error_message == "Model loading failed"
-        assert error.request_id == "test-123"
 
-    def test_error_json(self):
-        """Test error JSON serialization"""
+    def test_error_to_dict(self):
+        """Test error serialization"""
         error = ErrorResponse(
             error_code="E5002",
             error_message="Timeout",
-            request_id="abc-def",
         )
-        json_data = error.model_dump()
+        json_data = error.to_dict()
         assert json_data["error_code"] == "E5002"
-        assert json_data["request_id"] == "abc-def"
+        assert json_data["error_message"] == "Timeout"
 
 
 class TestSTTEngineConstants:

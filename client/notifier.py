@@ -28,16 +28,21 @@ if IS_WINDOWS:
     # winotify 需要开始菜单快捷键才能显示通知，plyer 没有这个限制
     try:
         from plyer import notification
+
         _notifier_backend = "plyer"
         logger.info("使用 plyer 作为 Windows 通知后端")
     except ImportError:
         # 备选: winotify
         try:
             from winotify import Notification, audio
+
             # 注册 App ID
             try:
                 import ctypes
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("voiceinput.framework.v1")
+
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    "voiceinput.framework.v1"
+                )
             except Exception:
                 pass
             _notifier_backend = "winotify"
@@ -48,6 +53,7 @@ if IS_WINDOWS:
             # 最后备选: win10toast
             try:
                 from win10toast import ToastNotifier
+
                 _notifier_backend = "win10toast"
                 logger.info("使用 win10toast 作为 Windows 通知后端")
             except ImportError:
@@ -69,6 +75,7 @@ elif IS_LINUX:
         # 备选: plyer
         try:
             from plyer import notification
+
             _notifier_backend = "plyer"
             logger.info("使用 plyer 作为 Linux 通知后端")
         except ImportError:
@@ -97,21 +104,21 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
         if _notifier_backend == "plyer":
             # Plyer 跨平台通知
             from plyer import notification
-            
+
             # Windows: 设置 App User Model ID 避免显示 Python 包名
             if IS_WINDOWS:
                 try:
                     import ctypes
+
                     # 注册应用 ID
-                    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("voiceinput.framework.v1")
+                    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                        "voiceinput.framework.v1"
+                    )
                 except Exception:
                     pass
-            
+
             notification.notify(
-                title=title,
-                message=message,
-                app_name="Voice Input",
-                timeout=timeout
+                title=title, message=message, app_name="Voice Input", timeout=timeout
             )
             logger.info(f"plyer 通知已发送: {title} - {message}")
             return True
@@ -119,10 +126,14 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
         elif _notifier_backend == "winotify":
             # Windows 10+ Toast 通知
             from winotify import Notification, audio
+
             # 确保 App ID 已注册
             try:
                 import ctypes
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("voiceinput.framework.v1")
+
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    "voiceinput.framework.v1"
+                )
             except Exception:
                 pass
 
@@ -131,7 +142,7 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
                 title=title,
                 msg=message,
                 duration="short",  # short, long
-                icon=None
+                icon=None,
             )
             toast.set_audio(audio.Default, loop=False)
             toast.show()
@@ -141,26 +152,18 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
         elif _notifier_backend == "win10toast":
             # Windows 10 Toast 通知 (旧版)
             from win10toast import ToastNotifier
+
             toaster = ToastNotifier()
-            toaster.show_toast(
-                title,
-                message,
-                duration=timeout,
-                threaded=True
-            )
+            toaster.show_toast(title, message, duration=timeout, threaded=True)
             logger.info(f"win10toast 通知已发送: {title} - {message}")
             return True
 
         elif _notifier_backend == "osascript":
             # macOS AppleScript 通知
-            script = f'''
+            script = f"""
             display notification "{message}" with title "{title}" sound name "default"
-            '''
-            result = subprocess.run(
-                ["osascript", "-e", script],
-                capture_output=True,
-                text=True
-            )
+            """
+            result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
             if result.returncode == 0:
                 logger.info(f"osascript 通知已发送: {title} - {message}")
                 return True
@@ -173,7 +176,7 @@ def send_notification(title: str, message: str, timeout: int = 5) -> bool:
             result = subprocess.run(
                 ["notify-send", "-t", str(timeout * 1000), title, message],
                 capture_output=True,
-                text=True
+                text=True,
             )
             if result.returncode == 0:
                 logger.info(f"notify-send 通知已发送: {title} - {message}")
@@ -203,10 +206,10 @@ def is_notification_available() -> bool:
 
 # 导出
 __all__ = [
-    "send_notification",
+    "IS_LINUX",
+    "IS_MACOS",
+    "IS_WINDOWS",
     "get_notifier_backend",
     "is_notification_available",
-    "IS_WINDOWS",
-    "IS_MACOS",
-    "IS_LINUX"
+    "send_notification",
 ]

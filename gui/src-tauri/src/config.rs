@@ -92,7 +92,8 @@ impl Default for VoiceInputConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig {
-                host: "localhost".into(),
+                // 用 127.0.0.1 而非 localhost:避免 Windows IPv6(::1)优先解析导致连接延迟
+                host: "127.0.0.1".into(),
                 port: 6544,
             },
             hotkey: HotkeyConfig {
@@ -190,7 +191,7 @@ impl VoiceInputConfig {
                     .server
                     .as_ref()
                     .and_then(|s| s.host.clone())
-                    .unwrap_or_else(|| "localhost".into()),
+                    .unwrap_or_else(|| "127.0.0.1".into()),
                 port: old.server.as_ref().and_then(|s| s.port).unwrap_or(6544),
             },
             hotkey: HotkeyConfig {

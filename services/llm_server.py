@@ -11,8 +11,8 @@ import logging
 import os
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
 
 import uvicorn
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -45,6 +45,7 @@ DEFAULT_PROMPT = """你是一个语音输入后处理助手。
 
 只返回优化后的文本，不要额外解释。"""
 
+
 def load_prompt() -> str:
     """加载提示词"""
     logger.info(f"Loading prompt from {PROMPT_FILE}")
@@ -55,6 +56,7 @@ def load_prompt() -> str:
             logger.warning(f"Failed to load prompt file: {e}")
     return DEFAULT_PROMPT
 
+
 def save_prompt(prompt: str) -> bool:
     """保存提示词"""
     try:
@@ -64,11 +66,14 @@ def save_prompt(prompt: str) -> bool:
         logger.error(f"Failed to save prompt file: {e}")
         return False
 
+
 # ============== Data Models ==============
+
 
 class ProcessRequest(BaseModel):
     text: str
     options: dict = {}
+
 
 class ProcessResult(BaseModel):
     text: str
@@ -77,22 +82,26 @@ class ProcessResult(BaseModel):
     model: str
     success: bool = True
 
+
 class ModelInfo(BaseModel):
     name: str
     description: str = ""
     is_loaded: bool = False
     is_current: bool = False
 
+
 class HealthStatus(BaseModel):
     status: str
     version: str = "1.0.0"
     uptime_seconds: float
     current_model: str
-    loaded_models: List[str]
+    loaded_models: list[str]
     active_connections: int = 0
     is_processing: bool = False
 
+
 # ============== LLM Engine ==============
+
 
 class LLMEngine:
     """LLM 引擎管理器"""
@@ -132,7 +141,7 @@ class LLMEngine:
         self._processing = False
         self.start_time = time.time()
 
-    async def load(self, model_name: Optional[str] = None) -> bool:
+    async def load(self, model_name: str | None = None) -> bool:
         """加载模型"""
         target_model = model_name or self.default_model
         model_id = self.MODEL_IDS.get(target_model)
@@ -171,6 +180,7 @@ class LLMEngine:
         """同步加载模型"""
         try:
             import mlx_lm
+
             self._model, self._tokenizer = mlx_lm.load(model_id)
             return True
         except Exception as e:
@@ -197,11 +207,11 @@ class LLMEngine:
             # 加载提示词
             system_prompt = load_prompt()
             logger.info(f"Using prompt: {system_prompt[:200]}...")
-            
+
             # 构建消息
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
+                {"role": "user", "content": text},
             ]
 
             prompt = self._tokenizer.apply_chat_template(
@@ -220,65 +230,97 @@ class LLMEngine:
                 tokenizer=self._tokenizer,
                 prompt=prompt,
                 max_tokens=256,
-                
             )
 
             # 清理响应 - 移除思考标签
             import re
+
             # 移除 <think>...</think> 标签
-            cleaned = re.sub(r'<think>[\\s\\S]*?</think>', '', response)
+            cleaned = re.sub(r"<think>[\\s\\S]*?</think>", "", response)
             # 移除单独的 <think> 或 </think> 标签
-            cleaned = re.sub(r'</?think>', '', cleaned)
+            cleaned = re.sub(r"</?think>", "", cleaned)
             # 处理 Thinking Process 或分析输出
             # 检查是否包含分析标记
-            has_analysis = 'Thinking Process:' in cleaned or 'Analyze the Request:' in cleaned or 'Process the Input:' in cleaned
-            
+            has_analysis = (
+                "Thinking Process:" in cleaned
+                or "Analyze the Request:" in cleaned
+                or "Process the Input:" in cleaned
+            )
+
             if has_analysis:
                 # 方法1: 尝试找 "输出：" 或 "Output:" 后的内容
-                for marker in ['输出：', 'Output:', 'Construct Output:', 'Final Output:']:
+                for marker in ["输出：", "Output:", "Construct Output:", "Final Output:"]:
                     if marker in cleaned:
                         parts = cleaned.split(marker)
                         if len(parts) > 1:
                             # 取最后一个标记后的内容
                             potential = parts[-1].strip()
                             # 如果内容太长，可能还包含分析，继续分割
-                            lines = potential.split('\n')
+                            lines = potential.split("\n")
                             for line in lines:
                                 line = line.strip()
                                 # 找第一个实际的中文输出行（不是英文分析）
-                                if line and len(line) < 100 and not line.startswith(('1.', '2.', '3.', '4.', '5.', '*', '-')):
-                                    if not any(en in line for en in ['Analyze', 'Process', 'Rules:', 'Task:', 'Role:', 'Input']):
+                                if (
+                                    line
+                                    and len(line) < 100
+                                    and not line.startswith(
+                                        ("1.", "2.", "3.", "4.", "5.", "*", "-")
+                                    )
+                                ):
+                                    if not any(
+                                        en in line
+                                        for en in [
+                                            "Analyze",
+                                            "Process",
+                                            "Rules:",
+                                            "Task:",
+                                            "Role:",
+                                            "Input",
+                                        ]
+                                    ):
                                         cleaned = line
                                         break
                             break
                 else:
                     # 方法2: 如果没有找到输出标记，从后往前找第一行中文
-                    lines = cleaned.split('\n')
+                    lines = cleaned.split("\n")
                     for line in reversed(lines):
                         line = line.strip()
                         # 找包含中文的行，且不是分析内容
                         if line and len(line) < 100:
-                            if not line.startswith(('1.', '2.', '3.', '4.', '5.', '*', '-', '**')):
-                                if not any(en in line for en in ['Analyze', 'Process', 'Rules:', 'Task:', 'Role:', 'Input', 'Thinking', 'Construct']):
+                            if not line.startswith(("1.", "2.", "3.", "4.", "5.", "*", "-", "**")):
+                                if not any(
+                                    en in line
+                                    for en in [
+                                        "Analyze",
+                                        "Process",
+                                        "Rules:",
+                                        "Task:",
+                                        "Role:",
+                                        "Input",
+                                        "Thinking",
+                                        "Construct",
+                                    ]
+                                ):
                                     cleaned = line
                                     break
-            
+
             # 移除 markdown 标记和引号
-            cleaned = cleaned.replace('**', '')
-            cleaned = cleaned.replace('"', '')
-            cleaned = cleaned.replace("'", '')
+            cleaned = cleaned.replace("**", "")
+            cleaned = cleaned.replace('"', "")
+            cleaned = cleaned.replace("'", "")
             cleaned = cleaned.strip()
-            
+
             # 处理重复内容：如果有多行相同内容，只保留一行
-            lines = cleaned.split('\n')
+            lines = cleaned.split("\n")
             unique_lines = []
             for line in lines:
                 line = line.strip()
                 if line and line not in unique_lines:
                     unique_lines.append(line)
-            cleaned = ' '.join(unique_lines)
+            cleaned = " ".join(unique_lines)
             # 移除开头的 \nquirer 或 thinker
-            cleaned = re.sub(r'^\\s*(?:quirer|thinker)\\s*', '', cleaned)
+            cleaned = re.sub(r"^\\s*(?:quirer|thinker)\\s*", "", cleaned)
             cleaned = cleaned.strip()
 
             latency = (time.time() - start_time) * 1000
@@ -317,6 +359,7 @@ class LLMEngine:
     def is_processing(self) -> bool:
         return self._processing
 
+
 # ============== FastAPI App ==============
 
 # 配置
@@ -327,33 +370,34 @@ LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
 # 初始化引擎
 engine = LLMEngine(default_model=LLM_MODEL)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期:启动时后台加载模型,关闭时清理(FastAPI 推荐用法)"""
+    logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
+    logger.info(f"Default model: {LLM_MODEL}")
+    # 后台加载模型(非阻塞)
+    asyncio.create_task(engine.load())
+    yield
+    logger.info("LLM Service shutting down")
+
+
 app = FastAPI(
     title="Voice Input Framework - LLM Service",
     description="独立的文本后处理服务,使用 MLX-LM",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-async def startup_event():
-    """启动时加载模型"""
-    logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
-    logger.info(f"Default model: {LLM_MODEL}")
-    # 后台加载模型(非阻塞)
-    asyncio.create_task(engine.load())
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭时清理"""
-    logger.info("LLM Service shutting down")
 
 @app.get("/health", response_model=HealthStatus)
 async def health_check():
@@ -368,18 +412,22 @@ async def health_check():
         is_processing=engine.is_processing(),
     )
 
-@app.get("/models", response_model=List[ModelInfo])
+
+@app.get("/models", response_model=list[ModelInfo])
 async def list_models():
     """获取可用模型列表"""
     models = []
     for name in LLMEngine.AVAILABLE_MODELS:
-        models.append(ModelInfo(
-            name=name,
-            description=f"LLM model: {LLMEngine.MODEL_IDS.get(name, name)}",
-            is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
-            is_current=(name == engine.current_model_name),
-        ))
+        models.append(
+            ModelInfo(
+                name=name,
+                description=f"LLM model: {LLMEngine.MODEL_IDS.get(name, name)}",
+                is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
+                is_current=(name == engine.current_model_name),
+            )
+        )
     return models
+
 
 @app.post("/models/select")
 async def select_model(model_name: str = Form(...)):
@@ -395,6 +443,7 @@ async def select_model(model_name: str = Form(...)):
     except Exception as e:
         logger.error(f"Error switching model: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/process", response_model=ProcessResult)
 async def process_text(request: ProcessRequest):
@@ -414,11 +463,13 @@ async def process_text(request: ProcessRequest):
         logger.error(f"Process error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ============== Prompt Management API ==============
 @app.get("/prompt")
 async def get_prompt():
     """获取当前提示词"""
     return {"prompt": load_prompt()}
+
 
 @app.put("/prompt")
 async def update_prompt(request: Request):
@@ -432,8 +483,12 @@ async def update_prompt(request: Request):
         return {"status": "success"}
     raise HTTPException(status_code=500, detail="Failed to save prompt")
 
+
 def main():
     """主函数"""
+    from shared.version_check import check_python_version
+
+    check_python_version()
     logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
     uvicorn.run(
         app,
@@ -441,6 +496,7 @@ def main():
         port=LLM_PORT,
         log_level=_log_level.lower(),
     )
+
 
 if __name__ == "__main__":
     main()

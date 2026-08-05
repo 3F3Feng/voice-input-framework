@@ -4,17 +4,16 @@ Voice Input Framework - STT 引擎基类
 定义所有 STT 引擎必须实现的接口。
 """
 
-from abc import ABC, abstractmethod
-from typing import AsyncIterator
 import asyncio
 import logging
+from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
 
 class STTEngineError(Exception):
     """STT 引擎相关错误"""
-    pass
 
 
 class BaseSTTEngine(ABC):
@@ -38,12 +37,10 @@ class BaseSTTEngine(ABC):
     @abstractmethod
     async def load(self) -> None:
         """加载模型"""
-        pass
     
     @abstractmethod
     async def unload(self) -> None:
         """卸载模型"""
-        pass
     
     @abstractmethod
     async def transcribe(
@@ -53,7 +50,6 @@ class BaseSTTEngine(ABC):
         sample_rate: int = 16000,
     ) -> "TranscriptionResult":
         """转写音频数据"""
-        pass
     
     @abstractmethod
     async def transcribe_stream(
@@ -63,7 +59,6 @@ class BaseSTTEngine(ABC):
         sample_rate: int = 16000,
     ) -> AsyncIterator["TranscriptionResult"]:
         """流式转写音频流"""
-        pass
     
     async def transcribe_with_lock(
         self,
