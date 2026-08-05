@@ -28,3 +28,10 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 rdev = "0.5"
 base64 = "0.22"
+
+# macOS 专用:CGEventTap 监听快捷键(替代 rdev——rdev 的 macOS 后端在
+# 事件回调里调 TSMGetInputSourceProperty,macOS 15+ 非主线程调用会
+# SIGTRAP 崩溃,与 Python 端 pynput 崩溃同源)
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.23"
+core-foundation = "0.9"
