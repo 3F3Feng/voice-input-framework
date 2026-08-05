@@ -51,6 +51,7 @@ class VoiceInputApp:
         self.selected_mic: int | None = None
         self._audio_devices: dict = {}  # 设备名 → 设备 id(macOS UI 用名称选择)
         self._frontmost_app: str | None = None  # 录音时的前台应用(粘贴前激活)
+        self._frontmost_activated = False  # 主线程 NS 版激活是否成功(粘贴用)
 
         # UI
         self.window: MainWindow | None = None
@@ -160,14 +161,9 @@ class VoiceInputApp:
         if self._hotkey_pressed:
             return  # 去抖:已处于录音状态,忽略重复触发
         self._hotkey_pressed = True
-        # 预取前台应用:NSWorkspace 公共 API 毫秒级(不阻塞录音启动);
-        # 粘贴时直接用,省去 osascript 查询(1.5s+)的等待。
+        # 前台应用预取已移到主线程 _on_recording_started(AppKit 只能
+        # 主线程调用,asyncio 线程调 NSWorkspace 会死锁)
         self._frontmost_app = None
-        if sys.platform == "darwin":
-            try:
-                self._frontmost_app = self._get_frontmost_app_fast()
-            except Exception:  # noqa: BLE001
-                self._frontmost_app = None
         if self.selected_mic is not None:
             self.audio.selected_device = self.selected_mic
         # 先发"录音开始"事件(立即显示指示器),再启动音频流——
@@ -218,6 +214,13 @@ class VoiceInputApp:
         if getattr(self, "indicators", None):
             self.indicators.show_recording()
         self._lower_main_window()
+        # 主线程预取前台应用(NSWorkspace 毫秒级;粘贴时直接用,
+        # 省去 osascript 查询)。只能在主线程调 AppKit。
+        if sys.platform == "darwin":
+            try:
+                self._frontmost_app = self._get_frontmost_app_fast()
+            except Exception:  # noqa: BLE001
+                self._frontmost_app = None
 
     def _on_recording_stopped(self):
         if getattr(self, "indicators", None):
@@ -257,8 +260,8 @@ class VoiceInputApp:
     def _get_frontmost_app_fast() -> str | None:
         """NSWorkspace 直达前台应用名(毫秒级,无需辅助功能权限)
 
-        osascript/System Events 查询需要辅助功能权限且慢(可挂起 1.5s+);
-        NSWorkspace.frontmostApplication() 是公共 API,毫秒级返回。
+        **只允许在主线程调用**:AppKit 在后台线程首次初始化会死锁
+        (等待主线程 runloop)。后台线程请用 _get_frontmost_app_slow。
         """
         try:
             from AppKit import NSWorkspace
@@ -270,30 +273,14 @@ class VoiceInputApp:
             return None
 
     @staticmethod
-    def _get_frontmost_app() -> str | None:
-        """获取当前前台应用名称(macOS;供粘贴前激活)
+    def _get_frontmost_app_slow() -> str | None:
+        """osascript/System Events 查询前台应用(后台线程专用)
 
-        优先 NSWorkspace(快);回退 osascript/System Events(需辅助功能权限,
-        未授权时可能挂起 → 直接返回 None 避免阻塞数秒)。
+        需辅助功能权限,未授权时可能挂起(最长 1.5s);只能从后台线程
+        (asyncio.to_thread 等)调用,绝不在主线程调用。
         """
         if sys.platform != "darwin":
             return None
-        name = VoiceInputApp._get_frontmost_app_fast()
-        if name:
-            return name
-        try:
-            # 辅助功能权限预检(AXIsProcessTrusted)
-            import ctypes
-
-            hiservices = ctypes.CDLL(
-                "/System/Library/Frameworks/ApplicationServices.framework/" "ApplicationServices"
-            )
-            hiservices.AXIsProcessTrusted.restype = ctypes.c_bool
-            if not hiservices.AXIsProcessTrusted():
-                logger.debug("辅助功能未授权,跳过前台应用获取")
-                return None
-        except Exception:  # noqa: BLE001
-            pass
         try:
             import subprocess
 
@@ -310,11 +297,11 @@ class VoiceInputApp:
             return None
 
     @staticmethod
-    def _activate_frontmost_app(name: str | None) -> bool:
-        """激活指定应用(macOS);失败返回 False
+    def _activate_frontmost_app_ns(name: str | None) -> bool:
+        """NSRunningApplication 激活指定应用(macOS;主线程专用)
 
-        优先 NSRunningApplication.activateWithOptions_(毫秒级,无需
-        Apple Events 权限);回退 osascript(慢,可能阻塞数秒)。
+        毫秒级、无需 Apple Events 权限。**只允许在主线程调用**(AppKit
+        后台线程会死锁);后台线程用 _activate_frontmost_app_osascript。
         """
         if not name or sys.platform != "darwin":
             return False
@@ -327,6 +314,13 @@ class VoiceInputApp:
                     return True
         except Exception:  # noqa: BLE001
             pass
+        return False
+
+    @staticmethod
+    def _activate_frontmost_app_osascript(name: str | None) -> bool:
+        """osascript 激活指定应用(后台线程专用;可能阻塞数秒)"""
+        if not name or sys.platform != "darwin":
+            return False
         try:
             import subprocess
 
@@ -367,11 +361,13 @@ class VoiceInputApp:
         try:
             if sys.platform == "darwin":
                 # macOS:剪贴板 + Cmd+V 粘贴(对中文/特殊字符可靠)。
-                # 此时才获取前台应用(录音开始时不取,避免阻塞启动);
-                # 先激活它,否则 Cmd+V 进的是客户端自己的窗口。
+                # 前台应用已在主线程预取(_frontmost_app)且 NS 版激活已在
+                # 主线程尝试(_frontmost_activated);这里只做 osascript 兑底
+                # (本方法运行在 asyncio.to_thread 后台线程,不能用 AppKit)。
                 if self._frontmost_app is None:
-                    self._frontmost_app = self._get_frontmost_app()
-                self._activate_frontmost_app(self._frontmost_app)
+                    self._frontmost_app = self._get_frontmost_app_slow()
+                if not self._frontmost_activated:
+                    self._activate_frontmost_app_osascript(self._frontmost_app)
                 try:
                     import subprocess
 
@@ -669,6 +665,9 @@ class VoiceInputApp:
             # osascript 可能阻塞数秒,必须在 asyncio 线程执行,不能卡主线程。
             text = values.get("-AUTO-INPUT-") or ""
             if text:
+                # 主线程:NS 版激活(毫秒级);后台线程只做 osascript 兑底
+                if sys.platform == "darwin":
+                    self._frontmost_activated = self._activate_frontmost_app_ns(self._frontmost_app)
                 self._async_task(self._auto_input_async(text))
 
         elif event == "-CLEAR-":
@@ -677,6 +676,8 @@ class VoiceInputApp:
         elif event == "-PASTE-":
             text = window["-RESULT-"].get()
             if text:
+                if sys.platform == "darwin":
+                    self._frontmost_activated = self._activate_frontmost_app_ns(self._frontmost_app)
                 self._async_task(self._auto_input_async(text))
 
         elif event == "-MINIMIZE-TRAY-":
