@@ -562,7 +562,10 @@ class FloatingIndicator:
                 return
 
             try:
-                event, values = self.window.read(timeout=max(0, min(100, timeout)))
+                # 非阻塞 read:更新由后台线程填充 _pending_*,主线程只处理
+                # 已到达的事件,不阻塞等待(阻塞 read 会挤占主窗口处理,
+                # 导致卡顿/彩虹指针)
+                event, values = self.window.read(timeout=0)
 
                 if event == sg.WIN_CLOSED or event == sg.TIMEOUT_EVENT:
                     if event == sg.WIN_CLOSED:
@@ -958,7 +961,10 @@ class ProcessingIndicator:
                 return
 
             try:
-                event, values = self.window.read(timeout=max(0, min(100, timeout)))
+                # 非阻塞 read:更新由后台线程填充 _pending_*,主线程只处理
+                # 已到达的事件,不阻塞等待(阻塞 read 会挤占主窗口处理,
+                # 导致卡顿/彩虹指针)
+                event, values = self.window.read(timeout=0)
 
                 if event == sg.WIN_CLOSED or event == sg.TIMEOUT_EVENT:
                     if event == sg.WIN_CLOSED:
