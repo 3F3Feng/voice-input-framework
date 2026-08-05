@@ -438,10 +438,10 @@ class VoiceInputApp:
             try:
                 if not _window:
                     break
-                event, values = _window.read(timeout=30)
+                event, values = _window.read(timeout=50)
                 # 驱动悬浮指示器事件(音量条/计时器实时更新)
                 if getattr(self, "indicators", None):
-                    self.indicators.process_events(timeout=30)
+                    self.indicators.process_events(timeout=50)
                 if event == sg.WIN_CLOSED or event == "-EXIT-":
                     break
                 self._handle_event(event, values, _window)

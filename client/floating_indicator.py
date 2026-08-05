@@ -423,10 +423,11 @@ class FloatingIndicator:
                 if self.window.TKroot:
                     # 强制显示窗口 + 置顶(macOS 上 keep_on_top 参数在窗口被
                     # 覆盖后不自动置顶,需显式 topmost + lift)
+                    # 置顶:topmost + lift 即可,不用 update()——update() 会
+                    # 同步处理全部挂起事件,主线程可能阻塞(彩虹指针)
                     self.window.TKroot.attributes("-topmost", True)
                     self.window.TKroot.deiconify()
                     self.window.TKroot.lift()
-                    self.window.TKroot.update()
                     logger.debug("浮标窗口已显示")
             except Exception as e:
                 logger.debug(f"显示浮标窗口时出错: {e}")
@@ -533,7 +534,7 @@ class FloatingIndicator:
                     except Exception as e:
                         logger.debug(f"获取音量失败: {e}")
 
-                time.sleep(0.03)  # 30ms 更新间隔(~33fps,与主循环刷新率匹配)
+                time.sleep(0.05)  # 50ms 更新间隔(20fps,稳定优先)
 
             except Exception as e:
                 logger.error(f"更新线程出错: {e}")
@@ -846,10 +847,11 @@ class ProcessingIndicator:
                 if self.window.TKroot:
                     # 强制显示窗口 + 置顶(macOS 上 keep_on_top 参数在窗口被
                     # 覆盖后不自动置顶,需显式 topmost + lift)
+                    # 置顶:topmost + lift 即可,不用 update()——update() 会
+                    # 同步处理全部挂起事件,主线程可能阻塞(彩虹指针)
                     self.window.TKroot.attributes("-topmost", True)
                     self.window.TKroot.deiconify()
                     self.window.TKroot.lift()
-                    self.window.TKroot.update()
                     logger.debug("处理中窗口已显示")
             except Exception as e:
                 logger.debug(f"显示处理中窗口时出错: {e}")
@@ -946,7 +948,7 @@ class ProcessingIndicator:
                     except Exception as e:
                         logger.debug(f"跟随鼠标时出错: {e}")
 
-                time.sleep(0.15)  # 150ms 动画帧间隔(沙漏切换更流畅)
+                time.sleep(0.25)  # 250ms 动画帧间隔(稳定优先)
             except Exception as e:
                 logger.error(f"动画循环出错: {e}")
                 break
