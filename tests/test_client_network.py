@@ -536,3 +536,143 @@ class TestTrayCallbackContract:
 
         missing = sorted(menu_cb - setup_cb)
         assert missing == [], f"托盘菜单回调未在 app.py setup 中提供: {missing}"
+
+
+class TestMacHidKeyMapping:
+    """CGEventTap 的 macOS HID 键码 → 键名/字符映射(防 Windows VK 错配回归)
+
+    macOS HID 键码与 Windows VK 完全不同:字母 A=0x00(不是 0x41)、
+    数字 1=0x12(不是 0x31)。映射错误会导致带字母/数字主键的快捷键
+    (如 alt+v)永远不触发。
+    """
+
+    @staticmethod
+    def _listener():
+        try:
+            import pynput  # noqa: F401
+        except ImportError:
+            # 无 pynput 环境:注入最小 stub(hotkey_manager 顶层只用
+            # keyboard 名字;HID 映射逻辑本身不依赖 pynput)
+            import sys
+            import types
+
+            kb = types.ModuleType("pynput.keyboard")
+
+            class _KeyCode:
+                def __init__(self, vk=None, char=None):
+                    self.vk = vk
+                    self.char = char
+
+                @classmethod
+                def from_vk(cls, vk):
+                    return cls(vk=vk)
+
+            kb.KeyCode = _KeyCode
+            kb.Key = type(
+                "Key",
+                (),
+                {
+                    "shift": _KeyCode(),
+                    "ctrl": _KeyCode(),
+                    "alt": _KeyCode(),
+                    "cmd": _KeyCode(),
+                },
+            )
+            pynput_mod = types.ModuleType("pynput")
+            pynput_mod.keyboard = kb
+            sys.modules.setdefault("pynput", pynput_mod)
+            sys.modules.setdefault("pynput.keyboard", kb)
+
+        from client.hotkey_manager import _MacOSEventTapListener
+
+        return _MacOSEventTapListener(on_press=lambda k: None, on_release=lambda k: None)
+
+    def test_letter_keys_use_macos_hid_keycodes(self):
+        lis = self._listener()
+        key = lis._key_from_vk(0x09)  # V (macOS HID)
+        assert key.name == "v" and key.char == "v"
+        key = lis._key_from_vk(0x00)  # A
+        assert key.name == "a" and key.char == "a"
+        key = lis._key_from_vk(0x2D)  # N
+        assert key.name == "n" and key.char == "n"
+
+    def test_digit_keys_use_macos_hid_keycodes(self):
+        lis = self._listener()
+        key = lis._key_from_vk(0x12)  # 1
+        assert key.name == "1" and key.char == "1"
+        key = lis._key_from_vk(0x1D)  # 0
+        assert key.name == "0" and key.char == "0"
+
+    def test_modifier_and_function_keys(self):
+        lis = self._listener()
+        assert lis._key_from_vk(0x3B).name == "ctrl_l"
+        assert lis._key_from_vk(0x37).name == "cmd_l"
+        assert lis._key_from_vk(0x31).name == "space"
+        assert lis._key_from_vk(0x69).name == "f13"  # 预设里有 f13
+
+    def test_hid_key_matches_main_key(self):
+        """macOS HID 键码的 V 键(_TapKey 带 char)能匹配主键 'v'"""
+        from client.hotkey_manager import HotkeyManager, _TapKey
+
+        hm = HotkeyManager()
+        hm.set_hotkey("alt+v")
+        hm.pressed_keys.add(_TapKey("v", 0x09, char="v"))
+        assert hm._is_main_key_pressed() is True
+        # 老实现(Windows VK 误配)会产生 name="vk_9" → 匹配失败,此测试拦截
+
+    def test_hid_key_vk_not_windows_vk(self):
+        """字母键 vk 不应落入 Windows VK 字母范围(0x41-0x5A)"""
+        lis = self._listener()
+        key = lis._key_from_vk(0x09)  # macOS V
+        assert not (0x41 <= key.vk <= 0x5A)
+
+
+class TestAppAsyncEventContract:
+    """app.py 后台线程不直接碰 Tk + 事件投递齐全(防卡顿/指示器卡死回归)
+
+    识别/LLM 在 asyncio 线程运行;直接调 window.set_status / update_result /
+    indicators.hide_processing 会触发 tkinter "main thread is not in main
+    loop" 错误(被吞后处理中指示器卡住),必须经 write_event_value 投递。
+    """
+
+    @staticmethod
+    def _process_audio_node():
+        import ast
+
+        src = Path(project_dir / "client" / "app.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        for n in ast.walk(tree):
+            if (
+                isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))
+                and n.name == "_process_audio"
+            ):
+                return n
+        raise AssertionError("app.py 缺少 _process_audio")
+
+    def test_process_audio_has_no_direct_tk_calls(self):
+        import ast
+
+        node = self._process_audio_node()
+        attrs = {
+            n.func.attr
+            for n in ast.walk(node)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        }
+        forbidden = {"set_status", "update_result", "hide_processing", "update_model_status"}
+        assert not (forbidden & attrs), f"_process_audio 直接调 Tk: {forbidden & attrs}"
+
+    def test_async_events_handled_in_main_loop(self):
+        app_src = Path(project_dir / "client" / "app.py").read_text(encoding="utf-8")
+        for ev in ("-STATUS-", "-RESULT-READY-", "-AUTO-INPUT-"):
+            assert f'event == "{ev}"' in app_src, f"主循环缺少 {ev} 事件处理"
+
+    def test_auto_input_async_exists(self):
+        import ast
+
+        src = Path(project_dir / "client" / "app.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        names = {
+            n.name for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))
+        }
+        assert "_auto_input_async" in names
+        assert "_auto_input_text" in names  # 被 to_thread 包裹的同步实现仍在

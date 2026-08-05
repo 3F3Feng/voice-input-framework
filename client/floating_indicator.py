@@ -393,11 +393,28 @@ class FloatingIndicator:
             self.cursor_pos = self._get_mouse_position()
 
         with self._window_lock:
-            # 创建窗口
-            self.window = self._create_window()
-            if not self.window:
-                logger.error("创建浮标窗口失败")
-                return
+            if self.window is None:
+                # 创建窗口(仅首次/被用户关闭后)
+                self.window = self._create_window()
+                if not self.window:
+                    logger.error("创建浮标窗口失败")
+                    return
+            else:
+                # 复用已有窗口:重新定位到当前鼠标位置再显示
+                try:
+                    actual_size = self.size
+                    if self.window.TKroot:
+                        rw = self.window.TKroot.winfo_reqwidth()
+                        rh = self.window.TKroot.winfo_reqheight()
+                        if rw > 0 and rh > 0:
+                            actual_size = (rw, rh)
+                    target = self._calculate_window_position(
+                        self.cursor_pos, window_size=actual_size
+                    )
+                    if target:
+                        self.window.move(target[0], target[1])
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"复用浮标窗口定位失败: {e}")
 
             self.is_visible = True
             self.is_recording = True
@@ -467,11 +484,11 @@ class FloatingIndicator:
                     # 记住位置
                     if self.window.TKroot:
                         self.position = self.window.current_location()
-                    self.window.close()
+                    # withdraw 隐藏但保留窗口,下次 show 直接复用,
+                    # 避免每次触发都重建/销毁 Tk 窗口(macOS 上慢)
+                    self.window.hide()
                 except Exception as e:
-                    logger.warning(f"关闭悬浮窗口时出错: {e}")
-                finally:
-                    self.window = None
+                    logger.warning(f"隐藏悬浮窗口时出错: {e}")
 
         logger.info("悬浮录音指示器已隐藏")
 
@@ -820,10 +837,28 @@ class ProcessingIndicator:
             self.cursor_pos = self._get_mouse_position()
 
         with self._window_lock:
-            self.window = self._create_window()
-            if not self.window:
-                logger.error("创建处理中指示器窗口失败")
-                return
+            if self.window is None:
+                # 创建窗口(仅首次/被用户关闭后)
+                self.window = self._create_window()
+                if not self.window:
+                    logger.error("创建处理中指示器窗口失败")
+                    return
+            else:
+                # 复用已有窗口:重新定位到当前鼠标位置再显示
+                try:
+                    actual_size = self.size
+                    if self.window.TKroot:
+                        rw = self.window.TKroot.winfo_reqwidth()
+                        rh = self.window.TKroot.winfo_reqheight()
+                        if rw > 0 and rh > 0:
+                            actual_size = (rw, rh)
+                    target = self._calculate_window_position(
+                        self.cursor_pos, window_size=actual_size
+                    )
+                    if target:
+                        self.window.move(target[0], target[1])
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"复用处理指示器窗口定位失败: {e}")
 
             self.is_visible = True
 
@@ -887,10 +922,10 @@ class ProcessingIndicator:
         with self._window_lock:
             if self.window:
                 try:
-                    self.window.close()
+                    # withdraw 隐藏但保留窗口,下次 show 复用
+                    self.window.hide()
                 except Exception as e:
-                    logger.warning(f"关闭处理中窗口时出错: {e}")
-                finally:
+                    logger.warning(f"隐藏处理中窗口时出错: {e}")
                     self.window = None
 
         logger.info("处理中指示器已隐藏")

@@ -203,29 +203,30 @@ class VoiceInputApp:
             self.indicators.show_processing()
 
     async def _process_audio(self):
-        """处理已录制的音频"""
+        """处理已录制的音频(在 asyncio 线程运行,不直接碰 Tk)"""
         self.audio.stop_recording()
         audio_data = self.audio.get_full_audio()
-        if getattr(self, "indicators", None):
-            self.indicators.hide_processing()
         if not audio_data or len(audio_data) < 320:
+            # 无有效音频:仍要收起处理中指示器(UI 由主线程处理)
+            if self.window:
+                self.window.write_event_value("-RESULT-READY-", "")
             return
 
-        # 通过 LLM 后处理或直接返回
+        # 通过 LLM 后处理或直接返回(UI 更新全部投递回主线程)
         llm_enabled = self.config.llm_enabled
-        self.window.set_status("正在识别...", "yellow")
+        if self.window:
+            self.window.write_event_value("-STATUS-", ("正在识别...", "yellow"))
         result = await self.stt.transcribe(audio_data, language="auto")
         text = result.get("text", "")
 
         if text and llm_enabled:
-            self.window.set_status("正在 LLM 后处理...", "cyan")
+            if self.window:
+                self.window.write_event_value("-STATUS-", ("正在 LLM 后处理...", "cyan"))
             text = await self.llm.process(text)
 
-        # 显示和输入
+        # 结果就绪:主线程负责收起处理中指示器 + 更新结果 + 自动输入
         if self.window:
-            self.window.update_result(text)
-            self.window.write_event_value("-AUTO-INPUT-", text)
-            self.window.set_status("就绪", "green")
+            self.window.write_event_value("-RESULT-READY-", text)
 
     # ── 文本输入 ──
 
@@ -355,6 +356,13 @@ class VoiceInputApp:
                 pyautogui.typewrite(text, interval=0.01)
         except Exception as e:
             logger.error(f"自动输入失败: {e}")
+
+    async def _auto_input_async(self, text: str):
+        """异步版自动输入:复制剪贴板 + 粘贴(osascript 子进程不阻塞 GUI 线程)"""
+        if not text:
+            return
+        await asyncio.to_thread(self._copy_to_clipboard, text)
+        await asyncio.to_thread(self._auto_input_text, text)
 
     # ── 异步线程 ──
 
@@ -583,19 +591,39 @@ class VoiceInputApp:
                 subprocess.run(["pbcopy"], input=result.encode("utf-8"))
                 self.window.log("已复制到剪贴板")
 
+        elif event == "-STATUS-":
+            # 后台线程(识别/LLM)发来的状态更新 → 主线程更新 UI
+            st = values.get("-STATUS-") or ("", "black")
+            if isinstance(st, tuple) and len(st) >= 2:
+                text, color = st[0], st[1]
+            else:
+                text, color = str(st), "black"
+            window.set_status(text, color)
+
+        elif event == "-RESULT-READY-":
+            # 识别/LLM 完成(asyncio 线程投递)→ 主线程更新 UI + 自动输入
+            text = values.get("-RESULT-READY-") or ""
+            if getattr(self, "indicators", None):
+                self.indicators.hide_processing()
+            self.window.update_result(text)
+            self.window.set_status("就绪", "green")
+            if text:
+                self.window.write_event_value("-AUTO-INPUT-", text)
+
         elif event == "-AUTO-INPUT-":
-            # 识别结果自动输入:先复制到剪贴板,再粘贴回原输入框
+            # 识别结果自动输入:复制剪贴板 + 粘贴回原输入框。
+            # osascript 可能阻塞数秒,必须在 asyncio 线程执行,不能卡主线程。
             text = values.get("-AUTO-INPUT-") or ""
             if text:
-                self._copy_to_clipboard(text)
-                self._auto_input_text(text)
+                self._async_task(self._auto_input_async(text))
 
         elif event == "-CLEAR-":
             window["-RESULT-"].update("")
 
         elif event == "-PASTE-":
             text = window["-RESULT-"].get()
-            self._auto_input_text(text)
+            if text:
+                self._async_task(self._auto_input_async(text))
 
         elif event == "-MINIMIZE-TRAY-":
             if sys.platform == "darwin":
