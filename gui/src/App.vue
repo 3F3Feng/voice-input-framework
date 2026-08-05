@@ -472,30 +472,70 @@ async function toggleLlm() {
 }
 
 // ── Hotkey ──
+// 当前录制监听器(用于取消/卸载时移除;防止残留监听重复触发)
+let hotkeyHandler: ((e: KeyboardEvent) => void) | null = null;
+
 function startHotkeyRecording() {
   hotkeyRecording.value = !hotkeyRecording.value;
   hotkeyMsg.value = "";
   if (hotkeyRecording.value) {
-    const handler = (e: KeyboardEvent) => {
-      e.preventDefault(); e.stopPropagation();
-      const parts: string[] = [];
-      if (e.code?.startsWith('ControlLeft')) parts.push('left_ctrl');
-      else if (e.code?.startsWith('ControlRight')) parts.push('right_ctrl');
-      else if (e.code?.startsWith('AltLeft')) parts.push('left_alt');
-      else if (e.code?.startsWith('AltRight')) parts.push('right_alt');
-      else if (e.code?.startsWith('ShiftLeft')) parts.push('left_shift');
-      else if (e.code?.startsWith('ShiftRight')) parts.push('right_shift');
-      if (e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Shift' && e.key !== 'Meta') {
-        parts.push(e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
-      }
-      if (parts.length > 0) {
-        hotkeyStr.value = parts.join('+');
-        hotkeyChanged.value = true;
-        hotkeyRecording.value = false;
-        document.removeEventListener('keydown', handler);
+    // 修饰键跨事件累积(按 ctrl 再按 alt 不结束;主键按下或纯修饰键
+    // 组合全部松开时才结束)。旧实现每次事件新建 parts,且按下 ctrl
+    // 就因 parts 非空立即结束——只能录到单个键。
+    let mods: string[] = [];
+    const modName = (e: KeyboardEvent): string | null => {
+      switch (e.code) {
+        case 'ControlLeft': return 'left_ctrl';
+        case 'ControlRight': return 'right_ctrl';
+        case 'AltLeft': return 'left_alt';
+        case 'AltRight': return 'right_alt';
+        case 'ShiftLeft': return 'left_shift';
+        case 'ShiftRight': return 'right_shift';
+        case 'MetaLeft': return 'left_cmd';
+        case 'MetaRight': return 'right_cmd';
+        default: return null;
       }
     };
+    const cleanup = () => {
+      if (hotkeyHandler) {
+        document.removeEventListener('keydown', hotkeyHandler);
+        document.removeEventListener('keyup', hotkeyHandler);
+        hotkeyHandler = null;
+      }
+    };
+    const finish = (mainKey: string | null) => {
+      const parts = [...mods];
+      if (mainKey) parts.push(mainKey.length === 1 ? mainKey.toLowerCase() : mainKey.toLowerCase());
+      if (parts.length === 0) return;  // 无内容不结束
+      hotkeyStr.value = parts.join('+');
+      hotkeyChanged.value = true;
+      hotkeyRecording.value = false;
+      cleanup();
+    };
+    const handler = (e: KeyboardEvent) => {
+      e.preventDefault(); e.stopPropagation();
+      const m = modName(e);
+      if (e.type === 'keydown') {
+        if (m) {
+          if (!mods.includes(m)) mods.push(m);
+          return;  // 只累积修饰键,等待主键
+        }
+        finish(e.key);  // 主键按下 → 结束
+      } else if (e.type === 'keyup') {
+        // 纯修饰键组合:全部松开时结束(如 ctrl+alt 无主键)
+        if (m && mods.length > 0) finish(null);
+      }
+    };
+    hotkeyHandler = handler;
     document.addEventListener('keydown', handler);
+    document.addEventListener('keyup', handler);
+  } else {
+    // 用户点"取消":移除监听
+    if (hotkeyHandler) {
+      document.removeEventListener('keydown', hotkeyHandler);
+      document.removeEventListener('keyup', hotkeyHandler);
+      hotkeyHandler = null;
+    }
   }
 }
 async function applyHotkey() {
@@ -641,6 +681,11 @@ onUnmounted(() => {
   if (timerInterval) clearInterval(timerInterval);
   if (levelInterval) clearInterval(levelInterval);
   if (processingTimerInterval) clearInterval(processingTimerInterval);
+  if (hotkeyHandler) {
+    document.removeEventListener('keydown', hotkeyHandler);
+    document.removeEventListener('keyup', hotkeyHandler);
+    hotkeyHandler = null;
+  }
 });
 </script>
 
