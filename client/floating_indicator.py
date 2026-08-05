@@ -421,8 +421,11 @@ class FloatingIndicator:
             # 确保窗口显示
             try:
                 if self.window.TKroot:
-                    # 强制显示窗口
+                    # 强制显示窗口 + 置顶(macOS 上 keep_on_top 参数在窗口被
+                    # 覆盖后不自动置顶,需显式 topmost + lift)
+                    self.window.TKroot.attributes("-topmost", True)
                     self.window.TKroot.deiconify()
+                    self.window.TKroot.lift()
                     self.window.TKroot.update()
                     logger.debug("浮标窗口已显示")
             except Exception as e:
@@ -838,8 +841,11 @@ class ProcessingIndicator:
             # 确保窗口显示
             try:
                 if self.window.TKroot:
-                    # 强制显示窗口
+                    # 强制显示窗口 + 置顶(macOS 上 keep_on_top 参数在窗口被
+                    # 覆盖后不自动置顶,需显式 topmost + lift)
+                    self.window.TKroot.attributes("-topmost", True)
                     self.window.TKroot.deiconify()
+                    self.window.TKroot.lift()
                     self.window.TKroot.update()
                     logger.debug("处理中窗口已显示")
             except Exception as e:

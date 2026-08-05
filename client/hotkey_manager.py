@@ -790,8 +790,7 @@ class _MacOSEventTapListener:
         self._runloop = None
         self._thread: "threading.Thread | None" = None
         self._running = False
-        self._last_flags = 0  # 上一个 flagsChanged 的 flags(修饰键 diff 用)
-        self._mod_state: dict = {}  # 修饰键 vk → 是否按下(flagsChanged 翻转用)
+        self._last_flags = 0  # 上一个 flagsChanged 的 flags(修饰键 diff 兜底用)
 
     def start(self):
         """在独立线程启动 CGEventTap runloop"""
@@ -851,10 +850,12 @@ class _MacOSEventTapListener:
             elif event_type == kCGEventKeyUp:
                 self.on_release(key)
             elif event_type == kCGEventFlagsChanged:
-                # 修饰键事件:每次按下/释放各发一次 flagsChanged。
-                # 注意:CGEventGetFlags 在释放事件里仍可能含该键掩码
-                # (macOS 记录的是按下时状态),所以**不能**用 flags 判断
-                # 按下/释放——必须用状态翻转(每收到一次事件切换一次)。
+                # 修饰键事件:flagsChanged 的键码标识"哪个修饰键变化",
+                # flags 判断该键当前按下/释放。注意 kCGEventFlagMaskControl
+                # =0x40000(非 0x100),释放后 flags 不再含该键掩码——
+                # 用 flags&mask 判断可靠,不依赖事件计数(翻转方案会因
+                # macOS 偶发重复事件而错位,导致释放永不触发)。
+                flags = CGEventGetFlags(event)
                 mod_flag_map = {
                     0x37: kCGEventFlagMaskCommand,  # cmd_l
                     0x36: kCGEventFlagMaskCommand,  # cmd_r
@@ -865,18 +866,16 @@ class _MacOSEventTapListener:
                     0x3B: kCGEventFlagMaskControl,  # ctrl_l
                     0x3E: kCGEventFlagMaskControl,  # ctrl_r
                 }
-                if vk in mod_flag_map:
-                    was_pressed = self._mod_state.get(vk, False)
-                    if was_pressed:
-                        logger.debug(f"CGEventTap 修饰键释放: {key}")
-                        self.on_release(key)
-                    else:
-                        logger.debug(f"CGEventTap 修饰键按下: {key}")
-                        self.on_press(key)
-                    self._mod_state[vk] = not was_pressed
-                else:
+                mask = mod_flag_map.get(vk)
+                if mask is None:
                     # 键码不可用(个别情况为 0xFF):回退到 flags diff
-                    self._handle_modifier_flags_diff(CGEventGetFlags(event))
+                    self._handle_modifier_flags_diff(flags)
+                elif flags & mask:
+                    logger.debug(f"CGEventTap 修饰键按下: {key}")
+                    self.on_press(key)
+                else:
+                    logger.debug(f"CGEventTap 修饰键释放: {key}")
+                    self.on_release(key)
         except Exception as e:  # noqa: BLE001
             logger.debug(f"CGEventTap 回调异常: {e}")
 
