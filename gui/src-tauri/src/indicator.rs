@@ -27,15 +27,18 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
         .shadow(false)
         .title("");
 
-    #[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]
-    let window = builder.transparent(true).build().map_err(|e| format!("Indicator failed: {}", e))?;
-    #[cfg(not(any(not(target_os = "macos"), feature = "macos-private-api")))]
+    // macOS 用不透明深色窗口:透明窗口(Tauri 2 + WKWebView)内容经常
+    // 不渲染(已知问题),导致全透明空窗口完全不可见。胶囊 HTML 的背景
+    // 色与窗口背景色一致(rgb(15,15,25)),视觉上等同圆角胶囊。
+    #[cfg(target_os = "macos")]
     let window = builder.build().map_err(|e| format!("Indicator failed: {}", e))?;
+    #[cfg(not(target_os = "macos"))]
+    let window = builder.transparent(true).build().map_err(|e| format!("Indicator failed: {}", e))?;
 
-    #[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]
-    { let _ = window.set_background_color(Some(Color(0, 0, 0, 0))); }
-    #[cfg(not(any(not(target_os = "macos"), feature = "macos-private-api")))]
+    #[cfg(target_os = "macos")]
     { let _ = window.set_background_color(Some(Color(15, 15, 25, 255))); }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = window.set_background_color(Some(Color(0, 0, 0, 0))); }
 
     let _ = window.show();
     let _ = window.set_focus();
@@ -44,7 +47,7 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
         sw, sh, x, y, tauri::WebviewUrl::App("indicator.html".into())
     );
 
-    // 诊断:1s 后读窗口标题,判断 indicator.html 是否成功加载
+    // 诊断:1s 后读窗口标题 + 实际 URL,判断 indicator.html 是否成功加载
     // (页面加载后会把标题改成 "indicator-loaded")
     let probe = window.clone();
     tauri::async_runtime::spawn(async move {
@@ -52,6 +55,10 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
         match probe.title() {
             Ok(t) => eprintln!("[indicator] title after 1s: {:?}", t),
             Err(e) => eprintln!("[indicator] title probe failed: {:?}", e),
+        }
+        match probe.url() {
+            Ok(u) => eprintln!("[indicator] url: {}", u),
+            Err(e) => eprintln!("[indicator] url probe failed: {:?}", e),
         }
     });
 
