@@ -5,7 +5,14 @@ use tauri::{window::Color, Emitter, Manager, WebviewWindowBuilder};
 pub const INDICATOR_LABEL: &str = "indicator";
 
 pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
-    let _ = hide(app);
+    // 复用已存在的窗口:close 是异步的,close 后立刻同 label 重建会
+    // "window already exists" 静默失败 → 胶囊不显示。复用 + 重置页面。
+    if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("indicator-reset", ());
+        return Ok(());
+    }
     let (sw, sh) = screen_center_bottom(app);
     let x = sw - 110;
     let y = sh - 100;
