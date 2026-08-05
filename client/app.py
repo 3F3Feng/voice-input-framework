@@ -211,21 +211,28 @@ class VoiceInputApp:
             logger.debug(f"主窗口降级失败: {e}")
 
     def _on_recording_started(self):
-        if getattr(self, "indicators", None):
-            self.indicators.show_recording()
-        self._lower_main_window()
-        # 主线程预取前台应用(NSWorkspace 毫秒级;粘贴时直接用,
-        # 省去 osascript 查询)。只能在主线程调 AppKit。
+        # 顺序关键:先记录前台应用,再显示浮标——浮标窗口
+        # (no_titlebar)创建时会 focus_force 抢焦点,若先显示浮标,
+        # 记录到的前台应用就是客户端自己,粘贴会失败。
         if sys.platform == "darwin":
             try:
                 self._frontmost_app = self._get_frontmost_app_fast()
             except Exception:  # noqa: BLE001
                 self._frontmost_app = None
+        if getattr(self, "indicators", None):
+            self.indicators.show_recording()
+        # 浮标抢走焦点后,把焦点还给原应用(毫秒级),用户可继续操作
+        if sys.platform == "darwin" and self._frontmost_app:
+            self._activate_frontmost_app_ns(self._frontmost_app)
+        self._lower_main_window()
 
     def _on_recording_stopped(self):
         if getattr(self, "indicators", None):
             self.indicators.hide_recording()
             self.indicators.show_processing()
+        # 处理中浮标同样抢焦点,还回原应用(粘贴前还会再激活一次)
+        if sys.platform == "darwin" and self._frontmost_app:
+            self._activate_frontmost_app_ns(self._frontmost_app)
         self._lower_main_window()
 
     async def _process_audio(self):
