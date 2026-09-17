@@ -51,7 +51,9 @@ async fn set_server_host(
     *stt_client = stt::SttClient::new(&url);
     let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
     cfg.server.host = host;
-    if let Some(port) = port { cfg.server.port = port; }
+    if let Some(port) = port {
+        cfg.server.port = port;
+    }
     cfg.save(&app).ok();
     Ok(())
 }
@@ -98,7 +100,12 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
         *status = "识别中...".to_string();
     }
 
-    log_info!("[stop] chunks={}, fallback_samples={}, src_rate={}", chunk_rx.is_some(), fallback_samples.len(), src_rate);
+    log_info!(
+        "[stop] chunks={}, fallback_samples={}, src_rate={}",
+        chunk_rx.is_some(),
+        fallback_samples.len(),
+        src_rate
+    );
 
     let (host, language) = {
         let stt_client = state.stt.lock().map_err(|e| e.to_string())?;
@@ -115,22 +122,39 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
     tauri::async_runtime::spawn(async move {
         eprintln!("[transcribe] Background task started, host={}", host);
         let transcribe_start = std::time::Instant::now();
-        let result = run_transcription(&app_handle, &indicator_status, &host, &language, chunk_rx, fallback_samples, src_rate).await;
+        let result = run_transcription(
+            &app_handle,
+            &indicator_status,
+            &host,
+            &language,
+            chunk_rx,
+            fallback_samples,
+            src_rate,
+        )
+        .await;
         let elapsed_ms = transcribe_start.elapsed().as_millis() as u64;
 
         match result {
             Ok(text) => {
-                eprintln!("[transcribe] Done: {} chars in {}ms", text.len(), elapsed_ms);
+                eprintln!(
+                    "[transcribe] Done: {} chars in {}ms",
+                    text.len(),
+                    elapsed_ms
+                );
                 // Show processing time on indicator for 500ms before hiding
                 indicator::show_result(&app_handle, elapsed_ms);
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
+                if let Ok(mut status) = indicator_status.lock() {
+                    *status = String::new();
+                }
                 let _ = indicator::hide(&app_handle);
                 let _ = app_handle.emit("transcribe-done", text);
             }
             Err(e) => {
                 eprintln!("[transcribe] Error: {}", e);
-                if let Ok(mut status) = indicator_status.lock() { *status = String::new(); }
+                if let Ok(mut status) = indicator_status.lock() {
+                    *status = String::new();
+                }
                 let _ = indicator::hide(&app_handle);
                 let _ = app_handle.emit("transcribe-error", e);
             }
@@ -146,7 +170,10 @@ async fn start_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> R
 }
 
 #[tauri::command]
-async fn stop_recording(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+async fn stop_recording(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     stop_recording_internal(&app, &state)
 }
 
@@ -160,7 +187,10 @@ async fn run_transcription(
     src_rate: u32,
 ) -> Result<String, String> {
     let client = stt::SttClient::new(host);
-    eprintln!("[transcribe] Starting transcription, host={}, lang={}", host, language);
+    eprintln!(
+        "[transcribe] Starting transcription, host={}, lang={}",
+        host, language
+    );
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<stt::StreamEvent>();
 
@@ -184,11 +214,20 @@ async fn run_transcription(
         eprintln!("[transcribe] Using streaming mode");
         client.transcribe_stream(rx, language, Some(event_tx)).await
     } else {
-        eprintln!("[transcribe] Using fallback batch mode ({} samples)", fallback_samples.len());
+        eprintln!(
+            "[transcribe] Using fallback batch mode ({} samples)",
+            fallback_samples.len()
+        );
         let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-        if wav.is_empty() { return Err("No audio captured".to_string()); }
+        if wav.is_empty() {
+            return Err("No audio captured".to_string());
+        }
         let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" { wav[44..].to_vec() } else { wav };
+        let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" {
+            wav[44..].to_vec()
+        } else {
+            wav
+        };
         let _ = tx.send(pcm).await;
         drop(tx);
         client.transcribe_stream(rx, language, Some(event_tx)).await
@@ -201,7 +240,9 @@ async fn run_transcription(
 // ── Audio device commands ──
 
 #[tauri::command]
-async fn get_audio_devices(state: State<'_, AppState>) -> Result<Vec<audio::AudioDeviceInfo>, String> {
+async fn get_audio_devices(
+    state: State<'_, AppState>,
+) -> Result<Vec<audio::AudioDeviceInfo>, String> {
     let recorder = state.recorder.lock().map_err(|e| e.to_string())?;
     Ok(recorder.list_devices())
 }
@@ -222,26 +263,38 @@ async fn get_indicator_status(state: State<'_, AppState>) -> Result<String, Stri
 
 #[tauri::command]
 async fn get_models(state: State<'_, AppState>) -> Result<Vec<stt::ModelInfo>, String> {
-    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
     let client = stt::SttClient::new(&host);
     client.get_stt_models().await
 }
 
 #[tauri::command]
 async fn switch_model(state: State<'_, AppState>, name: String) -> Result<String, String> {
-    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
     stt::SttClient::new(&host).switch_stt_model(&name).await
 }
 
 #[tauri::command]
 async fn get_llm_models(state: State<'_, AppState>) -> Result<Vec<stt::ModelInfo>, String> {
-    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
     stt::SttClient::new(&host).get_llm_models().await
 }
 
 #[tauri::command]
 async fn switch_llm_model(state: State<'_, AppState>, name: String) -> Result<String, String> {
-    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
     stt::SttClient::new(&host).switch_llm_model(&name).await
 }
 
@@ -253,14 +306,21 @@ async fn get_config(state: State<'_, AppState>) -> Result<config::VoiceInputConf
 }
 
 #[tauri::command]
-async fn update_config(app: tauri::AppHandle, state: State<'_, AppState>, new_config: config::VoiceInputConfig) -> Result<(), String> {
+async fn update_config(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    new_config: config::VoiceInputConfig,
+) -> Result<(), String> {
     new_config.save(&app)?;
     *state.config.lock().map_err(|e| e.to_string())? = new_config;
     Ok(())
 }
 
 #[tauri::command]
-async fn import_old_config(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<config::VoiceInputConfig, String> {
+async fn import_old_config(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<config::VoiceInputConfig, String> {
     let cfg = config::VoiceInputConfig::load(&app);
     *state.config.lock().map_err(|e| e.to_string())? = cfg.clone();
     Ok(cfg)
@@ -270,25 +330,37 @@ async fn import_old_config(app: tauri::AppHandle, state: State<'_, AppState>) ->
 
 #[tauri::command]
 async fn get_llm_prompt(state: State<'_, AppState>) -> Result<String, String> {
-    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
     stt::SttClient::new(&host).get_llm_prompt().await
 }
 
 #[tauri::command]
 async fn save_llm_prompt(state: State<'_, AppState>, text: String) -> Result<(), String> {
-    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
     stt::SttClient::new(&host).save_llm_prompt(&text).await
 }
 
 #[tauri::command]
 async fn get_llm_enabled(state: State<'_, AppState>) -> Result<bool, String> {
-    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
     stt::SttClient::new(&host).get_llm_enabled().await
 }
 
 #[tauri::command]
 async fn set_llm_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
-    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
     stt::SttClient::new(&host).set_llm_enabled(enabled).await
 }
 
@@ -298,7 +370,9 @@ async fn register_hotkey(app: tauri::AppHandle, shortcut: String) -> Result<(), 
         hotkey::start_listener(app.clone(), keys);
         eprintln!("[hotkey] Re-registered: {}", shortcut);
         Ok(())
-    } else { Err(format!("Invalid hotkey format: {}", shortcut)) }
+    } else {
+        Err(format!("Invalid hotkey format: {}", shortcut))
+    }
 }
 
 #[tauri::command]
@@ -308,21 +382,26 @@ async fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 async fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-    if enabled { app.autolaunch().enable().map_err(|e| e.to_string()) }
-    else { app.autolaunch().disable().map_err(|e| e.to_string()) }
+    if enabled {
+        app.autolaunch().enable().map_err(|e| e.to_string())
+    } else {
+        app.autolaunch().disable().map_err(|e| e.to_string())
+    }
 }
 
 // ── Diarize commands ──
 
-
-
 #[tauri::command]
-async fn auto_input(text: String) -> Result<(), String> { input::type_text(&text) }
+async fn auto_input(text: String) -> Result<(), String> {
+    input::type_text(&text)
+}
 
 #[tauri::command]
 async fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {
     hotkey::reset_state();
-    if let Some(window) = app.get_webview_window("main") { let _ = window.hide(); }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
     Ok(())
 }
 
@@ -344,9 +423,14 @@ async fn transcribe_ws(
     audio_data: Vec<u8>,
     language: Option<String>,
 ) -> Result<String, String> {
-    let host = { let c = state.stt.lock().map_err(|e| e.to_string())?; c.stt_url.clone() };
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
     let lang = language.unwrap_or_else(|| "auto".into());
-    stt::SttClient::new(&host).transcribe_ws(audio_data, &lang).await
+    stt::SttClient::new(&host)
+        .transcribe_ws(audio_data, &lang)
+        .await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -354,7 +438,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![])))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         .setup(|app| {
             let cfg = config::VoiceInputConfig::load(app.handle());
             let default_host = cfg.server.host.clone();
@@ -378,7 +465,9 @@ pub fn run() {
             }
 
             if start_minimized {
-                if let Some(w) = app.get_webview_window("main") { let _ = w.hide(); }
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
             }
 
             if let Some(window) = app.get_webview_window("main") {
@@ -394,15 +483,31 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            set_server_host, start_recording, stop_recording,
-            get_audio_devices, get_audio_level, get_indicator_status,
-            transcribe_ws, get_models, switch_model,
-            get_llm_models, switch_llm_model,
-            get_config, update_config, import_old_config,
-            get_llm_prompt, save_llm_prompt, get_llm_enabled, set_llm_enabled,
-            auto_input, minimize_to_tray,
-            register_hotkey, get_autostart, set_autostart,
-            check_update, install_update,
+            set_server_host,
+            start_recording,
+            stop_recording,
+            get_audio_devices,
+            get_audio_level,
+            get_indicator_status,
+            transcribe_ws,
+            get_models,
+            switch_model,
+            get_llm_models,
+            switch_llm_model,
+            get_config,
+            update_config,
+            import_old_config,
+            get_llm_prompt,
+            save_llm_prompt,
+            get_llm_enabled,
+            set_llm_enabled,
+            auto_input,
+            minimize_to_tray,
+            register_hotkey,
+            get_autostart,
+            set_autostart,
+            check_update,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

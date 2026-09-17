@@ -17,31 +17,48 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
     let x = sw - 110;
     let y = sh - 100;
 
-    let builder = WebviewWindowBuilder::new(app, INDICATOR_LABEL, tauri::WebviewUrl::App("indicator.html".into()))
-        .inner_size(210.0, 44.0)
-        .position(x as f64, y as f64)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .shadow(false)
-        .title("");
+    let builder = WebviewWindowBuilder::new(
+        app,
+        INDICATOR_LABEL,
+        tauri::WebviewUrl::App("indicator.html".into()),
+    )
+    .inner_size(210.0, 44.0)
+    .position(x as f64, y as f64)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .resizable(false)
+    .shadow(false)
+    .title("");
 
     #[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]
-    let window = builder.transparent(true).build().map_err(|e| format!("Indicator failed: {}", e))?;
+    let window = builder
+        .transparent(true)
+        .build()
+        .map_err(|e| format!("Indicator failed: {}", e))?;
     #[cfg(not(any(not(target_os = "macos"), feature = "macos-private-api")))]
-    let window = builder.build().map_err(|e| format!("Indicator failed: {}", e))?;
+    let window = builder
+        .build()
+        .map_err(|e| format!("Indicator failed: {}", e))?;
 
     #[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]
-    { let _ = window.set_background_color(Some(Color(0, 0, 0, 0))); }
+    {
+        let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+    }
     #[cfg(not(any(not(target_os = "macos"), feature = "macos-private-api")))]
-    { let _ = window.set_background_color(Some(Color(15, 15, 25, 255))); }
+    {
+        let _ = window.set_background_color(Some(Color(15, 15, 25, 255)));
+    }
 
     let _ = window.show();
     let _ = window.set_focus();
     eprintln!(
         "[indicator] built: screen=({},{}) pos=({},{}), url={:?}",
-        sw, sh, x, y, tauri::WebviewUrl::App("indicator.html".into())
+        sw,
+        sh,
+        x,
+        y,
+        tauri::WebviewUrl::App("indicator.html".into())
     );
 
     // 诊断:1s 后读窗口标题,判断 indicator.html 是否成功加载
@@ -59,7 +76,9 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn hide(app: &tauri::AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(INDICATOR_LABEL) { let _ = window.close(); }
+    if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
+        let _ = window.close();
+    }
     Ok(())
 }
 
@@ -85,9 +104,12 @@ pub fn update_status(app: &tauri::AppHandle, status: &str) {
 /// The indicator JS will display it for a short duration before hiding.
 pub fn show_result(app: &tauri::AppHandle, duration_ms: u64) {
     if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
-        let _ = window.emit("indicator-result", serde_json::json!({
-            "duration_ms": duration_ms,
-        }));
+        let _ = window.emit(
+            "indicator-result",
+            serde_json::json!({
+                "duration_ms": duration_ms,
+            }),
+        );
     }
 }
 
