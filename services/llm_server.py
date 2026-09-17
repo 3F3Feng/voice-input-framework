@@ -163,12 +163,11 @@ class LLMEngine:
             if self._is_loaded and self.current_model_name == target_model:
                 return True
 
-            if self._loading:
-                logger.info("Model is loading, waiting...")
-                while self._loading:
-                    await asyncio.sleep(0.5)
-                return self._is_loaded and self.current_model_name == target_model
-
+            # 注: 此处不需要再等待 `self._loading` —— 该标志只在持有 _load_lock
+            # 期间被置位/清除,能走到这里就说明锁已到手、没有其他加载在进行。
+            # 旧代码里的 `while self._loading: await sleep()` 分支永远不可达;
+            # 即便可达也只会自锁(持锁方无法在本协程持锁时清除标志)。
+            # `_loading` 本身保留: is_loading() 对外暴露加载状态(/ready 等接口在用)。
             self._loading = True
             try:
                 # 切换模型前先释放旧模型内存(与 STT 侧一致,否则每次切换都泄漏一份权重)
