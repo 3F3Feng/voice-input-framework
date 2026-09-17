@@ -39,6 +39,16 @@ pub enum StreamEvent {
     Error { message: String },
 }
 
+/// Extract a human-readable message from a server payload.
+/// Error frames/responses carry `error_message` (see shared/data_types.py
+/// ErrorResponse); success responses carry `message`.
+pub(crate) fn server_message(data: &Value) -> &str {
+    data["error_message"]
+        .as_str()
+        .or_else(|| data["message"].as_str())
+        .unwrap_or("")
+}
+
 pub struct SttClient {
     pub stt_url: String,
 }
@@ -169,7 +179,8 @@ impl SttClient {
                         }
                         "error" => {
                             let _ = stream_task.await;
-                            return Err(data["message"].as_str().unwrap_or("Unknown error").to_string());
+                            let msg = server_message(&data);
+                            return Err(if msg.is_empty() { "Unknown error".to_string() } else { msg.to_string() });
                         }
                         _ => {}
                     }
@@ -222,7 +233,10 @@ impl SttClient {
                             if data["type"].as_str().unwrap_or("") == "result" { return Ok(final_text); }
                         }
                         "done" => return if final_text.is_empty() { Err("No speech detected".to_string()) } else { Ok(final_text) },
-                        "error" => return Err(data["message"].as_str().unwrap_or("Unknown error").to_string()),
+                        "error" => {
+                            let msg = server_message(&data);
+                            return Err(if msg.is_empty() { "Unknown error".to_string() } else { msg.to_string() });
+                        }
                         _ => {}
                     }
                 }
@@ -247,7 +261,7 @@ impl SttClient {
         let params = [("model_name", name)];
         let resp = client.post(format!("{}/models/select", self.stt_url)).form(&params).send().await.map_err(|e| e.to_string())?;
         let data: Value = resp.json().await.map_err(|e| e.to_string())?;
-        Ok(data["message"].as_str().unwrap_or("").to_string())
+        Ok(server_message(&data).to_string())
     }
 
     pub async fn get_llm_models(&self) -> Result<Vec<ModelInfo>, String> {
@@ -262,7 +276,7 @@ impl SttClient {
         let body = serde_json::json!({"model_name": name});
         let resp = client.post(format!("{}/llm/models/select", self.stt_url)).json(&body).send().await.map_err(|e| e.to_string())?;
         let data: Value = resp.json().await.map_err(|e| e.to_string())?;
-        Ok(data["message"].as_str().unwrap_or("").to_string())
+        Ok(server_message(&data).to_string())
     }
 
     pub async fn get_llm_prompt(&self) -> Result<String, String> {

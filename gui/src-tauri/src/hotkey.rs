@@ -283,6 +283,10 @@ fn spawn_hotkey_worker(
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
 
+    // Safety timeout: force-stop recording if running longer than this
+    // (mirrors the Windows poller, which already had one).
+    const MAX_RECORD_SECS: u64 = 300; // 5 minutes
+
     let recording = Arc::new(AtomicBool::new(false));
     let _ = std::thread::Builder::new()
         .name("hotkey-worker".into())
@@ -294,6 +298,12 @@ fn spawn_hotkey_worker(
             }
             match cmd_rx.recv() {
                 Ok(HotkeyCmd::Press) => {
+                    // Re-check after the (blocking) recv: a superseded worker
+                    // must not act on a command from its stale listener.
+                    if LISTENER_GEN.load(Ordering::SeqCst) != my_gen {
+                        eprintln!("[hotkey] Worker gen {} superseded, exiting", my_gen);
+                        break;
+                    }
                     if recording.swap(true, Ordering::SeqCst) {
                         continue;
                     }
@@ -306,15 +316,39 @@ fn spawn_hotkey_worker(
                         recording.store(false, Ordering::SeqCst);
                         continue;
                     }
+                    let record_start = std::time::Instant::now();
+                    let mut timed_out = false;
                     'record: loop {
                         match cmd_rx.try_recv() {
                             Ok(_) => break 'record,
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => break 'record,
                             Err(std::sync::mpsc::TryRecvError::Empty) => {}
                         }
+                        if record_start.elapsed()
+                            >= std::time::Duration::from_secs(MAX_RECORD_SECS)
+                        {
+                            eprintln!(
+                                "[hotkey] Safety timeout: force-stopping recording after {}s",
+                                MAX_RECORD_SECS
+                            );
+                            timed_out = true;
+                            break 'record;
+                        }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
                     recording.store(false, Ordering::SeqCst);
+                    if timed_out {
+                        // Drop the buffer instead of transcribing 5 min of audio.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            // Bind in separate lets to ensure proper drop order
+                            let state = app.state::<crate::AppState>();
+                            let result = state.recorder.lock();
+                            if let Ok(mut guard) = result {
+                                guard.reset();
+                            }
+                        }));
+                        continue;
+                    }
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let state = app.state::<crate::AppState>();
                         let _ = crate::stop_recording_internal(&app, &state);
@@ -331,7 +365,11 @@ fn spawn_hotkey_worker(
 struct HotkeyMatcher {
     pressed: Vec<HotkeyKey>,
     keys: Vec<HotkeyKey>,
-    last_press_emit: std::time::Instant,
+    /// True between an emitted Press and its matching Release. Pairing
+    /// Press/Release explicitly (instead of suppressing releases that arrive
+    /// within a time window) keeps a quick tap from losing its Release and
+    /// leaving the recorder stuck on, and swallows key-autorepeat Presses.
+    press_active: bool,
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -340,8 +378,7 @@ impl HotkeyMatcher {
         Self {
             pressed: Vec::new(),
             keys,
-            last_press_emit: std::time::Instant::now()
-                - std::time::Duration::from_secs(1),
+            press_active: false,
         }
     }
 
@@ -354,16 +391,12 @@ impl HotkeyMatcher {
             self.pressed.retain(|&x| x != key);
         }
         let all_pressed = self.keys.iter().all(|k| self.pressed.contains(k));
-        let now = std::time::Instant::now();
-        if is_press {
-            if all_pressed {
-                self.last_press_emit = now;
-                return Some(HotkeyCmd::Press);
-            }
-        } else if !all_pressed {
-            if now.duration_since(self.last_press_emit).as_millis() < 100 {
-                return None;
-            }
+        if all_pressed && !self.press_active {
+            self.press_active = true;
+            return Some(HotkeyCmd::Press);
+        }
+        if !all_pressed && self.press_active {
+            self.press_active = false;
             return Some(HotkeyCmd::Release);
         }
         None
@@ -391,6 +424,12 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
             let mut matcher = HotkeyMatcher::new(hotkey_keys.clone());
             let a = app.clone();
             mac_tap::run(move |key, is_press| {
+                // A re-registration spawns a new tap; this (now stale) one must
+                // stop, or both taps fire and recording starts twice.
+                if LISTENER_GEN.load(Ordering::SeqCst) != my_gen {
+                    eprintln!("[hotkey] Tap gen {} superseded, stopping runloop", my_gen);
+                    return mac_tap::TapAction::Stop;
+                }
                 if let Some(cmd) = matcher.on_change(key, is_press) {
                     let _ = cmd_tx.send(cmd);
                     let _ = a.emit(
@@ -398,6 +437,7 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
                         (),
                     );
                 }
+                mac_tap::TapAction::Continue
             });
         });
 }
@@ -485,6 +525,13 @@ mod mac_tap {
         })
     }
 
+    /// What the handler wants the tap to do next.
+    pub enum TapAction {
+        Continue,
+        /// Stop the runloop and drop the tap (used when superseded).
+        Stop,
+    }
+
     /// Run a CGEventTap on the current thread (called from the
     /// hotkey-listener thread). Never touches TextServices, so it does not
     /// hit the macOS 15+ TSMGetInputSourceProperty assert crash that rdev
@@ -492,7 +539,7 @@ mod mac_tap {
     /// otherwise CGEventTapCreate fails and we log and return.
     pub fn run<F>(handler: F)
     where
-        F: FnMut(HotkeyKey, bool) + 'static,
+        F: FnMut(HotkeyKey, bool) -> TapAction + 'static,
     {
         // CGEventTap::new's callback is `Fn` (immutable), but our handler
         // mutates the matcher — RefCell gives interior mutability; the
@@ -511,23 +558,26 @@ mod mac_tap {
             events,
             move |_proxy, etype, event| {
                 let mut h = handler.borrow_mut();
-                match etype {
+                let action = match etype {
                     CGEventType::KeyDown | CGEventType::KeyUp => {
                         let vk = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
-                        if let Some(k) = hid_to_hotkey(vk) {
-                            h(k, matches!(etype, CGEventType::KeyDown));
+                        match hid_to_hotkey(vk) {
+                            Some(k) => h(k, matches!(etype, CGEventType::KeyDown)),
+                            None => TapAction::Continue,
                         }
                     }
                     CGEventType::FlagsChanged => {
                         let vk = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
                         let flags = event.get_flags();
-                        if let Some(mask) = mod_flag(vk) {
-                            if let Some(k) = hid_to_hotkey(vk) {
-                                h(k, flags.contains(mask));
-                            }
+                        match (mod_flag(vk), hid_to_hotkey(vk)) {
+                            (Some(mask), Some(k)) => h(k, flags.contains(mask)),
+                            _ => TapAction::Continue,
                         }
                     }
-                    _ => {}
+                    _ => TapAction::Continue,
+                };
+                if matches!(action, TapAction::Stop) {
+                    CFRunLoop::get_current().stop();
                 }
                 None
             },

@@ -75,3 +75,30 @@ fn ws_url_derives_from_http() {
     let url = format!("{}/ws/stream", ws_url);
     assert_eq!(url, "ws://localhost:6544/ws/stream");
 }
+
+// ── 错误消息字段解析(服务端发 error_message,旧代码读 message)──
+
+#[test]
+fn error_frame_uses_error_message() {
+    // services/stt_server.py 的 WS error 帧:{"type","error_code","error_message"}
+    let data: serde_json::Value = serde_json::from_str(
+        r#"{"type":"error","error_code":"E5001","error_message":"转写超时"}"#,
+    )
+    .unwrap();
+    assert_eq!(stt::server_message(&data), "转写超时");
+}
+
+#[test]
+fn success_response_falls_back_to_message() {
+    // /models/select 成功响应只有 message 字段
+    let data: serde_json::Value =
+        serde_json::from_str(r#"{"status":"success","message":"Switching to whisper_turbo"}"#)
+            .unwrap();
+    assert_eq!(stt::server_message(&data), "Switching to whisper_turbo");
+}
+
+#[test]
+fn missing_both_fields_is_empty() {
+    let data: serde_json::Value = serde_json::from_str(r#"{"status":"success"}"#).unwrap();
+    assert_eq!(stt::server_message(&data), "");
+}

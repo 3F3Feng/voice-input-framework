@@ -95,6 +95,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # 保留的旧客户端/既有文件:未使用导入等债务暂豁免(F 类真实错误待后续清理)
 "client/gui.py" = ["F401", "F841"]
+"client/gui_v1_backup.py" = ["F401", "F841"]  # v1 GUI 备份文件,不参与构建
 "client/notifier.py" = ["F401"]
 "client/ui.py" = ["F401"]
 "client/cursor_tracker.py" = ["F841"]

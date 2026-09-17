@@ -23,7 +23,13 @@ unsafe impl Send for SendStream {}
 /// cpal-based audio capture with streaming channel support
 pub struct AudioRecorder {
     selected_device: Option<String>,
+    /// Device-native capture rate (diagnostics only).
     input_sample_rate: u32,
+    /// Rate of the samples actually stored in `self.samples`. The capture
+    /// callback resamples to 16 kHz before buffering, so this is always
+    /// 16000 — returning `input_sample_rate` here made the batch path
+    /// resample an already-16 kHz buffer a second time.
+    buffer_sample_rate: u32,
     peak_level: Arc<AtomicU32>,
     is_recording: Arc<AtomicBool>,
     stream: Option<SendStream>,
@@ -37,6 +43,7 @@ impl AudioRecorder {
         Self {
             selected_device: None,
             input_sample_rate: 16000,
+            buffer_sample_rate: 16000,
             peak_level: Arc::new(AtomicU32::new(0)),
             is_recording: Arc::new(AtomicBool::new(false)),
             stream: None,
@@ -262,6 +269,8 @@ impl AudioRecorder {
         stream.play().map_err(|e| format!("Failed to start stream: {}", e))?;
 
         self.input_sample_rate = sample_rate;
+        // push_samples() always resamples to 16 kHz before buffering.
+        self.buffer_sample_rate = 16000;
         recording.store(true, Ordering::SeqCst);
         self.stream = Some(SendStream(Some(stream)));
         self.selected_device = device_name;
@@ -286,10 +295,13 @@ impl AudioRecorder {
             let mut buf = self.samples.lock().map_err(|e| e.to_string())?;
             let result = buf.clone();
             buf.clear();
-            (result, self.input_sample_rate)
+            // Return the BUFFER rate, not the device rate: the callback has
+            // already resampled. Returning the device rate made the caller
+            // resample a second time (pitch/speed corruption in batch mode).
+            (result, self.buffer_sample_rate)
         };
 
-        eprintln!("[audio] Stopped: {} samples ({:.2}s at {}Hz)", samples.len(), samples.len() as f64 / rate as f64, rate);
+        eprintln!("[audio] Stopped: {} samples ({:.2}s at {}Hz, device {}Hz)", samples.len(), samples.len() as f64 / rate as f64, rate, self.input_sample_rate);
         Ok((samples, rate))
     }
 

@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,6 +24,12 @@ from pydantic import BaseModel
 project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
+
+from shared.constants import (  # noqa: E402
+    DEFAULT_BIND_HOST,
+    DEFAULT_CORS_ORIGINS,
+    MAX_PROCESS_TEXT_LENGTH,
+)
 
 # 配置日志
 _log_level = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
@@ -139,6 +146,8 @@ class LLMEngine:
         self._loading = False
         self._load_lock = asyncio.Lock()
         self._processing = False
+        # 生成在线程池执行,需用线程锁(而非 asyncio.Lock)串行化
+        self._process_lock = threading.Lock()
         self.start_time = time.time()
 
     async def load(self, model_name: str | None = None) -> bool:
@@ -162,6 +171,9 @@ class LLMEngine:
 
             self._loading = True
             try:
+                # 切换模型前先释放旧模型内存(与 STT 侧一致,否则每次切换都泄漏一份权重)
+                if self._model is not None:
+                    self._release_model()
                 logger.info(f"Loading LLM model: {model_id}")
                 loop = asyncio.get_event_loop()
                 success = await loop.run_in_executor(None, self._load_sync, model_id)
@@ -175,6 +187,22 @@ class LLMEngine:
                 return False
             finally:
                 self._loading = False
+
+    def _release_model(self):
+        """释放当前已加载的模型内存"""
+        import gc
+
+        self._is_loaded = False
+        self._model = None
+        self._tokenizer = None
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except Exception as e:  # mlx 不可用时静默跳过
+            logger.debug(f"MLX cache clear skipped: {e}")
+        gc.collect()
+        logger.info("Old LLM model memory released")
 
     def _load_sync(self, model_id: str) -> bool:
         """同步加载模型"""
@@ -198,8 +226,30 @@ class LLMEngine:
                 success=False,
             )
 
-        self._processing = True
+        # /process 在默认线程池执行,并发请求会同时命中同一个 MLX 模型实例
+        # (生成状态非线程安全)并互相覆盖 _processing 标志 —— 这里串行化。
+        with self._process_lock:
+            self._processing = True
+            try:
+                return self._generate(text)
+            finally:
+                self._processing = False
+
+    def _generate(self, text: str) -> ProcessResult:
+        """实际的生成 + 输出清洗(调用方必须已持有 _process_lock)"""
         start_time = time.time()
+
+        # 取本地引用:并发的模型切换会把 self._model 置空,
+        # 本地引用可保证本次生成用完整的旧实例跑完。
+        model, tokenizer = self._model, self._tokenizer
+        if model is None or tokenizer is None:
+            return ProcessResult(
+                text=text,
+                original_text=text,
+                llm_latency_ms=0,
+                model="",
+                success=False,
+            )
 
         try:
             import mlx_lm
@@ -214,7 +264,7 @@ class LLMEngine:
                 {"role": "user", "content": text},
             ]
 
-            prompt = self._tokenizer.apply_chat_template(
+            prompt = tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
@@ -226,8 +276,8 @@ class LLMEngine:
 
             # 生成
             response = mlx_lm.generate(
-                model=self._model,
-                tokenizer=self._tokenizer,
+                model=model,
+                tokenizer=tokenizer,
                 prompt=prompt,
                 max_tokens=256,
             )
@@ -235,8 +285,8 @@ class LLMEngine:
             # 清理响应 - 移除思考标签
             import re
 
-            # 移除 <think>...</think> 标签
-            cleaned = re.sub(r"<think>[\\s\\S]*?</think>", "", response)
+            # 移除 <think>...</think> 标签(DOTALL:思考块通常跨多行)
+            cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
             # 移除单独的 <think> 或 </think> 标签
             cleaned = re.sub(r"</?think>", "", cleaned)
             # 处理 Thinking Process 或分析输出
@@ -320,7 +370,7 @@ class LLMEngine:
                     unique_lines.append(line)
             cleaned = " ".join(unique_lines)
             # 移除开头的 \nquirer 或 thinker
-            cleaned = re.sub(r"^\\s*(?:quirer|thinker)\\s*", "", cleaned)
+            cleaned = re.sub(r"^\s*(?:quirer|thinker)\s*", "", cleaned)
             cleaned = cleaned.strip()
 
             latency = (time.time() - start_time) * 1000
@@ -342,8 +392,6 @@ class LLMEngine:
                 model=self.current_model_name,
                 success=False,
             )
-        finally:
-            self._processing = False
 
     async def process_async(self, text: str) -> ProcessResult:
         """异步处理文本"""
@@ -363,9 +411,13 @@ class LLMEngine:
 # ============== FastAPI App ==============
 
 # 配置
-LLM_HOST = os.getenv("VIF_LLM_HOST", "0.0.0.0")
+# 默认只绑定回环地址:本服务无鉴权,不应默认暴露到局域网。
+LLM_HOST = os.getenv("VIF_LLM_HOST", DEFAULT_BIND_HOST)
 LLM_PORT = int(os.getenv("VIF_LLM_PORT", "6545"))
 LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
+CORS_ORIGINS = [
+    o.strip() for o in os.getenv("VIF_CORS_ORIGINS", "").split(",") if o.strip()
+] or DEFAULT_CORS_ORIGINS
 
 # 初始化引擎
 engine = LLMEngine(default_model=LLM_MODEL)
@@ -392,7 +444,7 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -449,6 +501,11 @@ async def select_model(model_name: str = Form(...)):
 async def process_text(request: ProcessRequest):
     """处理文本"""
     try:
+        if len(request.text) > MAX_PROCESS_TEXT_LENGTH:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Text too long: {len(request.text)} > {MAX_PROCESS_TEXT_LENGTH} chars",
+            )
         if not engine.is_model_loaded():
             # 尝试加载
             loaded = await engine.load()

@@ -45,13 +45,24 @@ from services.stt_engine import (
     TranscriptionRequest,
     TranscriptionResult,
 )
-from shared.constants import DEFAULT_LLM_PORT, DEFAULT_STT_PORT
+from shared.constants import (
+    DEFAULT_BIND_HOST,
+    DEFAULT_CORS_ORIGINS,
+    DEFAULT_LLM_PORT,
+    DEFAULT_STT_PORT,
+    MAX_UPLOAD_SIZE,
+    WS_MAX_MESSAGE_SIZE,
+)
 from shared.data_types import ErrorResponse
 from shared.model_registry import MODELS_CONFIG, get_default_model
 
 # ============== Configuration ==============
-STT_HOST = os.getenv("VIF_STT_HOST", "0.0.0.0")
+# 默认只绑定回环地址:本服务无鉴权,不应默认暴露到局域网。
+STT_HOST = os.getenv("VIF_STT_HOST", DEFAULT_BIND_HOST)
 STT_PORT = int(os.getenv("VIF_STT_PORT", str(DEFAULT_STT_PORT)))
+CORS_ORIGINS = [
+    o.strip() for o in os.getenv("VIF_CORS_ORIGINS", "").split(",") if o.strip()
+] or DEFAULT_CORS_ORIGINS
 STT_MODEL = os.getenv(
     "VIF_STT_MODEL",
     get_default_model(),
@@ -215,7 +226,8 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -438,11 +450,18 @@ async def transcribe(
     req_id = request_id_ctx.get()
     try:
         audio_content = await file.read()
+        if len(audio_content) > MAX_UPLOAD_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Audio too large: {len(audio_content)} > {MAX_UPLOAD_SIZE} bytes",
+            )
         result = await engine.transcribe(
             audio_content,
             language=language,
         )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Transcription error: {e}", extra={"request_id": req_id})
         raise HTTPException(status_code=500, detail=str(e))
@@ -491,6 +510,8 @@ async def websocket_stream(websocket: WebSocket):
     audio_queue = asyncio.Queue()
     stream_error = None
     language = "auto"
+    received_bytes = 0
+    size_error = None
 
     # ── 异步生成器：从 queue 读取音频块供 transcribe_stream ──
     async def audio_stream_generator():
@@ -508,7 +529,7 @@ async def websocket_stream(websocket: WebSocket):
 
     # ── 接收循环（投递到 queue）──
     async def receive_loop():
-        nonlocal stream_error, language
+        nonlocal stream_error, language, received_bytes, size_error
         try:
             while True:
                 message = await asyncio.wait_for(websocket.receive_text(), timeout=120.0)
@@ -518,7 +539,24 @@ async def websocket_stream(websocket: WebSocket):
                 if msg_type == "audio":
                     audio_b64 = data.get("data", "")
                     if audio_b64:
-                        await audio_queue.put(base64.b64decode(audio_b64))
+                        chunk = base64.b64decode(audio_b64)
+                        # 单帧上限:拒绝超大帧,避免单条消息撑爆内存
+                        if len(chunk) > WS_MAX_MESSAGE_SIZE:
+                            size_error = (
+                                f"Audio frame too large: {len(chunk)} > {WS_MAX_MESSAGE_SIZE} bytes"
+                            )
+                            await audio_queue.put(None)
+                            break
+                        # 累计上限:一次会话的音频总量不得超过上传上限
+                        received_bytes += len(chunk)
+                        if received_bytes > MAX_UPLOAD_SIZE:
+                            size_error = (
+                                f"Audio stream too large: {received_bytes} > "
+                                f"{MAX_UPLOAD_SIZE} bytes"
+                            )
+                            await audio_queue.put(None)
+                            break
+                        await audio_queue.put(chunk)
 
                 elif msg_type == "config":
                     language = data.get("language", "auto")
@@ -545,6 +583,23 @@ async def websocket_stream(websocket: WebSocket):
 
     # ── 等待音频接收完成，一次性转写 ──
     await receive_task
+
+    # 超出体积上限:丢弃已收音频并直接返回错误(终态,不再发 done)
+    if size_error:
+        logger.warning(f"Rejecting oversized audio stream: {size_error}")
+        await _safe_send(
+            {
+                "type": "error",
+                "error_code": "E4013",
+                "error_message": size_error,
+            }
+        )
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        engine.decrement_connections()
+        return
 
     # 收集所有音频数据
     all_audio = bytearray()
@@ -678,6 +733,11 @@ async def diarize(
 
     try:
         content = await file.read()
+        if len(content) > MAX_UPLOAD_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Audio too large: {len(content)} > {MAX_UPLOAD_SIZE} bytes",
+            )
         async with aiofiles.open(tmp_path, "wb") as f:
             await f.write(content)
 
@@ -704,6 +764,8 @@ async def diarize(
 
         return result
 
+    except HTTPException:
+        raise
     except ImportError as e:
         raise HTTPException(
             status_code=501,
