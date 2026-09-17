@@ -134,7 +134,7 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
 
     let current = app.package_info().version.to_string();
     let latest = manifest.version.trim_start_matches('v').to_string();
-    if compare_versions(&latest, &current.trim_start_matches('v')) != Ordering::Greater {
+    if compare_versions(&latest, current.trim_start_matches('v')) != Ordering::Greater {
         return Ok("已是最新版本".to_string());
     }
 

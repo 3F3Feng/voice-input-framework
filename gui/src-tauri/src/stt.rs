@@ -102,7 +102,7 @@ impl SttClient {
             .map_err(|e| format!("WebSocket send config failed: {}", e))?;
 
         // Spawn task to stream audio chunks
-        let (audio_done_tx, mut audio_done_rx) = tokio::sync::oneshot::channel::<()>();
+        let (audio_done_tx, audio_done_rx) = tokio::sync::oneshot::channel::<()>();
         let ws_sender = Arc::new(tokio::sync::Mutex::new(ws));
 
         let ws_clone = ws_sender.clone();
@@ -143,7 +143,7 @@ impl SttClient {
         loop {
             let msg_result = {
                 let mut ws = ws_recv.lock().await;
-                tokio::time::timeout(std::time::Duration::from_secs(300), (&mut *ws).next()).await
+                tokio::time::timeout(std::time::Duration::from_secs(300), (*ws).next()).await
             };
 
             let msg = match msg_result {
