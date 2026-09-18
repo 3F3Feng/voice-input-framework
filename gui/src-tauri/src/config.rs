@@ -135,6 +135,17 @@ pub struct AudioConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
+    /// LLM 后处理开关的**本地缓存**,不是权威。
+    ///
+    /// 权威一直在 STT 服务那边(`GET/PUT /llm/enabled`,由它持久化到
+    /// `~/.config/voice-input-framework/stt_state.json`),因为真正按这个标志位
+    /// 决定要不要做后处理的就是它。这个字段以前从头到尾没有任何地方读过——
+    /// 一份写了却没人看的「第二真相」。
+    ///
+    /// 现在它有且只有一个职责:回答一个**在 STT 起来之前问不到**的问题——
+    /// 应用启动时要不要拉起 LLM 服务(见 `lib.rs` 的 `auto_start` 一段)。
+    /// 缓存过期了不要紧:STT 一健康就会拿权威值对账并把这里改正过来
+    /// (`reconcile_llm_after_start`),所以两个标志位不会各说各话。
     pub enabled: bool,
 }
 

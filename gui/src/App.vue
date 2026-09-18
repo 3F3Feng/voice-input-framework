@@ -126,8 +126,13 @@
           <div class="s-section">
             <div class="s-title">LLM 后处理</div>
             <div class="s-row">
-              <label class="toggle"><input type="checkbox" v-model="llmEnabled" @change="toggleLlm" /><span class="slider"></span></label>
-              <span class="s-label">{{ llmEnabled ? '已启用' : '已禁用' }}</span>
+              <label class="toggle"><input type="checkbox" v-model="llmEnabled" @change="toggleLlm" :disabled="llmToggling" /><span class="slider"></span></label>
+              <span class="s-label" :class="{ 'llm-busy': llmToggling }">{{ llmToggleText }}</span>
+            </div>
+            <!-- 本地管理模式下这个开关不只是个标志位:LLM 服务跟着它起停。
+                 加载模型要几秒,开关这几秒是锁着的——得让用户知道那不是卡死。 -->
+            <div v-if="serverMode === 'local'" class="s-tip" style="margin-top:4px">
+              LLM 服务跟着这个开关走：打开时启动（加载模型要几秒），关闭时停止，不用一直占着内存。只停本应用启动的那个；你自己在终端里跑的服务会保留。
             </div>
             <div v-if="llmEnabled" style="margin-top: 8px;">
               <select class="s-select" v-model="llmModel" @change="switchLlm">
@@ -450,6 +455,8 @@ const llmPort = ref(6545);
 const localAutoStart = ref(false);
 let serverPollTimer: ReturnType<typeof setInterval> | null = null;
 const llmEnabled = ref(true);
+/** 开关正在生效中。本地模式下这几秒是在等 LLM 服务加载模型。 */
+const llmToggling = ref(false);
 const promptText = ref("");
 const autoInputEnabled = ref(false);
 const autoStart = ref(false);
@@ -549,6 +556,15 @@ const OWNER_CHIP: Record<ServerOwner, { text: string; cls: string }> = {
   external_unknown: { text: "外部（未识别）", cls: "muted" },
 };
 
+/** 开关旁边那行字。生效中要说清楚在等什么,否则几秒钟的静默像是没反应。 */
+const llmToggleText = computed(() => {
+  if (llmToggling.value) {
+    if (serverMode.value !== "local") return "处理中…";
+    return llmEnabled.value ? "正在启动 LLM 服务…" : "正在停止 LLM 服务…";
+  }
+  return llmEnabled.value ? "已启用" : "已禁用";
+});
+
 const serverRows = computed(() =>
   SERVER_META.map(m => {
     const status: ServerStatus | null = serverReport.value ? serverReport.value[m.kind] : null;
@@ -559,12 +575,21 @@ const serverRows = computed(() =>
     const showOwner = !!status && (isUp || status.owner === "app");
     const chip = status ? OWNER_CHIP[status.owner] : null;
     const canStop = !!status?.can_stop;
+    // LLM 现在是跟着后处理开关走的。开关关着时这一行显示「未运行」是**预期结果**,
+    // 不说一声的话看起来就像服务起不来。
+    const offBecauseToggle = m.kind === "llm" && !llmEnabled.value && state === "stopped";
+    // 反过来的那一半:开关开着、服务却没在跑(手动点了「停止」,或者它自己崩了)。
+    // 这是真正坏掉的组合——STT 每次转录都会去反代一个空端口,白等一次超时,
+    // 而界面上没有任何一处会说破。必须显式喊出来。
+    const onButMissing = m.kind === "llm" && llmEnabled.value && (state === "stopped" || state === "failed");
     const desc = status
       ? [
           `端口 ${status.port}`,
           status.pid ? `pid ${status.pid}` : "",
           status.current_model ? `模型 ${status.current_model}` : "",
           status.detail || "",
+          offBecauseToggle ? "已随「LLM 后处理」关闭；打开那个开关会自动启动" : "",
+          onButMissing ? "⚠「LLM 后处理」开着但服务没在跑，转录时的后处理会失败；点「启动」，或把那个开关关掉" : "",
         ].filter(Boolean).join("　")
       : "状态未知";
     return {
@@ -1010,8 +1035,30 @@ async function switchLlm() {
   try { await invoke<string>("switch_llm_model", { name: llmModel.value }); toast("LLM 已切换", "ok"); } catch (e) { toast(`LLM 切换失败: ${e}`, "err"); }
   llmLoading.value = false;
 }
+/**
+ * 拨「LLM 后处理」开关。
+ *
+ * 本地管理模式下这一下不只是翻标志位:LLM 服务跟着起停,打开时要等它把模型
+ * 加载完(几秒)。所以整个过程锁住开关并把文案改成「正在启动 LLM 服务…」——
+ * 不然用户看到的是拨了之后几秒钟毫无反应,只会再拨一次。
+ *
+ * 失败一律把开关拨回去。界面上写着「已启用」而服务端并没有,是最坏的一种结果:
+ * 之后每次转录都会去反代一个空端口。后端在失败时不会翻标志位,前端这里跟着回滚,
+ * 两边就始终说的是同一件事。
+ */
 async function toggleLlm() {
-  try { await invoke("set_llm_enabled", { enabled: llmEnabled.value }); toast(`LLM ${llmEnabled.value ? '已启用' : '已禁用'}`, "ok"); } catch { llmEnabled.value = !llmEnabled.value; }
+  const want = llmEnabled.value;
+  llmToggling.value = true;
+  try {
+    const msg = await invoke<string>("set_llm_enabled", { enabled: want });
+    toast(msg || `LLM ${want ? '已启用' : '已禁用'}`, "ok");
+  } catch (e) {
+    llmEnabled.value = !want;
+    toast(`${e}`, "err");
+  }
+  llmToggling.value = false;
+  // 服务的状态刚刚被改过,面板上那一行得跟着更新。
+  if (serverMode.value === "local") await refreshServers();
 }
 
 // ── Hotkey ──
@@ -1351,6 +1398,8 @@ html, body, #app { height: 100%; }
 .s-select { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 0.78rem; width: 100%; outline: none; }
 .s-loading { font-size: 0.7rem; color: var(--yellow); margin-top: 4px; }
 .s-label { font-size: 0.78rem; color: var(--text); }
+/* 开关生效中(本地模式下是在等 LLM 加载模型):换个颜色,别让这几秒看起来像卡死 */
+.s-label.llm-busy { color: var(--yellow); }
 .s-tip { font-size: 0.68rem; color: var(--muted); margin-top: 4px; }
 .s-textarea { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 0.75rem; width: 100%; resize: vertical; font-family: inherit; outline: none; }
 .s-textarea:focus { border-color: var(--blue); }

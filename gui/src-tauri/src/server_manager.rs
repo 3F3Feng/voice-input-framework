@@ -1066,6 +1066,124 @@ pub async fn restart(
     start(manager, cfg, kind).await
 }
 
+// ── LLM 后处理开关与 LLM 服务的联动 ──
+//
+// 「LLM 后处理」这个开关以前只翻 STT 服务端的一个标志位,LLM 服务自己在不在跑
+// 和它毫无关系——后处理关着,几个 G 的模型照样占着内存;而 STT 那边标志位开着、
+// LLM 端口是空的时,每次转录都要白等一次反代超时。现在把服务的生命周期挂到开关
+// 上:开 → 起,关 → 停。
+//
+// 「关 → 停」这一步必须收窄到**本应用拉起的那个进程**,比停止按钮更严。停止按钮
+// 敢动「外部(本项目)」,是因为那是用户瞄着某一个进程按下去的、明确的一下;而拨
+// 一下「后处理」开关顺手杀掉他在终端里跑着的服务,是另一回事——终端会话毫无征兆
+// 地没了,而他刚才做的事根本不叫「停止服务」。所以这里退回最保守的那条铁律:
+// 只停自己拉起的,别的一律保留并把原因说出来。
+//
+// 下面三个 `plan_*` 都是纯函数,不碰进程也不发请求:判断规则只在这里写一遍,
+// 调用方照着执行。这样「什么情况下才停」这条规矩是可以单测的,而不用真去起一个
+// 服务才能验证。
+
+/// 关掉 LLM 后处理时,对 LLM 服务的处置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmShutdownPlan {
+    /// 本应用拉起(或上次会话认领回来)的进程,跟着开关一起停。
+    Stop,
+    /// 端口上本来就没有在跑的 LLM 服务,没什么可停的。
+    NothingToStop,
+    /// 在跑,但不是本应用拉起的。保留,并把原因说给用户听。
+    KeepForeign(ServerOwner),
+}
+
+impl LlmShutdownPlan {
+    /// 保留了别人的进程时,给用户的解释。UI 直接显示,不要让开关看起来「没生效」。
+    pub fn keep_reason(self) -> Option<&'static str> {
+        match self {
+            LlmShutdownPlan::KeepForeign(ServerOwner::ExternalProject) => Some(
+                "LLM 服务不是本应用启动的(外部/本项目),已保留——你在终端里跑的进程不该因为拨一下开关就消失。要停它请用「服务器」面板上的「停止」。",
+            ),
+            LlmShutdownPlan::KeepForeign(_) => Some(
+                "LLM 端口上是认不出来源的外部进程,本应用只连接、不会碰它,已保留。",
+            ),
+            _ => None,
+        }
+    }
+}
+
+/// 关后处理时该不该动 LLM 服务。
+pub fn plan_llm_shutdown(status: &ServerStatus) -> LlmShutdownPlan {
+    // `Starting` 也算在跑:那是自己刚拉起、还在加载模型的进程,不停掉它就等于
+    // 开关关了而内存照占。`Failed` / `Stopped` / `NotConfigured` 都没有活着的
+    // 进程可停。
+    if !matches!(status.state, ServerState::Running | ServerState::Starting) {
+        return LlmShutdownPlan::NothingToStop;
+    }
+    match status.owner {
+        ServerOwner::App => LlmShutdownPlan::Stop,
+        other => LlmShutdownPlan::KeepForeign(other),
+    }
+}
+
+/// 应用启动时按顺序拉起哪些服务。
+///
+/// LLM 排在 STT 前面是老规矩:STT 要反代到 LLM,让它先就位,转录时的后处理就
+/// 不会撞上一个还没起来的端口。`llm_enabled` 为假时干脆不拉 LLM——这正是这次
+/// 改动的目的:后处理关着就别占那几个 G 的内存。
+pub fn auto_start_plan(llm_enabled: bool) -> Vec<ServerKind> {
+    if llm_enabled {
+        vec![ServerKind::Llm, ServerKind::Stt]
+    } else {
+        vec![ServerKind::Stt]
+    }
+}
+
+/// STT 起来之后,拿服务端的权威标志和启动时用的本地缓存对账的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmReconcile {
+    /// 缓存和权威一致,什么都不用做。
+    InSync,
+    /// 权威说后处理开着,启动时却没拉 LLM——补上。
+    StartLlm,
+    /// 权威说后处理关着,启动时却拉了 LLM——收回去(照样只收自己拉起的)。
+    StopLlm,
+}
+
+/// 启动时按缓存做的决定(`started_llm`),和 STT 报出来的权威值(`authoritative`)
+/// 对一次账。
+///
+/// 这一步是「两个标志位不会悄悄走散」的全部依靠:启动那一刻 STT 还没起来,
+/// `/llm/enabled` 根本问不到,只能先信本地缓存;缓存要是过期了,唯一能发现的
+/// 时机就是 STT 健康之后的这一次比对。少了它,两边各说各话而且没有任何地方
+/// 会察觉。
+pub fn plan_llm_reconcile(started_llm: bool, authoritative: bool) -> LlmReconcile {
+    match (started_llm, authoritative) {
+        (false, true) => LlmReconcile::StartLlm,
+        (true, false) => LlmReconcile::StopLlm,
+        _ => LlmReconcile::InSync,
+    }
+}
+
+/// 等某个服务的 `/health` 通。超时返回 false(进程可能还活着,只是没加载完)。
+///
+/// 打开后处理时必须等到这里返回 true 才敢去翻 STT 的标志位:`start` 返回只说明
+/// spawn 成功,之后还有几秒钟端口是死的,这段时间里 STT 去反代就是撞空。
+pub async fn wait_ready(
+    cfg: &crate::config::ServerConfig,
+    kind: ServerKind,
+    timeout: Duration,
+) -> bool {
+    let port = port_of(kind, &cfg.local);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if probe(port).await.is_some() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
 // ── 路径自动探测 ──
 
 /// 检查一个目录是不是 voice-input-framework 仓库根。
@@ -1300,6 +1418,102 @@ mod tests {
         assert!(!same_dir(&dir, Path::new("/nonexistent/elsewhere")));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 造一个 LLM 的状态快照,只关心 `plan_llm_shutdown` 看的那两个字段。
+    fn llm_status(state: ServerState, owner: ServerOwner) -> ServerStatus {
+        ServerStatus {
+            kind: ServerKind::Llm,
+            state,
+            port: 6545,
+            owner,
+            can_stop: owner.can_manage(),
+            pid: Some(4242),
+            current_model: None,
+            detail: None,
+            log_path: None,
+            recent_logs: Vec::new(),
+        }
+    }
+
+    /// 后处理关着就不该拉 LLM——这条就是这次改动本身。
+    #[test]
+    fn auto_start_skips_the_llm_server_when_post_processing_is_off() {
+        assert_eq!(auto_start_plan(false), vec![ServerKind::Stt]);
+    }
+
+    /// 开着的时候顺序不能变:LLM 在前,STT 的反代才有东西可连。
+    #[test]
+    fn auto_start_keeps_llm_before_stt_when_post_processing_is_on() {
+        assert_eq!(
+            auto_start_plan(true),
+            vec![ServerKind::Llm, ServerKind::Stt]
+        );
+    }
+
+    /// 自己拉起的,跟着开关一起停。
+    #[test]
+    fn toggling_off_stops_our_own_llm_server() {
+        assert_eq!(
+            plan_llm_shutdown(&llm_status(ServerState::Running, ServerOwner::App)),
+            LlmShutdownPlan::Stop
+        );
+        // 还在加载模型的也要停,否则开关关了内存照占。
+        assert_eq!(
+            plan_llm_shutdown(&llm_status(ServerState::Starting, ServerOwner::App)),
+            LlmShutdownPlan::Stop
+        );
+    }
+
+    /// 这条是整个联动里最要紧的一条闸门:**不是自己拉起的,一个都不停**。
+    ///
+    /// 注意它比停止按钮严——`ExternalProject` 的 `can_stop` 是 true,用户点
+    /// 「停止」能停掉它;但拨一下后处理开关就顺手杀掉他终端里的进程,是完全
+    /// 不同的一件事。这里刻意不复用 `can_manage`。
+    #[test]
+    fn toggling_off_never_stops_a_server_we_did_not_start() {
+        for owner in [ServerOwner::ExternalProject, ServerOwner::ExternalUnknown] {
+            let status = llm_status(ServerState::Running, owner);
+            assert_eq!(
+                plan_llm_shutdown(&status),
+                LlmShutdownPlan::KeepForeign(owner),
+                "{:?} 的进程不能因为拨开关被停掉",
+                owner
+            );
+            // 保留了就必须说清楚为什么,否则开关看起来像是没生效。
+            assert!(plan_llm_shutdown(&status).keep_reason().is_some());
+        }
+        // 「外部(本项目)」明明是可以从界面停的,这里照样不停——两条规则的
+        // 严格程度确实不同,这一行就是那个差别本身。
+        assert!(ServerOwner::ExternalProject.can_manage());
+    }
+
+    /// 没在跑就没什么可停的,也不该报成「保留了别人的进程」。
+    #[test]
+    fn toggling_off_with_no_llm_running_is_a_no_op() {
+        for state in [
+            ServerState::Stopped,
+            ServerState::Failed,
+            ServerState::NotConfigured,
+        ] {
+            assert_eq!(
+                plan_llm_shutdown(&llm_status(state, ServerOwner::App)),
+                LlmShutdownPlan::NothingToStop,
+                "{:?}",
+                state
+            );
+        }
+    }
+
+    /// 缓存和权威对账:一致就什么都不做,不一致一律以权威为准。
+    #[test]
+    fn reconcile_always_follows_the_authoritative_flag() {
+        assert_eq!(plan_llm_reconcile(true, true), LlmReconcile::InSync);
+        assert_eq!(plan_llm_reconcile(false, false), LlmReconcile::InSync);
+        // 缓存说关、服务端说开:补起 LLM,而不是把服务端改成关。
+        assert_eq!(plan_llm_reconcile(false, true), LlmReconcile::StartLlm);
+        // 缓存说开、服务端说关:把刚拉起的收回去。
+        assert_eq!(plan_llm_reconcile(true, false), LlmReconcile::StopLlm);
     }
 
     #[test]
@@ -1672,6 +1886,81 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
 
         assert!(wait_health(TEST_LLM_PORT, false, 10).await, "端口没释放");
         assert!(!pid_alive(pid), "子进程 {} 还活着,成了孤儿", pid);
+    }
+
+    /// LLM 后处理开关联动服务生命周期时,只准停自己拉起的那个。
+    ///
+    /// 用真进程跑一遍,是因为「谁拉起的」这个判断本身就依赖 `lsof` / `ps` 的
+    /// 真实结果——纯单测只能验证规则表,验证不了规则喂进去的那个 `owner` 是不是
+    /// 算对了。顺带把 `wait_ready` 也压在真实的「起来要花几秒」上。
+    #[tokio::test]
+    #[ignore = "会真的拉起子进程并绑 7545 端口"]
+    async fn the_toggle_only_stops_the_llm_server_it_started_itself() {
+        let repo = FakeRepo::create("llmtoggle");
+        let cfg = repo.config();
+        let manager = Mutex::new(ServerManager::new(repo.data_dir()));
+
+        assert!(probe(TEST_LLM_PORT).await.is_none(), "测试端口不干净");
+
+        // ── 1. 自己拉起的:等它就绪,然后开关一关就该停掉 ──
+        start(&manager, &cfg, ServerKind::Llm).await.unwrap();
+        assert!(
+            wait_ready(&cfg, ServerKind::Llm, Duration::from_secs(15)).await,
+            "wait_ready 没等到 LLM 服务就绪"
+        );
+
+        let st = status(&manager, &cfg, ServerKind::Llm).await;
+        assert_eq!(st.owner, ServerOwner::App);
+        assert_eq!(plan_llm_shutdown(&st), LlmShutdownPlan::Stop);
+        let own_pid = st.pid.unwrap();
+
+        stop(&manager, &cfg, ServerKind::Llm).unwrap();
+        assert!(wait_health(TEST_LLM_PORT, false, 10).await, "没停干净");
+        assert!(!pid_alive(own_pid));
+
+        // ── 2. 用户自己在终端里起的**同一个仓库**的服务:绝不能因为拨开关被停 ──
+        //
+        // 这一档(`ExternalProject`)的停止按钮是可以点的,所以它才是真正的
+        // 分界线:能停 ≠ 该在拨开关时顺手停。
+        let mut external = Command::new(system_python())
+            .arg("-m")
+            .arg("services.llm_server")
+            .current_dir(&repo.root)
+            .env("VIF_LLM_PORT", TEST_LLM_PORT.to_string())
+            .env("PYTHONUNBUFFERED", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        assert!(
+            wait_ready(&cfg, ServerKind::Llm, Duration::from_secs(15)).await,
+            "外部假服务没起来"
+        );
+
+        // 打开后处理时会先 `start`:端口上已经有健康服务,应该采纳而不是再起一个。
+        let msg = start(&manager, &cfg, ServerKind::Llm).await.unwrap();
+        assert!(msg.contains("外部进程"), "不该重复拉起: {}", msg);
+
+        let st = status(&manager, &cfg, ServerKind::Llm).await;
+        assert_eq!(st.owner, ServerOwner::ExternalProject);
+        assert!(st.can_stop, "「停止」按钮对这一档是开放的");
+        let plan = plan_llm_shutdown(&st);
+        assert_eq!(
+            plan,
+            LlmShutdownPlan::KeepForeign(ServerOwner::ExternalProject),
+            "拨开关不能停掉用户自己起的进程: {:?}",
+            st
+        );
+        assert!(plan.keep_reason().is_some(), "保留了就得给出理由");
+
+        // 照着 plan 走一遍(也就是什么都不做),进程必须毫发无伤。
+        assert!(pid_alive(external.id()), "外部进程被误杀了");
+        assert!(probe(TEST_LLM_PORT).await.is_some(), "它的端口也该还通着");
+
+        // 外部进程由测试自己收拾。
+        external.kill().ok();
+        external.wait().ok();
+        assert!(wait_health(TEST_LLM_PORT, false, 10).await);
     }
 }
 

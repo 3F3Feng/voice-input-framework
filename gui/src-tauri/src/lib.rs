@@ -443,22 +443,198 @@ async fn save_llm_prompt(state: State<'_, AppState>, text: String) -> Result<(),
     stt::SttClient::new(&host).save_llm_prompt(&text).await
 }
 
+/// 读后处理开关。前端每次连上服务都会调一次(`loadModels`)。
+///
+/// 顺手把读到的权威值写进本地缓存:这是除了启动对账之外,最频繁的一个能让缓存
+/// 跟上权威的时机。缓存越新,下次冷启动时「要不要拉 LLM 服务」这个决定就越准,
+/// 需要对账去纠正的次数也就越少。
 #[tauri::command]
-async fn get_llm_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+async fn get_llm_enabled(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
     let host = {
         let c = state.stt.lock().map_err(|e| e.to_string())?;
         c.stt_url.clone()
     };
-    stt::SttClient::new(&host).get_llm_enabled().await
+    let enabled = stt::SttClient::new(&host).get_llm_enabled().await?;
+    cache_llm_enabled(&app, &state, enabled);
+    Ok(enabled)
 }
 
+/// 打开后处理时,等 LLM 服务加载完模型的上限。
+///
+/// 超时不代表「失败了」,只代表「还没好」——进程还在跑,模型还在读。取 30 秒是
+/// 个取舍:用户说「开起来就几秒」,真等到几十秒说明这台机器或这个模型不对劲,
+/// 与其把开关一直锁着不动,不如放开,让他看着「服务器」面板等它变成「运行中」
+/// 再拨一次(那时 `start` 会直接采纳,一秒就成)。
+const LLM_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 自动启动后等 STT 就绪的上限,只用于开关对账。MLX 首次加载模型实测 10–30 秒,
+/// 给得宽一点:等不到只是跳过对账,不影响任何别的事。
+const STT_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// 把后处理开关的状态写进本地配置。
+///
+/// **权威在 STT 服务的 `/llm/enabled`**(它自己持久化在 `stt_state.json` 里)。
+/// 这里存的只是一份缓存,用来回答一个 STT 还没起来时问不到的问题:**启动时要不要
+/// 拉起 LLM 服务**。客户端配置里本来就有 `llm.enabled` 这个字段,只是从来没人读过
+/// ——现在给了它唯一的、明确的职责,而不是让它继续当第二份说不清谁说了算的真相。
+///
+/// 缓存会不会和权威走散?会。所以 `auto_start` 在 STT 健康之后必定拿权威对一次账
+/// (见 `reconcile_llm_after_start`),不一致时一律改缓存、跟着权威走。
+fn cache_llm_enabled(app: &tauri::AppHandle, state: &AppState, enabled: bool) {
+    let Ok(mut cfg) = state.config.lock() else {
+        log_error!("[llm] 配置锁不可用,开关状态没能写进配置");
+        return;
+    };
+    // 远程模式下这个值说的是**别人那台服务器**的开关,拿它去决定本机启动时拉不拉
+    // LLM 服务是张冠李戴。缓存只记本地那台服务说过的话,所以远程模式下一个字都
+    // 不写——这也让「远程模式下这个开关的行为和改动前逐字相同」成立。
+    if cfg.server.mode != config::ServerMode::Local {
+        return;
+    }
+    if cfg.llm.enabled == enabled {
+        return;
+    }
+    cfg.llm.enabled = enabled;
+    if let Err(e) = cfg.save(app) {
+        log_error!("[llm] 开关状态没能写进配置: {}", e);
+    }
+}
+
+/// 开 / 关 LLM 后处理。本地管理模式下顺带管 LLM 服务的启停。
+///
+/// 两个方向的顺序是**反过来**的,这不是随手写的:
+///
+/// - 开:先把 LLM 服务拉起来**并等它真的能应答**,再去翻 STT 的标志位。反过来
+///   就会留下一个「后处理已开、LLM 端口还是死的」的窗口——那几秒里转录会白等
+///   一次反代超时。任何一步失败都直接返回错误,标志位保持原样:绝不能出现
+///   界面上写着「已启用」而服务并没有起来的状态。
+/// - 关:先关标志位,STT 立刻不会再往 LLM 端口发东西,然后才动进程。
+///
+/// 远程模式下没有本地进程可管,两个分支都退化成「只翻标志位」,和改动前逐字
+/// 相同(见 `local_managed`)。
 #[tauri::command]
-async fn set_llm_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+async fn set_llm_enabled(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<String, String> {
+    let cfg = server_config_snapshot(&state)?;
     let host = {
         let c = state.stt.lock().map_err(|e| e.to_string())?;
         c.stt_url.clone()
     };
-    stt::SttClient::new(&host).set_llm_enabled(enabled).await
+    let local_managed = cfg.mode == config::ServerMode::Local;
+    let servers = state.servers.clone();
+    let mut notes: Vec<String> = Vec::new();
+
+    if enabled {
+        if local_managed {
+            let msg = server_manager::start(&servers, &cfg, server_manager::ServerKind::Llm)
+                .await
+                .map_err(|e| format!("LLM 服务启动失败,后处理未开启:{}", e))?;
+            log_info!("[llm] {}", msg);
+            if !server_manager::wait_ready(&cfg, server_manager::ServerKind::Llm, LLM_READY_TIMEOUT)
+                .await
+            {
+                return Err(format!(
+                    "LLM 服务还在加载模型(已等 {} 秒),后处理暂未开启。等「服务器」面板显示「运行中」后再打开这个开关即可。",
+                    LLM_READY_TIMEOUT.as_secs()
+                ));
+            }
+            notes.push("LLM 服务已就绪".into());
+        }
+        stt::SttClient::new(&host).set_llm_enabled(true).await?;
+        notes.push("LLM 后处理已启用".into());
+    } else {
+        stt::SttClient::new(&host).set_llm_enabled(false).await?;
+        notes.push("LLM 后处理已禁用".into());
+        if local_managed {
+            let status =
+                server_manager::status(&servers, &cfg, server_manager::ServerKind::Llm).await;
+            match server_manager::plan_llm_shutdown(&status) {
+                server_manager::LlmShutdownPlan::Stop => {
+                    match server_manager::stop(&servers, &cfg, server_manager::ServerKind::Llm) {
+                        Ok(msg) => {
+                            log_info!("[llm] {}", msg);
+                            notes.push(msg);
+                        }
+                        // 停不掉不该把「后处理已关」这件已经做成的事翻回去:标志位
+                        // 关了,后处理就是关的,只是内存还占着。如实说出来即可。
+                        Err(e) => notes.push(format!("LLM 服务没能停掉:{}", e)),
+                    }
+                }
+                plan => {
+                    if let Some(reason) = plan.keep_reason() {
+                        log_info!("[llm] {}", reason);
+                        notes.push(reason.into());
+                    }
+                }
+            }
+        }
+    }
+
+    cache_llm_enabled(&app, &state, enabled);
+    Ok(notes.join("；"))
+}
+
+/// STT 起来之后,拿服务端的权威标志和启动时用的本地缓存对一次账。
+///
+/// 启动那一刻 STT 还没起来,`/llm/enabled` 根本问不到,只能先信缓存;缓存要是
+/// 过期了(上次是在远程模式下拨的开关、有人直接改了服务端的状态文件、上次退出
+/// 时写配置失败……),唯一能发现的时机就是这里。权威说开着就把 LLM 补起来,
+/// 权威说关着就把刚拉起的收回去——收的时候照样只收自己拉起的,规则不放松。
+async fn reconcile_llm_after_start(
+    app: &tauri::AppHandle,
+    servers: std::sync::Arc<Mutex<server_manager::ServerManager>>,
+    cfg: config::ServerConfig,
+    started_llm: bool,
+) {
+    if !server_manager::wait_ready(&cfg, server_manager::ServerKind::Stt, STT_READY_TIMEOUT).await {
+        log_error!(
+            "[llm] STT 服务没能在 {} 秒内就绪,后处理开关的对账跳过",
+            STT_READY_TIMEOUT.as_secs()
+        );
+        return;
+    }
+    let truth = match stt::SttClient::new(&cfg.effective_stt_url())
+        .get_llm_enabled()
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            log_error!("[llm] 读不到 STT 的后处理开关,对账跳过: {}", e);
+            return;
+        }
+    };
+
+    match server_manager::plan_llm_reconcile(started_llm, truth) {
+        server_manager::LlmReconcile::InSync => {}
+        server_manager::LlmReconcile::StartLlm => {
+            log_info!("[llm] 服务端的后处理开关是开的,补起 LLM 服务");
+            match server_manager::start(&servers, &cfg, server_manager::ServerKind::Llm).await {
+                Ok(msg) => log_info!("[server] {}", msg),
+                Err(e) => log_error!("[server] 补起 LLM 服务失败: {}", e),
+            }
+        }
+        server_manager::LlmReconcile::StopLlm => {
+            log_info!("[llm] 服务端的后处理开关是关的,把刚拉起的 LLM 服务收回去");
+            let status =
+                server_manager::status(&servers, &cfg, server_manager::ServerKind::Llm).await;
+            if server_manager::plan_llm_shutdown(&status) == server_manager::LlmShutdownPlan::Stop {
+                match server_manager::stop(&servers, &cfg, server_manager::ServerKind::Llm) {
+                    Ok(msg) => log_info!("[server] {}", msg),
+                    Err(e) => log_error!("[server] 收回 LLM 服务失败: {}", e),
+                }
+            }
+        }
+    }
+
+    // 缓存一律跟着权威走,下次启动就不会再错一遍。
+    let state = app.state::<AppState>();
+    cache_llm_enabled(app, &state, truth);
 }
 
 #[tauri::command]
@@ -782,18 +958,28 @@ pub fn run() {
 
             // 本地模式 + 用户勾了「随应用启动」才自动拉起。`start` 内部照样
             // 先探测:用户已经在终端跑着的服务会被采纳,不会被重复拉起。
+            //
+            // 拉不拉 LLM 取决于后处理开关。这里有个绕不开的先后问题:开关的权威
+            // 在 STT 服务上,而此刻 STT 还没起来,问不到。所以启动这一步只能信
+            // 本地缓存(`cfg.llm.enabled`),然后在 STT 健康之后立刻拿权威对一次账
+            // (`reconcile_llm_after_start`)。反过来「先起 STT、等它好了再决定要不要
+            // 起 LLM」也能跑通,但那样 LLM 只能排在 STT 后面,又回到了「STT 的反代
+            // 指着一个还没起来的端口」——正是要避免的那种窗口。
             if auto_start {
                 let state = app.state::<AppState>();
                 let servers = state.servers.clone();
-                let server_cfg = state.config.lock().ok().map(|c| c.server.clone());
-                if let Some(server_cfg) = server_cfg {
+                let snapshot = state
+                    .config
+                    .lock()
+                    .ok()
+                    .map(|c| (c.server.clone(), c.llm.enabled));
+                let app_handle = app.handle().clone();
+                if let Some((server_cfg, llm_wanted)) = snapshot {
                     tauri::async_runtime::spawn(async move {
-                        for kind in [
-                            server_manager::ServerKind::Llm,
-                            // LLM 先起:STT 会反代到它,晚一点起只是转录时的
-                            // 后处理暂时不可用,不影响 STT 本身。
-                            server_manager::ServerKind::Stt,
-                        ] {
+                        if !llm_wanted {
+                            log_info!("[server] LLM 后处理是关的,本次不启动 LLM 服务");
+                        }
+                        for kind in server_manager::auto_start_plan(llm_wanted) {
                             match server_manager::start(&servers, &server_cfg, kind).await {
                                 Ok(msg) => log_info!("[server] 自动启动: {}", msg),
                                 Err(e) => {
@@ -801,6 +987,8 @@ pub fn run() {
                                 }
                             }
                         }
+                        reconcile_llm_after_start(&app_handle, servers, server_cfg, llm_wanted)
+                            .await;
                     });
                 }
             }
