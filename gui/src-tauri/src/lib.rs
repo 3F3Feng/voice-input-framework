@@ -5,6 +5,7 @@ mod indicator;
 mod input;
 mod log;
 mod permissions;
+mod server_manager;
 mod stt;
 mod tray;
 mod update;
@@ -34,6 +35,8 @@ pub struct AppState {
     pub recorder: Mutex<audio::AudioRecorder>,
     pub config: Mutex<config::VoiceInputConfig>,
     pub indicator_status: std::sync::Arc<Mutex<String>>,
+    /// 本地 STT / LLM 子进程的管理器。远程模式下它就是个空壳,不做任何事。
+    pub servers: std::sync::Arc<Mutex<server_manager::ServerManager>>,
 }
 
 #[tauri::command]
@@ -48,12 +51,16 @@ async fn set_server_host(
     } else {
         format!("http://{}", host)
     };
-    let mut stt_client = state.stt.lock().map_err(|e| e.to_string())?;
-    *stt_client = stt::SttClient::new(&url);
     let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
     cfg.server.host = host;
     if let Some(port) = port {
         cfg.server.port = port;
+    }
+    // 本地管理模式下这个输入框改的是「远程地址」,只存不用——客户端仍然连
+    // 本地端口。切回远程模式时 `set_server_mode` 会重新指向它。
+    if cfg.server.mode == config::ServerMode::Remote {
+        let mut stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        *stt_client = stt::SttClient::new(&url);
     }
     cfg.save(&app).ok();
     Ok(())
@@ -488,6 +495,126 @@ async fn transcribe_ws(
         .await
 }
 
+// ── 本地服务器管理 ──
+//
+// 所有命令都遵循同一个套路:先把配置 clone 出来(`config` 是 `std::sync::Mutex`,
+// guard 不是 Send,跨 await 持有会让 Future 不满足 tauri 的约束),再去做
+// 探测 / 拉起这些耗时的事。
+
+/// 从状态里取一份服务器配置快照。
+fn server_config_snapshot(state: &AppState) -> Result<config::ServerConfig, String> {
+    Ok(state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .server
+        .clone())
+}
+
+/// 两个服务的完整状态,前端轮询这一个命令就够。
+#[tauri::command]
+async fn get_server_report(
+    state: State<'_, AppState>,
+) -> Result<server_manager::ServerReport, String> {
+    let cfg = server_config_snapshot(&state)?;
+    let servers = state.servers.clone();
+    Ok(server_manager::report(&servers, &cfg).await)
+}
+
+/// 启动一个服务。端口上已有健康服务时只会「采纳」,不会重复拉起。
+#[tauri::command]
+async fn start_server(
+    state: State<'_, AppState>,
+    kind: server_manager::ServerKind,
+) -> Result<String, String> {
+    let cfg = server_config_snapshot(&state)?;
+    let servers = state.servers.clone();
+    let msg = server_manager::start(&servers, &cfg, kind).await?;
+    log_info!("[server] {}", msg);
+    Ok(msg)
+}
+
+/// 停止一个服务。只停本应用拉起 / 认领的,外部进程一律拒绝。
+#[tauri::command]
+async fn stop_server(
+    state: State<'_, AppState>,
+    kind: server_manager::ServerKind,
+) -> Result<String, String> {
+    let servers = state.servers.clone();
+    let msg = server_manager::stop(&servers, kind)?;
+    log_info!("[server] {}", msg);
+    Ok(msg)
+}
+
+#[tauri::command]
+async fn restart_server(
+    state: State<'_, AppState>,
+    kind: server_manager::ServerKind,
+) -> Result<String, String> {
+    let cfg = server_config_snapshot(&state)?;
+    let servers = state.servers.clone();
+    let msg = server_manager::restart(&servers, &cfg, kind).await?;
+    log_info!("[server] {}", msg);
+    Ok(msg)
+}
+
+/// 切换「本地管理 / 远程连接」。
+///
+/// 切换后必须立刻把 STT 客户端指向新地址,否则 UI 显示的是一套、实际连的是
+/// 另一套。注意**不动** `host` 字段:用户在远程模式填的地址要留着。
+#[tauri::command]
+async fn set_server_mode(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    mode: config::ServerMode,
+) -> Result<String, String> {
+    let url = {
+        let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+        cfg.server.mode = mode;
+        let url = cfg.server.effective_stt_url();
+        cfg.save(&app)?;
+        url
+    };
+    {
+        let mut stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        *stt_client = stt::SttClient::new(&url);
+    }
+    log_info!("[server] 模式切换为 {:?},连接 {}", mode, url);
+    Ok(url)
+}
+
+/// 保存本地管理模式的路径 / 端口 / 模型设置。
+///
+/// 这里做一次存在性校验并把问题原样返回,好过存下去之后在「启动」时才报错。
+#[tauri::command]
+async fn set_local_server_config(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    local: config::LocalServerConfig,
+) -> Result<server_manager::LocalPathReport, String> {
+    let url = {
+        let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+        cfg.server.local = local;
+        let url = cfg.server.effective_stt_url();
+        cfg.save(&app)?;
+        url
+    };
+    // 端口可能改了,客户端得跟着走。
+    {
+        let mut stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        *stt_client = stt::SttClient::new(&url);
+    }
+    let cfg = server_config_snapshot(&state)?;
+    let servers = state.servers.clone();
+    Ok(server_manager::report(&servers, &cfg).await.local_paths)
+}
+
+/// 自动探测仓库 / 解释器路径。探测不到时 `problem` 里是给用户看的原因。
+#[tauri::command]
+async fn detect_local_server() -> Result<server_manager::DetectResult, String> {
+    Ok(server_manager::detect())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -512,16 +639,53 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            let cfg = config::VoiceInputConfig::load(app.handle());
-            let default_host = cfg.server.host.clone();
+            let mut cfg = config::VoiceInputConfig::load(app.handle());
+
+            // 首次运行:猜一次仓库 / 解释器位置并存进配置。猜不到就留空——
+            // UI 会明确说「没探测到,请手动填」,而不是在启动时静默失败。
+            if cfg.server.local.repo_path.is_none() {
+                let detected = server_manager::detect();
+                if detected.repo_path.is_some() {
+                    log_info!(
+                        "[server] 自动探测到仓库 {:?},解释器 {:?}",
+                        detected.repo_path,
+                        detected.python_path
+                    );
+                    cfg.server.local.repo_path = detected.repo_path;
+                    cfg.server.local.python_path = detected.python_path;
+                    let _ = cfg.save(app.handle());
+                } else if let Some(problem) = detected.problem {
+                    log_info!("[server] {}", problem);
+                }
+            }
+
+            // 客户端连哪儿由模式决定:远程连 host,本地连 127.0.0.1:stt_port。
+            // 老配置没有 mode 字段 → 默认 Remote → 和以前完全一样。
+            let stt_url = cfg.server.effective_stt_url();
             let shortcut = cfg.hotkey.key.clone();
             let start_minimized = cfg.ui.start_minimized;
+            let local_mode = cfg.server.mode == config::ServerMode::Local;
+            let auto_start = local_mode && cfg.server.local.auto_start;
+
+            // 子进程日志和 pid 记账放在应用数据目录里,和 config.json 同级。
+            let data_dir = app.path().app_data_dir().unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                std::path::PathBuf::from(home).join(".config/voice-input")
+            });
+            let mut manager = server_manager::ServerManager::new(data_dir);
+            // 上次会话如果是被强杀的,子进程还活着;校验后认领回来,
+            // 这样用户还能从 UI 里停掉它们。
+            let reclaimed = manager.reclaim_orphans();
+            if !reclaimed.is_empty() {
+                log_info!("[server] 认领上次遗留的服务进程: {}", reclaimed.join("、"));
+            }
 
             app.manage(AppState {
-                stt: Mutex::new(stt::SttClient::new(&default_host)),
+                stt: Mutex::new(stt::SttClient::new(&stt_url)),
                 recorder: Mutex::new(audio::AudioRecorder::new()),
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
+                servers: std::sync::Arc::new(Mutex::new(manager)),
             });
 
             log::init(app.handle());
@@ -551,6 +715,31 @@ pub fn run() {
             if let Some(keys) = hotkey::parse_hotkey(&shortcut) {
                 hotkey::start_listener(app.handle().clone(), keys);
                 eprintln!("[hotkey] Started listener for: {}", shortcut);
+            }
+
+            // 本地模式 + 用户勾了「随应用启动」才自动拉起。`start` 内部照样
+            // 先探测:用户已经在终端跑着的服务会被采纳,不会被重复拉起。
+            if auto_start {
+                let state = app.state::<AppState>();
+                let servers = state.servers.clone();
+                let server_cfg = state.config.lock().ok().map(|c| c.server.clone());
+                if let Some(server_cfg) = server_cfg {
+                    tauri::async_runtime::spawn(async move {
+                        for kind in [
+                            server_manager::ServerKind::Llm,
+                            // LLM 先起:STT 会反代到它,晚一点起只是转录时的
+                            // 后处理暂时不可用,不影响 STT 本身。
+                            server_manager::ServerKind::Stt,
+                        ] {
+                            match server_manager::start(&servers, &server_cfg, kind).await {
+                                Ok(msg) => log_info!("[server] 自动启动: {}", msg),
+                                Err(e) => {
+                                    log_error!("[server] 自动启动 {} 失败: {}", kind.label(), e)
+                                }
+                            }
+                        }
+                    });
+                }
             }
 
             if start_minimized {
@@ -600,8 +789,15 @@ pub fn run() {
             set_autostart,
             check_update,
             install_update,
+            get_server_report,
+            start_server,
+            stop_server,
+            restart_server,
+            set_server_mode,
+            set_local_server_config,
+            detect_local_server,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
             let msg = format!("Fatal startup error: {:?}", e);
             eprintln!("{}", msg);
@@ -624,5 +820,29 @@ pub fn run() {
                     .spawn();
             }
             std::process::exit(1);
+        })
+        // 从 `.run(context)` 改成 `.build(context).run(callback)`,只为了能拿到
+        // `RunEvent::Exit`:应用退出时必须把自己拉起的 Python 子进程带走,
+        // 否则它们会继续占着 6544/6545,下次启动只能当成「外部进程」。
+        //
+        // 覆盖得到的退出路径:托盘「退出」(`app.exit(0)`)、Cmd+Q、
+        // 系统注销。**覆盖不到**的是 SIGKILL / 强制退出 / 崩溃——那时谁的代码
+        // 都不会跑,子进程会被 launchd 收养并继续运行。这种情况由启动时的
+        // `reclaim_orphans` 兜底:核对 pid 与命令行后认领回来,用户仍然能从
+        // UI 里停掉;万一认领不成(比如 pid 已被复用),`start` 的健康探测
+        // 也会把它当成外部进程直接采纳,绝不会重复拉起。
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // 先把 Arc 克隆出来:`State` 借的是 `app_handle`,而 guard 的
+                // 析构要排在 `state` 之后,直接锁会活不过这个块。
+                // 先把 Arc 克隆出来(`State` 借的是 `app_handle`),再把锁的结果
+                // 单独绑一个变量——`if let` 里的临时值要活到块尾,会比 `servers`
+                // 本身还晚析构。
+                let servers = app_handle.state::<AppState>().servers.clone();
+                let locked = servers.lock();
+                if let Ok(mut manager) = locked {
+                    manager.shutdown_all();
+                }
+            }
         });
 }

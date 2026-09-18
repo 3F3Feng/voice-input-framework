@@ -26,14 +26,88 @@
     <transition name="slide">
       <div v-if="showSettings" class="settings-panel">
         <div class="settings-scroll">
-          <!-- Connection -->
+          <!-- 服务器 -->
           <div class="s-section">
-            <div class="s-title">连接</div>
-            <div class="s-row">
-              <input class="s-input" v-model="serverHost" placeholder="localhost" @keyup.enter="updateServer" @change="onServerSettingChange" />
-              <input class="s-input s-port" v-model.number="serverPort" type="number" @keyup.enter="updateServer" @change="onServerSettingChange" />
-              <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
+            <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
+              <span>服务器</span>
+              <button class="s-btn" @click="refreshServers" :disabled="serversLoading">
+                {{ serversLoading ? '...' : '刷新' }}
+              </button>
             </div>
+
+            <!-- 本地管理 / 远程连接 -->
+            <div class="s-row mode-switch">
+              <button :class="['s-btn', 'mode-btn', { active: serverMode === 'local' }]"
+                @click="switchMode('local')" :disabled="modeBusy">本地管理</button>
+              <button :class="['s-btn', 'mode-btn', { active: serverMode === 'remote' }]"
+                @click="switchMode('remote')" :disabled="modeBusy">远程连接</button>
+            </div>
+
+            <!-- 远程:只连接，不管理进程 -->
+            <template v-if="serverMode === 'remote'">
+              <div class="s-row" style="margin-top:8px">
+                <input class="s-input" v-model="serverHost" placeholder="localhost 或 http://1.2.3.4:6544"
+                  @keyup.enter="updateServer" @change="onServerSettingChange" />
+                <input class="s-input s-port" v-model.number="serverPort" type="number"
+                  @keyup.enter="updateServer" @change="onServerSettingChange" />
+                <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
+              </div>
+              <div class="s-tip">只连接，不管理进程。服务需要在对端自行启动。主机可填裸主机名，也可填完整 URL。</div>
+            </template>
+
+            <!-- 本地：两个服务的状态与启停 -->
+            <template v-else>
+              <div v-for="row in serverRows" :key="row.kind" class="perm-row">
+                <div class="perm-info">
+                  <div class="perm-head">
+                    <span class="s-label">{{ row.label }}</span>
+                    <span :class="['perm-state', row.chipClass]">{{ row.chipText }}</span>
+                    <span v-if="row.ownerText" :class="['perm-state', row.ownerClass]">{{ row.ownerText }}</span>
+                  </div>
+                  <div class="s-tip" style="margin-top:2px">{{ row.desc }}</div>
+                </div>
+                <div class="perm-actions">
+                  <button v-if="!row.isUp" class="s-btn" @click="startSrv(row.kind)" :disabled="srvBusy === row.kind">
+                    {{ srvBusy === row.kind ? '...' : '启动' }}
+                  </button>
+                  <button v-else class="s-btn" @click="stopSrv(row.kind)"
+                    :disabled="srvBusy === row.kind || !row.canStop"
+                    :title="row.canStop ? '' : '外部进程，本应用不会停止它'">
+                    {{ srvBusy === row.kind ? '...' : '停止' }}
+                  </button>
+                  <button class="s-btn" @click="restartSrv(row.kind)" :disabled="srvBusy === row.kind || !row.canRestart">
+                    重启
+                  </button>
+                </div>
+              </div>
+
+              <!-- 路径（应用装在 /Applications，仓库在别处，只能配置） -->
+              <div class="s-row" style="margin-top:8px">
+                <input class="s-input" v-model="repoPath" placeholder="仓库路径（含 services/stt_server.py）" @change="saveLocal" />
+                <button class="s-btn" @click="detectPaths" :disabled="detecting">{{ detecting ? '...' : '自动探测' }}</button>
+              </div>
+              <div class="s-row" style="margin-top:4px">
+                <input class="s-input" v-model="pythonPath" placeholder="Python 解释器（如 .venv/bin/python）" @change="saveLocal" />
+              </div>
+              <div class="s-row" style="margin-top:4px">
+                <span class="s-tip" style="margin:0">端口</span>
+                <input class="s-input s-port" v-model.number="sttPort" type="number" title="STT 端口" @change="saveLocal" />
+                <input class="s-input s-port" v-model.number="llmPort" type="number" title="LLM 端口" @change="saveLocal" />
+                <label class="toggle"><input type="checkbox" v-model="localAutoStart" @change="saveLocal" /><span class="slider"></span></label>
+                <span class="s-label">随应用启动</span>
+              </div>
+
+              <div v-if="pathProblem" class="s-tip srv-problem">⚠ {{ pathProblem }}</div>
+
+              <!-- 子进程输出：起不来的时候唯一能看的东西 -->
+              <div v-if="serverLogLines.length" class="srv-logs">
+                <div v-for="(l, i) in serverLogLines" :key="i" class="srv-log-line">{{ l }}</div>
+              </div>
+              <div v-if="serverLogPaths.length" class="s-tip">日志文件：{{ serverLogPaths.join('　') }}</div>
+              <div class="s-tip">
+                只会停止本应用启动的服务。你自己在终端里跑的会被标成「外部」——直接连接使用，不会重复启动，也不会被停掉。
+              </div>
+            </template>
           </div>
 
           <!-- Models -->
@@ -265,8 +339,50 @@ import { listen } from "@tauri-apps/api/event";
 
 // ── Types ──
 interface ModelInfo { name: string; is_loaded: boolean; }
+// 服务器：本地管理 / 远程连接
+type ServerMode = "local" | "remote";
+type ServerKind = "stt" | "llm";
+type ServerState = "not_configured" | "stopped" | "starting" | "running" | "failed";
+interface ServerStatus {
+  kind: ServerKind;
+  state: ServerState;
+  port: number;
+  /** 由本应用拉起（可停）；false 表示外部进程，只连不管。 */
+  managed: boolean;
+  pid: number | null;
+  current_model: string | null;
+  detail: string | null;
+  log_path: string | null;
+  recent_logs: string[];
+}
+interface LocalPathReport {
+  repo_path: string | null;
+  python_path: string | null;
+  repo_ok: boolean;
+  python_ok: boolean;
+  problem: string | null;
+}
+interface ServerReport {
+  mode: ServerMode;
+  stt: ServerStatus;
+  llm: ServerStatus;
+  local_paths: LocalPathReport;
+  remote_url: string;
+}
+interface DetectResult { repo_path: string | null; python_path: string | null; problem: string | null; }
+interface LocalServerConfig {
+  repo_path: string | null;
+  python_path: string | null;
+  stt_port: number;
+  llm_port: number;
+  stt_model: string | null;
+  llm_model: string | null;
+  auto_start: boolean;
+}
 interface VoiceInputConfig {
-  server: { host: string; port: number };
+  // mode / local 是后加的：旧 config.json 里没有这两项，Rust 端有 serde 默认值，
+  // 读出来一定是 remote + 空 local。
+  server: { host: string; port: number; mode: ServerMode; local: LocalServerConfig };
   hotkey: { key: string; distinguish_left_right: boolean };
   ui: { start_minimized: boolean; use_floating_indicator: boolean; use_tray: boolean; opacity: number; auto_input?: boolean };
   audio: { device: string | null; language: string };
@@ -306,6 +422,20 @@ const promptStatus = ref("");
 
 const serverHost = ref("localhost");
 const serverPort = ref(6544);
+
+// 服务器管理
+const serverMode = ref<ServerMode>("remote");
+const serverReport = ref<ServerReport | null>(null);
+const serversLoading = ref(false);
+const modeBusy = ref(false);
+const detecting = ref(false);
+const srvBusy = ref<ServerKind | "">("");
+const repoPath = ref("");
+const pythonPath = ref("");
+const sttPort = ref(6544);
+const llmPort = ref(6545);
+const localAutoStart = ref(false);
+let serverPollTimer: ReturnType<typeof setInterval> | null = null;
 const llmEnabled = ref(true);
 const promptText = ref("");
 const autoInputEnabled = ref(false);
@@ -382,6 +512,68 @@ const permissionRows = computed(() =>
     return { ...m, status, canRequest };
   })
 );
+// ── 服务器状态行 ──
+const SERVER_META: { kind: ServerKind; label: string }[] = [
+  { kind: "stt", label: "STT 语音识别" },
+  { kind: "llm", label: "LLM 后处理" },
+];
+
+function srvStateText(s: ServerState) {
+  return { not_configured: "未配置", stopped: "未运行", starting: "启动中", running: "运行中", failed: "失败" }[s] || s;
+}
+function srvStateClass(s: ServerState) {
+  return s === "running" ? "ok" : s === "starting" ? "warn" : s === "failed" ? "bad" : "";
+}
+
+const serverRows = computed(() =>
+  SERVER_META.map(m => {
+    const status: ServerStatus | null = serverReport.value ? serverReport.value[m.kind] : null;
+    const state: ServerState = status?.state ?? "stopped";
+    const isUp = state === "running" || state === "starting";
+    // 「本应用 / 外部」这个区分必须显式画出来：停止按钮只对前者有效，
+    // 不标出来的话按钮为什么是灰的就没人看得懂。
+    const ownerText = !status ? "" : status.managed ? "本应用" : state === "running" ? "外部" : "";
+    const desc = status
+      ? [
+          `端口 ${status.port}`,
+          status.pid ? `pid ${status.pid}` : "",
+          status.current_model ? `模型 ${status.current_model}` : "",
+          status.detail || "",
+        ].filter(Boolean).join("　")
+      : "状态未知";
+    return {
+      kind: m.kind,
+      label: m.label,
+      status,
+      isUp,
+      chipText: srvStateText(state),
+      chipClass: srvStateClass(state),
+      ownerText,
+      ownerClass: ownerText === "本应用" ? "ok" : "warn",
+      canStop: !!status?.managed,
+      // 外部进程停不掉，「重启」也就无从谈起。
+      canRestart: !isUp || !!status?.managed,
+      desc,
+    };
+  })
+);
+
+const pathProblem = computed(() =>
+  serverMode.value === "local" ? serverReport.value?.local_paths.problem ?? null : null
+);
+/** 两个服务的日志尾巴合起来给用户看，各自带前缀。 */
+const serverLogLines = computed(() => {
+  const r = serverReport.value;
+  if (!r || serverMode.value !== "local") return [];
+  const take = (s: ServerStatus, tag: string) => s.recent_logs.slice(-8).map(l => `[${tag}] ${l}`);
+  return [...take(r.stt, "STT"), ...take(r.llm, "LLM")];
+});
+const serverLogPaths = computed(() => {
+  const r = serverReport.value;
+  if (!r || serverMode.value !== "local") return [];
+  return [r.stt.log_path, r.llm.log_path].filter((p): p is string => !!p);
+});
+
 const missingPermLabels = computed(() =>
   perms.value?.is_macos
     ? permissionRows.value.filter(r => r.status !== "granted").map(r => r.label)
@@ -495,6 +687,107 @@ async function openPermSettings(key: PermissionKey) {
   } catch (e) { toast(`打开系统设置失败: ${e}`, "err"); }
 }
 
+// ── 服务器管理 ──
+async function refreshServers() {
+  serversLoading.value = true;
+  try {
+    const r = await invoke<ServerReport>("get_server_report");
+    serverReport.value = r;
+    serverMode.value = r.mode;
+  } catch (e) { console.error("get_server_report failed:", e); }
+  serversLoading.value = false;
+}
+
+/** 只在设置面板打开且处于本地模式时轮询：启动中要看着它变成运行中。 */
+function syncServerPolling() {
+  const want = showSettings.value && serverMode.value === "local";
+  if (want && !serverPollTimer) {
+    serverPollTimer = setInterval(refreshServers, 3000);
+  } else if (!want && serverPollTimer) {
+    clearInterval(serverPollTimer);
+    serverPollTimer = null;
+  }
+}
+
+async function switchMode(mode: ServerMode) {
+  if (mode === serverMode.value) return;
+  modeBusy.value = true;
+  try {
+    const url = await invoke<string>("set_server_mode", { mode });
+    serverMode.value = mode;
+    toast(mode === "local" ? `已切到本地管理（${url}）` : `已切到远程连接（${url}）`, "ok");
+    await refreshServers();
+    await loadModels();
+  } catch (e) { toast(`切换失败: ${e}`, "err"); }
+  modeBusy.value = false;
+  syncServerPolling();
+}
+
+async function startSrv(kind: ServerKind) {
+  srvBusy.value = kind;
+  try {
+    const msg = await invoke<string>("start_server", { kind });
+    toast(msg, "ok");
+  } catch (e) { toast(`启动失败: ${e}`, "err"); }
+  srvBusy.value = "";
+  await refreshServers();
+}
+
+async function stopSrv(kind: ServerKind) {
+  srvBusy.value = kind;
+  try {
+    const msg = await invoke<string>("stop_server", { kind });
+    toast(msg, "ok");
+  } catch (e) { toast(`停止失败: ${e}`, "err"); }
+  srvBusy.value = "";
+  await refreshServers();
+}
+
+async function restartSrv(kind: ServerKind) {
+  srvBusy.value = kind;
+  try {
+    const msg = await invoke<string>("restart_server", { kind });
+    toast(msg, "ok");
+  } catch (e) { toast(`重启失败: ${e}`, "err"); }
+  srvBusy.value = "";
+  await refreshServers();
+}
+
+/** 保存本地模式的路径 / 端口 / 自启设置，并回显路径是否可用。 */
+async function saveLocal() {
+  const local: LocalServerConfig = {
+    repo_path: repoPath.value.trim() || null,
+    python_path: pythonPath.value.trim() || null,
+    stt_port: sttPort.value || 6544,
+    llm_port: llmPort.value || 6545,
+    stt_model: null,
+    llm_model: null,
+    auto_start: localAutoStart.value,
+  };
+  try {
+    const report = await invoke<LocalPathReport>("set_local_server_config", { local });
+    if (report.problem) toast(report.problem, "err");
+  } catch (e) { toast(`保存失败: ${e}`, "err"); }
+  await refreshServers();
+}
+
+/** 自动探测仓库 / 解释器。探测不到时把原因说出来，而不是静默无反应。 */
+async function detectPaths() {
+  detecting.value = true;
+  try {
+    const d = await invoke<DetectResult>("detect_local_server");
+    if (d.repo_path) {
+      repoPath.value = d.repo_path;
+      pythonPath.value = d.python_path || "";
+      await saveLocal();
+      toast(d.problem ? d.problem : `已探测到：${d.repo_path}`, d.problem ? "err" : "ok");
+    } else {
+      toast(d.problem || "没有探测到仓库，请手动填写路径", "err");
+    }
+  } catch (e) { toast(`探测失败: ${e}`, "err"); }
+  detecting.value = false;
+}
+
 // ── Config ──
 async function loadConfig() {
   try {
@@ -506,6 +799,17 @@ async function loadConfig() {
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     selectedDevice.value = cfg.audio.device;
+    // 旧配置没有 server.mode / server.local，Rust 端补了默认值；这里仍然
+    // 用 ?? 兜一层，免得手改过配置文件时前端直接崩。
+    serverMode.value = cfg.server.mode ?? "remote";
+    const local = cfg.server.local;
+    if (local) {
+      repoPath.value = local.repo_path ?? "";
+      pythonPath.value = local.python_path ?? "";
+      sttPort.value = local.stt_port ?? 6544;
+      llmPort.value = local.llm_port ?? 6545;
+      localAutoStart.value = local.auto_start ?? false;
+    }
   } catch {}
 }
 async function loadAutostart() {
@@ -730,7 +1034,12 @@ onMounted(async () => {
   await loadAutostart();
   await refreshDevices();
   await refreshPermissions();
+  await refreshServers();
   await updateServer();
+
+  // 设置面板开着 + 本地模式时才轮询状态：「启动中 → 运行中」要肉眼可见，
+  // 但面板关着时没人看，没必要每 3 秒打一次 /health。
+  watch([showSettings, serverMode], syncServerPolling, { immediate: true });
 
   // Hotkey lifecycle is handled entirely in Rust (start/stop recording + transcription).
   // Frontend only updates UI state to reflect what Rust already did.
@@ -797,6 +1106,7 @@ onUnmounted(() => {
   if (timerInterval) clearInterval(timerInterval);
   if (levelInterval) clearInterval(levelInterval);
   if (processingTimerInterval) clearInterval(processingTimerInterval);
+  if (serverPollTimer) clearInterval(serverPollTimer);
   if (hotkeyHandler) {
     document.removeEventListener('keydown', hotkeyHandler);
     document.removeEventListener('keyup', hotkeyHandler);
@@ -890,6 +1200,16 @@ html, body, #app { height: 100%; }
 .perm-state.bad { color: var(--red); background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.3); }
 .perm-banner { width: 100%; max-width: 360px; background: rgba(251, 191, 36, 0.12); border: 1px solid rgba(251, 191, 36, 0.3); color: var(--yellow); border-radius: 8px; padding: 8px 10px; font-size: 0.7rem; line-height: 1.4; text-align: center; cursor: pointer; }
 .perm-banner:hover { background: rgba(251, 191, 36, 0.2); }
+
+/* 服务器 */
+.mode-switch { gap: 0; }
+.mode-btn { flex: 1; border-radius: 0; }
+.mode-btn:first-child { border-radius: 6px 0 0 6px; }
+.mode-btn:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.mode-btn.active { background: rgba(96, 165, 250, 0.15); color: var(--blue); border-color: rgba(96, 165, 250, 0.4); }
+.srv-problem { color: var(--yellow); }
+.srv-logs { margin-top: 6px; max-height: 110px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+.srv-log-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.62rem; color: var(--muted); line-height: 1.45; white-space: pre-wrap; word-break: break-all; }
 
 /* Update */
 .update-info { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
