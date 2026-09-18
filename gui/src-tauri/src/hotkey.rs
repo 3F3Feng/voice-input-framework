@@ -671,7 +671,14 @@ mod mac_tap {
                     Err(_) => eprintln!("[hotkey] create_runloop_source failed"),
                 }
             }
-            Err(_) => eprintln!("[hotkey] CGEventTapCreate failed (Input Monitoring permission?)"),
+            Err(_) => {
+                // 几乎总是因为缺「输入监控」权限,把当前状态一并打出来,
+                // 免得用户只看到一句语焉不详的失败。
+                crate::log_error!(
+                    "[hotkey] CGEventTapCreate 失败,全局快捷键不可用(输入监控权限={:?})",
+                    crate::permissions::input_monitoring_status()
+                );
+            }
         }
     }
 }

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS 用途说明(usage description)。
+
+  Tauri 会把本文件合并进 macOS .app 生成的 Info.plist —— 它固定在
+  tauri.conf.json 同级目录查找 `Info.plist`,无需额外配置
+  (bundle.macOS.infoPlist 可以另外再指定一个文件)。
+
+  NSMicrophoneUsageDescription 是硬性要求:缺这个 key 时,进程第一次访问
+  麦克风会被系统直接拒绝(并可能被杀掉),而且不会弹出授权窗口。
+
+  「输入监控」和「辅助功能」没有对应的 Info.plist key,它们由
+  IOHIDRequestAccess / AXIsProcessTrustedWithOptions 在运行时申请,
+  见 src/permissions.rs。
+-->
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Voice Input 需要使用麦克风录制你的语音,并将其转写为文字。录音只在你按住快捷键期间进行,音频仅发送到你自己配置的语音识别服务。</string>
+</dict>
+</plist>

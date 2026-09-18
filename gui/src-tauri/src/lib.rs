@@ -4,6 +4,7 @@ mod hotkey;
 mod indicator;
 mod input;
 mod log;
+mod permissions;
 mod stt;
 mod tray;
 mod update;
@@ -58,9 +59,37 @@ async fn set_server_host(
     Ok(())
 }
 
+/// 录音前的麦克风权限闸门。
+///
+/// - 已授权 / 非 macOS:放行。
+/// - 从未询问:触发一次系统弹窗,本次录音失败并提示用户授权后重试
+///   (弹窗期间 cpal 拿到的只有静音,直接录会得到一段空音频)。
+/// - 已拒绝 / 受限:系统不会再弹窗,提示去「系统设置」手动打开。
+fn check_microphone_permission() -> Result<(), String> {
+    use permissions::PermissionStatus;
+    match permissions::microphone_status() {
+        PermissionStatus::Granted => Ok(()),
+        PermissionStatus::NotDetermined => {
+            permissions::request_microphone();
+            Err("正在申请麦克风权限,请在系统弹窗中点击「允许」,然后重新录音。".to_string())
+        }
+        PermissionStatus::Denied => Err(
+            "未获得麦克风权限。请到「系统设置 → 隐私与安全性 → 麦克风」中勾选 Voice Input。"
+                .to_string(),
+        ),
+        PermissionStatus::Restricted => {
+            Err("麦克风权限被系统策略限制(如屏幕使用时间 / MDM),无法录音。".to_string())
+        }
+    }
+}
+
 /// Start recording: acquire device, create stream, begin capture, show indicator.
 /// Extracted so both Tauri commands and the hotkey thread can call the same logic.
 pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
+    // 录音是麦克风权限真正被需要的时刻,在这里拦截。缺权限时 cpal 照样能开流,
+    // 但只会送来静音——与其转录一段空音频,不如直接报错说清楚原因。
+    check_microphone_permission()?;
+
     let device;
     {
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
@@ -396,6 +425,32 @@ async fn auto_input(text: String) -> Result<(), String> {
     input::type_text(&text)
 }
 
+// ── Permission commands (macOS TCC) ──
+
+/// 一次性查询三项权限,不弹窗。前端进入设置面板 / 启动时调用。
+#[tauri::command]
+async fn get_permissions() -> Result<permissions::PermissionReport, String> {
+    Ok(permissions::report())
+}
+
+/// 申请某项权限并等待结果。
+///
+/// 仅当该权限「从未询问过」时系统才会弹窗;已拒绝的项系统不再弹窗,前端会改为
+/// 引导用户点「打开设置」。最多等 30 秒后返回当前状态,不会无限挂住。
+#[tauri::command]
+async fn request_permission(
+    permission: permissions::Permission,
+) -> Result<permissions::PermissionStatus, String> {
+    permissions::request(permission);
+    Ok(permissions::await_status(permission, std::time::Duration::from_secs(30)).await)
+}
+
+/// 打开对应的「系统设置 → 隐私与安全性」子面板。
+#[tauri::command]
+async fn open_permission_settings(permission: permissions::Permission) -> Result<(), String> {
+    permissions::open_settings(permission)
+}
+
 #[tauri::command]
 async fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {
     hotkey::reset_state();
@@ -459,6 +514,26 @@ pub fn run() {
 
             let _ = tray::setup(app);
 
+            // 启动时只查询三项权限并记录,不一次性把三个弹窗全甩给用户。
+            // 唯一在启动时主动申请的是「输入监控」——全局快捷键监听器马上就要
+            // 用它,没有它 CGEventTap 直接创建失败,快捷键完全不工作。
+            // 麦克风在开始录音时申请,辅助功能在第一次自动输入时申请。
+            let perms = permissions::report();
+            log_info!(
+                "[perm] 麦克风={:?} 输入监控={:?} 辅助功能={:?}",
+                perms.microphone,
+                perms.input_monitoring,
+                perms.accessibility
+            );
+            if perms.input_monitoring == permissions::PermissionStatus::NotDetermined {
+                // 只在「从未询问」时弹窗:已拒绝时系统不会再弹,重复调用只会
+                // 每次启动都骚扰用户却毫无效果。
+                log_info!("[perm] 申请输入监控权限(全局快捷键需要)");
+                permissions::request_input_monitoring();
+            } else if !perms.input_monitoring.is_granted() {
+                log_error!("[perm] 缺少输入监控权限,全局快捷键将不工作;请在设置中授权");
+            }
+
             if let Some(keys) = hotkey::parse_hotkey(&shortcut) {
                 hotkey::start_listener(app.handle().clone(), keys);
                 eprintln!("[hotkey] Started listener for: {}", shortcut);
@@ -502,6 +577,9 @@ pub fn run() {
             get_llm_enabled,
             set_llm_enabled,
             auto_input,
+            get_permissions,
+            request_permission,
+            open_permission_settings,
             minimize_to_tray,
             register_hotkey,
             get_autostart,

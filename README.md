@@ -83,6 +83,7 @@ npm run tauri dev
 - **自动更新**：检测 GitHub Releases 新版本，一键更新
 - **调试日志**：内置日志面板，方便排查问题
 - **音频设备选择**：支持选择系统中任意输入设备
+- **macOS 权限**：设置面板内查看/申请麦克风、输入监控、辅助功能三项权限，详见 `docs/macos-permissions.md`
 
 ### 架构
 
@@ -97,6 +98,7 @@ npm run tauri dev
 │  audio.rs  (cpal 音频采集 + 流式通道)       │
 │  stt.rs    (WebSocket 流式转写)            │
 │  hotkey.rs (rdev 全局快捷键)               │
+│  permissions.rs (macOS 权限查询/申请)      │
 │  indicator.rs (悬浮胶囊窗口管理)           │
 │  update.rs (GitHub Releases 更新检查)      │
 │  log.rs    (全局日志，emit 到前端)          │

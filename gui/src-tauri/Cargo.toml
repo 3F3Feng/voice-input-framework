@@ -35,3 +35,9 @@ base64 = "0.22"
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.23"
 core-foundation = "0.9"
+# 麦克风权限(AVCaptureDevice 授权查询/申请)。输入监控与辅助功能用的是
+# IOKit / ApplicationServices 的 C 符号,直接在 permissions.rs 里声明 FFI,
+# 不额外引依赖。objc2 / block2 本来就在依赖树里(tauri → wry),此处只是显式引用。
+objc2 = "0.6"
+block2 = "0.6"
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
