@@ -263,15 +263,36 @@ class LLMEngine:
                 {"role": "user", "content": text},
             ]
 
-            prompt = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+            # 关闭思考模式。语音输入后处理是确定性的文本清洗任务,推理除了
+            # 烧 token 没有收益 —— 而且是有害的:推理模型会把整个思考过程
+            # 当正文吐出来(不一定带 <think> 标签),在 max_tokens 耗尽前根本
+            # 走不到真正的输出,结果就是把一大段分析文字敲进用户的文档。
+            # 老模型的 chat template 不认这个参数,TypeError 时按原样退回。
+            thinking_disabled = True
+            try:
+                prompt = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+            except TypeError:
+                thinking_disabled = False
+                prompt = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
 
-            # 移除可能触发思考的特殊标记
-            prompt = prompt.replace("<think>", "")
-            prompt = prompt.replace("</think>", "")
+            if not thinking_disabled:
+                # 老模板不认 enable_thinking,只能沿用土办法:抹掉可能触发思考的标记。
+                #
+                # 注意这两行绝不能在 enable_thinking=False 生效时执行 —— Qwen 的模板
+                # 此时会在结尾追加一个**空的** think 块(`<think>\n\n</think>\n\n`),
+                # 那是"思考已完成,直接给答案"的信号。把标签抹掉会留下畸形的
+                # `<|im_start|>assistant\n\n\n\n\n`,模型随即吐 EOS,返回空字符串。
+                prompt = prompt.replace("<think>", "")
+                prompt = prompt.replace("</think>", "")
 
             # 生成
             response = mlx_lm.generate(
@@ -288,72 +309,6 @@ class LLMEngine:
             cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
             # 移除单独的 <think> 或 </think> 标签
             cleaned = re.sub(r"</?think>", "", cleaned)
-            # 处理 Thinking Process 或分析输出
-            # 检查是否包含分析标记
-            has_analysis = (
-                "Thinking Process:" in cleaned
-                or "Analyze the Request:" in cleaned
-                or "Process the Input:" in cleaned
-            )
-
-            if has_analysis:
-                # 方法1: 尝试找 "输出：" 或 "Output:" 后的内容
-                for marker in ["输出：", "Output:", "Construct Output:", "Final Output:"]:
-                    if marker in cleaned:
-                        parts = cleaned.split(marker)
-                        if len(parts) > 1:
-                            # 取最后一个标记后的内容
-                            potential = parts[-1].strip()
-                            # 如果内容太长，可能还包含分析，继续分割
-                            lines = potential.split("\n")
-                            for line in lines:
-                                line = line.strip()
-                                # 找第一个实际的中文输出行（不是英文分析）
-                                if (
-                                    line
-                                    and len(line) < 100
-                                    and not line.startswith(
-                                        ("1.", "2.", "3.", "4.", "5.", "*", "-")
-                                    )
-                                ):
-                                    if not any(
-                                        en in line
-                                        for en in [
-                                            "Analyze",
-                                            "Process",
-                                            "Rules:",
-                                            "Task:",
-                                            "Role:",
-                                            "Input",
-                                        ]
-                                    ):
-                                        cleaned = line
-                                        break
-                            break
-                else:
-                    # 方法2: 如果没有找到输出标记，从后往前找第一行中文
-                    lines = cleaned.split("\n")
-                    for line in reversed(lines):
-                        line = line.strip()
-                        # 找包含中文的行，且不是分析内容
-                        if line and len(line) < 100:
-                            if not line.startswith(("1.", "2.", "3.", "4.", "5.", "*", "-", "**")):
-                                if not any(
-                                    en in line
-                                    for en in [
-                                        "Analyze",
-                                        "Process",
-                                        "Rules:",
-                                        "Task:",
-                                        "Role:",
-                                        "Input",
-                                        "Thinking",
-                                        "Construct",
-                                    ]
-                                ):
-                                    cleaned = line
-                                    break
-
             # 移除 markdown 标记和引号
             cleaned = cleaned.replace("**", "")
             cleaned = cleaned.replace('"', "")
