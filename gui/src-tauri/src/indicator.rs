@@ -44,7 +44,7 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
 
     let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
 
-    float_over_fullscreen(&window);
+    float_over_fullscreen(app);
 
     // 不调用 set_focus:这是一个 always-on-top 的被动提示窗。语音输入的目的
     // 是把文字打进用户当前的应用,录音一开始就抢走焦点会直接破坏这个前提。
@@ -60,32 +60,45 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
 /// 那管的是多个桌面 Space,管不了全屏;还需要 `FullScreenAuxiliary`(1<<8)。
 /// 同时把层级从 NSFloatingWindowLevel(3)提到 NSStatusWindowLevel(25),
 /// 否则在全屏 Space 里仍会被盖住。
+///
+/// **必须在主线程执行**:AppKit 规定 NSWindow 只能在主线程操作,macOS 27 对
+/// 违反者是硬性 trap("Must only be used from the main thread" → SIGTRAP)。
+/// `show()` 是从 hotkey-worker 线程调进来的 —— 同一函数里的 `window.show()`
+/// 等调用之所以安全,是因为 Tauri 内部会转发到主线程;这里用 msg_send! 直接
+/// 打 AppKit 绕过了那层保护,所以必须自己用 run_on_main_thread 转发。
 #[cfg(target_os = "macos")]
-fn float_over_fullscreen(window: &tauri::WebviewWindow) {
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
+fn float_over_fullscreen(app: &tauri::AppHandle) {
+    let app = app.clone();
+    // 在闭包内部重新取窗口,避免把 ns_window 的裸指针跨线程传递。
+    let _ = app.clone().run_on_main_thread(move || {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
 
-    const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
-    const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
-    const NS_STATUS_WINDOW_LEVEL: isize = 25;
+        const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+        const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+        const NS_STATUS_WINDOW_LEVEL: isize = 25;
 
-    let Ok(ptr) = window.ns_window() else {
-        return;
-    };
-    if ptr.is_null() {
-        return;
-    }
-    let ns_window = ptr as *mut AnyObject;
-    unsafe {
-        let current: usize = msg_send![ns_window, collectionBehavior];
-        let behavior = current | CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY;
-        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
-        let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
-    }
+        let Some(window) = app.get_webview_window(INDICATOR_LABEL) else {
+            return;
+        };
+        let Ok(ptr) = window.ns_window() else {
+            return;
+        };
+        if ptr.is_null() {
+            return;
+        }
+        let ns_window = ptr as *mut AnyObject;
+        unsafe {
+            let current: usize = msg_send![ns_window, collectionBehavior];
+            let behavior = current | CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY;
+            let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
+            let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
+        }
+    });
 }
 
 #[cfg(not(target_os = "macos"))]
-fn float_over_fullscreen(_window: &tauri::WebviewWindow) {}
+fn float_over_fullscreen(_app: &tauri::AppHandle) {}
 
 pub fn hide(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
