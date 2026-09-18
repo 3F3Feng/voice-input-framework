@@ -78,8 +78,8 @@ npm run tauri dev
 - **按住说话**：支持鼠标按钮和全局快捷键录音
 - **音频上传**：录音结束后将音频发送到服务器转写（分块上传，非真流式推理）
 - **LLM 后处理**：可选开启，录音后自动优化识别结果
-- **悬浮胶囊**：录音时显示计时器和音量条，处理中显示状态
-- **系统托盘**：支持最小化到托盘，快捷键全局可用
+- **悬浮胶囊**：录音时显示计时器和音量条，处理中显示状态；macOS 上可浮于全屏应用之上
+- **系统托盘**：macOS 以菜单栏应用（accessory）身份运行，**不占用 Dock 图标**，主窗口从托盘菜单打开
 - **自动更新**：检测 GitHub Releases 新版本，一键更新
 - **调试日志**：内置日志面板，方便排查问题
 - **音频设备选择**：支持选择系统中任意输入设备
@@ -97,7 +97,7 @@ npm run tauri dev
 │  lib.rs    (命令注册 + 应用生命周期)        │
 │  audio.rs  (cpal 音频采集 + 流式通道)       │
 │  stt.rs    (WebSocket 流式转写)            │
-│  hotkey.rs (rdev 全局快捷键)               │
+│  hotkey.rs (全局快捷键；macOS 用 CGEventTap)│
 │  permissions.rs (macOS 权限查询/申请)      │
 │  indicator.rs (悬浮胶囊窗口管理)           │
 │  update.rs (GitHub Releases 更新检查)      │
@@ -111,17 +111,24 @@ npm run tauri dev
 
 ### 构建
 
+**macOS 推荐走脚本**，它会用本机证书签名、校验产物、并安装到 `/Applications`：
+
 ```bash
-# 前端
+scripts/build-macos.sh --install
+```
+
+签名不是可选项：macOS 的隐私权限（TCC）按**代码签名身份**记录授权，
+而不带证书构建时 Tauri 只做 ad-hoc 签名、身份每次构建都变 ——
+后果是麦克风、输入监控、辅助功能三项权限**每构建一次就要重新授予一遍**。
+脚本还会校验 hardened runtime 所需的 entitlement 确实进了产物（缺了麦克风会静默失效）。
+
+完整说明见 [docs/macos-signed-build.md](docs/macos-signed-build.md)。
+
+其它平台（或只想编译不签名）：
+
+```bash
 cd gui
 npm install
-npm run build
-
-# 后端
-cd gui/src-tauri
-cargo build --release
-
-# 完整打包
 npm run tauri build
 ```
 
