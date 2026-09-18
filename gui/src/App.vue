@@ -4,8 +4,10 @@
     <header class="header">
       <div class="header-left">
         <span class="app-icon">🎙️</span>
-        <span :class="['conn-dot', connected ? 'on' : 'off']"></span>
-        <span class="conn-text">{{ connected ? currentModelName : '未连接' }}</span>
+        <!-- 正在等服务器起来的时候别断言「未连接」：本地模式下服务刚拉起，
+             模型要加载十几秒，这段时间说「未连接」看着就像服务坏了。 -->
+        <span :class="['conn-dot', connected ? 'on' : connecting ? 'wait' : 'off']"></span>
+        <span class="conn-text">{{ connected ? currentModelName : connecting ? '连接中…' : '未连接' }}</span>
       </div>
       <div class="header-right">
         <button class="header-btn" @click="minimizeToTray" title="最小化到托盘">─</button>
@@ -281,6 +283,7 @@
           <span v-if="recording" class="status-rec">录音中 {{ timerText }}</span>
           <span v-else-if="loading" class="status-proc">{{ llmProcessing ? 'LLM 处理中' : '识别中' }} {{ processingTimerText }}</span>
           <span v-else-if="connected" class="status-ready">按住说话 · {{ displayHotkey }}</span>
+          <span v-else-if="connecting" class="status-proc">正在连接服务器…</span>
           <span v-else class="status-off">未连接服务器</span>
         </div>
       </div>
@@ -582,6 +585,10 @@ const serverRows = computed(() =>
   })
 );
 
+/** STT 服务此刻的状态。客户端连的就是它,连接状态该跟着它走。
+ *  `null` = 还没拿到第一份报告。 */
+const sttState = computed<ServerState | null>(() => serverReport.value?.stt.state ?? null);
+
 const pathProblem = computed(() =>
   serverMode.value === "local" ? serverReport.value?.local_paths.problem ?? null : null
 );
@@ -749,15 +756,33 @@ function syncServerPolling() {
 async function switchMode(mode: ServerMode) {
   if (mode === serverMode.value) return;
   modeBusy.value = true;
+  let switched = false;
   try {
     const url = await invoke<string>("set_server_mode", { mode });
     serverMode.value = mode;
     toast(mode === "local" ? `已切到本地管理（${url}）` : `已切到远程连接（${url}）`, "ok");
     await refreshServers();
-    await loadModels();
+    switched = true;
   } catch (e) { toast(`切换失败: ${e}`, "err"); }
   modeBusy.value = false;
   syncServerPolling();
+  // 换了模式就是换了连接目标,得重连,而不是留着上一套的 connected 和模型列表。
+  // 以前这里只 `loadModels()`：请求打的确实是新地址，但 `connected` 一直是切换前
+  // 那个值——切过去连不上也照样显示已连接，切回来连上了也照样是「未连接」。
+  //
+  // 预算按新目标重算（作废上一轮剩下的），并且**不 await**：本地模式下服务可能
+  // 正在加载模型，不该把两个模式按钮跟着锁上几十秒。
+  if (switched) {
+    connectDeadline = 0;
+    ensureConnected(connectBudget());
+  }
+}
+
+/** 起完 / 重启完之后把连接补上。客户端只连 STT——LLM 是由 STT 服务端反代的,
+ *  起它不改变连接状态,但模型列表值得刷新一下。 */
+async function connectAfterServerAction(kind: ServerKind) {
+  if (kind === "stt") await ensureConnected(connectBudget());
+  else if (connected.value) await loadModels();
 }
 
 async function startSrv(kind: ServerKind) {
@@ -768,6 +793,9 @@ async function startSrv(kind: ServerKind) {
   } catch (e) { toast(`启动失败: ${e}`, "err"); }
   srvBusy.value = "";
   await refreshServers();
+  // 以前到这里就结束了:面板上写着「运行中」,头部却一直「未连接」,录音按钮
+  // 一直是灰的,除非用户自己回到远程那一栏点「连接」。
+  await connectAfterServerAction(kind);
 }
 
 async function stopSrv(kind: ServerKind) {
@@ -788,6 +816,7 @@ async function restartSrv(kind: ServerKind) {
   } catch (e) { toast(`重启失败: ${e}`, "err"); }
   srvBusy.value = "";
   await refreshServers();
+  await connectAfterServerAction(kind);
 }
 
 /** 保存本地模式的路径 / 端口 / 自启设置，并回显路径是否可用。 */
@@ -862,23 +891,92 @@ function toggleStartMinimized() { saveConfigPatch(cfg => { cfg.ui.start_minimize
 function onAutoInputToggle() { saveConfigPatch(cfg => { cfg.ui.auto_input = autoInputEnabled.value; }); }
 
 // ── Connection ──
-async function updateServer() {
-  connected.value = false;
+// 连接不再是「点一次按钮、试一次」。服务刚被拉起时 MLX 要 10–30 秒加载模型,
+// 这期间 `/models` 必然不通,单次尝试的结果就是界面永远停在「未连接」,而旁边
+// 的服务器面板明明写着「运行中」。这里统一成一个带截止时间的重试循环。
+
+/** 重试间隔。模型加载期间每 2 秒问一次,不迟钝也不打搅。 */
+const CONNECT_RETRY_MS = 2000;
+/** 服务「启动中」时的等待预算。MLX STT 首次加载模型实测 10–30 秒。 */
+const CONNECT_BUDGET_STARTING_MS = 60000;
+/** 服务 `/health` 已经通了才连,一次多半就成,留点余量给模型列表接口。 */
+const CONNECT_BUDGET_RUNNING_MS = 8000;
+
+// 同一时刻只允许一轮循环在跑。想连的人只是把截止时间往后推,不会各自起一个
+// 循环去打服务端——「每个 3 秒轮询 tick 都重试一次」正是要避免的那种风暴。
+let connectRun: Promise<void> | null = null;
+let connectDeadline = 0;
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * 连接该重试多久。
+ *
+ * 只有本地管理模式下我们才知道服务的死活:正在加载模型就值得等下去,已经健康
+ * 的一次就该通,停着的连都不必连(只试一次,让用户立刻看到结果而不是干等)。
+ * 远程模式一律只试一次,和以前的「连接」按钮行为逐字相同。
+ */
+function connectBudget(): number {
+  if (serverMode.value !== "local") return 0;
+  const state = serverReport.value?.stt.state;
+  if (state === "running") return CONNECT_BUDGET_RUNNING_MS;
+  if (state === "starting") return CONNECT_BUDGET_STARTING_MS;
+  return 0;
+}
+
+/** 连一次。地址由 Rust 按当前模式算(`effective_stt_url`),前端不再自己拼:
+ *  本地管理连的是 `local.stt_port`,远程才是 host/port,而 host 还可能本身就是
+ *  一条完整 URL。能取到模型列表才算连上。 */
+async function connectOnce(): Promise<boolean> {
+  await invoke<string>("connect_effective_server");
+  const ok = await loadModels();
+  connected.value = ok;
+  return ok;
+}
+
+/**
+ * 连到通为止,但有上限。
+ *
+ * `budgetMs = 0` 就是以前的行为:只试一次,不通就报「服务器无响应」。
+ * 已经有一轮在跑时不会再起第二轮,只把截止时间往后推。
+ */
+function ensureConnected(budgetMs = 0): Promise<void> {
+  connectDeadline = Math.max(connectDeadline, Date.now() + budgetMs);
+  if (!connectRun) {
+    connectRun = connectLoop().finally(() => { connectRun = null; connectDeadline = 0; });
+  }
+  return connectRun;
+}
+
+async function connectLoop() {
   connecting.value = true;
+  connected.value = false;
+  try {
+    for (;;) {
+      let failure = "";
+      try {
+        if (await connectOnce()) { toast("已连接", "ok"); return; }
+      } catch (e) { failure = `${e}`; }
+      // 预算用完才认输。中途每次失败都不吭声:服务还在加载模型是预期内的,
+      // 每 2 秒弹一次红字只会把日志面板刷满。
+      if (Date.now() >= connectDeadline) {
+        toast(failure ? `连接失败: ${failure}` : "服务器无响应", "err");
+        return;
+      }
+      await sleep(CONNECT_RETRY_MS);
+    }
+  } finally { connecting.value = false; }
+}
+
+/** 远程模式下手动「连接」。行为保持不变:存下输入框里的地址,只试一次。 */
+async function updateServer() {
   const host = serverHost.value.trim() || "localhost";
   const port = serverPort.value || 6544;
   try {
+    // `set_server_host` 自己会把地址写进配置并落盘,这里不用再存一遍。
     await invoke("set_server_host", { host, port });
-    const ok = await loadModels();
-    if (ok) {
-      connected.value = true;
-      toast("已连接", "ok");
-      saveConfigPatch(cfg => { cfg.server.host = host; cfg.server.port = port; });
-    } else {
-      toast("服务器无响应", "err");
-    }
-  } catch (e) { toast(`连接失败: ${e}`, "err"); }
-  connecting.value = false;
+  } catch (e) { toast(`连接失败: ${e}`, "err"); return; }
+  await ensureConnected(0);
 }
 
 // ── Models ──
@@ -1067,13 +1165,40 @@ async function minimizeToTray() {
 // 打开设置面板时重新查一次:用户可能刚在系统设置里改过授权
 watch(showSettings, open => { if (open) refreshPermissions(); });
 
+// 连接状态跟着观测到的服务健康走,而不是散在各个调用点上手动置 true / false。
+//
+// 只认「状态变了」的那一下,不是每个轮询 tick 都试:服务真起不来的时候,后者
+// 就是每 3 秒一次的重试风暴。`ensureConnected` 那层的单飞再兜一次底——启动按钮
+// 和这个 watcher 撞上时,后来的只是把截止时间往后推。
+watch(sttState, (next, prev) => {
+  if (serverMode.value !== "local" || next === prev) return;
+  if (next === "running") {
+    if (!connected.value) ensureConnected(CONNECT_BUDGET_RUNNING_MS);
+  } else if (connected.value) {
+    // 看到的不是「运行中」,连接就是断的——问的是此刻的健康状况,不是
+    // 「上一次看到的是不是运行中」:后者会漏掉从没被观测到运行过的情形
+    // (面板一直关着,轮询没跑过),于是服务停了录音按钮还亮着,
+    // 等用户按下去才失败。
+    connected.value = false;
+  }
+});
+
 onMounted(async () => {
   await loadConfig();
   await loadAutostart();
   await refreshDevices();
   await refreshPermissions();
   await refreshServers();
-  await updateServer();
+
+  // 启动时这一次连接**不能 await**：下面还要注册快捷键 / 转录的事件监听，
+  // 而本地模式下这个循环可能要等几十秒。以前它是一次性的所以看不出来。
+  //
+  // `auto_start` 时服务是 Rust 的 setup() 异步拉起的，这一刻 STT 多半还没
+  // 开始监听端口（状态还是 stopped），所以不能只看状态来定预算。
+  const bootBudget = serverMode.value === "local" && localAutoStart.value
+    ? CONNECT_BUDGET_STARTING_MS
+    : connectBudget();
+  ensureConnected(bootBudget);
 
   // 设置面板开着 + 本地模式时才轮询状态：「启动中 → 运行中」要肉眼可见，
   // 但面板关着时没人看，没必要每 3 秒打一次 /health。
@@ -1188,6 +1313,9 @@ html, body, #app { height: 100%; }
 .conn-dot { width: 7px; height: 7px; border-radius: 50%; }
 .conn-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .conn-dot.off { background: var(--red); }
+/* 连接中：黄色 + 呼吸，和「连不上」的死红区分开 */
+.conn-dot.wait { background: var(--yellow); animation: conn-pulse 1.2s ease-in-out infinite; }
+@keyframes conn-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .conn-text { font-size: 0.75rem; color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .header-right { display: flex; gap: 4px; }
 .header-btn { background: none; border: none; color: var(--muted); font-size: 1rem; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.15s; }

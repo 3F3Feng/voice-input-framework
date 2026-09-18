@@ -46,11 +46,6 @@ async fn set_server_host(
     host: String,
     port: Option<u16>,
 ) -> Result<(), String> {
-    let url = if let Some(port) = port {
-        format!("http://{}:{}", host, port)
-    } else {
-        format!("http://{}", host)
-    };
     let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
     cfg.server.host = host;
     if let Some(port) = port {
@@ -59,11 +54,37 @@ async fn set_server_host(
     // 本地管理模式下这个输入框改的是「远程地址」,只存不用——客户端仍然连
     // 本地端口。切回远程模式时 `set_server_mode` 会重新指向它。
     if cfg.server.mode == config::ServerMode::Remote {
+        // 地址一律由 `effective_stt_url()` 推导,不在这里再拼一遍:以前这里
+        // 自己 `format!("http://{host}:{port}")`,用户填完整 URL 时会拼出
+        // `http://1.2.3.4:6544:6544`。
+        let url = cfg.server.effective_stt_url();
         let mut stt_client = state.stt.lock().map_err(|e| e.to_string())?;
         *stt_client = stt::SttClient::new(&url);
     }
     cfg.save(&app).ok();
     Ok(())
+}
+
+/// 按当前模式解析该连的 STT 地址,并把客户端指过去。返回连的是哪儿。
+///
+/// 前端需要这个命令是因为「连哪儿」不是前端能算的:本地管理模式下地址来自
+/// `server.local.stt_port`,远程模式才是 `host` / `port`,而 `host` 还可能本身
+/// 就是一条完整 URL。前端曾经拿远程那对字段自己拼,于是本地模式下服务在
+/// 127.0.0.1 上跑着,客户端却一直去敲用户填的远程地址。
+///
+/// 只重指客户端,不碰配置,也不发请求——通不通由调用方紧接着拉一次模型列表
+/// 来判断。
+#[tauri::command]
+async fn connect_effective_server(state: State<'_, AppState>) -> Result<String, String> {
+    let url = {
+        let cfg = state.config.lock().map_err(|e| e.to_string())?;
+        cfg.server.effective_stt_url()
+    };
+    {
+        let mut stt_client = state.stt.lock().map_err(|e| e.to_string())?;
+        *stt_client = stt::SttClient::new(&url);
+    }
+    Ok(url)
 }
 
 /// 录音前的麦克风权限闸门。
@@ -773,6 +794,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             set_server_host,
+            connect_effective_server,
             start_recording,
             stop_recording,
             get_audio_devices,

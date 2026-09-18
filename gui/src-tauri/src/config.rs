@@ -383,6 +383,27 @@ mod tests {
         assert_eq!(cfg.server.effective_stt_url(), "http://1.2.3.4:6544");
     }
 
+    /// https 也要原样透传:远程服务在反代后面时地址就是 https 的。
+    #[test]
+    fn remote_https_url_is_passed_through() {
+        let mut cfg = VoiceInputConfig::default();
+        cfg.server.host = "https://stt.example.com".into();
+        assert_eq!(cfg.server.effective_stt_url(), "https://stt.example.com");
+    }
+
+    /// 远程模式填完整 URL 时,`port` 字段必须完全不参与。
+    ///
+    /// `set_server_host` 以前自己拼 `http://{host}:{port}`,于是用户填
+    /// `http://1.2.3.4:6544` 会被拼成 `http://1.2.3.4:6544:6544`——一条连不上
+    /// 的地址。改成走 `effective_stt_url()` 之后端口只可能出现一次。
+    #[test]
+    fn full_url_host_never_gets_the_port_appended_twice() {
+        let mut cfg = VoiceInputConfig::default();
+        cfg.server.host = "http://1.2.3.4:6544".into();
+        cfg.server.port = 6544;
+        assert_eq!(cfg.server.effective_stt_url(), "http://1.2.3.4:6544");
+    }
+
     /// 本地模式忽略 host,但不擦掉它——切回远程时用户填的地址还得在。
     #[test]
     fn local_mode_uses_loopback_and_keeps_remote_host() {
@@ -392,6 +413,33 @@ mod tests {
         cfg.server.local.stt_port = 7544;
         assert_eq!(cfg.server.effective_stt_url(), "http://127.0.0.1:7544");
         assert_eq!(cfg.server.host, "192.168.1.9");
+    }
+
+    /// 本地模式下 host 哪怕是一条完整 URL,也一样不参与——「本地管理」的
+    /// 含义就是连自己拉起的那个进程。
+    #[test]
+    fn local_mode_ignores_a_full_url_host() {
+        let mut cfg = VoiceInputConfig::default();
+        cfg.server.host = "https://stt.example.com".into();
+        cfg.server.mode = ServerMode::Local;
+        assert_eq!(cfg.server.effective_stt_url(), "http://127.0.0.1:6544");
+    }
+
+    /// 本地模式跟的是 `local.stt_port`,不是 `server.port`。
+    ///
+    /// 这就是「从界面启动服务后一直未连接」的形状:前端拿 `host` + `port`
+    /// 自己拼地址,本地管理模式下拼出来的是远程那对字段,和服务实际在听的
+    /// 端口毫无关系。地址只能有 `effective_stt_url` 一个出处。
+    #[test]
+    fn local_mode_follows_the_local_stt_port_not_the_remote_fields() {
+        let mut cfg = VoiceInputConfig::default();
+        cfg.server.host = "192.168.1.9".into();
+        cfg.server.port = 6544;
+        cfg.server.mode = ServerMode::Local;
+        cfg.server.local.stt_port = 7544;
+        let naive = format!("http://{}:{}", cfg.server.host, cfg.server.port);
+        assert_eq!(cfg.server.effective_stt_url(), "http://127.0.0.1:7544");
+        assert_ne!(cfg.server.effective_stt_url(), naive);
     }
 
     /// 存下去的配置必须能再读回来(新字段的 serde 表示自洽)。
