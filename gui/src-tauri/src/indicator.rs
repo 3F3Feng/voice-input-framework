@@ -8,8 +8,10 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
     // 复用已存在的窗口:close 是异步的,close 后立刻同 label 重建会
     // "window already exists" 静默失败 → 胶囊不显示。复用 + 重置页面。
     if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
-        let _ = window.show();
         let _ = window.emit("indicator-reset", ());
+        // 复用同样要走 float_over_fullscreen:上次显示时所在的 Space 可能
+        // 已经不是现在这个,需要重新设 behavior 再 order front。
+        float_over_fullscreen(app);
         return Ok(());
     }
     let (sw, sh) = screen_center_bottom(app);
@@ -44,11 +46,12 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
 
     let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
 
-    float_over_fullscreen(app);
-
+    // 注意:显示动作在 float_over_fullscreen 内部完成。
+    // collection behavior 必须在窗口显示**之前**设好 —— 窗口一旦显示,
+    // macOS 就把它分配到了当时的 Space,之后再改 behavior 不会重新分配。
     // 不调用 set_focus:这是一个 always-on-top 的被动提示窗。语音输入的目的
     // 是把文字打进用户当前的应用,录音一开始就抢走焦点会直接破坏这个前提。
-    let _ = window.show();
+    float_over_fullscreen(app);
 
     Ok(())
 }
@@ -93,12 +96,22 @@ fn float_over_fullscreen(app: &tauri::AppHandle) {
             let behavior = current | CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY;
             let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
             let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
+
+            // 设好 behavior 之后才显示。orderFrontRegardless 不会激活本应用,
+            // 因此不会把用户从全屏应用里踢出去,也不抢焦点。
+            let _: () = msg_send![ns_window, orderFrontRegardless];
         }
     });
 }
 
+/// 非 macOS:没有 Space 概念,直接显示即可(显示动作在 macOS 分支里是由
+/// orderFrontRegardless 完成的,这里要补上)。
 #[cfg(not(target_os = "macos"))]
-fn float_over_fullscreen(_app: &tauri::AppHandle) {}
+fn float_over_fullscreen(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
+        let _ = window.show();
+    }
+}
 
 pub fn hide(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {

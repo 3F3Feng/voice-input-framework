@@ -498,6 +498,20 @@ pub fn run() {
             Some(vec![]),
         ))
         .setup(|app| {
+            // macOS:以 accessory(菜单栏应用)身份运行。
+            //
+            // 这不只是"不要 Dock 图标"的外观选择 —— 它决定了悬浮胶囊能否
+            // 出现在别的应用的全屏 Space 上。常规(regular)应用的普通 NSWindow
+            // 在 macOS 上无法加入其它应用的全屏 Space:实测即使
+            // collectionBehavior 设成 CanJoinAllSpaces|FullScreenAuxiliary(0x101)
+            // 且层级提到 25,isOnActiveSpace 在全屏场景下仍然是 false。
+            // accessory 应用则不受此限制。
+            //
+            // 代价:Dock 图标和应用菜单栏消失。本应用由快捷键 + 托盘驱动
+            // (ui.use_tray 默认开启),主窗口通过托盘菜单打开,因此代价可接受。
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let cfg = config::VoiceInputConfig::load(app.handle());
             let default_host = cfg.server.host.clone();
             let shortcut = cfg.hotkey.key.clone();
