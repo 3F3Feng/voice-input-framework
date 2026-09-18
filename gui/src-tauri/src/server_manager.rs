@@ -8,15 +8,23 @@
 //! 只把它显示成运行中,绝不另起一个,也绝不去停它。
 //!
 //! 「是不是自己拉起的」不靠标志位记账,而是每次看状态时现算:
-//! 端口健康 + 本进程手里有对应的活着的子进程 = 自己的(可停);
-//! 端口健康 + 手里没有 = 外部的(不可停)。这样即使中途状态错乱也会自愈。
+//! 端口健康 + 本进程手里有对应的活着的子进程 = 自己的(可停)。
+//! 这样即使中途状态错乱也会自愈。
 //!
-//! 唯一的例外是「上次会话的遗孤」:应用被 SIGKILL / 崩溃时来不及杀子进程,
+//! 一个例外是「上次会话的遗孤」:应用被 SIGKILL / 崩溃时来不及杀子进程,
 //! 下次启动时那两个服务还在监听。纯靠上面的规则会把它们判成「外部进程」,
 //! 用户明明是从应用里启动的却停不掉。为此 spawn 时把 pid 落盘
 //! (`managed-servers.json`),启动时校验 pid 仍然活着 **且** 命令行确实是对应
 //! 的模块,才认领回来(`Handle::Reclaimed`)——pid 会被系统复用,只比对 pid
 //! 是不够的。
+//!
+//! 手里没有句柄、端口却健康,曾经一律判成「外部进程,不可停」。这条规矩定得
+//! 太宽了:它本意是防止误杀「碰巧占着这个端口的陌生进程」,结果连用户自己在
+//! 终端里 `python -m services.stt_server` 起的**本项目**服务也一并锁死——想从
+//! 界面上管自己的服务,得先回终端把它杀掉,纯粹的摩擦。现在改成先去问一句
+//! 「端口上监听的到底是谁」(见 `identify_external`):认得出是本项目的服务就
+//! 允许停,认不出才拒绝。铁律没有松动,只是从「不是我起的就不碰」收紧成了
+//! 「认不出身份的不碰」——见 `ServerOwner`。
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -90,18 +98,47 @@ pub enum ServerState {
     Failed,
 }
 
+/// 端口上那个进程和本应用是什么关系。决定「停止 / 重启」能不能点。
+///
+/// 分三档而不是两档,是这次改动的核心。原来只有「本应用启动 / 外部」两档,
+/// 外部一律不可停;可「外部」里其实混着两种完全不同的东西:用户自己在终端里
+/// 跑的**本项目**服务,和一个碰巧占着这个端口的陌生进程。前者理应能从界面上
+/// 停掉,后者绝对不能碰。两者合并成一档,就只能按后者的标准一刀切,代价是
+/// 前者也被锁死。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerOwner {
+    /// 本应用 spawn 的,或上次会话遗留、启动时认领回来的。
+    App,
+    /// 不是本应用启动的,但身份校验通过:跑的是本项目的模块,且工作目录就是
+    /// 当前配置的仓库根(见 `pid_is_project_server`)。可以停。
+    ExternalProject,
+    /// 端口上有健康服务,但对不上号——认不出来,或者认出来是别的 checkout。
+    /// 一律不碰。没有任何进程时也取这一档(最保守的那个)。
+    ExternalUnknown,
+}
+
+impl ServerOwner {
+    /// 允许从界面停止 / 重启吗?只有前两档可以。
+    pub fn can_manage(self) -> bool {
+        matches!(self, ServerOwner::App | ServerOwner::ExternalProject)
+    }
+}
+
 /// 一个服务的完整状态快照,直接丢给前端。
 #[derive(Debug, Clone, Serialize)]
 pub struct ServerStatus {
     pub kind: ServerKind,
     pub state: ServerState,
     pub port: u16,
-    /// 是否由本应用负责生命周期。
+    /// 这个进程和本应用的关系,决定停止 / 重启按钮的可用性。
     ///
-    /// `false` 且 `state == Running` 表示这是用户自己在终端起的(或上次遗留下来
-    /// 又认领不回来的)进程:**停止按钮必须禁用**,否则就是在误导用户——
-    /// 点了也不会有反应,而如果真去停了,就是在杀别人的进程。
-    pub managed: bool,
+    /// `ExternalUnknown` 且 `state == Running` 表示端口上有服务但认不出身份:
+    /// **停止按钮必须禁用**,否则就是在误导用户——真去停了就是在杀别人的进程。
+    pub owner: ServerOwner,
+    /// 「停止 / 重启」能不能点。规则只在 `ServerOwner::can_manage` 里写一遍,
+    /// 前端直接用,不要自己再推一遍——两处各写一份迟早会对不上。
+    pub can_stop: bool,
     pub pid: Option<u32>,
     /// `/health` 报告的当前模型,运行中才有。
     pub current_model: Option<String>,
@@ -307,8 +344,10 @@ impl ServerManager {
         // 下面会整个覆盖掉这个 slot,所以手里如果还攥着一个活的子进程,必须先
         // 停掉——否则句柄一丢,它就变成了谁也管不着的孤儿。最典型的触发路径是
         // 用户改了端口:新端口探测为空,于是走到这里,而老进程还在老端口上跑。
-        if self.slot(kind).as_mut().is_some_and(|s| s.alive()) {
-            let _ = self.stop(kind);
+        if let Some(mut old) = self.slot(kind).take() {
+            if old.alive() {
+                let _ = self.stop_slot(kind, old);
+            }
         }
 
         let log_path = self.data_dir.join(kind.log_file_name());
@@ -368,19 +407,73 @@ impl ServerManager {
         Ok(pid)
     }
 
-    /// 停止本应用拉起(或认领)的进程。
+    /// 停止一个服务。
     ///
-    /// 手里没有句柄 = 这个服务不是本应用的,直接拒绝。这是「绝不杀别人进程」
-    /// 那条铁律的落地点。
-    fn stop(&mut self, kind: ServerKind) -> Result<String, String> {
+    /// 手里有句柄就走 `stop_slot`;没有句柄不再一律拒绝,而是交给
+    /// `stop_external` 去核实身份——认得出是本项目的服务才停。
+    fn stop(
+        &mut self,
+        kind: ServerKind,
+        local: &crate::config::LocalServerConfig,
+    ) -> Result<String, String> {
         // 句柄直接取走:无论停成没停成,这个 slot 都不该再留着。
         // (丢弃 `Child` 不会杀进程,所以取走是安全的。)
-        let Some(mut slot) = self.slot(kind).take() else {
+        match self.slot(kind).take() {
+            Some(slot) => self.stop_slot(kind, slot),
+            None => self.stop_external(kind, local),
+        }
+    }
+
+    /// 停一个不是本应用启动、但校验过确实属于本项目的服务。
+    ///
+    /// 这是整个模块里唯一会对「别人的进程」发信号的地方,所以身份必须**在发
+    /// 信号的那一刻**重新算一遍,而不能沿用状态轮询时的结论:轮询和用户点按钮
+    /// 之间隔着几秒,这几秒里进程完全可能已经退出、pid 被系统分配给了别的程序。
+    /// 拿旧结论去杀新 pid,就是在赌。
+    fn stop_external(
+        &mut self,
+        kind: ServerKind,
+        local: &crate::config::LocalServerConfig,
+    ) -> Result<String, String> {
+        // 这一句就是「发信号前重新校验」:`identify_external` 每次都现查 lsof + ps。
+        let Some(pid) = identify_external(kind, local) else {
             return Err(format!(
-                "{} 服务不是由本应用启动的,无法从这里停止。请到启动它的终端里停。",
+                "{} 服务不是由本应用启动的,也认不出是本项目的服务,无法从这里停止。请到启动它的终端里停。",
                 kind.label()
             ));
         };
+        let repo = PathBuf::from(local.repo_path.clone().unwrap_or_default());
+        let stopped = format!("{} 服务(pid {},本项目的外部进程)已停止", kind.label(), pid);
+
+        terminate(pid);
+        let deadline = Instant::now() + TERM_GRACE;
+        while Instant::now() < deadline {
+            // 等待条件用的是「它**还是不是**本项目的那个服务」,而不是单纯的 pid
+            // 判活。差别在两个真实情况上:进程退成僵尸时 `kill -0` 仍然成功(命令行
+            // 已经变成 `<defunct>`),pid 被复用时也成功——两种情况下继续死等都是
+            // 错的,最后还会对着一个不知道是谁的 pid 发 SIGKILL。
+            if !pid_is_project_server(pid, kind.module(), &repo) {
+                return Ok(stopped);
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+
+        // 赖着不走才升级到 SIGKILL。发信号前再确认一次身份——上面的循环条件已经
+        // 是这个校验了,这里再查一次是为了把「绝不对没通过校验的 pid 发信号」这条
+        // 写死在发信号的那一行旁边,而不是依赖读者去推循环的退出条件。
+        if !pid_is_project_server(pid, kind.module(), &repo) {
+            return Ok(stopped);
+        }
+        force_kill(pid);
+        Ok(format!(
+            "{} 服务(pid {},本项目的外部进程)未响应,已强制结束",
+            kind.label(),
+            pid
+        ))
+    }
+
+    /// 停止本应用拉起(或认领)的进程。调用方负责把 slot 取出来交进来。
+    fn stop_slot(&mut self, kind: ServerKind, mut slot: Slot) -> Result<String, String> {
         let pid = slot.pid;
 
         if !slot.alive() {
@@ -423,8 +516,10 @@ impl ServerManager {
     /// 应用退出时调用:把所有自己拉起的子进程带走,不留孤儿。
     pub fn shutdown_all(&mut self) {
         for kind in [ServerKind::Stt, ServerKind::Llm] {
-            if self.slot(kind).is_some() {
-                let _ = self.stop(kind);
+            // 只带走自己手里的句柄。退出应用**不该**顺手停掉用户自己在终端里
+            // 跑的服务,哪怕现在已经有能力停了——那是用户的进程,不是我们的。
+            if let Some(slot) = self.slot(kind).take() {
+                let _ = self.stop_slot(kind, slot);
             }
         }
         // 全停干净了,记账文件也清掉,免得下次启动去认领已经不存在的 pid。
@@ -561,6 +656,115 @@ fn pid_runs_module(pid: u32, _module: &str) -> bool {
     pid_alive(pid)
 }
 
+// ── 端口上监听的到底是谁 ──
+//
+// 「手里没句柄」不等于「不认识」。下面这一组函数就是去把端口上的进程认出来,
+// 好让用户自己在终端里起的本项目服务也能从界面上管起来。
+
+/// 正在监听某个 TCP 端口的进程 pid。
+///
+/// `-t` 只输出 pid;`-nP` 关掉 DNS 和服务名反查(纯粹是提速,本地回环没必要
+/// 查);`-sTCP:LISTEN` 把 ESTABLISHED 的连接排除掉——不加这一条,正连着这个
+/// 端口的客户端(包括本应用自己)也会被算进来,那就南辕北辙了。
+///
+/// 同一个进程同时监听 v4/v6 时 `-t` 会吐出重复的 pid,去重。`lsof` 不在(某些
+/// 精简的 Linux 发行版)或查不动时返回空——调用方会因此判成「认不出」,
+/// 也就是退回改动之前的行为,安全。
+#[cfg(unix)]
+fn port_listener_pids(port: u16) -> Vec<u32> {
+    let Ok(out) = Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return Vec::new();
+    };
+    // 注意不看退出码:`lsof` 查不到东西时就是非 0,那是正常情况而不是错误。
+    let mut pids: Vec<u32> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.trim().parse::<u32>().ok())
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+/// 进程的当前工作目录。
+///
+/// `-a` 是把 `-p`(进程)和 `-d cwd`(只要 cwd 这一个「fd」)两个条件**求交**——
+/// `lsof` 默认是求并,不加 `-a` 会把该进程打开的所有文件都列出来。`-Fn` 输出
+/// 机器可读的字段行(`p<pid>` / `fcwd` / `n<路径>`),我们要的是 `n` 那一行。
+#[cfg(unix)]
+fn pid_cwd(pid: u32) -> Option<PathBuf> {
+    let out = Command::new("lsof")
+        .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-Fn"])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix('n'))
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+}
+
+/// 两个路径是不是同一个目录。软链接、`..`、结尾斜杠都规范化掉再比。
+///
+/// macOS 上这一步不是可选的:临时目录 `/var/folders/...` 实际是
+/// `/private/var/folders/...` 的软链,`lsof` 报后者而配置里存的可能是前者。
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        // 规范化失败(目录已经被删了)就退回字面比较,不做任何猜测。
+        _ => a == b,
+    }
+}
+
+/// 这个 pid 是不是「本项目的 `module` 服务」。两道关卡都得过:
+///
+/// 1. 命令行里确实有 `services.stt_server` / `services.llm_server`;
+/// 2. 进程的工作目录就是当前配置的那个仓库根。
+///
+/// 第二条不能拿命令行顶替。用户在终端里敲的是
+/// `.venv/bin/python -m services.stt_server`——解释器是**相对路径**,整条命令行
+/// 里压根没有仓库路径可比(这是在用户真实跑着的进程上核对过的)。而
+/// `python -m services.stt_server` 能跑起来这件事本身就说明 `services` 包是相对
+/// cwd 解析出来的,所以 cwd 才是那个既拿得到、又真正说明问题的锚点。
+///
+/// 严到什么程度是个取舍:只比模块名太松,别的 checkout 里的同名服务会被当成
+/// 自己的,那就退回了「杀错人」的老风险;再往严了走(比如要求解释器路径也在
+/// 仓库里)又会把 `conda` / 系统 python 起的服务挡在外面,重新制造这次要解决的
+/// 摩擦。「模块名 + cwd」正好卡在中间:它唯一放过的情况,是同一个仓库目录下
+/// 用户用别的方式跑起来的同一个服务——而那本来就该算是本项目的服务。
+///
+/// 拿不到 cwd(`lsof` 不在、权限不够、进程刚退出)一律返回 false:宁可让用户
+/// 回终端去停,也不能凭猜测发信号。
+#[cfg(unix)]
+fn pid_is_project_server(pid: u32, module: &str, repo: &Path) -> bool {
+    if !pid_runs_module(pid, module) {
+        return false;
+    }
+    match pid_cwd(pid) {
+        Some(cwd) => same_dir(&cwd, repo),
+        None => false,
+    }
+}
+
+/// Windows 上没有 `lsof`,`tasklist` 既给不出完整命令行也给不出工作目录,拿不到
+/// 任何能把端口上的进程和本项目对上号的证据。所以这里一律返回 false:所有
+/// 「端口健康但手里没句柄」的情况都停在 `ExternalUnknown`,功能上退回改动之前
+/// (用户仍需回终端停自己的服务),但绝不会误杀无关进程。等哪天接上 WMI 的
+/// `Win32_Process.CommandLine` 再放开。
+#[cfg(not(unix))]
+fn pid_is_project_server(_pid: u32, _module: &str, _repo: &Path) -> bool {
+    false
+}
+
+#[cfg(not(unix))]
+fn port_listener_pids(_port: u16) -> Vec<u32> {
+    Vec::new()
+}
+
 #[cfg(unix)]
 fn terminate(pid: u32) {
     let _ = Command::new("kill")
@@ -632,6 +836,26 @@ fn port_of(kind: ServerKind, local: &crate::config::LocalServerConfig) -> u16 {
     }
 }
 
+/// 端口上那个不是本应用启动的服务,认得出是本项目的吗?认得出就给出它的 pid。
+///
+/// 只在「端口健康但手里没有句柄」时才需要问这个问题。没配仓库路径就无从比对,
+/// 直接放弃(而不是退化成只比模块名——那正是要避免的松)。
+///
+/// 端口上可能有不止一个监听者(v4/v6 被不同进程分别占、或者 `SO_REUSEPORT`),
+/// 挑法很直白:取第一个通过身份校验的。通不过的那些本来也不该碰。
+fn identify_external(kind: ServerKind, local: &crate::config::LocalServerConfig) -> Option<u32> {
+    let repo = local
+        .repo_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())?;
+    let repo = Path::new(repo);
+    let module = kind.module();
+    port_listener_pids(port_of(kind, local))
+        .into_iter()
+        .find(|&pid| pid_is_project_server(pid, module, repo))
+}
+
 /// 单个服务的状态。
 pub async fn status(
     manager: &Mutex<ServerManager>,
@@ -654,31 +878,50 @@ pub async fn status(
             kind,
             state: ServerState::Running,
             port,
-            managed: true,
+            owner: ServerOwner::App,
+            can_stop: ServerOwner::App.can_manage(),
             pid: Some(snap.pid),
             current_model: h.current_model,
             detail: None,
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
         },
-        // 端口健康,但本应用手里没有活着的进程 = 外部进程,只连不管。
-        (Some(h), other) => ServerStatus {
-            kind,
-            state: ServerState::Running,
-            port,
-            managed: false,
-            pid: None,
-            current_model: h.current_model,
-            detail: Some("外部进程(不是本应用启动的),只能连接,不能从这里停止".into()),
-            log_path: other.as_ref().map(|s| s.log_path.clone()),
-            recent_logs: other.map(|s| s.recent_logs).unwrap_or_default(),
-        },
+        // 端口健康,但本应用手里没有活着的进程。**不再一律推给用户**:先去问
+        // 一句端口上监听的到底是谁。认得出是本项目的服务(用户自己在终端里起
+        // 的那个)就允许从界面上停;认不出才是真正的「别人的进程」,拒绝。
+        (Some(h), other) => {
+            let (owner, pid, detail) = match identify_external(kind, &cfg.local) {
+                Some(pid) => (
+                    ServerOwner::ExternalProject,
+                    Some(pid),
+                    "这个服务不是本应用启动的,但确认是本项目的服务,可以从这里停止",
+                ),
+                None => (
+                    ServerOwner::ExternalUnknown,
+                    None,
+                    "外部进程(不是本应用启动的),只能连接,不能从这里停止",
+                ),
+            };
+            ServerStatus {
+                kind,
+                state: ServerState::Running,
+                port,
+                owner,
+                can_stop: owner.can_manage(),
+                pid,
+                current_model: h.current_model,
+                detail: Some(detail.into()),
+                log_path: other.as_ref().map(|s| s.log_path.clone()),
+                recent_logs: other.map(|s| s.recent_logs).unwrap_or_default(),
+            }
+        }
         // 进程还活着但 `/health` 没通 = 正在加载模型(同样要求端口一致)。
         (None, Some(snap)) if snap.alive && snap.port == port => ServerStatus {
             kind,
             state: ServerState::Starting,
             port,
-            managed: true,
+            owner: ServerOwner::App,
+            can_stop: ServerOwner::App.can_manage(),
             pid: Some(snap.pid),
             current_model: None,
             detail: Some("已启动,正在加载模型...".into()),
@@ -690,7 +933,10 @@ pub async fn status(
             kind,
             state: ServerState::Failed,
             port,
-            managed: false,
+            // 失败的那个进程确实是本应用起的,如实标出来:用户看到「本应用启动
+            // / 失败」才知道该去翻下面的日志尾巴。
+            owner: ServerOwner::App,
+            can_stop: ServerOwner::App.can_manage(),
             pid: None,
             current_model: None,
             detail: Some(if snap.alive {
@@ -714,7 +960,9 @@ pub async fn status(
                 ServerState::Stopped
             },
             port,
-            managed: false,
+            // 压根没有进程,这个字段没有意义,取最保守的一档。
+            owner: ServerOwner::ExternalUnknown,
+            can_stop: ServerOwner::ExternalUnknown.can_manage(),
             pid: None,
             current_model: None,
             detail: if cfg.mode == crate::config::ServerMode::Local && !paths_ok {
@@ -759,14 +1007,21 @@ pub async fn start(
             .and_then(|mut m| m.snapshot(kind))
             .map(|s| s.alive && s.port == port)
             .unwrap_or(false);
-        return Ok(if ours {
-            format!("{} 服务已在运行(本应用启动)", kind.label())
-        } else {
-            format!(
+        if ours {
+            return Ok(format!("{} 服务已在运行(本应用启动)", kind.label()));
+        }
+        return Ok(match identify_external(kind, &cfg.local) {
+            Some(pid) => format!(
+                "{} 服务已在 {} 端口运行(外部进程 pid {},确认是本项目的服务),已直接连接,未重复启动",
+                kind.label(),
+                port,
+                pid
+            ),
+            None => format!(
                 "{} 服务已在 {} 端口运行(外部进程),已直接连接,未重复启动",
                 kind.label(),
                 port
-            )
+            ),
         });
     }
 
@@ -780,13 +1035,17 @@ pub async fn start(
     ))
 }
 
-/// 停止一个服务。只停本应用拉起 / 认领的。
-pub fn stop(manager: &Mutex<ServerManager>, kind: ServerKind) -> Result<String, String> {
+/// 停止一个服务。只停本应用拉起 / 认领的,以及校验过属于本项目的外部进程。
+pub fn stop(
+    manager: &Mutex<ServerManager>,
+    cfg: &crate::config::ServerConfig,
+    kind: ServerKind,
+) -> Result<String, String> {
     let mut guard = manager.lock().map_err(|e| e.to_string())?;
-    guard.stop(kind)
+    guard.stop(kind, &cfg.local)
 }
 
-/// 重启:停(不是自己的就跳过)再起。
+/// 重启:停再起。
 pub async fn restart(
     manager: &Mutex<ServerManager>,
     cfg: &crate::config::ServerConfig,
@@ -797,15 +1056,11 @@ pub async fn restart(
     let healthy = probe(port_of(kind, &cfg.local)).await.is_some();
     {
         let mut guard = manager.lock().map_err(|e| e.to_string())?;
-        if guard.slot(kind).is_some() {
-            guard.stop(kind)?;
-        } else if healthy {
-            // 外部进程停不了,这时候「重启」只会变成「又拉起一个」——
-            // 与其偷偷只做一半,不如直说。
-            return Err(format!(
-                "{} 服务是外部进程,本应用不能重启它。请到启动它的终端里操作。",
-                kind.label()
-            ));
+        // 手里有句柄、或者端口上有健康服务,都得先停掉再拉起。外部进程里认得出
+        // 是本项目的那些现在也停得掉;认不出来源的会在这里报错——「重启」在那种
+        // 情况下只会变成「又拉起一个」,与其偷偷只做一半,不如直说。
+        if guard.slot(kind).is_some() || healthy {
+            guard.stop(kind, &cfg.local)?;
         }
     }
     start(manager, cfg, kind).await
@@ -985,6 +1240,68 @@ mod tests {
         assert!(!pid_runs_module(0, "services.stt_server"));
     }
 
+    /// 三档归属里,只有前两档允许从界面动它。第三档是「认不出身份」的兜底,
+    /// 这条断言就是那条铁律本身。
+    #[test]
+    fn only_identified_processes_can_be_managed() {
+        assert!(ServerOwner::App.can_manage());
+        assert!(ServerOwner::ExternalProject.can_manage());
+        assert!(!ServerOwner::ExternalUnknown.can_manage());
+    }
+
+    #[test]
+    fn owner_serializes_as_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&ServerOwner::ExternalProject).unwrap(),
+            "\"external_project\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ServerOwner::ExternalUnknown).unwrap(),
+            "\"external_unknown\""
+        );
+    }
+
+    /// 身份校验的第一道关卡就该把不存在的 pid 挡掉,不能走到发信号那一步。
+    #[test]
+    fn bogus_pid_is_not_a_project_server() {
+        assert!(!pid_is_project_server(
+            0,
+            "services.stt_server",
+            Path::new("/nonexistent/repo")
+        ));
+    }
+
+    /// 没配仓库路径 = 没有比对的基准,只能认不出,绝不能退化成「只比模块名」。
+    #[test]
+    fn without_repo_path_nothing_is_identified() {
+        let local = LocalServerConfig::default();
+        assert!(identify_external(ServerKind::Stt, &local).is_none());
+        let blank = LocalServerConfig {
+            repo_path: Some("   ".into()),
+            ..Default::default()
+        };
+        assert!(identify_external(ServerKind::Stt, &blank).is_none());
+    }
+
+    /// 路径比对必须先规范化。macOS 上这不是洁癖:临时目录 `/var/folders/...`
+    /// 是 `/private/var/folders/...` 的软链,`lsof` 报后者,配置里存的常是前者,
+    /// 直接比字符串会把同一个目录判成两个,用户的服务就又变回「认不出」了。
+    #[test]
+    fn same_dir_sees_through_symlinks_and_dots() {
+        let dir = std::env::temp_dir().join(format!("vif-samedir-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+
+        // 绕一圈再回来,是同一个目录。
+        assert!(same_dir(&dir, &dir.join("sub").join("..")));
+        // macOS 上 /var 是 /private/var 的软链,两种写法必须判成同一个。
+        if Path::new("/private/var").exists() {
+            assert!(same_dir(Path::new("/var"), Path::new("/private/var")));
+        }
+        assert!(!same_dir(&dir, Path::new("/nonexistent/elsewhere")));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn repo_root_detection_needs_both_servers() {
         let dir = std::env::temp_dir().join(format!("vif-sm-test-{}", std::process::id()));
@@ -1050,8 +1367,10 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
     }
 
     impl FakeRepo {
-        fn create() -> Self {
-            let root = std::env::temp_dir().join(format!("vif-e2e-{}", std::process::id()));
+        /// `tag` 让同一个测试里能同时存在两个「checkout」——认错 checkout 的
+        /// 负面用例需要一个和配置里不同的仓库目录。
+        fn create(tag: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("vif-e2e-{}-{}", std::process::id(), tag));
             let services = root.join("services");
             std::fs::create_dir_all(&services).unwrap();
             std::fs::write(services.join("__init__.py"), "").unwrap();
@@ -1118,7 +1437,7 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
     #[tokio::test]
     #[ignore = "会真的拉起子进程并绑 7544 端口"]
     async fn spawn_then_adopt_then_stop() {
-        let repo = FakeRepo::create();
+        let repo = FakeRepo::create("adopt");
         let cfg = repo.config();
         let manager = Mutex::new(ServerManager::new(repo.data_dir()));
 
@@ -1136,14 +1455,15 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         // 健康还没通,但进程活着 → Starting(假服务故意睡了 1.5 秒)。
         let st = status(&manager, &cfg, ServerKind::Stt).await;
         assert_eq!(st.state, ServerState::Starting, "{:?}", st);
-        assert!(st.managed);
+        assert_eq!(st.owner, ServerOwner::App);
         assert!(st.pid.is_some());
 
         // ── 2. 起来之后是 Running,且带模型名 ──
         assert!(wait_health(TEST_STT_PORT, true, 15).await, "服务没起来");
         let st = status(&manager, &cfg, ServerKind::Stt).await;
         assert_eq!(st.state, ServerState::Running);
-        assert!(st.managed, "自己拉起的必须标成 managed");
+        assert_eq!(st.owner, ServerOwner::App, "自己拉起的必须标成本应用管理");
+        assert!(st.can_stop);
         assert_eq!(st.current_model.as_deref(), Some("fake-model"));
 
         // ── 3. 日志被抓到了(文件 + 内存尾巴)──
@@ -1161,12 +1481,15 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         assert!(msg.contains("本应用启动"), "{}", msg);
 
         // ── 5. 停得掉 ──
-        stop(&manager, ServerKind::Stt).unwrap();
+        stop(&manager, &cfg, ServerKind::Stt).unwrap();
         assert!(wait_health(TEST_STT_PORT, false, 10).await, "没停干净");
         let st = status(&manager, &cfg, ServerKind::Stt).await;
         assert_eq!(st.state, ServerState::Stopped);
 
-        // ── 6. 外部进程:采纳,但不许停 ──
+        // ── 6. 用户自己在终端里起的本项目服务:采纳,而且**停得掉** ──
+        //
+        // 这一段就是这次改动要解决的场景本身:同一个仓库目录、同一个模块,
+        // 只是不是本应用 spawn 的。以前它会被判成「外部,不可停」。
         let mut external = Command::new(system_python())
             .arg("-m")
             .arg("services.stt_server")
@@ -1187,16 +1510,100 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
 
         let st = status(&manager, &cfg, ServerKind::Stt).await;
         assert_eq!(st.state, ServerState::Running);
-        assert!(!st.managed, "外部进程绝不能标成本应用管理");
+        assert_eq!(
+            st.owner,
+            ServerOwner::ExternalProject,
+            "同仓库同模块的外部进程应该被认出来: {:?}",
+            st
+        );
+        assert!(st.can_stop, "认出来了就该能停");
+        assert_eq!(
+            st.pid,
+            Some(external.id()),
+            "认出来的应该正是端口上监听的那个进程"
+        );
+        assert!(st.detail.unwrap().contains("可以从这里停止"));
+
+        // 真的停掉它——这是以前做不到的那一步。
+        let msg = stop(&manager, &cfg, ServerKind::Stt).unwrap();
+        assert!(msg.contains("已停止"), "{}", msg);
+        assert!(
+            wait_health(TEST_STT_PORT, false, 10).await,
+            "外部进程没停掉"
+        );
+        // 收尸,免得留下僵尸进程干扰后面的 pid 判活。
+        external.wait().ok();
+
+        let st = status(&manager, &cfg, ServerKind::Stt).await;
+        assert_eq!(st.state, ServerState::Stopped);
+    }
+
+    /// 负面用例:端口是健康的,但监听它的**不是**本项目的服务。
+    ///
+    /// 必须保持不可停。这是放宽「只停自己拉起的」之后,防止误杀无关进程的
+    /// 那道闸门——一旦这条断言挂了,说明身份校验松到了危险的程度。
+    #[tokio::test]
+    #[ignore = "会真的拉起子进程并绑 7544 端口"]
+    async fn a_server_from_another_checkout_stays_untouchable() {
+        // 配置指向 `repo`,但端口上跑的是 `other` 里的那份 checkout。
+        let repo = FakeRepo::create("mine");
+        let other = FakeRepo::create("theirs");
+        let cfg = repo.config();
+        let manager = Mutex::new(ServerManager::new(repo.data_dir()));
+
+        assert!(probe(TEST_STT_PORT).await.is_none(), "测试端口不干净");
+
+        // 同样的模块名、同样的端口,只是工作目录是另一个仓库。
+        let mut stranger = Command::new(system_python())
+            .arg("-m")
+            .arg("services.stt_server")
+            .current_dir(&other.root)
+            .env("VIF_STT_PORT", TEST_STT_PORT.to_string())
+            .env("PYTHONUNBUFFERED", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        assert!(wait_health(TEST_STT_PORT, true, 15).await, "陌生服务没起来");
+
+        // 先确认这个测试有意义:校验函数确实认得出它属于 `other`,
+        // 只是不属于配置里的 `repo`。否则「认不出」可能只是因为整个机制没跑起来。
+        let pid = stranger.id();
+        assert!(
+            pid_is_project_server(pid, ServerKind::Stt.module(), &other.root),
+            "对着它自己的仓库应该认得出,否则这个负面用例什么都没证明"
+        );
+        assert!(
+            !pid_is_project_server(pid, ServerKind::Stt.module(), &repo.root),
+            "别的 checkout 绝不能被认成本仓库的服务"
+        );
+
+        let st = status(&manager, &cfg, ServerKind::Stt).await;
+        assert_eq!(st.state, ServerState::Running, "端口是通的,状态该是运行中");
+        assert_eq!(
+            st.owner,
+            ServerOwner::ExternalUnknown,
+            "别的 checkout 必须留在「未识别」这一档: {:?}",
+            st
+        );
+        assert!(!st.can_stop, "认不出身份就绝不能给出停止能力");
+        assert!(st.pid.is_none(), "认不出身份时不该把 pid 报出来");
         assert!(st.detail.unwrap().contains("不能从这里停止"));
 
-        // 停止必须被拒绝——这是「绝不杀别人进程」那条铁律的断言。
-        let err = stop(&manager, ServerKind::Stt).unwrap_err();
-        assert!(err.contains("不是由本应用启动的"), "{}", err);
+        // 停止必须被拒绝,而且进程要毫发无伤。
+        let err = stop(&manager, &cfg, ServerKind::Stt).unwrap_err();
+        assert!(err.contains("认不出是本项目的服务"), "{}", err);
+        assert!(pid_alive(pid), "被拒绝之后陌生进程必须还活着");
+        assert!(probe(TEST_STT_PORT).await.is_some(), "它的端口也该还通着");
 
-        // 外部进程由测试自己收拾(模拟用户关掉自己的终端)。
-        external.kill().ok();
-        external.wait().ok();
+        // 重启同样不行:停不掉就不能假装重启。
+        let err = restart(&manager, &cfg, ServerKind::Stt).await.unwrap_err();
+        assert!(err.contains("认不出是本项目的服务"), "{}", err);
+        assert!(pid_alive(pid), "重启被拒绝之后陌生进程也必须还活着");
+
+        // 陌生进程由测试自己收拾(生产代码不许碰它,所以只能在这里 kill)。
+        stranger.kill().ok();
+        stranger.wait().ok();
         assert!(wait_health(TEST_STT_PORT, false, 10).await);
     }
 
@@ -1205,7 +1612,7 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
     #[ignore = "会真的拉起子进程并绑 7544/7546 端口"]
     async fn changing_port_does_not_orphan_the_old_child() {
         const NEW_PORT: u16 = 7546;
-        let repo = FakeRepo::create();
+        let repo = FakeRepo::create("port");
         let mut cfg = repo.config();
         let manager = Mutex::new(ServerManager::new(repo.data_dir()));
 
@@ -1220,10 +1627,22 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         cfg.local.stt_port = NEW_PORT;
         cfg.port = NEW_PORT;
 
-        // 端口对不上,所以不算「本应用管理中」——否则停止按钮会作用到
-        // 新端口上的别人身上。
+        // 端口对不上:绝不能报成「运行中」,否则用户会以为新端口上那个就是自己
+        // 的服务。`owner` 这时说的是**本应用手里那个还在老端口上跑的进程**,
+        // 而不是新端口上的任何东西——新端口上此刻根本没有东西,所以 pid 不报。
         let st = status(&manager, &cfg, ServerKind::Stt).await;
-        assert!(!st.managed, "端口不一致时不能标成 managed: {:?}", st);
+        assert_eq!(st.state, ServerState::Failed, "{:?}", st);
+        assert!(
+            st.pid.is_none(),
+            "不能把老进程的 pid 当成新端口上的: {:?}",
+            st
+        );
+        let detail = st.detail.clone().unwrap_or_default();
+        assert!(
+            detail.contains(&TEST_STT_PORT.to_string()) && detail.contains(&NEW_PORT.to_string()),
+            "得说清楚是哪两个端口对不上: {}",
+            detail
+        );
 
         // 在新端口上重新启动:老的必须被带走,不能留成孤儿。
         start(&manager, &cfg, ServerKind::Stt).await.unwrap();
@@ -1239,7 +1658,7 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
     #[tokio::test]
     #[ignore = "会真的拉起子进程并绑 7545 端口"]
     async fn shutdown_all_leaves_nothing_behind() {
-        let repo = FakeRepo::create();
+        let repo = FakeRepo::create("shutdown");
         let cfg = repo.config();
         let manager = Mutex::new(ServerManager::new(repo.data_dir()));
 
@@ -1272,5 +1691,88 @@ mod detect_smoke {
         let repo = d.repo_path.expect("应该探测到仓库");
         assert!(is_repo_root(Path::new(&repo)));
         assert!(d.python_path.is_some(), "应该在仓库里找到 .venv/bin/python");
+    }
+}
+
+/// 对着这台机器上**真正跑着**的服务验证一遍身份校验。全程只读:只做 `/health`
+/// 探测和 `ps` / `lsof` 查询,绝不发任何信号。
+///
+/// 这是这次改动最有说服力的一条验证。假服务再像也是假的,而用户在终端里
+/// `.venv/bin/python -m services.stt_server` 起的那个才是真正要认的东西——它的
+/// 命令行里解释器是**相对路径**,正是这一点决定了身份校验只能锚在 cwd 上,
+/// 拿命令行去比仓库路径在真实场景里根本比不出来。
+///
+/// `#[ignore]`,而且端口上没服务时直接跳过:它依赖这台机器此刻的状态,不该
+/// 因为用户没开服务就把 `--ignored` 那一轮判红。
+/// 手动执行:`cargo test --lib -- --ignored real_servers --nocapture`
+#[cfg(test)]
+mod real_servers {
+    use super::*;
+    use crate::config::{LocalServerConfig, ServerConfig, ServerMode};
+
+    #[tokio::test]
+    #[ignore = "依赖本机此刻在 6544/6545 上跑着的真实服务"]
+    async fn identifies_the_real_running_servers() {
+        let Some(repo) = detect_repo() else {
+            eprintln!("跳过:没探测到仓库");
+            return;
+        };
+        let cfg = ServerConfig {
+            host: "127.0.0.1".into(),
+            port: 6544,
+            mode: ServerMode::Local,
+            local: LocalServerConfig {
+                repo_path: Some(repo.clone()),
+                python_path: Some(format!("{}/.venv/bin/python", repo)),
+                stt_port: 6544,
+                llm_port: 6545,
+                ..Default::default()
+            },
+        };
+        let manager = Mutex::new(ServerManager::new(
+            std::env::temp_dir().join("vif-real-check"),
+        ));
+
+        for kind in [ServerKind::Stt, ServerKind::Llm] {
+            if probe(port_of(kind, &cfg.local)).await.is_none() {
+                eprintln!(
+                    "跳过 {:?}:{} 端口上没有服务",
+                    kind,
+                    port_of(kind, &cfg.local)
+                );
+                continue;
+            }
+            let st = status(&manager, &cfg, kind).await;
+            println!(
+                "{:?}: state={:?} owner={:?} can_stop={} pid={:?} model={:?}",
+                kind, st.state, st.owner, st.can_stop, st.pid, st.current_model
+            );
+            assert_eq!(st.state, ServerState::Running, "{:?} 没在跑", kind);
+            assert_eq!(
+                st.owner,
+                ServerOwner::ExternalProject,
+                "用户自己起的本项目服务必须被认出来: {:?}",
+                st
+            );
+            assert!(st.can_stop, "认出来了就该能停");
+            assert!(st.pid.is_some());
+        }
+
+        // 换一个仓库路径,同样这两个进程就绝不能再被认走——这是严格性那一半。
+        let mut wrong = cfg.clone();
+        wrong.local.repo_path = Some("/tmp".into());
+        for kind in [ServerKind::Stt, ServerKind::Llm] {
+            if probe(port_of(kind, &wrong.local)).await.is_none() {
+                continue;
+            }
+            let st = status(&manager, &wrong, kind).await;
+            assert_eq!(
+                st.owner,
+                ServerOwner::ExternalUnknown,
+                "仓库路径对不上就必须认不出: {:?}",
+                st
+            );
+            assert!(!st.can_stop);
+        }
     }
 }

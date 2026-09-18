@@ -543,14 +543,16 @@ async fn start_server(
     Ok(msg)
 }
 
-/// 停止一个服务。只停本应用拉起 / 认领的,外部进程一律拒绝。
+/// 停止一个服务。只停本应用拉起 / 认领的,以及校验过确实属于本项目的外部进程;
+/// 认不出身份的一律拒绝。
 #[tauri::command]
 async fn stop_server(
     state: State<'_, AppState>,
     kind: server_manager::ServerKind,
 ) -> Result<String, String> {
+    let cfg = server_config_snapshot(&state)?;
     let servers = state.servers.clone();
-    let msg = server_manager::stop(&servers, kind)?;
+    let msg = server_manager::stop(&servers, &cfg, kind)?;
     log_info!("[server] {}", msg);
     Ok(msg)
 }

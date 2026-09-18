@@ -72,7 +72,7 @@
                   </button>
                   <button v-else class="s-btn" @click="stopSrv(row.kind)"
                     :disabled="srvBusy === row.kind || !row.canStop"
-                    :title="row.canStop ? '' : '外部进程，本应用不会停止它'">
+                    :title="row.stopHint">
                     {{ srvBusy === row.kind ? '...' : '停止' }}
                   </button>
                   <button class="s-btn" @click="restartSrv(row.kind)" :disabled="srvBusy === row.kind || !row.canRestart">
@@ -105,7 +105,7 @@
               </div>
               <div v-if="serverLogPaths.length" class="s-tip">日志文件：{{ serverLogPaths.join('　') }}</div>
               <div class="s-tip">
-                只会停止本应用启动的服务。你自己在终端里跑的会被标成「外部」——直接连接使用，不会重复启动，也不会被停掉。
+                端口上已经有服务就直接连接，不会重复启动。你自己在终端里跑的服务，只要工作目录就是上面这个仓库，会标成「外部（本项目）」，照样可以从这里停止和重启；认不出来源的进程标成「外部（未识别）」，本应用只连接、绝不停它。
               </div>
             </template>
           </div>
@@ -345,12 +345,16 @@ interface ModelInfo { name: string; is_loaded: boolean; }
 type ServerMode = "local" | "remote";
 type ServerKind = "stt" | "llm";
 type ServerState = "not_configured" | "stopped" | "starting" | "running" | "failed";
+/** 与后端 `ServerOwner` 一一对应。 */
+type ServerOwner = "app" | "external_project" | "external_unknown";
 interface ServerStatus {
   kind: ServerKind;
   state: ServerState;
   port: number;
-  /** 由本应用拉起（可停）；false 表示外部进程，只连不管。 */
-  managed: boolean;
+  /** 进程归属三档：本应用启动 / 外部但确认是本项目 / 外部且认不出。 */
+  owner: ServerOwner;
+  /** 能不能从这里停。规则由后端算好，前端别自己再推一遍。 */
+  can_stop: boolean;
   pid: number | null;
   current_model: string | null;
   detail: string | null;
@@ -531,14 +535,27 @@ function srvStateClass(s: ServerState) {
   return s === "running" ? "ok" : s === "starting" ? "warn" : s === "failed" ? "bad" : "";
 }
 
+/** 归属三档的显示文案与配色。 */
+const OWNER_CHIP: Record<ServerOwner, { text: string; cls: string }> = {
+  // 本应用 spawn 的，生命周期完全归我们管。
+  app: { text: "本应用启动", cls: "ok" },
+  // 用户自己在终端里起的，但校验过确实是本项目的服务——能停，只是得让用户
+  // 知道这不是应用起的，免得他以为自己的终端会话会跟着一起消失。
+  external_project: { text: "外部（本项目）", cls: "warn" },
+  // 端口上有东西，但认不出是谁。中性色：不是错误，只是管不着。
+  external_unknown: { text: "外部（未识别）", cls: "muted" },
+};
+
 const serverRows = computed(() =>
   SERVER_META.map(m => {
     const status: ServerStatus | null = serverReport.value ? serverReport.value[m.kind] : null;
     const state: ServerState = status?.state ?? "stopped";
     const isUp = state === "running" || state === "starting";
-    // 「本应用 / 外部」这个区分必须显式画出来：停止按钮只对前者有效，
-    // 不标出来的话按钮为什么是灰的就没人看得懂。
-    const ownerText = !status ? "" : status.managed ? "本应用" : state === "running" ? "外部" : "";
+    // 归属必须显式画出来：停止按钮为什么能点 / 为什么是灰的，全靠这个 chip 解释。
+    // 「本应用启动」在失败时也要显示——用户得知道那是自己这边的进程没起来。
+    const showOwner = !!status && (isUp || status.owner === "app");
+    const chip = status ? OWNER_CHIP[status.owner] : null;
+    const canStop = !!status?.can_stop;
     const desc = status
       ? [
           `端口 ${status.port}`,
@@ -554,11 +571,12 @@ const serverRows = computed(() =>
       isUp,
       chipText: srvStateText(state),
       chipClass: srvStateClass(state),
-      ownerText,
-      ownerClass: ownerText === "本应用" ? "ok" : "warn",
-      canStop: !!status?.managed,
-      // 外部进程停不掉，「重启」也就无从谈起。
-      canRestart: !isUp || !!status?.managed,
+      ownerText: showOwner && chip ? chip.text : "",
+      ownerClass: chip ? chip.cls : "",
+      canStop,
+      // 停不掉的（认不出身份）自然也谈不上重启。
+      canRestart: !isUp || canStop,
+      stopHint: canStop ? "" : "这个进程认不出是不是本项目的服务，本应用不会碰它",
       desc,
     };
   })
@@ -1222,6 +1240,8 @@ html, body, #app { height: 100%; }
 .perm-state.ok { color: var(--green); background: rgba(74, 222, 128, 0.12); border-color: rgba(74, 222, 128, 0.3); }
 .perm-state.warn { color: var(--yellow); background: rgba(251, 191, 36, 0.12); border-color: rgba(251, 191, 36, 0.3); }
 .perm-state.bad { color: var(--red); background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.3); }
+/* 「外部（未识别）」用的中性色：它不是错误，只是本应用管不着，别拿红色吓人。 */
+.perm-state.muted { color: var(--muted); background: rgba(113, 113, 122, 0.12); border-color: rgba(113, 113, 122, 0.3); }
 .perm-banner { width: 100%; max-width: 360px; background: rgba(251, 191, 36, 0.12); border: 1px solid rgba(251, 191, 36, 0.3); color: var(--yellow); border-radius: 8px; padding: 8px 10px; font-size: 0.7rem; line-height: 1.4; text-align: center; cursor: pointer; }
 .perm-banner:hover { background: rgba(251, 191, 36, 0.2); }
 
