@@ -30,27 +30,21 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
     .shadow(false)
     .title("");
 
-    // macOS 用不透明深色窗口:透明窗口(Tauri 2 + WKWebView)内容经常
-    // 不渲染(已知问题),导致全透明空窗口完全不可见。胶囊 HTML 的背景
-    // 色与窗口背景色一致(rgb(15,15,25)),视觉上等同圆角胶囊。
-    #[cfg(target_os = "macos")]
-    let window = builder
-        .build()
-        .map_err(|e| format!("Indicator failed: {}", e))?;
-    #[cfg(not(target_os = "macos"))]
+    // 全平台使用透明窗口,让 indicator.html 里的圆角胶囊直接呈现。
+    //
+    // 历史:曾因 macOS 上"透明窗口内容不渲染"改成不透明深色窗口,但那次
+    // 诊断(title after 1s 为空)是被定位缺陷误导的 —— 当时窗口被放在了
+    // 屏幕外面(物理像素当逻辑像素用),而 macOS 对完全离屏的窗口会推迟
+    // WebView 渲染。定位修复后页面渲染正常,不透明窗口反而会在圆角胶囊
+    // 外面露出一圈黑色方块(窗口 210x44 比 200px 的胶囊大一圈)。
     let window = builder
         .transparent(true)
         .build()
         .map_err(|e| format!("Indicator failed: {}", e))?;
 
-    #[cfg(target_os = "macos")]
-    {
-        let _ = window.set_background_color(Some(Color(15, 15, 25, 255)));
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
-    }
+    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+
+    float_over_fullscreen(&window);
 
     // 不调用 set_focus:这是一个 always-on-top 的被动提示窗。语音输入的目的
     // 是把文字打进用户当前的应用,录音一开始就抢走焦点会直接破坏这个前提。
@@ -58,6 +52,40 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
+/// 让胶囊能浮在全屏应用之上。
+///
+/// macOS 的全屏应用独占一个 Space,普通窗口即使 always_on_top 也进不去。
+/// Tauri 的 `visible_on_all_workspaces` 只设了 `CanJoinAllSpaces`(1<<0),
+/// 那管的是多个桌面 Space,管不了全屏;还需要 `FullScreenAuxiliary`(1<<8)。
+/// 同时把层级从 NSFloatingWindowLevel(3)提到 NSStatusWindowLevel(25),
+/// 否则在全屏 Space 里仍会被盖住。
+#[cfg(target_os = "macos")]
+fn float_over_fullscreen(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+    const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+    const NS_STATUS_WINDOW_LEVEL: isize = 25;
+
+    let Ok(ptr) = window.ns_window() else {
+        return;
+    };
+    if ptr.is_null() {
+        return;
+    }
+    let ns_window = ptr as *mut AnyObject;
+    unsafe {
+        let current: usize = msg_send![ns_window, collectionBehavior];
+        let behavior = current | CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY;
+        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
+        let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn float_over_fullscreen(_window: &tauri::WebviewWindow) {}
 
 pub fn hide(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
