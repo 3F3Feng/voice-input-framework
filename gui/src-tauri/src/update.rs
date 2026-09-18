@@ -2,8 +2,8 @@
 //! Uses direct HTTP fetch for check (with 30s timeout), falls back to
 //! tauri-plugin-updater for download + install.
 
-use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -99,11 +99,17 @@ fn compare_versions(a: &str, b: &str) -> Ordering {
 /// Get the download URL for the current platform from latest.json.
 fn get_platform_key() -> &'static str {
     #[cfg(target_os = "windows")]
-    { "windows-x86_64" }
+    {
+        "windows-x86_64"
+    }
     #[cfg(target_os = "linux")]
-    { "linux-x86_64" }
+    {
+        "linux-x86_64"
+    }
     #[cfg(target_os = "macos")]
-    { "darwin-aarch64" }
+    {
+        "darwin-aarch64"
+    }
 }
 
 /// Download update file and trigger install.
@@ -128,16 +134,21 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
 
     let current = app.package_info().version.to_string();
     let latest = manifest.version.trim_start_matches('v').to_string();
-    if compare_versions(&latest, &current.trim_start_matches('v')) != Ordering::Greater {
+    if compare_versions(&latest, current.trim_start_matches('v')) != Ordering::Greater {
         return Ok("已是最新版本".to_string());
     }
 
     let platform_key = get_platform_key();
-    let entry = manifest.platforms.get(platform_key)
+    let entry = manifest
+        .platforms
+        .get(platform_key)
         .ok_or_else(|| format!("当前平台({})没有可用更新", platform_key))?;
 
     let download_url = &entry.url;
-    eprintln!("[update] Downloading {} from {}", manifest.version, download_url);
+    eprintln!(
+        "[update] Downloading {} from {}",
+        manifest.version, download_url
+    );
     let _ = app.emit("update-progress", "正在下载更新...");
 
     // Download file to temp path
@@ -171,14 +182,19 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
     let _ = app.emit("update-progress", "下载完成，准备安装...");
 
     // Write to temp file
-    let ext = if cfg!(target_os = "windows") { ".exe" } else if cfg!(target_os = "macos") { ".dmg" } else { ".AppImage" };
+    let ext = if cfg!(target_os = "windows") {
+        ".exe"
+    } else if cfg!(target_os = "macos") {
+        ".dmg"
+    } else {
+        ".AppImage"
+    };
     let temp_dir = std::env::temp_dir();
     let temp_path = temp_dir.join(format!("vif-update-{}{}", manifest.version, ext));
 
     // Remove old file if it exists
     let _ = std::fs::remove_file(&temp_path);
-    std::fs::write(&temp_path, &bytes)
-        .map_err(|e| format!("写入临时文件失败: {}", e))?;
+    std::fs::write(&temp_path, &bytes).map_err(|e| format!("写入临时文件失败: {}", e))?;
 
     eprintln!("[update] Saved to {:?}", temp_path);
 

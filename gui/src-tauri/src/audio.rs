@@ -23,7 +23,13 @@ unsafe impl Send for SendStream {}
 /// cpal-based audio capture with streaming channel support
 pub struct AudioRecorder {
     selected_device: Option<String>,
+    /// Device-native capture rate (diagnostics only).
     input_sample_rate: u32,
+    /// Rate of the samples actually stored in `self.samples`. The capture
+    /// callback resamples to 16 kHz before buffering, so this is always
+    /// 16000 — returning `input_sample_rate` here made the batch path
+    /// resample an already-16 kHz buffer a second time.
+    buffer_sample_rate: u32,
     peak_level: Arc<AtomicU32>,
     is_recording: Arc<AtomicBool>,
     stream: Option<SendStream>,
@@ -37,6 +43,7 @@ impl AudioRecorder {
         Self {
             selected_device: None,
             input_sample_rate: 16000,
+            buffer_sample_rate: 16000,
             peak_level: Arc::new(AtomicU32::new(0)),
             is_recording: Arc::new(AtomicBool::new(false)),
             stream: None,
@@ -97,9 +104,12 @@ impl AudioRecorder {
             .ok_or_else(|| "No audio input device found".to_string())?;
 
         let device_name_str = device.name().unwrap_or_else(|_| "unknown".into());
-        let config = device
-            .default_input_config()
-            .map_err(|e| format!("Failed to get input config for '{}': {}", device_name_str, e))?;
+        let config = device.default_input_config().map_err(|e| {
+            format!(
+                "Failed to get input config for '{}': {}",
+                device_name_str, e
+            )
+        })?;
 
         let sample_format = config.sample_format();
         let sample_rate = config.sample_rate().0;
@@ -120,7 +130,11 @@ impl AudioRecorder {
         }
         impl Resampler {
             fn new(src_rate: u32) -> Self {
-                Self { ratio: src_rate as f64 / 16000.0, position: 0.0, last_sample: 0.0 }
+                Self {
+                    ratio: src_rate as f64 / 16000.0,
+                    position: 0.0,
+                    last_sample: 0.0,
+                }
             }
             fn process(&mut self, input: &[f32]) -> Vec<f32> {
                 let mut out = Vec::new();
@@ -138,8 +152,13 @@ impl AudioRecorder {
 
         let needs_resample = stream_config.sample_rate.0 != 16000;
         let resampler: Option<Arc<Mutex<Resampler>>> = if needs_resample {
-            eprintln!("[audio] Resampling {}Hz → 16kHz on-the-fly", stream_config.sample_rate.0);
-            Some(Arc::new(Mutex::new(Resampler::new(stream_config.sample_rate.0))))
+            eprintln!(
+                "[audio] Resampling {}Hz → 16kHz on-the-fly",
+                stream_config.sample_rate.0
+            );
+            Some(Arc::new(Mutex::new(Resampler::new(
+                stream_config.sample_rate.0,
+            ))))
         } else {
             None
         };
@@ -179,89 +198,190 @@ impl AudioRecorder {
                 for &mono in data {
                     buf.push(mono);
                     let abs = mono.abs();
-                    if abs > local_peak { local_peak = abs; }
+                    if abs > local_peak {
+                        local_peak = abs;
+                    }
                 }
             } else {
                 for &mono in data {
                     let abs = mono.abs();
-                    if abs > local_peak { local_peak = abs; }
+                    if abs > local_peak {
+                        local_peak = abs;
+                    }
                 }
             }
             peak.store((local_peak * 1000.0) as u32, Ordering::SeqCst);
 
             if let Some(ref tx) = sender {
-                let pcm: Vec<u8> = data.iter().flat_map(|&mono| {
-                    let clamped = mono.clamp(-1.0, 1.0);
-                    let s = if clamped < 0.0 { (clamped * 32768.0) as i16 } else { (clamped * 32767.0) as i16 };
-                    s.to_le_bytes()
-                }).collect();
+                let pcm: Vec<u8> = data
+                    .iter()
+                    .flat_map(|&mono| {
+                        let clamped = mono.clamp(-1.0, 1.0);
+                        let s = if clamped < 0.0 {
+                            (clamped * 32768.0) as i16
+                        } else {
+                            (clamped * 32767.0) as i16
+                        };
+                        s.to_le_bytes()
+                    })
+                    .collect();
                 let _ = tx.try_send(pcm);
             }
         }
 
-        fn to_mono_f32<T: Copy>(data: &[T], channels: usize, convert: impl Fn(T) -> f32) -> Vec<f32> {
-            data.chunks(channels).map(|chunk| {
-                let sum: f32 = chunk.iter().map(|&s| convert(s)).sum();
-                sum / channels as f32
-            }).collect()
+        fn to_mono_f32<T: Copy>(
+            data: &[T],
+            channels: usize,
+            convert: impl Fn(T) -> f32,
+        ) -> Vec<f32> {
+            data.chunks(channels)
+                .map(|chunk| {
+                    let sum: f32 = chunk.iter().map(|&s| convert(s)).sum();
+                    sum / channels as f32
+                })
+                .collect()
         }
 
         let stream = match sample_format {
             cpal::SampleFormat::F32 => {
-                let (r, p, s, tx, rs) = (recording.clone(), peak.clone(), samples.clone(), sender.clone(), resampler.clone());
-                device.build_input_stream(&stream_config, move |data: &[f32], _| {
-                    if !r.load(Ordering::SeqCst) { return; }
-                    let mono = to_mono_f32(data, channels, |v| v);
-                    push_samples(&mono, &s, &p, &tx, &rs);
-                }, err_fn, None)
+                let (r, p, s, tx, rs) = (
+                    recording.clone(),
+                    peak.clone(),
+                    samples.clone(),
+                    sender.clone(),
+                    resampler.clone(),
+                );
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _| {
+                        if !r.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let mono = to_mono_f32(data, channels, |v| v);
+                        push_samples(&mono, &s, &p, &tx, &rs);
+                    },
+                    err_fn,
+                    None,
+                )
             }
             cpal::SampleFormat::I16 => {
-                let (r, p, s, tx, rs) = (recording.clone(), peak.clone(), samples.clone(), sender.clone(), resampler.clone());
-                device.build_input_stream(&stream_config, move |data: &[i16], _| {
-                    if !r.load(Ordering::SeqCst) { return; }
-                    let mono = to_mono_f32(data, channels, |v| v as f32 / 32768.0);
-                    push_samples(&mono, &s, &p, &tx, &rs);
-                }, err_fn, None)
+                let (r, p, s, tx, rs) = (
+                    recording.clone(),
+                    peak.clone(),
+                    samples.clone(),
+                    sender.clone(),
+                    resampler.clone(),
+                );
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[i16], _| {
+                        if !r.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let mono = to_mono_f32(data, channels, |v| v as f32 / 32768.0);
+                        push_samples(&mono, &s, &p, &tx, &rs);
+                    },
+                    err_fn,
+                    None,
+                )
             }
             cpal::SampleFormat::U16 => {
-                let (r, p, s, tx, rs) = (recording.clone(), peak.clone(), samples.clone(), sender.clone(), resampler.clone());
-                device.build_input_stream(&stream_config, move |data: &[u16], _| {
-                    if !r.load(Ordering::SeqCst) { return; }
-                    let mono = to_mono_f32(data, channels, |v| (v as f32 - 32768.0) / 32768.0);
-                    push_samples(&mono, &s, &p, &tx, &rs);
-                }, err_fn, None)
+                let (r, p, s, tx, rs) = (
+                    recording.clone(),
+                    peak.clone(),
+                    samples.clone(),
+                    sender.clone(),
+                    resampler.clone(),
+                );
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[u16], _| {
+                        if !r.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let mono = to_mono_f32(data, channels, |v| (v as f32 - 32768.0) / 32768.0);
+                        push_samples(&mono, &s, &p, &tx, &rs);
+                    },
+                    err_fn,
+                    None,
+                )
             }
             cpal::SampleFormat::I32 => {
-                let (r, p, s, tx, rs) = (recording.clone(), peak.clone(), samples.clone(), sender.clone(), resampler.clone());
-                device.build_input_stream(&stream_config, move |data: &[i32], _| {
-                    if !r.load(Ordering::SeqCst) { return; }
-                    let mono = to_mono_f32(data, channels, |v| v as f32 / 2147483648.0);
-                    push_samples(&mono, &s, &p, &tx, &rs);
-                }, err_fn, None)
+                let (r, p, s, tx, rs) = (
+                    recording.clone(),
+                    peak.clone(),
+                    samples.clone(),
+                    sender.clone(),
+                    resampler.clone(),
+                );
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[i32], _| {
+                        if !r.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let mono = to_mono_f32(data, channels, |v| v as f32 / 2147483648.0);
+                        push_samples(&mono, &s, &p, &tx, &rs);
+                    },
+                    err_fn,
+                    None,
+                )
             }
             cpal::SampleFormat::U32 => {
-                let (r, p, s, tx, rs) = (recording.clone(), peak.clone(), samples.clone(), sender.clone(), resampler.clone());
-                device.build_input_stream(&stream_config, move |data: &[u32], _| {
-                    if !r.load(Ordering::SeqCst) { return; }
-                    let mono = to_mono_f32(data, channels, |v| (v as f32 - 2147483648.0) / 2147483648.0);
-                    push_samples(&mono, &s, &p, &tx, &rs);
-                }, err_fn, None)
+                let (r, p, s, tx, rs) = (
+                    recording.clone(),
+                    peak.clone(),
+                    samples.clone(),
+                    sender.clone(),
+                    resampler.clone(),
+                );
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[u32], _| {
+                        if !r.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let mono = to_mono_f32(data, channels, |v| {
+                            (v as f32 - 2147483648.0) / 2147483648.0
+                        });
+                        push_samples(&mono, &s, &p, &tx, &rs);
+                    },
+                    err_fn,
+                    None,
+                )
             }
             cpal::SampleFormat::F64 => {
-                let (r, p, s, tx, rs) = (recording.clone(), peak.clone(), samples.clone(), sender.clone(), resampler.clone());
-                device.build_input_stream(&stream_config, move |data: &[f64], _| {
-                    if !r.load(Ordering::SeqCst) { return; }
-                    let mono = to_mono_f32(data, channels, |v| v as f32);
-                    push_samples(&mono, &s, &p, &tx, &rs);
-                }, err_fn, None)
+                let (r, p, s, tx, rs) = (
+                    recording.clone(),
+                    peak.clone(),
+                    samples.clone(),
+                    sender.clone(),
+                    resampler.clone(),
+                );
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[f64], _| {
+                        if !r.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let mono = to_mono_f32(data, channels, |v| v as f32);
+                        push_samples(&mono, &s, &p, &tx, &rs);
+                    },
+                    err_fn,
+                    None,
+                )
             }
             other => return Err(format!("Unsupported sample format: {:?}", other)),
         }
         .map_err(|e| format!("Failed to create audio stream: {}", e))?;
 
-        stream.play().map_err(|e| format!("Failed to start stream: {}", e))?;
+        stream
+            .play()
+            .map_err(|e| format!("Failed to start stream: {}", e))?;
 
         self.input_sample_rate = sample_rate;
+        // push_samples() always resamples to 16 kHz before buffering.
+        self.buffer_sample_rate = 16000;
         recording.store(true, Ordering::SeqCst);
         self.stream = Some(SendStream(Some(stream)));
         self.selected_device = device_name;
@@ -274,7 +394,9 @@ impl AudioRecorder {
         self.is_recording.store(false, Ordering::SeqCst);
         self.peak_level.store(0, Ordering::SeqCst);
 
-        if let Some(s) = self.stream.take() { drop(s); }
+        if let Some(s) = self.stream.take() {
+            drop(s);
+        }
         self.chunk_sender = None;
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(10);
@@ -286,10 +408,19 @@ impl AudioRecorder {
             let mut buf = self.samples.lock().map_err(|e| e.to_string())?;
             let result = buf.clone();
             buf.clear();
-            (result, self.input_sample_rate)
+            // Return the BUFFER rate, not the device rate: the callback has
+            // already resampled. Returning the device rate made the caller
+            // resample a second time (pitch/speed corruption in batch mode).
+            (result, self.buffer_sample_rate)
         };
 
-        eprintln!("[audio] Stopped: {} samples ({:.2}s at {}Hz)", samples.len(), samples.len() as f64 / rate as f64, rate);
+        eprintln!(
+            "[audio] Stopped: {} samples ({:.2}s at {}Hz, device {}Hz)",
+            samples.len(),
+            samples.len() as f64 / rate as f64,
+            rate,
+            self.input_sample_rate
+        );
         Ok((samples, rate))
     }
 
@@ -309,7 +440,10 @@ impl AudioRecorder {
     fn select_device(&self, host: &cpal::Host, name: Option<&str>) -> Option<cpal::Device> {
         if let Some(name) = name {
             let devices: Vec<cpal::Device> = host.input_devices().ok()?.collect();
-            devices.into_iter().find(|d| d.name().ok().as_deref() == Some(name)).or_else(|| host.default_input_device())
+            devices
+                .into_iter()
+                .find(|d| d.name().ok().as_deref() == Some(name))
+                .or_else(|| host.default_input_device())
         } else {
             host.default_input_device()
         }
@@ -360,7 +494,11 @@ fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     wav.extend_from_slice(&data_size.to_le_bytes());
     for &sample in samples {
         let clamped = sample.clamp(-1.0, 1.0);
-        let int_sample = if clamped < 0.0 { (clamped * 32768.0) as i16 } else { (clamped * 32767.0) as i16 };
+        let int_sample = if clamped < 0.0 {
+            (clamped * 32768.0) as i16
+        } else {
+            (clamped * 32767.0) as i16
+        };
         wav.extend_from_slice(&int_sample.to_le_bytes());
     }
     wav

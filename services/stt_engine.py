@@ -77,6 +77,7 @@ class STTEngine:
         self.default_model = default_model
         self.current_model_name = default_model
         self._model = None
+        self._model_type = None
         self._is_loaded = False
         self._loading = False
         self._load_lock = asyncio.Lock()
@@ -229,26 +230,29 @@ class STTEngine:
 
         logger.info(f"Switching from {self.current_model_name} to {model_name}")
 
-        # 更新模型信息
-        self.current_model_name = model_name
-        self._model_info = self.AVAILABLE_MODELS[model_name]
+        # 切换与加载必须互斥:否则卸载旧模型时可能有 load() 正在写 _model/_model_type,
+        # 导致状态错乱。(并发的 transcribe() 已在内部取本地引用,不会用到半释放的实例。)
+        async with self._load_lock:
+            # 更新模型信息
+            self.current_model_name = model_name
+            self._model_info = self.AVAILABLE_MODELS[model_name]
 
-        # 重置状态
-        self._is_loaded = False
-        self._loading = False
+            # 重置状态
+            self._is_loaded = False
+            self._loading = False
 
-        # 释放旧模型内存
-        if self._model is not None:
-            import gc
+            # 释放旧模型内存
+            if self._model is not None:
+                import gc
 
-            import torch
+                import torch
 
-            del self._model
-            self._model = None
-            if torch.backends.mps.is_available():
-                torch.mps.empty_cache()
-            gc.collect()
-            logger.info("Old model memory released")
+                self._model = None
+                self._model_type = None
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+                gc.collect()
+                logger.info("Old model memory released")
 
         # 在后台异步加载新模型
         async def load_in_background():
@@ -299,10 +303,16 @@ class STTEngine:
             # 执行转写
             lang = None if language == "auto" else language
 
-            # ── MLX 原生引擎 (mlx-audio) ── 必须在加载模型的同一线程执行
+            # 取本地引用:并发的 switch_model() 会把 _model/_model_type 置空,
+            # 本地引用保证本次转写用同一个(且完整的)实例跑完。
+            model = self._model
             model_type = getattr(self, "_model_type", None)
+            if model is None:
+                raise RuntimeError("STT model is not available (switching?)")
+
+            # ── MLX 原生引擎 (mlx-audio) ── 必须在加载模型的同一线程执行
             if model_type == "qwen_asr_mlx_native":
-                result = await self._model.transcribe(
+                result = await model.transcribe(
                     audio=(audio_array, sample_rate),
                     language=lang or "auto",
                     sample_rate=sample_rate,
@@ -312,10 +322,10 @@ class STTEngine:
                 text, detected_lang = "", lang or language
 
                 # ── Whisper MLX 引擎 ──
-                if getattr(self, "_model_type", None) == "whisper_mlx":
+                if model_type == "whisper_mlx":
                     import mlx_whisper
 
-                    model_id = self._model["model_id"]
+                    model_id = model["model_id"]
                     result = mlx_whisper.transcribe(
                         audio_array,
                         path_or_hf_repo=model_id,
@@ -326,12 +336,12 @@ class STTEngine:
                     detected_lang = result.get("language", lang or "en")
 
                 # ── Whisper.cpp 引擎 ──
-                elif getattr(self, "_model_type", None) == "whisper_cpp":
+                elif model_type == "whisper_cpp":
                     import numpy as np
 
                     # whisper.cpp 需要 bytes
                     audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
-                    result = await self._model.transcribe(
+                    result = await model.transcribe(
                         audio_data=audio_bytes,
                         language=lang or "auto",
                         sample_rate=sample_rate,
@@ -340,8 +350,8 @@ class STTEngine:
                     detected_lang = result.language
 
                 # ── Whisper Turbo (transformers) ──
-                elif getattr(self, "_model_type", None) == "whisper_turbo":
-                    result = self._model(
+                elif model_type == "whisper_turbo":
+                    result = model(
                         audio_array,
                         generate_kwargs={"language": lang},
                     )
@@ -350,7 +360,7 @@ class STTEngine:
 
                 # ── Qwen3-ASR (transformers 或 MLX 环境) ──
                 else:
-                    results = self._model.transcribe(
+                    results = model.transcribe(
                         audio=(audio_array, sample_rate),
                         language=lang,
                     )

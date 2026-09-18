@@ -46,7 +46,6 @@ pub struct LlmConfig {
     pub enabled: bool,
 }
 
-
 /// Old Python client config format (for migration)
 #[derive(Debug, Deserialize)]
 struct OldPythonConfig {

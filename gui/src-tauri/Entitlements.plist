@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS hardened runtime 的 entitlements。
+
+  用真证书(Developer ID / Apple Development)签名时,Tauri 会自动带上
+  hardened runtime(codesign flags 里的 0x10000)。开启之后,访问受保护资源
+  必须显式声明 entitlement,否则系统「直接拒绝」而不是弹窗询问 ——
+  表现为:authorizationStatus 返回 denied、不弹授权窗、应用也不出现在
+  「系统设置 → 隐私与安全性」的列表里。
+
+  ad-hoc 签名不会启用 hardened runtime,所以这个问题只在换用证书之后出现。
+
+  麦克风(cpal 采集)需要 device.audio-input。
+  「输入监控」和「辅助功能」由 TCC 单独管理,没有对应的 entitlement,
+  不需要在这里声明。
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

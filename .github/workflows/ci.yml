@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, review/architecture-notes]
+  # 不限定 base 分支:任何 PR 都要跑测试。此前只监听 base=main 的 PR,
+  # 导致面向长期分支(如 review/architecture-notes)的 PR 一个 job 都不触发。
   pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
