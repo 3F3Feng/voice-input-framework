@@ -87,6 +87,37 @@ async fn connect_effective_server(state: State<'_, AppState>) -> Result<String, 
     Ok(url)
 }
 
+/// 把主窗口显示出来并前置。
+///
+/// macOS 上本应用以 accessory(菜单栏应用)身份运行,这类应用**不会自动激活
+/// 自己**:窗口即使是 visible 的也只是待在别人后面,而且没有 Dock 图标可点。
+/// 所以除了 show/unminimize/set_focus,还要显式 activate 一次 NSApp。
+///
+/// AppKit 只能在主线程操作,因此整段都通过 run_on_main_thread 转发。
+pub(crate) fn show_main_window(app: &tauri::AppHandle) {
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+
+        // accessory 应用必须自己抢一次激活,否则上面的 set_focus 只是把窗口
+        // 排到本应用内部的最前,整个应用仍然不是前台,用户看不到它。
+        #[cfg(target_os = "macos")]
+        unsafe {
+            use objc2::runtime::AnyObject;
+            use objc2::{class, msg_send};
+
+            let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            if !ns_app.is_null() {
+                let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
+            }
+        }
+    });
+}
+
 /// 录音前的麦克风权限闸门。
 ///
 /// - 已授权 / 非 macOS:放行。
@@ -778,6 +809,11 @@ pub fn run() {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
+            } else {
+                // accessory 应用启动时不会自动激活自己:窗口建出来了、也是 visible,
+                // 但从不前置,而且没有 Dock 图标可点 —— 用户看到的就是「明明没勾
+                // 「启动时最小化」,程序却自己最小化了」。这里显式前置一次。
+                show_main_window(app.handle());
             }
 
             if let Some(window) = app.get_webview_window("main") {
