@@ -199,6 +199,40 @@ fn parse_key(token: &str) -> Option<HotkeyKey> {
 /// listener and reset is not needed.
 pub fn reset_state() {}
 
+// ── 错误上报 ──
+//
+// 快捷键是这个应用的主路径,可它跑在后台线程上,没有任何 Tauri command 的
+// 返回值可以借。以前这里一律 `let _ =` 把 Result 丢掉,结果 `lib.rs` 里那些
+// 写得很清楚的权限提示(「未获得麦克风权限。请到「系统设置 → …」」)一个字
+// 都到不了用户眼前:没有 toast、没有事件、连日志都没有。用户按住快捷键,
+// 什么都不发生,也不知道为什么。
+//
+// 下面两个函数把失败送到前端已经在监听的事件上,不必新增事件类型:
+// `hotkey-release` 收掉「录音中」的状态和计时器,`transcribe-error` 关掉
+// loading 并弹出错误 toast(toast 同时会进应用内的日志面板)。
+
+/// 录音没能开起来(或中途被强行终止):把 UI 从「录音中」收回来,并把原因
+/// 摆到用户面前。`hotkey-press` 已经发过了,所以必须补一个 `hotkey-release`,
+/// 否则界面会永远停在录音状态、计时器一直涨。
+fn report_recording_aborted(app: &tauri::AppHandle, err: &str) {
+    crate::log_error!("[hotkey] 录音中止:{}", err);
+    // 悬浮胶囊只在 stop 的转录任务里关。安全超时那条路不走 stop,胶囊会一直
+    // 挂在屏幕上。窗口不存在时 hide 自身是空操作,启动失败那条路调它也无害。
+    let _ = crate::indicator::hide(app);
+    // 顺序有讲究:先 release(停计时器、进 loading),再报错(关 loading)。
+    // 用户手指真正松开时监听线程还会再发一次 hotkey-release —— 前端那边有
+    // 「不在录音状态就忽略」的判断,所以这里抢先补发是安全的。
+    let _ = app.emit("hotkey-release", ());
+    let _ = app.emit("transcribe-error", err.to_string());
+}
+
+/// 结束录音失败。这时 `hotkey-release` 已经发过,UI 停在「识别中」,
+/// `transcribe-error` 会把它收掉并弹出原因。
+fn report_stop_failed(app: &tauri::AppHandle, err: &str) {
+    crate::log_error!("[hotkey] 结束录音失败:{}", err);
+    let _ = app.emit("transcribe-error", err.to_string());
+}
+
 // ── Windows implementation: pure GetAsyncKeyState polling ──
 
 #[cfg(target_os = "windows")]
@@ -267,12 +301,24 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
 
                             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 let state = app.state::<AppState>();
-                                let _ = crate::start_recording_internal(&app, &state);
+                                crate::start_recording_internal(&app, &state)
                             }));
-                            if r.is_err() {
-                                eprintln!("[hotkey] start_recording_internal panic");
-                                recording.store(false, Ordering::SeqCst);
-                                record_start = None;
+                            match r {
+                                Err(_) => {
+                                    eprintln!("[hotkey] start_recording_internal panic");
+                                    recording.store(false, Ordering::SeqCst);
+                                    record_start = None;
+                                    report_recording_aborted(&app, "录音启动时发生内部错误。");
+                                }
+                                Ok(Err(e)) => {
+                                    // 权限被拒、设备打不开之类:必须说出来。
+                                    // 键还按着也不会刷屏 —— 触发只认上升沿,
+                                    // `all_down_start` 已经清成 None 了。
+                                    recording.store(false, Ordering::SeqCst);
+                                    record_start = None;
+                                    report_recording_aborted(&app, &e);
+                                }
+                                Ok(Ok(())) => {}
                             }
                         }
                     }
@@ -290,10 +336,15 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
                             let _ = app.emit("hotkey-release", ());
                             eprintln!("[hotkey] Release detected (poll), stopping recording");
 
-                            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 let state = app.state::<AppState>();
-                                let _ = crate::stop_recording_internal(&app, &state);
+                                crate::stop_recording_internal(&app, &state)
                             }));
+                            match r {
+                                Err(_) => report_stop_failed(&app, "结束录音时发生内部错误。"),
+                                Ok(Err(e)) => report_stop_failed(&app, &e),
+                                Ok(Ok(_)) => {}
+                            }
                         }
                     }
                 }
@@ -318,6 +369,13 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
                                     guard.reset();
                                 }
                             }));
+                            // 录音机复位了,可前端还停在「录音中」:没有 hotkey-release
+                            // 就没人去清 recording / 计时器,界面会一直转,连录音按钮
+                            // 都被 startRecord 的状态锁卡死,直到重启应用。
+                            report_recording_aborted(
+                                &app,
+                                "录音超过 5 分钟,已自动停止(这段音频未转录)。",
+                            );
                         }
                     }
                 }
@@ -381,12 +439,22 @@ fn spawn_hotkey_worker(
                     }
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let state = app.state::<crate::AppState>();
-                        let _ = crate::start_recording_internal(&app, &state);
+                        crate::start_recording_internal(&app, &state)
                     }));
-                    if r.is_err() {
-                        eprintln!("[hotkey] start_recording panic");
-                        recording.store(false, Ordering::SeqCst);
-                        continue;
+                    match r {
+                        Err(_) => {
+                            eprintln!("[hotkey] start_recording panic");
+                            recording.store(false, Ordering::SeqCst);
+                            report_recording_aborted(&app, "录音启动时发生内部错误。");
+                            continue;
+                        }
+                        Ok(Err(e)) => {
+                            // 权限被拒、设备打不开之类:必须说出来。
+                            recording.store(false, Ordering::SeqCst);
+                            report_recording_aborted(&app, &e);
+                            continue;
+                        }
+                        Ok(Ok(())) => {}
                     }
                     let record_start = std::time::Instant::now();
                     let mut timed_out = false;
@@ -418,14 +486,29 @@ fn spawn_hotkey_worker(
                                 guard.reset();
                             }
                         }));
+                        // 录音机复位了,可前端还停在「录音中」:没有 hotkey-release
+                        // 就没人去清 recording / 计时器,界面会一直转,连录音按钮
+                        // 都被 startRecord 的状态锁卡死,直到重启应用。
+                        report_recording_aborted(
+                            &app,
+                            "录音超过 5 分钟,已自动停止(这段音频未转录)。",
+                        );
                         continue;
                     }
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let state = app.state::<crate::AppState>();
-                        let _ = crate::stop_recording_internal(&app, &state);
+                        crate::stop_recording_internal(&app, &state)
                     }));
+                    match r {
+                        Err(_) => report_stop_failed(&app, "结束录音时发生内部错误。"),
+                        Ok(Err(e)) => report_stop_failed(&app, &e),
+                        Ok(Ok(_)) => {}
+                    }
                 }
-                _ => break,
+                // 落单的 Release(比如上一次 Press 因为权限失败提前收了尾)不该
+                // 让 worker 退出 —— 一退出快捷键就彻底哑了,要等重新注册才复活。
+                Ok(HotkeyCmd::Release) => continue,
+                Err(_) => break,
             }
         });
 }

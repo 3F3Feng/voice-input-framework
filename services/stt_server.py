@@ -36,6 +36,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from services.diarize_engine import DIARIZE_ENABLED, DiarizationEngine
 from services.stt_engine import (
@@ -290,12 +291,34 @@ async def list_models():
 # ============== LLM 转发 API ==============
 
 
-def _llm_error(message: str) -> dict:
-    """构造结构化 LLM 转发错误响应(M7:统一错误模型)"""
-    return ErrorResponse(
-        error_code="LLM_PROXY_ERROR",
-        error_message=message,
-    ).to_dict()
+def _llm_error(message: str, status_code: int = 502) -> JSONResponse:
+    """构造结构化 LLM 转发错误响应(M7:统一错误模型)。
+
+    必须带非 2xx 状态码。以前这里返回一个裸 dict,FastAPI 照样按 200 发出去,
+    只看状态码的调用方(Rust 客户端、client/network.py)就把转发失败当成了成功
+    —— LLM 模型切换失败一路传到界面上会弹成「已切换」。
+    """
+    return JSONResponse(
+        status_code=status_code,
+        content=ErrorResponse(
+            error_code="LLM_PROXY_ERROR",
+            error_message=message,
+        ).to_dict(),
+    )
+
+
+def _upstream_message(resp: httpx.Response) -> str:
+    """从上游(LLM 服务)的失败响应里挖出可读的原因,挖不到就退回状态码。"""
+    try:
+        data = resp.json()
+        if isinstance(data, dict):
+            for key in ("message", "error_message", "detail"):
+                value = data.get(key)
+                if isinstance(value, str) and value:
+                    return value
+    except Exception:
+        pass
+    return f"LLM server returned {resp.status_code}"
 
 
 @app.get("/llm/models")
@@ -327,15 +350,21 @@ async def select_llm_model(request: Request):
             resp = await client.post(
                 f"{LLM_SERVER_URL}/models/select", data={"model_name": model_name}, timeout=30.0
             )
-            if resp.status_code == 200:
-                # 持久化 LLM 模型选择
-                state = load_state()
-                state["llm_model"] = model_name
-                save_state(state)
-                logger.info(f"LLM model saved to state: {model_name}")
-                return resp.json()
-            else:
-                return _llm_error(f"LLM server returned {resp.status_code}")
+            if resp.status_code != 200:
+                logger.error(f"LLM model switch failed: {model_name} ({resp.status_code})")
+                return _llm_error(f"LLM 模型切换失败:{_upstream_message(resp)}", resp.status_code)
+            data = resp.json()
+            # 老版本 LLM 服务用 200 + status:"failed" 报失败,这里同样按失败处理,
+            # 否则下面会把一个根本没加载成功的模型持久化下来。
+            if isinstance(data, dict) and data.get("status") == "failed":
+                logger.error(f"LLM model switch failed: {model_name}")
+                return _llm_error(f"LLM 模型切换失败:{data.get('message') or model_name}", 502)
+            # 持久化 LLM 模型选择(只有确实切成功了才存)
+            state = load_state()
+            state["llm_model"] = model_name
+            save_state(state)
+            logger.info(f"LLM model saved to state: {model_name}")
+            return data
     except Exception as e:
         logger.error(f"Failed to select LLM model: {e}")
         return _llm_error(str(e))

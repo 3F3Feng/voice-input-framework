@@ -102,3 +102,43 @@ fn missing_both_fields_is_empty() {
     let data: serde_json::Value = serde_json::from_str(r#"{"status":"success"}"#).unwrap();
     assert_eq!(stt::server_message(&data), "");
 }
+
+// ── 模型切换的成败判定(回归:失败曾被当成成功)──
+
+#[test]
+fn switch_success_is_not_a_failure() {
+    let data: serde_json::Value =
+        serde_json::from_str(r#"{"status":"success","current_model":"Qwen3.5-4B-OptiQ"}"#).unwrap();
+    assert!(!stt::switch_failed(true, &data));
+}
+
+#[test]
+fn http_error_is_a_failure() {
+    // 服务端现在用 503 回答「模型加载失败」
+    let data: serde_json::Value =
+        serde_json::from_str(r#"{"status":"failed","message":"模型 X 加载失败"}"#).unwrap();
+    assert!(stt::switch_failed(false, &data));
+}
+
+#[test]
+fn status_failed_in_a_200_is_still_a_failure() {
+    // 老服务端用 200 + status:"failed" 报失败;只看 HTTP 状态码会把它当成功,
+    // 界面于是弹出一句「LLM 已切换」,而模型根本没换。
+    let data: serde_json::Value =
+        serde_json::from_str(r#"{"status":"failed","current_model":"Qwen3.5-4B-OptiQ"}"#).unwrap();
+    assert!(stt::switch_failed(true, &data));
+}
+
+#[test]
+fn proxy_error_body_is_a_failure_with_a_readable_message() {
+    // 转发层的 502:错误原因在 error_message 里
+    let data: serde_json::Value = serde_json::from_str(
+        r#"{"error_code":"LLM_PROXY_ERROR","error_message":"LLM 模型切换失败:模型 X 加载失败"}"#,
+    )
+    .unwrap();
+    assert!(stt::switch_failed(false, &data));
+    assert_eq!(
+        stt::server_message(&data),
+        "LLM 模型切换失败:模型 X 加载失败"
+    );
+}

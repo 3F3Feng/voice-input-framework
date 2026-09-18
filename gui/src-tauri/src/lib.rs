@@ -104,6 +104,15 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
     }
     {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+        // 已经在录了就原地拒绝,一个字节的状态都别动。
+        // 下面那两步都是破坏性的:`create_stream_channel` 会把正在跑的回调手里
+        // 那个 sender 换掉(流式分片从此进不来),而 `start()` 认出重复启动返回
+        // Err 之后,错误分支的 `reset()` 会连采样缓冲一起清空。
+        // 真实场景:快捷键正按着录音,用户又去设置面板点了一下「录音」,
+        // 松手时只剩一句 "No audio captured"。
+        if recorder.is_recording() {
+            return Err("正在录音中,请先结束当前录音。".to_string());
+        }
         recorder.create_stream_channel(4096);
         match recorder.start(device) {
             Ok(()) => {

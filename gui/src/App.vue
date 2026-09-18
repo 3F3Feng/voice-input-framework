@@ -142,7 +142,9 @@
             <div class="s-row">
               <select class="s-select" v-model="selectedDevice" @change="onDeviceChange" style="flex:1">
                 <option :value="null">默认设备</option>
-                <option v-for="(name, id) in audioDevices" :key="id" :value="name">{{ name }}</option>
+                <option v-for="d in audioDevices" :key="d.name" :value="d.name">
+                  {{ d.default ? `${d.name}（系统默认）` : d.name }}
+                </option>
               </select>
               <button class="s-btn" @click="refreshDevices" title="刷新">🔄</button>
             </div>
@@ -390,6 +392,10 @@ interface VoiceInputConfig {
   _version: string;
 }
 interface HistoryItem { text: string; time: string; }
+/** get_audio_devices 的真实返回：见 src-tauri/src/audio.rs 的 AudioDeviceInfo。
+ *  这里以前声明成 Record<string, string>，于是下拉框把整个对象序列化出来当选项名，
+ *  选中后写进 cfg.audio.device 的也是个对象，serde 那头直接拒收。 */
+interface AudioDeviceInfo { name: string; channels: number; default: boolean; }
 // macOS TCC 权限(非 macOS 上 is_macos=false 且三项都是 granted)
 type PermissionStatus = "granted" | "denied" | "not_determined" | "restricted";
 type PermissionKey = "microphone" | "input_monitoring" | "accessibility";
@@ -453,7 +459,7 @@ const hotkeyRecording = ref(false);
 const hotkeyChanged = ref(false);
 const hotkeyMsg = ref("");
 const defaultHotkey = "left_ctrl+left_alt";
-const audioDevices = ref<Record<string, string>>({});
+const audioDevices = ref<AudioDeviceInfo[]>([]);
 const selectedDevice = ref<string | null>(null);
 
 // 权限
@@ -594,12 +600,19 @@ async function getConfig(): Promise<VoiceInputConfig> {
   return await invoke("get_config");
 }
 
-async function saveConfigPatch(patch: (cfg: VoiceInputConfig) => void) {
+/** 返回是否保存成功。失败会弹 toast（并进日志面板）——以前这里只 console.error，
+ *  没人看得见：麦克风选了半天存不进去，界面上一点动静都没有。 */
+async function saveConfigPatch(patch: (cfg: VoiceInputConfig) => void): Promise<boolean> {
   try {
     const cfg = await getConfig();
     patch(cfg);
     await invoke("update_config", { newConfig: cfg });
-  } catch (e) { console.error("Config save failed:", e); }
+    return true;
+  } catch (e) {
+    console.error("Config save failed:", e);
+    toast(`设置保存失败: ${e}`, "err");
+    return false;
+  }
 }
 
 function addToHistory(text: string) {
@@ -648,10 +661,16 @@ async function stopRecord() {
 
 // ── Devices ──
 async function refreshDevices() {
-  try { audioDevices.value = await invoke<Record<string, string>>("get_audio_devices"); } catch {}
+  try {
+    audioDevices.value = await invoke<AudioDeviceInfo[]>("get_audio_devices");
+  } catch (e) {
+    // 设备列举失败别静默：下拉框只剩「默认设备」时用户根本猜不到是出了错。
+    toast(`读取麦克风列表失败: ${e}`, "err");
+  }
 }
-function onDeviceChange() {
-  saveConfigPatch(cfg => { cfg.audio.device = selectedDevice.value; });
+async function onDeviceChange() {
+  const ok = await saveConfigPatch(cfg => { cfg.audio.device = selectedDevice.value; });
+  if (ok) toast(selectedDevice.value ? `麦克风已切换到 ${selectedDevice.value}` : "已切回默认麦克风", "ok");
 }
 
 // ── 权限(macOS) ──
@@ -865,13 +884,14 @@ async function loadModels(): Promise<boolean> {
 async function switchStt() {
   if (!sttModel.value) return;
   sttLoading.value = true;
-  try { await invoke<string>("switch_model", { name: sttModel.value }); toast("模型已切换", "ok"); } catch (e) { toast("切换失败", "err"); }
+  // 失败原因要带上：光说「切换失败」，用户既不知道是模型没下全还是服务没起来。
+  try { await invoke<string>("switch_model", { name: sttModel.value }); toast("模型已切换", "ok"); } catch (e) { toast(`切换失败: ${e}`, "err"); }
   sttLoading.value = false;
 }
 async function switchLlm() {
   if (!llmModel.value) return;
   llmLoading.value = true;
-  try { await invoke<string>("switch_llm_model", { name: llmModel.value }); toast("LLM 已切换", "ok"); } catch (e) { toast("切换失败", "err"); }
+  try { await invoke<string>("switch_llm_model", { name: llmModel.value }); toast("LLM 已切换", "ok"); } catch (e) { toast(`LLM 切换失败: ${e}`, "err"); }
   llmLoading.value = false;
 }
 async function toggleLlm() {
@@ -1053,6 +1073,10 @@ onMounted(async () => {
     }, 100);
   });
   listen("hotkey-release", () => {
+    // 没在录音就什么都不做。Rust 那边遇到录音失败 / 5 分钟安全超时会先补发一次
+    // hotkey-release 把界面收干净，等用户手指真正松开时事件还会再来一次；
+    // 不挡住的话第二次会重新点亮 loading 并起一个永远没人来关的计时器。
+    if (!recording.value) return;
     recording.value = false;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
