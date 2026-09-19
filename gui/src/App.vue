@@ -74,6 +74,34 @@
             </div>
           </div>
 
+          <!-- macOS 系统权限 -->
+          <div class="s-section" v-if="perms?.is_macos">
+            <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
+              <span>系统权限</span>
+              <button class="s-btn" @click="refreshPermissions" :disabled="permsLoading">
+                {{ permsLoading ? '...' : '刷新' }}
+              </button>
+            </div>
+            <div v-for="row in permissionRows" :key="row.key" class="perm-row">
+              <div class="perm-info">
+                <div class="perm-head">
+                  <span class="s-label">{{ row.label }}</span>
+                  <span :class="['perm-state', permStateClass(row.status)]">{{ permStateText(row.status) }}</span>
+                </div>
+                <div class="s-tip" style="margin-top:2px">{{ row.desc }}</div>
+              </div>
+              <div class="perm-actions">
+                <button v-if="row.canRequest" class="s-btn" @click="requestPerm(row.key)" :disabled="permBusy === row.key">
+                  {{ permBusy === row.key ? '...' : '请求授权' }}
+                </button>
+                <button class="s-btn" @click="openPermSettings(row.key)">打开设置</button>
+              </div>
+            </div>
+            <div class="s-tip" style="margin-top:6px">
+              已拒绝的权限系统不会再弹窗，需在「系统设置 → 隐私与安全性」中手动勾选；辅助功能改动后可能需要重启本应用。
+            </div>
+          </div>
+
           <!-- Hotkey -->
           <div class="s-section">
             <div class="s-title">快捷键</div>
@@ -156,6 +184,11 @@
 
     <!-- Main Content -->
     <div class="main" v-show="!showSettings">
+      <!-- 缺权限提示(仅 macOS) -->
+      <div v-if="missingPermLabels.length" class="perm-banner" @click="showSettings = true">
+        ⚠️ {{ missingPermLabels.join('、') }}未授权，相关功能不可用 · 点击前往授权
+      </div>
+
       <!-- Record Button -->
       <div class="record-area">
         <button
@@ -226,7 +259,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -241,6 +274,15 @@ interface VoiceInputConfig {
   _version: string;
 }
 interface HistoryItem { text: string; time: string; }
+// macOS TCC 权限(非 macOS 上 is_macos=false 且三项都是 granted)
+type PermissionStatus = "granted" | "denied" | "not_determined" | "restricted";
+type PermissionKey = "microphone" | "input_monitoring" | "accessibility";
+interface PermissionReport {
+  is_macos: boolean;
+  microphone: PermissionStatus;
+  input_monitoring: PermissionStatus;
+  accessibility: PermissionStatus;
+}
 
 // ── State ──
 const recording = ref(false);
@@ -284,6 +326,16 @@ const defaultHotkey = "left_ctrl+left_alt";
 const audioDevices = ref<Record<string, string>>({});
 const selectedDevice = ref<string | null>(null);
 
+// 权限
+const perms = ref<PermissionReport | null>(null);
+const permsLoading = ref(false);
+const permBusy = ref<PermissionKey | "">("");
+const PERM_META: { key: PermissionKey; label: string; desc: string }[] = [
+  { key: "microphone", label: "麦克风", desc: "录音识别需要" },
+  { key: "input_monitoring", label: "输入监控", desc: "全局快捷键需要" },
+  { key: "accessibility", label: "辅助功能", desc: "把文字自动输入到其他窗口需要" },
+];
+
 // Update
 interface UpdateInfo { available: boolean; current_version: string; latest_version: string; body: string; }
 const updateInfo = ref<UpdateInfo | null>(null);
@@ -317,6 +369,24 @@ const processingTimerText = computed(() => {
   const ms = processingMs.value % 1000;
   return `${s}.${String(ms).padStart(3, "0").slice(0, 1)}s`;
 });
+
+const permissionRows = computed(() =>
+  PERM_META.map(m => {
+    const status: PermissionStatus = perms.value ? perms.value[m.key] : "granted";
+    // 麦克风/输入监控:只有「未询问」时系统才会弹窗,拒绝后再调用毫无反应。
+    // 辅助功能:AXIsProcessTrusted 只有受信任/不受信任两态,拿不到「未询问」;
+    // 而带 prompt 的查询每次都会弹引导窗,并把本应用加进系统设置的列表里
+    // (没请求过的应用根本不会出现在那个列表,用户想勾也勾不到),所以只要
+    // 没授权就一直提供「请求授权」。
+    const canRequest = m.key === "accessibility" ? status !== "granted" : status === "not_determined";
+    return { ...m, status, canRequest };
+  })
+);
+const missingPermLabels = computed(() =>
+  perms.value?.is_macos
+    ? permissionRows.value.filter(r => r.status !== "granted").map(r => r.label)
+    : []
+);
 
 // ── Helpers ──
 function toast(msg: string, type = "info") {
@@ -390,6 +460,39 @@ async function refreshDevices() {
 }
 function onDeviceChange() {
   saveConfigPatch(cfg => { cfg.audio.device = selectedDevice.value; });
+}
+
+// ── 权限(macOS) ──
+function permStateText(s: PermissionStatus) {
+  return { granted: "已授权", denied: "已拒绝", not_determined: "未询问", restricted: "受限" }[s] || s;
+}
+function permStateClass(s: PermissionStatus) {
+  return s === "granted" ? "ok" : s === "not_determined" ? "warn" : "bad";
+}
+async function refreshPermissions() {
+  permsLoading.value = true;
+  try { perms.value = await invoke<PermissionReport>("get_permissions"); }
+  catch (e) { console.error("get_permissions failed:", e); }
+  permsLoading.value = false;
+}
+
+// 触发系统授权弹窗，最多等 30 秒（Rust 端轮询，超时返回当前状态）
+async function requestPerm(key: PermissionKey) {
+  permBusy.value = key;
+  try {
+    const next = await invoke<PermissionStatus>("request_permission", { permission: key });
+    if (perms.value) perms.value[key] = next;
+    toast(next === "granted" ? "已授权" : "尚未授权，请在系统设置中手动勾选后点「刷新」", next === "granted" ? "ok" : "err");
+  } catch (e) { toast(`权限申请失败: ${e}`, "err"); }
+  permBusy.value = "";
+  await refreshPermissions();
+}
+
+async function openPermSettings(key: PermissionKey) {
+  try {
+    await invoke("open_permission_settings", { permission: key });
+    toast("已打开系统设置，勾选后请点「刷新」", "info");
+  } catch (e) { toast(`打开系统设置失败: ${e}`, "err"); }
 }
 
 // ── Config ──
@@ -472,30 +575,70 @@ async function toggleLlm() {
 }
 
 // ── Hotkey ──
+// 当前录制监听器(用于取消/卸载时移除;防止残留监听重复触发)
+let hotkeyHandler: ((e: KeyboardEvent) => void) | null = null;
+
 function startHotkeyRecording() {
   hotkeyRecording.value = !hotkeyRecording.value;
   hotkeyMsg.value = "";
   if (hotkeyRecording.value) {
-    const handler = (e: KeyboardEvent) => {
-      e.preventDefault(); e.stopPropagation();
-      const parts: string[] = [];
-      if (e.code?.startsWith('ControlLeft')) parts.push('left_ctrl');
-      else if (e.code?.startsWith('ControlRight')) parts.push('right_ctrl');
-      else if (e.code?.startsWith('AltLeft')) parts.push('left_alt');
-      else if (e.code?.startsWith('AltRight')) parts.push('right_alt');
-      else if (e.code?.startsWith('ShiftLeft')) parts.push('left_shift');
-      else if (e.code?.startsWith('ShiftRight')) parts.push('right_shift');
-      if (e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Shift' && e.key !== 'Meta') {
-        parts.push(e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
-      }
-      if (parts.length > 0) {
-        hotkeyStr.value = parts.join('+');
-        hotkeyChanged.value = true;
-        hotkeyRecording.value = false;
-        document.removeEventListener('keydown', handler);
+    // 修饰键跨事件累积(按 ctrl 再按 alt 不结束;主键按下或纯修饰键
+    // 组合全部松开时才结束)。旧实现每次事件新建 parts,且按下 ctrl
+    // 就因 parts 非空立即结束——只能录到单个键。
+    let mods: string[] = [];
+    const modName = (e: KeyboardEvent): string | null => {
+      switch (e.code) {
+        case 'ControlLeft': return 'left_ctrl';
+        case 'ControlRight': return 'right_ctrl';
+        case 'AltLeft': return 'left_alt';
+        case 'AltRight': return 'right_alt';
+        case 'ShiftLeft': return 'left_shift';
+        case 'ShiftRight': return 'right_shift';
+        case 'MetaLeft': return 'left_cmd';
+        case 'MetaRight': return 'right_cmd';
+        default: return null;
       }
     };
+    const cleanup = () => {
+      if (hotkeyHandler) {
+        document.removeEventListener('keydown', hotkeyHandler);
+        document.removeEventListener('keyup', hotkeyHandler);
+        hotkeyHandler = null;
+      }
+    };
+    const finish = (mainKey: string | null) => {
+      const parts = [...mods];
+      if (mainKey) parts.push(mainKey.length === 1 ? mainKey.toLowerCase() : mainKey.toLowerCase());
+      if (parts.length === 0) return;  // 无内容不结束
+      hotkeyStr.value = parts.join('+');
+      hotkeyChanged.value = true;
+      hotkeyRecording.value = false;
+      cleanup();
+    };
+    const handler = (e: KeyboardEvent) => {
+      e.preventDefault(); e.stopPropagation();
+      const m = modName(e);
+      if (e.type === 'keydown') {
+        if (m) {
+          if (!mods.includes(m)) mods.push(m);
+          return;  // 只累积修饰键,等待主键
+        }
+        finish(e.key);  // 主键按下 → 结束
+      } else if (e.type === 'keyup') {
+        // 纯修饰键组合:全部松开时结束(如 ctrl+alt 无主键)
+        if (m && mods.length > 0) finish(null);
+      }
+    };
+    hotkeyHandler = handler;
     document.addEventListener('keydown', handler);
+    document.addEventListener('keyup', handler);
+  } else {
+    // 用户点"取消":移除监听
+    if (hotkeyHandler) {
+      document.removeEventListener('keydown', hotkeyHandler);
+      document.removeEventListener('keyup', hotkeyHandler);
+      hotkeyHandler = null;
+    }
   }
 }
 async function applyHotkey() {
@@ -566,7 +709,12 @@ function copyResult() {
 }
 async function doAutoInput() {
   if (!result.value) return;
-  try { await invoke("auto_input", { text: result.value }); toast("已输入", "ok"); } catch { toast("输入失败", "err"); }
+  try { await invoke("auto_input", { text: result.value }); toast("已输入", "ok"); }
+  catch (e) {
+    // 缺「辅助功能」权限时 Rust 端会返回可读原因,原样展示,不要吞掉
+    toast(`${e}`, "err");
+    refreshPermissions();
+  }
 }
 function clearResult() { result.value = ""; }
 async function minimizeToTray() {
@@ -574,10 +722,14 @@ async function minimizeToTray() {
 }
 
 // ── Lifecycle ──
+// 打开设置面板时重新查一次:用户可能刚在系统设置里改过授权
+watch(showSettings, open => { if (open) refreshPermissions(); });
+
 onMounted(async () => {
   await loadConfig();
   await loadAutostart();
   await refreshDevices();
+  await refreshPermissions();
   await updateServer();
 
   // Hotkey lifecycle is handled entirely in Rust (start/stop recording + transcription).
@@ -619,7 +771,11 @@ onMounted(async () => {
       result.value = text;
       addToHistory(text);
       toast("识别完成", "ok");
-      if (autoInputEnabled.value) invoke("auto_input", { text }).catch(() => {});
+      // 自动输入失败(最常见是缺「辅助功能」权限)必须让用户看见:
+      // 以前这里 catch 成空函数,转录一切正常但目标窗口什么都没出现。
+      if (autoInputEnabled.value) {
+        invoke("auto_input", { text }).catch(e => { toast(`${e}`, "err"); refreshPermissions(); });
+      }
     }
   });
 
@@ -641,6 +797,11 @@ onUnmounted(() => {
   if (timerInterval) clearInterval(timerInterval);
   if (levelInterval) clearInterval(levelInterval);
   if (processingTimerInterval) clearInterval(processingTimerInterval);
+  if (hotkeyHandler) {
+    document.removeEventListener('keydown', hotkeyHandler);
+    document.removeEventListener('keyup', hotkeyHandler);
+    hotkeyHandler = null;
+  }
 });
 </script>
 
@@ -716,6 +877,19 @@ html, body, #app { height: 100%; }
 .hotkey-field { cursor: pointer; text-align: center; font-family: monospace; }
 .hotkey-field.recording { border-color: var(--yellow); animation: pulse-border 1s infinite; }
 @keyframes pulse-border { 0%,100% { border-color: var(--yellow); } 50% { border-color: transparent; } }
+
+/* Permissions */
+.perm-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.perm-row:last-of-type { border-bottom: none; }
+.perm-info { min-width: 0; }
+.perm-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.perm-head { display: flex; align-items: center; gap: 6px; }
+.perm-state { font-size: 0.65rem; padding: 1px 6px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; }
+.perm-state.ok { color: var(--green); background: rgba(74, 222, 128, 0.12); border-color: rgba(74, 222, 128, 0.3); }
+.perm-state.warn { color: var(--yellow); background: rgba(251, 191, 36, 0.12); border-color: rgba(251, 191, 36, 0.3); }
+.perm-state.bad { color: var(--red); background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.3); }
+.perm-banner { width: 100%; max-width: 360px; background: rgba(251, 191, 36, 0.12); border: 1px solid rgba(251, 191, 36, 0.3); color: var(--yellow); border-radius: 8px; padding: 8px 10px; font-size: 0.7rem; line-height: 1.4; text-align: center; cursor: pointer; }
+.perm-banner:hover { background: rgba(251, 191, 36, 0.2); }
 
 /* Update */
 .update-info { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }

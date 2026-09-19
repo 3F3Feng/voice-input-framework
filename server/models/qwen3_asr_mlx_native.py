@@ -6,11 +6,9 @@ Voice Input Framework - 真正的 MLX 原生引擎
 相比 PyTorch 版：内存更低、Apple Silicon 优化、支持 4-bit/8-bit 量化。
 """
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator
 
-import math
 import numpy as np
 
 from server.models.base import BaseSTTEngine, STTEngineError

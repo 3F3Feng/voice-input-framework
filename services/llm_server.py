@@ -10,9 +10,10 @@ import asyncio
 import logging
 import os
 import sys
+import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
 
 import uvicorn
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -23,6 +24,12 @@ from pydantic import BaseModel
 project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
+
+from shared.constants import (  # noqa: E402
+    DEFAULT_BIND_HOST,
+    DEFAULT_CORS_ORIGINS,
+    MAX_PROCESS_TEXT_LENGTH,
+)
 
 # 配置日志
 _log_level = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
@@ -45,6 +52,7 @@ DEFAULT_PROMPT = """你是一个语音输入后处理助手。
 
 只返回优化后的文本，不要额外解释。"""
 
+
 def load_prompt() -> str:
     """加载提示词"""
     logger.info(f"Loading prompt from {PROMPT_FILE}")
@@ -55,6 +63,7 @@ def load_prompt() -> str:
             logger.warning(f"Failed to load prompt file: {e}")
     return DEFAULT_PROMPT
 
+
 def save_prompt(prompt: str) -> bool:
     """保存提示词"""
     try:
@@ -64,11 +73,14 @@ def save_prompt(prompt: str) -> bool:
         logger.error(f"Failed to save prompt file: {e}")
         return False
 
+
 # ============== Data Models ==============
+
 
 class ProcessRequest(BaseModel):
     text: str
     options: dict = {}
+
 
 class ProcessResult(BaseModel):
     text: str
@@ -77,22 +89,26 @@ class ProcessResult(BaseModel):
     model: str
     success: bool = True
 
+
 class ModelInfo(BaseModel):
     name: str
     description: str = ""
     is_loaded: bool = False
     is_current: bool = False
 
+
 class HealthStatus(BaseModel):
     status: str
     version: str = "1.0.0"
     uptime_seconds: float
     current_model: str
-    loaded_models: List[str]
+    loaded_models: list[str]
     active_connections: int = 0
     is_processing: bool = False
 
+
 # ============== LLM Engine ==============
+
 
 class LLMEngine:
     """LLM 引擎管理器"""
@@ -130,9 +146,11 @@ class LLMEngine:
         self._loading = False
         self._load_lock = asyncio.Lock()
         self._processing = False
+        # 生成在线程池执行,需用线程锁(而非 asyncio.Lock)串行化
+        self._process_lock = threading.Lock()
         self.start_time = time.time()
 
-    async def load(self, model_name: Optional[str] = None) -> bool:
+    async def load(self, model_name: str | None = None) -> bool:
         """加载模型"""
         target_model = model_name or self.default_model
         model_id = self.MODEL_IDS.get(target_model)
@@ -145,14 +163,16 @@ class LLMEngine:
             if self._is_loaded and self.current_model_name == target_model:
                 return True
 
-            if self._loading:
-                logger.info("Model is loading, waiting...")
-                while self._loading:
-                    await asyncio.sleep(0.5)
-                return self._is_loaded and self.current_model_name == target_model
-
+            # 注: 此处不需要再等待 `self._loading` —— 该标志只在持有 _load_lock
+            # 期间被置位/清除,能走到这里就说明锁已到手、没有其他加载在进行。
+            # 旧代码里的 `while self._loading: await sleep()` 分支永远不可达;
+            # 即便可达也只会自锁(持锁方无法在本协程持锁时清除标志)。
+            # `_loading` 本身保留: is_loading() 对外暴露加载状态(/ready 等接口在用)。
             self._loading = True
             try:
+                # 切换模型前先释放旧模型内存(与 STT 侧一致,否则每次切换都泄漏一份权重)
+                if self._model is not None:
+                    self._release_model()
                 logger.info(f"Loading LLM model: {model_id}")
                 loop = asyncio.get_event_loop()
                 success = await loop.run_in_executor(None, self._load_sync, model_id)
@@ -167,10 +187,27 @@ class LLMEngine:
             finally:
                 self._loading = False
 
+    def _release_model(self):
+        """释放当前已加载的模型内存"""
+        import gc
+
+        self._is_loaded = False
+        self._model = None
+        self._tokenizer = None
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except Exception as e:  # mlx 不可用时静默跳过
+            logger.debug(f"MLX cache clear skipped: {e}")
+        gc.collect()
+        logger.info("Old LLM model memory released")
+
     def _load_sync(self, model_id: str) -> bool:
         """同步加载模型"""
         try:
             import mlx_lm
+
             self._model, self._tokenizer = mlx_lm.load(model_id)
             return True
         except Exception as e:
@@ -188,8 +225,30 @@ class LLMEngine:
                 success=False,
             )
 
-        self._processing = True
+        # /process 在默认线程池执行,并发请求会同时命中同一个 MLX 模型实例
+        # (生成状态非线程安全)并互相覆盖 _processing 标志 —— 这里串行化。
+        with self._process_lock:
+            self._processing = True
+            try:
+                return self._generate(text)
+            finally:
+                self._processing = False
+
+    def _generate(self, text: str) -> ProcessResult:
+        """实际的生成 + 输出清洗(调用方必须已持有 _process_lock)"""
         start_time = time.time()
+
+        # 取本地引用:并发的模型切换会把 self._model 置空,
+        # 本地引用可保证本次生成用完整的旧实例跑完。
+        model, tokenizer = self._model, self._tokenizer
+        if model is None or tokenizer is None:
+            return ProcessResult(
+                text=text,
+                original_text=text,
+                llm_latency_ms=0,
+                model="",
+                success=False,
+            )
 
         try:
             import mlx_lm
@@ -197,88 +256,75 @@ class LLMEngine:
             # 加载提示词
             system_prompt = load_prompt()
             logger.info(f"Using prompt: {system_prompt[:200]}...")
-            
+
             # 构建消息
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
+                {"role": "user", "content": text},
             ]
 
-            prompt = self._tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+            # 关闭思考模式。语音输入后处理是确定性的文本清洗任务,推理除了
+            # 烧 token 没有收益 —— 而且是有害的:推理模型会把整个思考过程
+            # 当正文吐出来(不一定带 <think> 标签),在 max_tokens 耗尽前根本
+            # 走不到真正的输出,结果就是把一大段分析文字敲进用户的文档。
+            # 老模型的 chat template 不认这个参数,TypeError 时按原样退回。
+            thinking_disabled = True
+            try:
+                prompt = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+            except TypeError:
+                thinking_disabled = False
+                prompt = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
 
-            # 移除可能触发思考的特殊标记
-            prompt = prompt.replace("<think>", "")
-            prompt = prompt.replace("</think>", "")
+            if not thinking_disabled:
+                # 老模板不认 enable_thinking,只能沿用土办法:抹掉可能触发思考的标记。
+                #
+                # 注意这两行绝不能在 enable_thinking=False 生效时执行 —— Qwen 的模板
+                # 此时会在结尾追加一个**空的** think 块(`<think>\n\n</think>\n\n`),
+                # 那是"思考已完成,直接给答案"的信号。把标签抹掉会留下畸形的
+                # `<|im_start|>assistant\n\n\n\n\n`,模型随即吐 EOS,返回空字符串。
+                prompt = prompt.replace("<think>", "")
+                prompt = prompt.replace("</think>", "")
 
             # 生成
             response = mlx_lm.generate(
-                model=self._model,
-                tokenizer=self._tokenizer,
+                model=model,
+                tokenizer=tokenizer,
                 prompt=prompt,
                 max_tokens=256,
-                
             )
 
             # 清理响应 - 移除思考标签
             import re
-            # 移除 <think>...</think> 标签
-            cleaned = re.sub(r'<think>[\\s\\S]*?</think>', '', response)
+
+            # 移除 <think>...</think> 标签(DOTALL:思考块通常跨多行)
+            cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
             # 移除单独的 <think> 或 </think> 标签
-            cleaned = re.sub(r'</?think>', '', cleaned)
-            # 处理 Thinking Process 或分析输出
-            # 检查是否包含分析标记
-            has_analysis = 'Thinking Process:' in cleaned or 'Analyze the Request:' in cleaned or 'Process the Input:' in cleaned
-            
-            if has_analysis:
-                # 方法1: 尝试找 "输出：" 或 "Output:" 后的内容
-                for marker in ['输出：', 'Output:', 'Construct Output:', 'Final Output:']:
-                    if marker in cleaned:
-                        parts = cleaned.split(marker)
-                        if len(parts) > 1:
-                            # 取最后一个标记后的内容
-                            potential = parts[-1].strip()
-                            # 如果内容太长，可能还包含分析，继续分割
-                            lines = potential.split('\n')
-                            for line in lines:
-                                line = line.strip()
-                                # 找第一个实际的中文输出行（不是英文分析）
-                                if line and len(line) < 100 and not line.startswith(('1.', '2.', '3.', '4.', '5.', '*', '-')):
-                                    if not any(en in line for en in ['Analyze', 'Process', 'Rules:', 'Task:', 'Role:', 'Input']):
-                                        cleaned = line
-                                        break
-                            break
-                else:
-                    # 方法2: 如果没有找到输出标记，从后往前找第一行中文
-                    lines = cleaned.split('\n')
-                    for line in reversed(lines):
-                        line = line.strip()
-                        # 找包含中文的行，且不是分析内容
-                        if line and len(line) < 100:
-                            if not line.startswith(('1.', '2.', '3.', '4.', '5.', '*', '-', '**')):
-                                if not any(en in line for en in ['Analyze', 'Process', 'Rules:', 'Task:', 'Role:', 'Input', 'Thinking', 'Construct']):
-                                    cleaned = line
-                                    break
-            
+            cleaned = re.sub(r"</?think>", "", cleaned)
             # 移除 markdown 标记和引号
-            cleaned = cleaned.replace('**', '')
-            cleaned = cleaned.replace('"', '')
-            cleaned = cleaned.replace("'", '')
+            cleaned = cleaned.replace("**", "")
+            cleaned = cleaned.replace('"', "")
+            cleaned = cleaned.replace("'", "")
             cleaned = cleaned.strip()
-            
+
             # 处理重复内容：如果有多行相同内容，只保留一行
-            lines = cleaned.split('\n')
+            lines = cleaned.split("\n")
             unique_lines = []
             for line in lines:
                 line = line.strip()
                 if line and line not in unique_lines:
                     unique_lines.append(line)
-            cleaned = ' '.join(unique_lines)
+            cleaned = " ".join(unique_lines)
             # 移除开头的 \nquirer 或 thinker
-            cleaned = re.sub(r'^\\s*(?:quirer|thinker)\\s*', '', cleaned)
+            cleaned = re.sub(r"^\s*(?:quirer|thinker)\s*", "", cleaned)
             cleaned = cleaned.strip()
 
             latency = (time.time() - start_time) * 1000
@@ -300,8 +346,6 @@ class LLMEngine:
                 model=self.current_model_name,
                 success=False,
             )
-        finally:
-            self._processing = False
 
     async def process_async(self, text: str) -> ProcessResult:
         """异步处理文本"""
@@ -317,43 +361,49 @@ class LLMEngine:
     def is_processing(self) -> bool:
         return self._processing
 
+
 # ============== FastAPI App ==============
 
 # 配置
-LLM_HOST = os.getenv("VIF_LLM_HOST", "0.0.0.0")
+# 默认只绑定回环地址:本服务无鉴权,不应默认暴露到局域网。
+LLM_HOST = os.getenv("VIF_LLM_HOST", DEFAULT_BIND_HOST)
 LLM_PORT = int(os.getenv("VIF_LLM_PORT", "6545"))
 LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
+CORS_ORIGINS = [
+    o.strip() for o in os.getenv("VIF_CORS_ORIGINS", "").split(",") if o.strip()
+] or DEFAULT_CORS_ORIGINS
 
 # 初始化引擎
 engine = LLMEngine(default_model=LLM_MODEL)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期:启动时后台加载模型,关闭时清理(FastAPI 推荐用法)"""
+    logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
+    logger.info(f"Default model: {LLM_MODEL}")
+    # 后台加载模型(非阻塞)
+    asyncio.create_task(engine.load())
+    yield
+    logger.info("LLM Service shutting down")
+
 
 app = FastAPI(
     title="Voice Input Framework - LLM Service",
     description="独立的文本后处理服务,使用 MLX-LM",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-async def startup_event():
-    """启动时加载模型"""
-    logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
-    logger.info(f"Default model: {LLM_MODEL}")
-    # 后台加载模型(非阻塞)
-    asyncio.create_task(engine.load())
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭时清理"""
-    logger.info("LLM Service shutting down")
 
 @app.get("/health", response_model=HealthStatus)
 async def health_check():
@@ -368,18 +418,22 @@ async def health_check():
         is_processing=engine.is_processing(),
     )
 
-@app.get("/models", response_model=List[ModelInfo])
+
+@app.get("/models", response_model=list[ModelInfo])
 async def list_models():
     """获取可用模型列表"""
     models = []
     for name in LLMEngine.AVAILABLE_MODELS:
-        models.append(ModelInfo(
-            name=name,
-            description=f"LLM model: {LLMEngine.MODEL_IDS.get(name, name)}",
-            is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
-            is_current=(name == engine.current_model_name),
-        ))
+        models.append(
+            ModelInfo(
+                name=name,
+                description=f"LLM model: {LLMEngine.MODEL_IDS.get(name, name)}",
+                is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
+                is_current=(name == engine.current_model_name),
+            )
+        )
     return models
+
 
 @app.post("/models/select")
 async def select_model(model_name: str = Form(...)):
@@ -396,10 +450,16 @@ async def select_model(model_name: str = Form(...)):
         logger.error(f"Error switching model: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/process", response_model=ProcessResult)
 async def process_text(request: ProcessRequest):
     """处理文本"""
     try:
+        if len(request.text) > MAX_PROCESS_TEXT_LENGTH:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Text too long: {len(request.text)} > {MAX_PROCESS_TEXT_LENGTH} chars",
+            )
         if not engine.is_model_loaded():
             # 尝试加载
             loaded = await engine.load()
@@ -414,11 +474,13 @@ async def process_text(request: ProcessRequest):
         logger.error(f"Process error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ============== Prompt Management API ==============
 @app.get("/prompt")
 async def get_prompt():
     """获取当前提示词"""
     return {"prompt": load_prompt()}
+
 
 @app.put("/prompt")
 async def update_prompt(request: Request):
@@ -432,8 +494,12 @@ async def update_prompt(request: Request):
         return {"status": "success"}
     raise HTTPException(status_code=500, detail="Failed to save prompt")
 
+
 def main():
     """主函数"""
+    from shared.version_check import check_python_version
+
+    check_python_version()
     logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
     uvicorn.run(
         app,
@@ -441,6 +507,7 @@ def main():
         port=LLM_PORT,
         log_level=_log_level.lower(),
     )
+
 
 if __name__ == "__main__":
     main()

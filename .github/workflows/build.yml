@@ -1,13 +1,14 @@
 name: Build Tauri Client
 on:
   push:
-    branches: [dev/llm-postprocessing-v2, main]
+    branches: [dev/llm-postprocessing-v2, main, review/architecture-notes]
     tags-ignore: ['**']
     paths:
       - 'gui/**'
       - '.github/workflows/build.yml'
+  # 不限定 base 分支:任何改动到 gui/ 的 PR 都要构建一次。保留 paths 过滤,
+  # 这样不碰 GUI 的 PR 不会白跑一轮 30 分钟的 Tauri 构建。
   pull_request:
-    branches: [dev/llm-postprocessing-v2, main]
     paths:
       - 'gui/**'
       - '.github/workflows/build.yml'

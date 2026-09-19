@@ -13,12 +13,19 @@
 //! Recording lifecycle is handled directly in Rust (not via frontend events)
 //! so hotkey operations work even when the webview is minimized/hidden.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{Emitter, Manager};
 
+// Windows branch (raw Win32 polling) uses these bare names; other
+// platforms reference them fully-qualified.
+#[cfg(target_os = "windows")]
 use crate::AppState;
+#[cfg(target_os = "windows")]
+use std::sync::atomic::AtomicBool;
+#[cfg(target_os = "windows")]
+use std::sync::Arc;
+#[cfg(target_os = "windows")]
+use std::time::{Duration, Instant};
 
 /// Global generation counter. Incremented each time `start_listener` is called.
 /// Old poller threads check this and exit when they detect a newer generation.
@@ -56,22 +63,59 @@ pub enum HotkeyKey {
     /// Backspace
     Backspace,
     /// F1–F12
-    F1, F2, F3, F4, F5, F6,
-    F7, F8, F9, F10, F11, F12,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
     /// A–Z
-    KeyA, KeyB, KeyC, KeyD, KeyE, KeyF,
-    KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL,
-    KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR,
-    KeyS, KeyT, KeyU, KeyV, KeyW, KeyX,
-    KeyY, KeyZ,
+    KeyA,
+    KeyB,
+    KeyC,
+    KeyD,
+    KeyE,
+    KeyF,
+    KeyG,
+    KeyH,
+    KeyI,
+    KeyJ,
+    KeyK,
+    KeyL,
+    KeyM,
+    KeyN,
+    KeyO,
+    KeyP,
+    KeyQ,
+    KeyR,
+    KeyS,
+    KeyT,
+    KeyU,
+    KeyV,
+    KeyW,
+    KeyX,
+    KeyY,
+    KeyZ,
 }
 
 /// Parse a hotkey string like `"left_ctrl+left_alt"` or `"capslock"` into key list.
 pub fn parse_hotkey(s: &str) -> Option<Vec<HotkeyKey>> {
     let tokens: Vec<&str> = s.split('+').collect();
-    if tokens.is_empty() { return None; }
+    if tokens.is_empty() {
+        return None;
+    }
     let keys: Vec<HotkeyKey> = tokens.iter().filter_map(|t| parse_key(t.trim())).collect();
-    if keys.len() == tokens.len() { Some(keys) } else { None }
+    if keys.len() == tokens.len() {
+        Some(keys)
+    } else {
+        None
+    }
 }
 
 fn parse_key(token: &str) -> Option<HotkeyKey> {
@@ -95,14 +139,22 @@ fn parse_key(token: &str) -> Option<HotkeyKey> {
         "backspace" => Some(HotkeyKey::Backspace),
         _ if t.starts_with('f') && t.len() <= 3 => {
             let n: u8 = t[1..].parse().ok()?;
-            if !(1..=12).contains(&n) { return None; }
+            if !(1..=12).contains(&n) {
+                return None;
+            }
             Some(match n {
-                1  => HotkeyKey::F1,  2 => HotkeyKey::F2,
-                3  => HotkeyKey::F3,  4 => HotkeyKey::F4,
-                5  => HotkeyKey::F5,  6 => HotkeyKey::F6,
-                7  => HotkeyKey::F7,  8 => HotkeyKey::F8,
-                9  => HotkeyKey::F9,  10 => HotkeyKey::F10,
-                11 => HotkeyKey::F11, 12 => HotkeyKey::F12,
+                1 => HotkeyKey::F1,
+                2 => HotkeyKey::F2,
+                3 => HotkeyKey::F3,
+                4 => HotkeyKey::F4,
+                5 => HotkeyKey::F5,
+                6 => HotkeyKey::F6,
+                7 => HotkeyKey::F7,
+                8 => HotkeyKey::F8,
+                9 => HotkeyKey::F9,
+                10 => HotkeyKey::F10,
+                11 => HotkeyKey::F11,
+                12 => HotkeyKey::F12,
                 _ => return None,
             })
         }
@@ -110,13 +162,32 @@ fn parse_key(token: &str) -> Option<HotkeyKey> {
             let c = t.chars().next()?;
             let i = (c as u8).wrapping_sub(b'a') as usize;
             const LETTERS: [HotkeyKey; 26] = [
-                HotkeyKey::KeyA, HotkeyKey::KeyB, HotkeyKey::KeyC, HotkeyKey::KeyD,
-                HotkeyKey::KeyE, HotkeyKey::KeyF, HotkeyKey::KeyG, HotkeyKey::KeyH,
-                HotkeyKey::KeyI, HotkeyKey::KeyJ, HotkeyKey::KeyK, HotkeyKey::KeyL,
-                HotkeyKey::KeyM, HotkeyKey::KeyN, HotkeyKey::KeyO, HotkeyKey::KeyP,
-                HotkeyKey::KeyQ, HotkeyKey::KeyR, HotkeyKey::KeyS, HotkeyKey::KeyT,
-                HotkeyKey::KeyU, HotkeyKey::KeyV, HotkeyKey::KeyW, HotkeyKey::KeyX,
-                HotkeyKey::KeyY, HotkeyKey::KeyZ,
+                HotkeyKey::KeyA,
+                HotkeyKey::KeyB,
+                HotkeyKey::KeyC,
+                HotkeyKey::KeyD,
+                HotkeyKey::KeyE,
+                HotkeyKey::KeyF,
+                HotkeyKey::KeyG,
+                HotkeyKey::KeyH,
+                HotkeyKey::KeyI,
+                HotkeyKey::KeyJ,
+                HotkeyKey::KeyK,
+                HotkeyKey::KeyL,
+                HotkeyKey::KeyM,
+                HotkeyKey::KeyN,
+                HotkeyKey::KeyO,
+                HotkeyKey::KeyP,
+                HotkeyKey::KeyQ,
+                HotkeyKey::KeyR,
+                HotkeyKey::KeyS,
+                HotkeyKey::KeyT,
+                HotkeyKey::KeyU,
+                HotkeyKey::KeyV,
+                HotkeyKey::KeyW,
+                HotkeyKey::KeyX,
+                HotkeyKey::KeyY,
+                HotkeyKey::KeyZ,
             ];
             LETTERS.get(i).copied()
         }
@@ -132,7 +203,9 @@ pub fn reset_state() {}
 
 #[cfg(target_os = "windows")]
 pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
-    if hotkey_keys.is_empty() { return; }
+    if hotkey_keys.is_empty() {
+        return;
+    }
 
     // Bump generation so any previously spawned poller threads will exit.
     let my_gen = LISTENER_GEN.fetch_add(1, Ordering::SeqCst) + 1;
@@ -140,7 +213,10 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
     let _ = std::thread::Builder::new()
         .name("hotkey-poller".into())
         .spawn(move || {
-            eprintln!("[hotkey] Starting GetAsyncKeyState poller for {} keys", hotkey_keys.len());
+            eprintln!(
+                "[hotkey] Starting GetAsyncKeyState poller for {} keys",
+                hotkey_keys.len()
+            );
 
             let recording = Arc::new(AtomicBool::new(false));
 
@@ -226,7 +302,10 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
                 if recording.load(Ordering::SeqCst) {
                     if let Some(start) = record_start {
                         if start.elapsed() >= Duration::from_secs(MAX_RECORD_SECS) {
-                            eprintln!("[hotkey] Safety timeout: force-stopping recording after {}s", MAX_RECORD_SECS);
+                            eprintln!(
+                                "[hotkey] Safety timeout: force-stopping recording after {}s",
+                                MAX_RECORD_SECS
+                            );
                             recording.store(false, Ordering::SeqCst);
                             record_start = None;
 
@@ -259,169 +338,448 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
         });
 }
 
-// ── Non-Windows implementation: rdev listener ──
+// ── Non-Windows: hotkey worker (shared by macOS CGEventTap & Linux rdev) ──
 
 #[cfg(not(target_os = "windows"))]
-pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
-    use std::sync::{mpsc, Arc, Mutex, OnceLock};
-    use std::time::Instant;
-    use tauri::Manager;
+enum HotkeyCmd {
+    Press,
+    Release,
+}
 
-    // Quick conversion back to rdev::Key for the legacy code path.
-    // This keeps the non-Windows path working unchanged.
-    fn hotkey_to_rdev(k: &HotkeyKey) -> Option<rdev::Key> {
-        Some(match k {
-            HotkeyKey::ControlLeft  => rdev::Key::ControlLeft,
-            HotkeyKey::ControlRight => rdev::Key::ControlRight,
-            HotkeyKey::Alt          => rdev::Key::Alt,
-            HotkeyKey::AltGr        => rdev::Key::AltGr,
-            HotkeyKey::ShiftLeft    => rdev::Key::ShiftLeft,
-            HotkeyKey::ShiftRight   => rdev::Key::ShiftRight,
-            HotkeyKey::CapsLock     => rdev::Key::CapsLock,
-            HotkeyKey::Space        => rdev::Key::Space,
-            HotkeyKey::Return       => rdev::Key::Return,
-            HotkeyKey::Tab          => rdev::Key::Tab,
-            HotkeyKey::Escape       => rdev::Key::Escape,
-            HotkeyKey::Delete       => rdev::Key::Delete,
-            HotkeyKey::Backspace    => rdev::Key::Backspace,
-            HotkeyKey::F1  => rdev::Key::F1,  HotkeyKey::F2  => rdev::Key::F2,
-            HotkeyKey::F3  => rdev::Key::F3,  HotkeyKey::F4  => rdev::Key::F4,
-            HotkeyKey::F5  => rdev::Key::F5,  HotkeyKey::F6  => rdev::Key::F6,
-            HotkeyKey::F7  => rdev::Key::F7,  HotkeyKey::F8  => rdev::Key::F8,
-            HotkeyKey::F9  => rdev::Key::F9,  HotkeyKey::F10 => rdev::Key::F10,
-            HotkeyKey::F11 => rdev::Key::F11, HotkeyKey::F12 => rdev::Key::F12,
-            HotkeyKey::KeyA => rdev::Key::KeyA, HotkeyKey::KeyB => rdev::Key::KeyB,
-            HotkeyKey::KeyC => rdev::Key::KeyC, HotkeyKey::KeyD => rdev::Key::KeyD,
-            HotkeyKey::KeyE => rdev::Key::KeyE, HotkeyKey::KeyF => rdev::Key::KeyF,
-            HotkeyKey::KeyG => rdev::Key::KeyG, HotkeyKey::KeyH => rdev::Key::KeyH,
-            HotkeyKey::KeyI => rdev::Key::KeyI, HotkeyKey::KeyJ => rdev::Key::KeyJ,
-            HotkeyKey::KeyK => rdev::Key::KeyK, HotkeyKey::KeyL => rdev::Key::KeyL,
-            HotkeyKey::KeyM => rdev::Key::KeyM, HotkeyKey::KeyN => rdev::Key::KeyN,
-            HotkeyKey::KeyO => rdev::Key::KeyO, HotkeyKey::KeyP => rdev::Key::KeyP,
-            HotkeyKey::KeyQ => rdev::Key::KeyQ, HotkeyKey::KeyR => rdev::Key::KeyR,
-            HotkeyKey::KeyS => rdev::Key::KeyS, HotkeyKey::KeyT => rdev::Key::KeyT,
-            HotkeyKey::KeyU => rdev::Key::KeyU, HotkeyKey::KeyV => rdev::Key::KeyV,
-            HotkeyKey::KeyW => rdev::Key::KeyW, HotkeyKey::KeyX => rdev::Key::KeyX,
-            HotkeyKey::KeyY => rdev::Key::KeyY, HotkeyKey::KeyZ => rdev::Key::KeyZ,
-        })
+#[cfg(not(target_os = "windows"))]
+fn spawn_hotkey_worker(
+    app: tauri::AppHandle,
+    cmd_rx: std::sync::mpsc::Receiver<HotkeyCmd>,
+    my_gen: u64,
+) {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    // Safety timeout: force-stop recording if running longer than this
+    // (mirrors the Windows poller, which already had one).
+    const MAX_RECORD_SECS: u64 = 300; // 5 minutes
+
+    let recording = Arc::new(AtomicBool::new(false));
+    let _ = std::thread::Builder::new()
+        .name("hotkey-worker".into())
+        .spawn(move || loop {
+            // Exit if a newer listener generation was registered.
+            if LISTENER_GEN.load(Ordering::SeqCst) != my_gen {
+                eprintln!("[hotkey] Worker gen {} superseded, exiting", my_gen);
+                break;
+            }
+            match cmd_rx.recv() {
+                Ok(HotkeyCmd::Press) => {
+                    // Re-check after the (blocking) recv: a superseded worker
+                    // must not act on a command from its stale listener.
+                    if LISTENER_GEN.load(Ordering::SeqCst) != my_gen {
+                        eprintln!("[hotkey] Worker gen {} superseded, exiting", my_gen);
+                        break;
+                    }
+                    if recording.swap(true, Ordering::SeqCst) {
+                        continue;
+                    }
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let state = app.state::<crate::AppState>();
+                        let _ = crate::start_recording_internal(&app, &state);
+                    }));
+                    if r.is_err() {
+                        eprintln!("[hotkey] start_recording panic");
+                        recording.store(false, Ordering::SeqCst);
+                        continue;
+                    }
+                    let record_start = std::time::Instant::now();
+                    let mut timed_out = false;
+                    'record: loop {
+                        match cmd_rx.try_recv() {
+                            Ok(_) => break 'record,
+                            Err(std::sync::mpsc::TryRecvError::Disconnected) => break 'record,
+                            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                        }
+                        if record_start.elapsed() >= std::time::Duration::from_secs(MAX_RECORD_SECS)
+                        {
+                            eprintln!(
+                                "[hotkey] Safety timeout: force-stopping recording after {}s",
+                                MAX_RECORD_SECS
+                            );
+                            timed_out = true;
+                            break 'record;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    recording.store(false, Ordering::SeqCst);
+                    if timed_out {
+                        // Drop the buffer instead of transcribing 5 min of audio.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            // Bind in separate lets to ensure proper drop order
+                            let state = app.state::<crate::AppState>();
+                            let result = state.recorder.lock();
+                            if let Ok(mut guard) = result {
+                                guard.reset();
+                            }
+                        }));
+                        continue;
+                    }
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let state = app.state::<crate::AppState>();
+                        let _ = crate::stop_recording_internal(&app, &state);
+                    }));
+                }
+                _ => break,
+            }
+        });
+}
+
+/// Shared press/release bookkeeping + hotkey-match → worker channel.
+/// Returns the emitted channel command, if any.
+#[cfg(not(target_os = "windows"))]
+struct HotkeyMatcher {
+    pressed: Vec<HotkeyKey>,
+    keys: Vec<HotkeyKey>,
+    /// True between an emitted Press and its matching Release. Pairing
+    /// Press/Release explicitly (instead of suppressing releases that arrive
+    /// within a time window) keeps a quick tap from losing its Release and
+    /// leaving the recorder stuck on, and swallows key-autorepeat Presses.
+    press_active: bool,
+}
+
+#[cfg(not(target_os = "windows"))]
+impl HotkeyMatcher {
+    fn new(keys: Vec<HotkeyKey>) -> Self {
+        Self {
+            pressed: Vec::new(),
+            keys,
+            press_active: false,
+        }
     }
 
-    let rdev_keys: Vec<rdev::Key> = hotkey_keys.iter().filter_map(hotkey_to_rdev).collect();
-    if rdev_keys.is_empty() { return; }
+    fn on_change(&mut self, key: HotkeyKey, is_press: bool) -> Option<HotkeyCmd> {
+        if is_press {
+            if !self.pressed.contains(&key) {
+                self.pressed.push(key);
+            }
+        } else {
+            self.pressed.retain(|&x| x != key);
+        }
+        let all_pressed = self.keys.iter().all(|k| self.pressed.contains(k));
+        if all_pressed && !self.press_active {
+            self.press_active = true;
+            return Some(HotkeyCmd::Press);
+        }
+        if !all_pressed && self.press_active {
+            self.press_active = false;
+            return Some(HotkeyCmd::Release);
+        }
+        None
+    }
+}
 
+// ── macOS: Quartz CGEventTap listener ──
+//
+// rdev's macOS backend calls TSMGetInputSourceProperty (TextServices) in
+// its event callback; on macOS 15+ with a running NSApplication main loop
+// that call dispatches on the background listener thread and hits
+// _dispatch_assert_queue_fail → SIGTRAP crash (identical to the pynput
+// crash we replaced on the Python client). CGEventTap is a pure C API and
+// never touches TextServices, so it is crash-free.
+
+#[cfg(target_os = "macos")]
+pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
     let my_gen = LISTENER_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<HotkeyCmd>();
+    spawn_hotkey_worker(app.clone(), cmd_rx, my_gen);
 
     let _ = std::thread::Builder::new()
         .name("hotkey-listener".into())
         .spawn(move || {
-            let pressed = Arc::new(Mutex::new(Vec::<rdev::Key>::new()));
-            static PRESSED_KEYS: OnceLock<Arc<Mutex<Vec<rdev::Key>>>> = OnceLock::new();
-            let _ = PRESSED_KEYS.set(pressed.clone());
+            let mut matcher = HotkeyMatcher::new(hotkey_keys.clone());
+            let a = app.clone();
+            mac_tap::run(move |key, is_press| {
+                // A re-registration spawns a new tap; this (now stale) one must
+                // stop, or both taps fire and recording starts twice.
+                if LISTENER_GEN.load(Ordering::SeqCst) != my_gen {
+                    eprintln!("[hotkey] Tap gen {} superseded, stopping runloop", my_gen);
+                    return mac_tap::TapAction::Stop;
+                }
+                if let Some(cmd) = matcher.on_change(key, is_press) {
+                    let _ = cmd_tx.send(cmd);
+                    let _ = a.emit(
+                        if is_press {
+                            "hotkey-press"
+                        } else {
+                            "hotkey-release"
+                        },
+                        (),
+                    );
+                }
+                mac_tap::TapAction::Continue
+            });
+        });
+}
 
-            let keys = rdev_keys.clone();
+#[cfg(target_os = "macos")]
+mod mac_tap {
+    use super::*;
+    use core_foundation::runloop::*;
+    use core_graphics::event::{
+        CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
+        CGEventTapPlacement, CGEventType, EventField,
+    };
+
+    // macOS HID keycode → HotkeyKey (ANSI layout; letters A=0x00, not Windows VK).
+    fn hid_to_hotkey(vk: i64) -> Option<HotkeyKey> {
+        Some(match vk {
+            // 修饰键(flagsChanged 事件经 mod_flag + flags 判断按下/释放)
+            0x3B => HotkeyKey::ControlLeft,
+            0x3E => HotkeyKey::ControlRight,
+            0x3A => HotkeyKey::Alt,
+            0x3D => HotkeyKey::AltGr,
+            0x38 => HotkeyKey::ShiftLeft,
+            0x3C => HotkeyKey::ShiftRight,
+            // 0x37/0x36 (Command) 未在 HotkeyKey 枚举中,不支持
+            0x00 => HotkeyKey::KeyA,
+            0x01 => HotkeyKey::KeyS,
+            0x02 => HotkeyKey::KeyD,
+            0x03 => HotkeyKey::KeyF,
+            0x04 => HotkeyKey::KeyH,
+            0x05 => HotkeyKey::KeyG,
+            0x06 => HotkeyKey::KeyZ,
+            0x07 => HotkeyKey::KeyX,
+            0x08 => HotkeyKey::KeyC,
+            0x09 => HotkeyKey::KeyV,
+            0x0B => HotkeyKey::KeyB,
+            0x0C => HotkeyKey::KeyQ,
+            0x0D => HotkeyKey::KeyW,
+            0x0E => HotkeyKey::KeyE,
+            0x0F => HotkeyKey::KeyR,
+            0x10 => HotkeyKey::KeyY,
+            0x11 => HotkeyKey::KeyT,
+            0x1F => HotkeyKey::KeyO,
+            0x20 => HotkeyKey::KeyU,
+            0x22 => HotkeyKey::KeyI,
+            0x23 => HotkeyKey::KeyP,
+            0x25 => HotkeyKey::KeyL,
+            0x26 => HotkeyKey::KeyJ,
+            0x28 => HotkeyKey::KeyK,
+            0x2D => HotkeyKey::KeyN,
+            0x2E => HotkeyKey::KeyM,
+            0x31 => HotkeyKey::Space,
+            0x30 => HotkeyKey::Tab,
+            0x24 => HotkeyKey::Return,
+            0x33 => HotkeyKey::Backspace,
+            0x35 => HotkeyKey::Escape,
+            0x75 => HotkeyKey::Delete,
+            0x39 => HotkeyKey::CapsLock,
+            0x7A => HotkeyKey::F1,
+            0x78 => HotkeyKey::F2,
+            0x63 => HotkeyKey::F3,
+            0x76 => HotkeyKey::F4,
+            0x60 => HotkeyKey::F5,
+            0x61 => HotkeyKey::F6,
+            0x62 => HotkeyKey::F7,
+            0x64 => HotkeyKey::F8,
+            0x65 => HotkeyKey::F9,
+            0x6D => HotkeyKey::F10,
+            0x67 => HotkeyKey::F11,
+            0x6F => HotkeyKey::F12,
+            _ => return None,
+        })
+    }
+
+    // Modifier HID keycodes → flag mask. FlagsChanged events carry the
+    // keycode of the changed modifier; CGEventGetFlags decides press vs
+    // release (kCGEventFlagMaskControl = 0x40000; after release the flag
+    // is gone, so flags&mask is reliable — no event-count toggling).
+    fn mod_flag(vk: i64) -> Option<CGEventFlags> {
+        Some(match vk {
+            0x37 | 0x36 => CGEventFlags::CGEventFlagCommand,
+            0x38 | 0x3C => CGEventFlags::CGEventFlagShift,
+            0x3A | 0x3D => CGEventFlags::CGEventFlagAlternate,
+            0x3B | 0x3E => CGEventFlags::CGEventFlagControl,
+            _ => return None,
+        })
+    }
+
+    /// What the handler wants the tap to do next.
+    pub enum TapAction {
+        Continue,
+        /// Stop the runloop and drop the tap (used when superseded).
+        Stop,
+    }
+
+    /// Run a CGEventTap on the current thread (called from the
+    /// hotkey-listener thread). Never touches TextServices, so it does not
+    /// hit the macOS 15+ TSMGetInputSourceProperty assert crash that rdev
+    /// does. Requires Input Monitoring / Accessibility permission;
+    /// otherwise CGEventTapCreate fails and we log and return.
+    pub fn run<F>(handler: F)
+    where
+        F: FnMut(HotkeyKey, bool) -> TapAction + 'static,
+    {
+        // CGEventTap::new's callback is `Fn` (immutable), but our handler
+        // mutates the matcher — RefCell gives interior mutability; the
+        // tap callback runs on this same (listener) thread, so no
+        // cross-thread access and no Send requirement.
+        let handler = std::cell::RefCell::new(handler);
+        let events = vec![
+            CGEventType::KeyDown,
+            CGEventType::KeyUp,
+            CGEventType::FlagsChanged,
+        ];
+        let tap = CGEventTap::new(
+            CGEventTapLocation::Session,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::ListenOnly,
+            events,
+            move |_proxy, etype, event| {
+                let mut h = handler.borrow_mut();
+                let action = match etype {
+                    CGEventType::KeyDown | CGEventType::KeyUp => {
+                        let vk = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+                        match hid_to_hotkey(vk) {
+                            Some(k) => h(k, matches!(etype, CGEventType::KeyDown)),
+                            None => TapAction::Continue,
+                        }
+                    }
+                    CGEventType::FlagsChanged => {
+                        let vk = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+                        let flags = event.get_flags();
+                        match (mod_flag(vk), hid_to_hotkey(vk)) {
+                            (Some(mask), Some(k)) => h(k, flags.contains(mask)),
+                            _ => TapAction::Continue,
+                        }
+                    }
+                    _ => TapAction::Continue,
+                };
+                if matches!(action, TapAction::Stop) {
+                    CFRunLoop::get_current().stop();
+                }
+                None
+            },
+        );
+        match tap {
+            Ok(tap) => {
+                tap.enable();
+                match tap.mach_port.create_runloop_source(0) {
+                    Ok(source) => {
+                        let current = CFRunLoop::get_current();
+                        // kCFRunLoopCommonModes is an extern static — reading it is unsafe
+                        current.add_source(&source, unsafe { kCFRunLoopCommonModes });
+                        eprintln!("[hotkey] CGEventTap listening");
+                        CFRunLoop::run_current();
+                    }
+                    Err(_) => eprintln!("[hotkey] create_runloop_source failed"),
+                }
+            }
+            Err(_) => {
+                // 几乎总是因为缺「输入监控」权限,把当前状态一并打出来,
+                // 免得用户只看到一句语焉不详的失败。
+                crate::log_error!(
+                    "[hotkey] CGEventTapCreate 失败,全局快捷键不可用(输入监控权限={:?})",
+                    crate::permissions::input_monitoring_status()
+                );
+            }
+        }
+    }
+}
+
+// ── Linux (and other non-Windows/non-macOS): rdev listener ──
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
+    use std::sync::mpsc;
+
+    let my_gen = LISTENER_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let (cmd_tx, cmd_rx) = mpsc::channel::<HotkeyCmd>();
+    spawn_hotkey_worker(app.clone(), cmd_rx, my_gen);
+
+    let _ = std::thread::Builder::new()
+        .name("hotkey-listener".into())
+        .spawn(move || {
+            let mut matcher = HotkeyMatcher::new(hotkey_keys.clone());
             let a = app.clone();
 
-            enum HotkeyCmd { Press, Release }
-            let (cmd_tx, cmd_rx) = mpsc::channel::<HotkeyCmd>();
-            let worker_app = a.clone();
-            let recording = Arc::new(AtomicBool::new(false));
-            let worker_recording = recording.clone();
-            let hotkey_keys_worker = rdev_keys.clone();
-
-            // Worker thread (same logic as before)
-            let _ = std::thread::Builder::new()
-                .name("hotkey-worker".into())
-                .spawn(move || {
-                    loop {
-                        // Exit if a newer listener generation was registered.
-                        if LISTENER_GEN.load(Ordering::SeqCst) != my_gen {
-                            eprintln!("[hotkey] Worker gen {} superseded, exiting", my_gen);
-                            break;
-                        }
-                        match cmd_rx.recv() {
-                            Ok(HotkeyCmd::Press) => {
-                                if worker_recording.swap(true, Ordering::SeqCst) { continue; }
-                                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    let state = worker_app.state::<crate::AppState>();
-                                    let _ = crate::start_recording_internal(&worker_app, &state);
-                                }));
-                                if r.is_err() {
-                                    eprintln!("[hotkey] start_recording panic");
-                                    worker_recording.store(false, Ordering::SeqCst);
-                                    continue;
-                                }
-                                'record: loop {
-                                    match cmd_rx.try_recv() {
-                                        Ok(HotkeyCmd::Release) => break 'record,
-                                        Ok(HotkeyCmd::Press) => break 'record,
-                                        Err(mpsc::TryRecvError::Disconnected) => break 'record,
-                                        Err(mpsc::TryRecvError::Empty) => {}
-                                    }
-                                    // Non-Windows fallback: check key state if available
-                                    #[cfg(target_os = "macos")]
-                                    {
-                                        // macOS: limited polling support — rely on rdev events
-                                    }
-                                    std::thread::sleep(std::time::Duration::from_millis(50));
-                                }
-                                worker_recording.store(false, Ordering::SeqCst);
-                                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    let state = worker_app.state::<crate::AppState>();
-                                    let _ = crate::stop_recording_internal(&worker_app, &state);
-                                }));
-                            }
-                            _ => break,
-                        }
-                    }
-                });
-
-            // rdev listen callback
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut last_press_emit = Instant::now() - std::time::Duration::from_secs(1);
                 let _ = rdev::listen(move |event: rdev::Event| {
-                    let key = match event.event_type {
-                        rdev::EventType::KeyPress(k) => {
-                            if let Ok(mut p) = pressed.lock() {
-                                if !p.contains(&k) { p.push(k); }
-                            }
-                            Some(k)
-                        }
-                        rdev::EventType::KeyRelease(k) => {
-                            if let Ok(mut p) = pressed.lock() {
-                                p.retain(|&x| x != k);
-                            }
-                            Some(k)
-                        }
-                        _ => None,
+                    let (key, is_press) = match event.event_type {
+                        rdev::EventType::KeyPress(k) => (Some(k), true),
+                        rdev::EventType::KeyRelease(k) => (Some(k), false),
+                        _ => (None, false),
                     };
-                    let Some(key) = key else { return };
-                    if !keys.contains(&key) { return; }
-
-                    let all_pressed = if let Ok(p) = pressed.lock() {
-                        keys.iter().all(|k| p.contains(k))
-                    } else { false };
-
-                    let now = Instant::now();
-
-                    if let rdev::EventType::KeyPress(_) = event.event_type {
-                        if all_pressed {
-                            last_press_emit = now;
-                            let _ = cmd_tx.send(HotkeyCmd::Press);
-                            let _ = a.emit("hotkey-press", ());
-                        }
-                        return;
-                    }
-
-                    if !all_pressed {
-                        if now.duration_since(last_press_emit).as_millis() < 100 {
-                            return;
-                        }
-                        let _ = cmd_tx.send(HotkeyCmd::Release);
-                        let _ = a.emit("hotkey-release", ());
+                    let Some(rk) = key else { return };
+                    let Some(k) = rdev_to_hotkey(&rk) else { return };
+                    if let Some(cmd) = matcher.on_change(k, is_press) {
+                        let _ = cmd_tx.send(cmd);
+                        let _ = a.emit(
+                            if is_press {
+                                "hotkey-press"
+                            } else {
+                                "hotkey-release"
+                            },
+                            (),
+                        );
                     }
                 });
             }));
         });
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn rdev_to_hotkey(k: &rdev::Key) -> Option<HotkeyKey> {
+    Some(match k {
+        rdev::Key::ControlLeft => HotkeyKey::ControlLeft,
+        rdev::Key::ControlRight => HotkeyKey::ControlRight,
+        rdev::Key::Alt => HotkeyKey::Alt,
+        rdev::Key::AltGr => HotkeyKey::AltGr,
+        rdev::Key::ShiftLeft => HotkeyKey::ShiftLeft,
+        rdev::Key::ShiftRight => HotkeyKey::ShiftRight,
+        rdev::Key::CapsLock => HotkeyKey::CapsLock,
+        rdev::Key::Space => HotkeyKey::Space,
+        rdev::Key::Return => HotkeyKey::Return,
+        rdev::Key::Tab => HotkeyKey::Tab,
+        rdev::Key::Escape => HotkeyKey::Escape,
+        rdev::Key::Delete => HotkeyKey::Delete,
+        rdev::Key::Backspace => HotkeyKey::Backspace,
+        rdev::Key::F1 => HotkeyKey::F1,
+        rdev::Key::F2 => HotkeyKey::F2,
+        rdev::Key::F3 => HotkeyKey::F3,
+        rdev::Key::F4 => HotkeyKey::F4,
+        rdev::Key::F5 => HotkeyKey::F5,
+        rdev::Key::F6 => HotkeyKey::F6,
+        rdev::Key::F7 => HotkeyKey::F7,
+        rdev::Key::F8 => HotkeyKey::F8,
+        rdev::Key::F9 => HotkeyKey::F9,
+        rdev::Key::F10 => HotkeyKey::F10,
+        rdev::Key::F11 => HotkeyKey::F11,
+        rdev::Key::F12 => HotkeyKey::F12,
+        rdev::Key::KeyA => HotkeyKey::KeyA,
+        rdev::Key::KeyB => HotkeyKey::KeyB,
+        rdev::Key::KeyC => HotkeyKey::KeyC,
+        rdev::Key::KeyD => HotkeyKey::KeyD,
+        rdev::Key::KeyE => HotkeyKey::KeyE,
+        rdev::Key::KeyF => HotkeyKey::KeyF,
+        rdev::Key::KeyG => HotkeyKey::KeyG,
+        rdev::Key::KeyH => HotkeyKey::KeyH,
+        rdev::Key::KeyI => HotkeyKey::KeyI,
+        rdev::Key::KeyJ => HotkeyKey::KeyJ,
+        rdev::Key::KeyK => HotkeyKey::KeyK,
+        rdev::Key::KeyL => HotkeyKey::KeyL,
+        rdev::Key::KeyM => HotkeyKey::KeyM,
+        rdev::Key::KeyN => HotkeyKey::KeyN,
+        rdev::Key::KeyO => HotkeyKey::KeyO,
+        rdev::Key::KeyP => HotkeyKey::KeyP,
+        rdev::Key::KeyQ => HotkeyKey::KeyQ,
+        rdev::Key::KeyR => HotkeyKey::KeyR,
+        rdev::Key::KeyS => HotkeyKey::KeyS,
+        rdev::Key::KeyT => HotkeyKey::KeyT,
+        rdev::Key::KeyU => HotkeyKey::KeyU,
+        rdev::Key::KeyV => HotkeyKey::KeyV,
+        rdev::Key::KeyW => HotkeyKey::KeyW,
+        rdev::Key::KeyX => HotkeyKey::KeyX,
+        rdev::Key::KeyY => HotkeyKey::KeyY,
+        rdev::Key::KeyZ => HotkeyKey::KeyZ,
+        _ => return None,
+    })
 }
 
 // ── Windows: GetAsyncKeyState helpers ──
@@ -431,9 +789,11 @@ fn win_key_down(k: &HotkeyKey) -> bool {
     extern "system" {
         fn GetAsyncKeyState(vKey: i32) -> i16;
     }
-    let Some(vk) = hotkey_to_vk(k) else { return false }; // unknown key = assume NOT pressed
-    // GetAsyncKeyState returns SHORT (i16). MSB=0x8000 means key is down.
-    // Cast to u16 to avoid literal out of range for i16.
+    let Some(vk) = hotkey_to_vk(k) else {
+        return false;
+    }; // unknown key = assume NOT pressed
+       // GetAsyncKeyState returns SHORT (i16). MSB=0x8000 means key is down.
+       // Cast to u16 to avoid literal out of range for i16.
     unsafe { (GetAsyncKeyState(vk) as u16) & 0x8000u16 != 0 }
 }
 
@@ -441,37 +801,56 @@ fn win_key_down(k: &HotkeyKey) -> bool {
 #[cfg(target_os = "windows")]
 fn hotkey_to_vk(k: &HotkeyKey) -> Option<i32> {
     Some(match k {
-        HotkeyKey::Alt          => 0x12,    // VK_MENU
-        HotkeyKey::AltGr        => 0xA5,    // VK_RMENU
-        HotkeyKey::ControlLeft  => 0xA2,    // VK_LCONTROL
-        HotkeyKey::ControlRight => 0xA3,    // VK_RCONTROL
-        HotkeyKey::ShiftLeft    => 0xA0,    // VK_LSHIFT
-        HotkeyKey::ShiftRight   => 0xA1,    // VK_RSHIFT
-        HotkeyKey::CapsLock     => 0x14,    // VK_CAPITAL
-        HotkeyKey::Space        => 0x20,    // VK_SPACE
-        HotkeyKey::Return       => 0x0D,    // VK_RETURN
-        HotkeyKey::Tab          => 0x09,    // VK_TAB
-        HotkeyKey::Escape       => 0x1B,    // VK_ESCAPE
-        HotkeyKey::Delete       => 0x2E,    // VK_DELETE
-        HotkeyKey::Backspace    => 0x08,    // VK_BACK
-        HotkeyKey::F1  => 0x70,  HotkeyKey::F2  => 0x71,
-        HotkeyKey::F3  => 0x72,  HotkeyKey::F4  => 0x73,
-        HotkeyKey::F5  => 0x74,  HotkeyKey::F6  => 0x75,
-        HotkeyKey::F7  => 0x76,  HotkeyKey::F8  => 0x77,
-        HotkeyKey::F9  => 0x78,  HotkeyKey::F10 => 0x79,
-        HotkeyKey::F11 => 0x7A,  HotkeyKey::F12 => 0x7B,
-        HotkeyKey::KeyA => 0x41, HotkeyKey::KeyB => 0x42,
-        HotkeyKey::KeyC => 0x43, HotkeyKey::KeyD => 0x44,
-        HotkeyKey::KeyE => 0x45, HotkeyKey::KeyF => 0x46,
-        HotkeyKey::KeyG => 0x47, HotkeyKey::KeyH => 0x48,
-        HotkeyKey::KeyI => 0x49, HotkeyKey::KeyJ => 0x4A,
-        HotkeyKey::KeyK => 0x4B, HotkeyKey::KeyL => 0x4C,
-        HotkeyKey::KeyM => 0x4D, HotkeyKey::KeyN => 0x4E,
-        HotkeyKey::KeyO => 0x4F, HotkeyKey::KeyP => 0x50,
-        HotkeyKey::KeyQ => 0x51, HotkeyKey::KeyR => 0x52,
-        HotkeyKey::KeyS => 0x53, HotkeyKey::KeyT => 0x54,
-        HotkeyKey::KeyU => 0x55, HotkeyKey::KeyV => 0x56,
-        HotkeyKey::KeyW => 0x57, HotkeyKey::KeyX => 0x58,
-        HotkeyKey::KeyY => 0x59, HotkeyKey::KeyZ => 0x5A,
+        HotkeyKey::Alt => 0x12,          // VK_MENU
+        HotkeyKey::AltGr => 0xA5,        // VK_RMENU
+        HotkeyKey::ControlLeft => 0xA2,  // VK_LCONTROL
+        HotkeyKey::ControlRight => 0xA3, // VK_RCONTROL
+        HotkeyKey::ShiftLeft => 0xA0,    // VK_LSHIFT
+        HotkeyKey::ShiftRight => 0xA1,   // VK_RSHIFT
+        HotkeyKey::CapsLock => 0x14,     // VK_CAPITAL
+        HotkeyKey::Space => 0x20,        // VK_SPACE
+        HotkeyKey::Return => 0x0D,       // VK_RETURN
+        HotkeyKey::Tab => 0x09,          // VK_TAB
+        HotkeyKey::Escape => 0x1B,       // VK_ESCAPE
+        HotkeyKey::Delete => 0x2E,       // VK_DELETE
+        HotkeyKey::Backspace => 0x08,    // VK_BACK
+        HotkeyKey::F1 => 0x70,
+        HotkeyKey::F2 => 0x71,
+        HotkeyKey::F3 => 0x72,
+        HotkeyKey::F4 => 0x73,
+        HotkeyKey::F5 => 0x74,
+        HotkeyKey::F6 => 0x75,
+        HotkeyKey::F7 => 0x76,
+        HotkeyKey::F8 => 0x77,
+        HotkeyKey::F9 => 0x78,
+        HotkeyKey::F10 => 0x79,
+        HotkeyKey::F11 => 0x7A,
+        HotkeyKey::F12 => 0x7B,
+        HotkeyKey::KeyA => 0x41,
+        HotkeyKey::KeyB => 0x42,
+        HotkeyKey::KeyC => 0x43,
+        HotkeyKey::KeyD => 0x44,
+        HotkeyKey::KeyE => 0x45,
+        HotkeyKey::KeyF => 0x46,
+        HotkeyKey::KeyG => 0x47,
+        HotkeyKey::KeyH => 0x48,
+        HotkeyKey::KeyI => 0x49,
+        HotkeyKey::KeyJ => 0x4A,
+        HotkeyKey::KeyK => 0x4B,
+        HotkeyKey::KeyL => 0x4C,
+        HotkeyKey::KeyM => 0x4D,
+        HotkeyKey::KeyN => 0x4E,
+        HotkeyKey::KeyO => 0x4F,
+        HotkeyKey::KeyP => 0x50,
+        HotkeyKey::KeyQ => 0x51,
+        HotkeyKey::KeyR => 0x52,
+        HotkeyKey::KeyS => 0x53,
+        HotkeyKey::KeyT => 0x54,
+        HotkeyKey::KeyU => 0x55,
+        HotkeyKey::KeyV => 0x56,
+        HotkeyKey::KeyW => 0x57,
+        HotkeyKey::KeyX => 0x58,
+        HotkeyKey::KeyY => 0x59,
+        HotkeyKey::KeyZ => 0x5A,
     })
 }

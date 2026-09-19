@@ -5,7 +5,7 @@ Voice Input Framework - Client Library
 """
 
 # 单一版本定义来源 - 其他模块从这里导入
-__version__ = "2.0.0"
+__version__ = "2.0.10"
 __author__ = "Voice Input Framework"
 
 # 重构后的应用控制器（推荐）
@@ -18,9 +18,10 @@ except ImportError:
 # 旧版 GUI 类（兼容性保留，需要 PySimpleGUI）
 try:
     from .gui import HotkeyVoiceInputV2
+
     HotkeyVoiceInput = HotkeyVoiceInputV2
 except ImportError:
     HotkeyVoiceInputV2 = None
     HotkeyVoiceInput = None
 
-__all__ = ["VoiceInputApp", "HotkeyVoiceInput", "HotkeyVoiceInputV2"]
+__all__ = ["HotkeyVoiceInput", "HotkeyVoiceInputV2", "VoiceInputApp"]

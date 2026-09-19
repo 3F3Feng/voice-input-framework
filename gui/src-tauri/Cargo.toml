@@ -1,6 +1,6 @@
 [package]
 name = "voice-input"
-version = "2.0.0"
+version = "2.1.0"
 description = "Voice Input Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -13,12 +13,12 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
-reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -28,3 +28,16 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 rdev = "0.5"
 base64 = "0.22"
+
+# macOS 专用:CGEventTap 监听快捷键(替代 rdev——rdev 的 macOS 后端在
+# 事件回调里调 TSMGetInputSourceProperty,macOS 15+ 非主线程调用会
+# SIGTRAP 崩溃,与 Python 端 pynput 崩溃同源)
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.23"
+core-foundation = "0.9"
+# 麦克风权限(AVCaptureDevice 授权查询/申请)。输入监控与辅助功能用的是
+# IOKit / ApplicationServices 的 C 符号,直接在 permissions.rs 里声明 FFI,
+# 不额外引依赖。objc2 / block2 本来就在依赖树里(tauri → wry),此处只是显式引用。
+objc2 = "0.6"
+block2 = "0.6"
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }

@@ -1,37 +1,17 @@
 """
 Tests for STT Server
 """
-import pytest
+
 import sys
 from pathlib import Path
+
+import numpy as np
+import pytest
 
 # Add project path
 project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
-
-
-class TestWordTimestamp:
-    """Test WordTimestamp model"""
-
-    def test_basic_creation(self):
-        """Test basic timestamp creation"""
-        from services.stt_server import WordTimestamp
-
-        ts = WordTimestamp(word="你好", start=0.0, end=0.5)
-        assert ts.word == "你好"
-        assert ts.start == 0.0
-        assert ts.end == 0.5
-
-    def test_json_serialization(self):
-        """Test JSON serialization"""
-        from services.stt_server import WordTimestamp
-
-        ts = WordTimestamp(word="test", start=1.0, end=2.0)
-        json_data = ts.model_dump()
-        assert json_data["word"] == "test"
-        assert json_data["start"] == 1.0
-        assert json_data["end"] == 2.0
 
 
 class TestTranscriptionResult:
@@ -46,22 +26,6 @@ class TestTranscriptionResult:
         assert result.confidence == 1.0
         assert result.language == "auto"
         assert result.is_final is True
-        assert result.timestamps is None
-
-    def test_result_with_timestamps(self):
-        """Test result with timestamps"""
-        from services.stt_server import TranscriptionResult, WordTimestamp
-
-        timestamps = [
-            WordTimestamp(word="Hello", start=0.0, end=0.5),
-            WordTimestamp(word="world", start=0.5, end=1.0),
-        ]
-        result = TranscriptionResult(
-            text="Hello world",
-            timestamps=timestamps
-        )
-        assert result.timestamps is not None
-        assert len(result.timestamps) == 2
 
 
 class TestSTTEngine:
@@ -72,9 +36,15 @@ class TestSTTEngine:
         from services.stt_server import STTEngine
 
         engine = STTEngine()
-        import platform; expected = "qwen_asr_mlx_native_small" if (platform.machine() == "arm64" and platform.system() == "Darwin") else "whisper_turbo"; assert engine.default_model == expected
+        import platform
+
+        expected = (
+            "qwen_asr_mlx_native_small"
+            if (platform.machine() == "arm64" and platform.system() == "Darwin")
+            else "whisper_turbo"
+        )
+        assert engine.default_model == expected
         assert not engine._is_loaded
-        assert not engine._aligner_loaded
         assert not engine._loading
 
     def test_available_models(self):
@@ -103,16 +73,6 @@ class TestSTTEngine:
 
         engine._is_loaded = True
         assert engine.is_model_loaded()
-
-    def test_is_aligner_loaded(self):
-        """Test aligner loaded state"""
-        from services.stt_server import STTEngine
-
-        engine = STTEngine()
-        assert not engine.is_aligner_loaded()
-
-        engine._aligner_loaded = True
-        assert engine.is_aligner_loaded()
 
     def test_get_stats(self):
         """Test statistics"""
@@ -168,15 +128,104 @@ class TestSTTEngine:
         with pytest.raises(RuntimeError, match="Failed to load STT model"):
             await engine.transcribe(b"fake audio")
 
+    @pytest.mark.asyncio
+    async def test_transcribe_whisper_mlx_returns_result(self, monkeypatch):
+        """whisper_mlx 分支必须返回 TranscriptionResult 而非元组(H2)"""
+        from services.stt_server import STTEngine, TranscriptionResult
+
+        engine = STTEngine()
+        engine._is_loaded = True
+        engine._model_type = "whisper_mlx"
+        engine._model = {"model_id": "mock"}
+
+        # 注入 fake mlx_whisper 模块,避免真实依赖
+        import sys
+        import types
+
+        fake_mlx_whisper = types.ModuleType("mlx_whisper")
+        fake_mlx_whisper.transcribe = lambda *a, **k: {"text": "hello", "language": "en"}
+        monkeypatch.setitem(sys.modules, "mlx_whisper", fake_mlx_whisper)
+
+        audio = np.zeros(16000, dtype=np.int16).tobytes()
+        result = await engine.transcribe(audio)
+        assert isinstance(result, TranscriptionResult)
+        assert result.text == "hello"
+
+    @pytest.mark.asyncio
+    async def test_transcribe_whisper_cpp_returns_result(self, monkeypatch):
+        """whisper_cpp 分支必须返回 TranscriptionResult 且无 asyncio.run 嵌套(H2/H3)"""
+        from services.stt_server import STTEngine, TranscriptionResult
+
+        engine = STTEngine()
+        engine._is_loaded = True
+        engine._model_type = "whisper_cpp"
+
+        class FakeWhisperCpp:
+            async def transcribe(self, audio_data, language="auto", sample_rate=16000):
+                return TranscriptionResult(text="cpp result", language="en")
+
+        engine._model = FakeWhisperCpp()
+
+        audio = np.zeros(16000, dtype=np.int16).tobytes()
+        result = await engine.transcribe(audio)
+        assert isinstance(result, TranscriptionResult)
+        assert result.text == "cpp result"
+
+    @pytest.mark.asyncio
+    async def test_transcribe_whisper_turbo_returns_result(self):
+        """whisper_turbo 分支必须返回 TranscriptionResult 而非元组(H2)"""
+        from services.stt_server import STTEngine, TranscriptionResult
+
+        engine = STTEngine()
+        engine._is_loaded = True
+        engine._model_type = "whisper_turbo"
+
+        class FakeTurbo:
+            def __call__(self, audio, generate_kwargs=None):
+                return {"text": "turbo result"}
+
+        engine._model = FakeTurbo()
+
+        audio = np.zeros(16000, dtype=np.int16).tobytes()
+        result = await engine.transcribe(audio)
+        assert isinstance(result, TranscriptionResult)
+        assert result.text == "turbo result"
+
+    @pytest.mark.asyncio
+    async def test_transcribe_qwen_transformers_returns_result(self):
+        """qwen transformers 分支必须返回 TranscriptionResult 而非元组(H2)"""
+        from services.stt_server import STTEngine, TranscriptionResult
+
+        engine = STTEngine()
+        engine._is_loaded = True
+        engine._model_type = "qwen_transformers"
+
+        class FakeResult:
+            text = "qwen result"
+            language = "zh"
+
+        class FakeQwen:
+            def transcribe(self, audio, language=None):
+                return [FakeResult()]
+
+        engine._model = FakeQwen()
+
+        audio = np.zeros(16000, dtype=np.int16).tobytes()
+        result = await engine.transcribe(audio)
+        assert isinstance(result, TranscriptionResult)
+        assert result.text == "qwen result"
+        assert result.language == "zh"
+
 
 class TestStructuredLogging:
     """Test structured logging"""
 
     def test_log_formatter(self):
         """Test StructuredLogFormatter"""
-        import logging
-        from services.stt_server import StructuredLogFormatter
         import json
+        import logging
+
+        from services.stt_server import StructuredLogFormatter
 
         formatter = StructuredLogFormatter()
         record = logging.LogRecord(
@@ -237,10 +286,10 @@ class TestModels:
         error = ErrorResponse(
             error_code="E5001",
             error_message="Test error",
-            request_id="test-123",
         )
         assert error.error_code == "E5001"
-        assert error.request_id == "test-123"
+        assert error.error_message == "Test error"
+        assert "error_code" in error.to_dict()
 
 
 class TestTranscriptionRequest:
@@ -252,15 +301,13 @@ class TestTranscriptionRequest:
 
         req = TranscriptionRequest()
         assert req.language == "auto"
-        assert req.return_timestamps is False
 
     def test_custom_values(self):
         """Test custom values"""
         from services.stt_server import TranscriptionRequest
 
-        req = TranscriptionRequest(language="zh", return_timestamps=True)
+        req = TranscriptionRequest(language="zh")
         assert req.language == "zh"
-        assert req.return_timestamps is True
 
 
 # Integration tests (require actual model loading)

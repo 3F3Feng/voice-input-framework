@@ -1,9 +1,11 @@
 """
 Tests for LLM Server
 """
-import pytest
+
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add project path
 project_dir = Path(__file__).parent.parent
@@ -26,10 +28,7 @@ class TestProcessRequest:
         """Test request with options"""
         from services.llm_server import ProcessRequest
 
-        req = ProcessRequest(
-            text="Test",
-            options={"temperature": 0.7, "max_tokens": 100}
-        )
+        req = ProcessRequest(text="Test", options={"temperature": 0.7, "max_tokens": 100})
         assert req.options["temperature"] == 0.7
         assert req.options["max_tokens"] == 100
 
@@ -45,7 +44,7 @@ class TestProcessResult:
             text="Processed text",
             original_text="Original text",
             llm_latency_ms=100.0,
-            model="Qwen3.5-4B-OptiQ"
+            model="Qwen3.5-4B-OptiQ",
         )
         assert result.text == "Processed text"
         assert result.original_text == "Original text"
@@ -56,11 +55,7 @@ class TestProcessResult:
         from services.llm_server import ProcessResult
 
         result = ProcessResult(
-            text="",
-            original_text="Original",
-            llm_latency_ms=0.0,
-            model="",
-            success=False
+            text="", original_text="Original", llm_latency_ms=0.0, model="", success=False
         )
         assert result.success is False
 
@@ -76,7 +71,7 @@ class TestModelInfo:
             name="Qwen3.5-4B-OptiQ",
             description="Fast optimization model",
             is_loaded=True,
-            is_current=True
+            is_current=True,
         )
         assert info.name == "Qwen3.5-4B-OptiQ"
         assert info.is_loaded is True
@@ -95,7 +90,7 @@ class TestHealthStatus:
             current_model="Qwen3.5-4B-OptiQ",
             loaded_models=["Qwen3.5-4B-OptiQ"],
             active_connections=5,
-            is_processing=False
+            is_processing=False,
         )
         assert health.status == "ok"
         assert health.uptime_seconds == 3600.0
@@ -206,7 +201,8 @@ class TestProcessingLogic:
             if "<think>" in cleaned:
                 # Remove think tags
                 import re
-                cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL)
+
+                cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
             assert cleaned == expected
 
 

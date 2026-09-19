@@ -12,7 +12,6 @@ import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-
 from server.models.base import BaseSTTEngine, STTEngineError
 from shared.data_types import TranscriptionResult
 
@@ -46,6 +45,12 @@ class WhisperCppEngine(BaseSTTEngine):
         self.model_path = os.path.expanduser(self.model_config["model_path"])
 
     async def load(self) -> None:
+        if self._is_loaded:
+            return
+        self.load_sync()
+
+    def load_sync(self) -> None:
+        """同步加载(无 await,供 executor/同步上下文调用)"""
         if self._is_loaded:
             return
 

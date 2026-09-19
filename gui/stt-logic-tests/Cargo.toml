@@ -1,0 +1,19 @@
+[package]
+name = "stt-logic-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# 轻量测试 crate:不依赖 tauri,仅在 Linux/macOS/Windows 上验证
+# gui/src-tauri/src/stt.rs 的纯逻辑(URL 构造、协议序列化、消息解析)。
+# 完整 Tauri 集成(录音/快捷键)仍需平台环境,见 docs/rust-client-verification.md
+
+[dependencies]
+# rustls 避免系统 openssl-dev 依赖,便于无 root 环境编译测试
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+base64 = "0.22"

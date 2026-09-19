@@ -10,18 +10,18 @@
 """
 
 import logging
-import time
+import sys
 import threading
+import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Optional, Callable
 
 import PySimpleGUI as sg
 
+from .auto_start import AutoStartManager
+from .floating_indicator import FloatingIndicator, ProcessingIndicator
 from .hotkey_manager import HotkeyPresets
 from .tray_manager import TrayIconManager, TrayStatus
-from .floating_indicator import FloatingIndicator, ProcessingIndicator
-from .auto_start import AutoStartManager
-from .update_checker import check_for_updates, format_version_message
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,9 @@ BUTTON_COLOR = ("white", "gray")
 
 # 焦点管理函数（Windows）
 try:
-    import win32gui
     import win32con
+    import win32gui
+
     WINAPI_AVAILABLE = True
 except ImportError:
     WINAPI_AVAILABLE = False
@@ -68,9 +69,11 @@ def restore_focus(hwnd):
 
 def restore_focus_later(hwnd, delay_ms: int = 100):
     """延迟一段时间后恢复焦点"""
+
     def _restore():
         time.sleep(delay_ms / 1000.0)
         restore_focus(hwnd)
+
     thread = threading.Thread(target=_restore, daemon=True)
     thread.start()
 
@@ -79,6 +82,7 @@ def get_input_cursor_position():
     """获取合适的光标位置显示浮标"""
     try:
         import pyautogui
+
         x, y = pyautogui.position()
         return (x, y - 20)
     except Exception as e:
@@ -89,200 +93,426 @@ def get_input_cursor_position():
 class MainWindow:
     """主窗口 UI — 负责布局构建和 UI 元素更新"""
 
-    def __init__(self, config_manager, audio_devices: dict,
-                 server_host: str, server_port: int):
+    def __init__(self, config_manager, audio_devices: dict, server_host: str, server_port: int):
         self.config_manager = config_manager
         self.audio_devices = audio_devices
         self.server_host = server_host
         self.server_port = server_port
-        self.window: Optional[sg.Window] = None
+        self.window: sg.Window | None = None
 
     def build_layout(self) -> list:
         """构建 PySimpleGUI 布局"""
         # 获取第一个设备名称作为默认值
         default_device_name = (
-            list(self.audio_devices.values())[0]
-            if self.audio_devices else "默认设备"
+            list(self.audio_devices.values())[0] if self.audio_devices else "默认设备"
         )
 
         layout = [
-            [sg.Text("🎤 Voice Input v1.1", font=("Helvetica", 14, "bold"),
-                     justification="center", expand_x=True,
-                     background_color=BACKGROUND_COLOR,
-                     text_color=TITLE_TEXT_COLOR)],
+            [
+                sg.Text(
+                    "🎤 Voice Input v1.1",
+                    font=("Helvetica", 14, "bold"),
+                    justification="center",
+                    expand_x=True,
+                    background_color=BACKGROUND_COLOR,
+                    text_color=TITLE_TEXT_COLOR,
+                )
+            ],
             [sg.HorizontalSeparator()],
-
             # 连接状态
-            [sg.Text(f"服务器: {self.server_host}:{self.server_port}",
-                     size=(50, 1), background_color=BACKGROUND_COLOR,
-                     text_color=TEXT_COLOR),
-             sg.Text("未连接", key="-STATUS-", text_color="red",
-                     size=(15, 1), background_color=BACKGROUND_COLOR)],
-
+            [
+                sg.Text(
+                    f"服务器: {self.server_host}:{self.server_port}",
+                    size=(50, 1),
+                    background_color=BACKGROUND_COLOR,
+                    text_color=TEXT_COLOR,
+                ),
+                sg.Text(
+                    "未连接",
+                    key="-STATUS-",
+                    text_color="red",
+                    size=(15, 1),
+                    background_color=BACKGROUND_COLOR,
+                ),
+            ],
             # 快捷键设置
-            [sg.Frame("快捷键设置", [
-                [sg.Text("开始/停止录音:", background_color=BACKGROUND_COLOR,
-                         text_color=TEXT_COLOR),
-                 sg.Input(self.config_manager.hotkey, key="-HOTKEY-",
-                          size=(30, 1)),
-                 sg.Button("录制", key="-RECORD-HOTKEY-", size=(8, 1)),
-                 sg.Button("更新", key="-UPDATE-HOTKEY-", size=(8, 1)),
-                 sg.Button("清除", key="-CLEAR-HOTKEY-", size=(8, 1))],
-                [sg.Checkbox("区分左右修饰键",
-                             default=self.config_manager.distinguish_left_right,
-                             key="-DISTINGUISH-LR-", enable_events=True,
-                             background_color=BACKGROUND_COLOR,
-                             text_color=TEXT_COLOR)],
-                [sg.Text("(按住快捷键说话，松开后自动输入)",
-                         text_color=TIP_TEXT_COLOR, font=("Helvetica", 9),
-                         background_color=BACKGROUND_COLOR)],
-                [sg.Text("预设方案:", background_color=BACKGROUND_COLOR,
-                         text_color=TEXT_COLOR),
-                 sg.Combo(list(HotkeyPresets.get_preset_names()),
-                          default_value="default", key="-HOTKEY-PRESET-",
-                          size=(20, 1), readonly=True, enable_events=True),
-                 sg.Button("应用预设", key="-APPLY-PRESET-", size=(10, 1))],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
-                expand_x=True)],
-
+            [
+                sg.Frame(
+                    "快捷键设置",
+                    [
+                        [
+                            sg.Text(
+                                "开始/停止录音:",
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            ),
+                            sg.Input(self.config_manager.hotkey, key="-HOTKEY-", size=(30, 1)),
+                            sg.Button("录制", key="-RECORD-HOTKEY-", size=(8, 1)),
+                            sg.Button("更新", key="-UPDATE-HOTKEY-", size=(8, 1)),
+                            sg.Button("清除", key="-CLEAR-HOTKEY-", size=(8, 1)),
+                        ],
+                        [
+                            sg.Checkbox(
+                                "区分左右修饰键",
+                                default=self.config_manager.distinguish_left_right,
+                                key="-DISTINGUISH-LR-",
+                                enable_events=True,
+                                disabled=(sys.platform == "darwin"),
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            )
+                        ],
+                        [
+                            sg.Text(
+                                "(按住快捷键说话，松开后自动输入)",
+                                text_color=TIP_TEXT_COLOR,
+                                font=("Helvetica", 9),
+                                background_color=BACKGROUND_COLOR,
+                            )
+                        ],
+                        [
+                            sg.Text(
+                                "预设方案:",
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            ),
+                            sg.Combo(
+                                list(HotkeyPresets.get_preset_names()),
+                                default_value="default",
+                                key="-HOTKEY-PRESET-",
+                                size=(20, 1),
+                                readonly=True,
+                                enable_events=True,
+                            ),
+                            sg.Button("应用预设", key="-APPLY-PRESET-", size=(10, 1)),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 麦克风选择
-            [sg.Frame("麦克风设置", [
-                [sg.Text("麦克风:", background_color=BACKGROUND_COLOR,
-                         text_color=TEXT_COLOR),
-                 sg.Combo(list(self.audio_devices.values()),
-                          default_value=default_device_name,
-                          key="-MICROPHONE-", size=(50, 1), readonly=True)],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
-                expand_x=True)],
-
+            [
+                sg.Frame(
+                    "麦克风设置",
+                    [
+                        [
+                            sg.Text(
+                                "麦克风:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Combo(
+                                list(self.audio_devices.values()),
+                                default_value=default_device_name,
+                                key="-MICROPHONE-",
+                                size=(50, 1),
+                                readonly=True,
+                                enable_events=True,
+                            ),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 服务器配置
-            [sg.Frame("服务器配置", [
-                [sg.Text("主机:", background_color=BACKGROUND_COLOR,
-                         text_color=TEXT_COLOR),
-                 sg.Input(self.server_host, key="-HOST-", size=(20, 1)),
-                 sg.Text("端口:", background_color=BACKGROUND_COLOR,
-                         text_color=TEXT_COLOR),
-                 sg.Input(str(self.server_port), key="-PORT-", size=(8, 1))],
-                [sg.Button("连接", key="-CONNECT-",
-                           button_color=("white", "green"), size=(10, 1)),
-                 sg.Text("", key="-CONN-STATUS-", text_color="yellow",
-                         background_color=BACKGROUND_COLOR)],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
-                expand_x=True)],
-
+            [
+                sg.Frame(
+                    "服务器配置",
+                    [
+                        [
+                            sg.Text(
+                                "主机:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Input(self.server_host, key="-HOST-", size=(20, 1)),
+                            sg.Text(
+                                "端口:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Input(str(self.server_port), key="-PORT-", size=(8, 1)),
+                        ],
+                        [
+                            sg.Button(
+                                "连接",
+                                key="-CONNECT-",
+                                button_color=("white", "green"),
+                                size=(10, 1),
+                            ),
+                            sg.Text(
+                                "",
+                                key="-CONN-STATUS-",
+                                text_color="yellow",
+                                background_color=BACKGROUND_COLOR,
+                            ),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 模型选择
-            [sg.Frame("模型设置", [
-                [sg.Text("STT模型:", background_color=BACKGROUND_COLOR,
-                         text_color=TEXT_COLOR),
-                 sg.Combo([], default_value="", key="-MODEL-SELECT-",
-                          size=(25, 1), readonly=True),
-                 sg.Button("刷新", key="-REFRESH-MODELS-", size=(8, 1)),
-                 sg.Button("切换", key="-SWITCH-MODEL-",
-                           button_color=("white", "blue"), size=(8, 1))],
-                [sg.Text("", key="-MODEL-STATUS-", text_color="yellow",
-                         size=(70, 1), background_color=BACKGROUND_COLOR)],
-                [sg.HorizontalSeparator()],
-                [sg.Text("LLM模型:", background_color=BACKGROUND_COLOR,
-                         text_color=TEXT_COLOR),
-                 sg.Combo([], default_value="", key="-LLM-MODEL-SELECT-",
-                          size=(25, 1), readonly=True),
-                 sg.Button("刷新", key="-REFRESH-LLM-MODELS-", size=(8, 1)),
-                 sg.Button("切换", key="-SWITCH-LLM-MODEL-",
-                           button_color=("white", "purple"), size=(8, 1)),
-                 sg.Text("", size=(5, 1), background_color=BACKGROUND_COLOR),
-                 sg.Checkbox("启用LLM后处理", key="-LLM-ENABLED-",
-                             enable_events=True,
-                             default=self.config_manager.llm_enabled,
-                             text_color=TEXT_COLOR,
-                             background_color=BACKGROUND_COLOR,
-                             size=(15, 1))],
-                [sg.Text("", key="-LLM-MODEL-STATUS-", text_color="cyan",
-                         size=(70, 1), background_color=BACKGROUND_COLOR)],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
-                expand_x=True)],
-
+            [
+                sg.Frame(
+                    "模型设置",
+                    [
+                        [
+                            sg.Text(
+                                "STT模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Combo(
+                                [],
+                                default_value="",
+                                key="-MODEL-SELECT-",
+                                size=(25, 1),
+                                readonly=True,
+                                enable_events=True,
+                            ),
+                            sg.Button("刷新", key="-REFRESH-MODELS-", size=(8, 1)),
+                            sg.Button(
+                                "切换",
+                                key="-SWITCH-MODEL-",
+                                button_color=("white", "blue"),
+                                size=(8, 1),
+                            ),
+                        ],
+                        [
+                            sg.Text(
+                                "",
+                                key="-MODEL-STATUS-",
+                                text_color="yellow",
+                                size=(70, 1),
+                                background_color=BACKGROUND_COLOR,
+                            )
+                        ],
+                        [sg.HorizontalSeparator()],
+                        [
+                            sg.Text(
+                                "LLM模型:", background_color=BACKGROUND_COLOR, text_color=TEXT_COLOR
+                            ),
+                            sg.Combo(
+                                [],
+                                default_value="",
+                                key="-LLM-MODEL-SELECT-",
+                                size=(25, 1),
+                                readonly=True,
+                                enable_events=True,
+                            ),
+                            sg.Button("刷新", key="-REFRESH-LLM-MODELS-", size=(8, 1)),
+                            sg.Button(
+                                "切换",
+                                key="-SWITCH-LLM-MODEL-",
+                                button_color=("white", "purple"),
+                                size=(8, 1),
+                            ),
+                            sg.Text("", size=(5, 1), background_color=BACKGROUND_COLOR),
+                            sg.Checkbox(
+                                "启用LLM后处理",
+                                key="-LLM-ENABLED-",
+                                enable_events=True,
+                                default=self.config_manager.llm_enabled,
+                                text_color=TEXT_COLOR,
+                                background_color=BACKGROUND_COLOR,
+                                size=(15, 1),
+                            ),
+                        ],
+                        [
+                            sg.Text(
+                                "",
+                                key="-LLM-MODEL-STATUS-",
+                                text_color="cyan",
+                                size=(70, 1),
+                                background_color=BACKGROUND_COLOR,
+                            )
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # LLM 提示词配置
             [sg.HorizontalSeparator()],
-            [sg.Frame("LLM 提示词配置", [
-                [sg.Multiline("", key="-LLM-PROMPT-", size=(60, 5),
-                              font=("Consolas", 9))],
-                [sg.Button("加载", key="-LOAD-PROMPT-", size=(8, 1)),
-                 sg.Button("保存", key="-SAVE-PROMPT-", size=(8, 1)),
-                 sg.Text("", key="-PROMPT-STATUS-", text_color="yellow",
-                         size=(30, 1))],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
-                expand_x=True)],
-
+            [
+                sg.Frame(
+                    "LLM 提示词配置",
+                    [
+                        [sg.Multiline("", key="-LLM-PROMPT-", size=(60, 5), font=("Consolas", 9))],
+                        [
+                            sg.Button("加载", key="-LOAD-PROMPT-", size=(8, 1)),
+                            sg.Button("保存", key="-SAVE-PROMPT-", size=(8, 1)),
+                            sg.Text("", key="-PROMPT-STATUS-", text_color="yellow", size=(30, 1)),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 界面设置
-            [sg.Frame("界面设置", [
-                [sg.Checkbox("启动时最小化到托盘",
-                             default=self.config_manager.start_minimized,
-                             key="-START-MINIMIZED-", enable_events=True,
-                             background_color=BACKGROUND_COLOR,
-                             text_color=TEXT_COLOR)],
-                [sg.Checkbox("使用悬浮录音指示器",
-                             default=self.config_manager.use_floating_indicator,
-                             key="-USE-INDICATOR-", enable_events=True,
-                             background_color=BACKGROUND_COLOR,
-                             text_color=TEXT_COLOR),
-                 sg.Button("显示主窗口", key="-SHOW-WINDOW-",
-                           size=(15, 1))],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
-                expand_x=True)],
-
+            [
+                sg.Frame(
+                    "界面设置",
+                    [
+                        [
+                            sg.Checkbox(
+                                (
+                                    "启动时最小化"
+                                    if sys.platform == "darwin"
+                                    else "启动时最小化到托盘"
+                                ),
+                                default=self.config_manager.start_minimized,
+                                key="-START-MINIMIZED-",
+                                enable_events=True,
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            )
+                        ],
+                        [
+                            sg.Checkbox(
+                                "使用悬浮录音指示器",
+                                default=self.config_manager.use_floating_indicator,
+                                key="-USE-INDICATOR-",
+                                enable_events=True,
+                                background_color=BACKGROUND_COLOR,
+                                text_color=TEXT_COLOR,
+                            ),
+                            sg.Button("显示主窗口", key="-SHOW-WINDOW-", size=(15, 1)),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 识别结果
-            [sg.Frame("识别结果", [
-                [sg.Multiline("", key="-RESULT-", size=(80, 8),
-                              font=("Consolas", 10), autoscroll=True,
-                              disabled=True, background_color="#1e1e1e",
-                              text_color="white")],
-                [sg.Button("复制", key="-COPY-", size=(10, 1)),
-                 sg.Button("清空", key="-CLEAR-", size=(10, 1)),
-                 sg.Button("输入（自动）", key="-PASTE-", size=(15, 1))],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
-                expand_x=True)],
-
+            [
+                sg.Frame(
+                    "识别结果",
+                    [
+                        [
+                            sg.Multiline(
+                                "",
+                                key="-RESULT-",
+                                size=(80, 8),
+                                font=("Consolas", 10),
+                                autoscroll=True,
+                                disabled=True,
+                                background_color="#1e1e1e",
+                                text_color="white",
+                            )
+                        ],
+                        [
+                            sg.Button("复制", key="-COPY-", size=(10, 1)),
+                            sg.Button("清空", key="-CLEAR-", size=(10, 1)),
+                            sg.Button("输入（自动）", key="-PASTE-", size=(15, 1)),
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 日志
-            [sg.Frame("日志", [
-                [sg.Multiline("", key="-LOG-", size=(80, 5),
-                              font=("Consolas", 10), autoscroll=True,
-                              disabled=True, background_color="#1e1e1e",
-                              text_color="#aaaaaa")],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
-                expand_x=True)],
-
+            [
+                sg.Frame(
+                    "日志",
+                    [
+                        [
+                            sg.Multiline(
+                                "",
+                                key="-LOG-",
+                                size=(80, 5),
+                                font=("Consolas", 10),
+                                autoscroll=True,
+                                disabled=True,
+                                background_color="#1e1e1e",
+                                text_color="#aaaaaa",
+                            )
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
             # 错误信息
-            [sg.Frame("错误信息", [
-                [sg.Multiline("", key="-ERROR-", size=(80, 3),
-                              font=("Consolas", 10), autoscroll=True,
-                              disabled=True, background_color="#3e1e1e",
-                              text_color="#ff8888")],
-            ], background_color=BACKGROUND_COLOR, title_color=GROUP_TEXT_COLOR,
-                expand_x=True)],
-
-            [sg.Push(background_color=BACKGROUND_COLOR),
-             sg.Button("退出", key="-EXIT-",
-                       button_color=("white", "gray"), size=(10, 1)),
-             sg.Button("最小化到托盘", key="-MINIMIZE-TRAY-", size=(15, 1)),
-             sg.Push(background_color=BACKGROUND_COLOR)],
+            [
+                sg.Frame(
+                    "错误信息",
+                    [
+                        [
+                            sg.Multiline(
+                                "",
+                                key="-ERROR-",
+                                size=(80, 3),
+                                font=("Consolas", 10),
+                                autoscroll=True,
+                                disabled=True,
+                                background_color="#3e1e1e",
+                                text_color="#ff8888",
+                            )
+                        ],
+                    ],
+                    background_color=BACKGROUND_COLOR,
+                    title_color=GROUP_TEXT_COLOR,
+                    expand_x=True,
+                )
+            ],
+            [
+                sg.Push(background_color=BACKGROUND_COLOR),
+                sg.Button("退出", key="-EXIT-", button_color=("white", "gray"), size=(10, 1)),
+                sg.Button(
+                    "最小化到Dock" if sys.platform == "darwin" else "最小化到托盘",
+                    key="-MINIMIZE-TRAY-",
+                    size=(15, 1),
+                ),
+                sg.Push(background_color=BACKGROUND_COLOR),
+            ],
         ]
         return layout
 
-    def create_window(self, start_minimized: bool = False) -> sg.Window:
-        """创建并返回主窗口"""
+    def create_window(self, start_minimized: bool = False, visible: bool = True) -> sg.Window:
+        """创建并返回主窗口
+
+        Args:
+            start_minimized: 启动即最小化
+            visible: False 时创建后立即隐藏(供"先做权限检测再显示"的启动流程)
+        """
         sg.theme("DarkBlue3")
         layout = self.build_layout()
+
+        # macOS:用标准窗口(no_titlebar=False)。no_titlebar 在 macOS 由
+        # PySimpleGUI 用 wm_overrideredirect 实现,override-redirect 窗口
+        # 无法 iconify(最小化)→ Dock 点击无法恢复。标准窗口原生支持
+        # 最小化 + Dock 恢复。
+        use_no_titlebar = sys.platform != "darwin"
 
         self.window = sg.Window(
             "🎤 Voice Input Framework v1.1",
             layout,
             finalize=True,
+            # 保持置顶:实测去掉 keep_on_top 会导致 macOS 启动卡死(原因未明,
+            # PySimpleGUI hide/un_hide 不依赖该参数)。浮标显示时会把主窗口
+            # 临时降级为非 topmost(见 app._lower_main_window_for_indicator),
+            # 因此主窗口置顶不会盖住浮标。
             keep_on_top=True,
-            no_titlebar=True,
+            no_titlebar=use_no_titlebar,
             grab_anywhere=True,
             background_color="#2e2e2e",
             button_color=("white", "#4e4e4e"),
         )
+
+        # 启动时最小化:macOS 标准窗口可 iconify(最小化到 Dock,原生恢复);
+        # 其他平台无边框窗口用 hide(配合托盘)
+        if start_minimized:
+            if sys.platform == "darwin":
+                self.window.minimize()
+            else:
+                self.window.hide()
+        elif not visible:
+            # 先隐藏,完成权限检测后再显示
+            self.window.hide()
 
         return self.window
 
@@ -319,9 +549,7 @@ class MainWindow:
             return
         if models:
             self.window["-MODEL-SELECT-"].update(values=models, value=current)
-            self.window["-MODEL-STATUS-"].update(
-                f"当前模型: {current}", text_color="yellow"
-            )
+            self.window["-MODEL-STATUS-"].update(f"当前模型: {current}", text_color="yellow")
         else:
             self.window["-MODEL-SELECT-"].update(values=[], value="")
             self.window["-MODEL-STATUS-"].update("未找到可用模型", text_color="red")
@@ -331,8 +559,7 @@ class MainWindow:
         if self.window:
             self.window["-MODEL-STATUS-"].update(text, text_color=color)
 
-    def update_llm_model_list(self, models: list, current: str,
-                              enabled: bool = True):
+    def update_llm_model_list(self, models: list, current: str, enabled: bool = True):
         """更新 LLM 模型下拉列表"""
         if not self.window:
             return
@@ -376,6 +603,8 @@ class MainWindow:
     def hide(self):
         """隐藏窗口"""
         if self.window:
+            # macOS 无边框窗口(override-redirect)不能 iconify,统一用
+            # withdraw 隐藏;Dock 点击恢复由 NSApp delegate 处理
             self.window.hide()
 
     def un_hide(self):
@@ -398,8 +627,7 @@ class MainWindow:
 class TrayMenu:
     """系统托盘菜单 — 管理托盘图标和回调"""
 
-    def __init__(self, tray_manager: TrayIconManager,
-                 auto_start_manager: AutoStartManager):
+    def __init__(self, tray_manager: TrayIconManager, auto_start_manager: AutoStartManager):
         self.tray_manager = tray_manager
         self.auto_start_manager = auto_start_manager
 
@@ -463,23 +691,27 @@ class IndicatorManager:
         """显示录音指示器"""
         if not self.use_floating_indicator:
             return
-        focus_hwnd = get_foreground_window()
-        if cursor_pos is None:
-            cursor_pos = get_input_cursor_position()
-        self.floating_indicator.show(cursor_pos=cursor_pos)
-        if focus_hwnd:
-            restore_focus_later(focus_hwnd, delay_ms=50)
+        try:
+            focus_hwnd = get_foreground_window()
+            # cursor_pos 不传时由指示器内部用 pynput 取鼠标位置
+            # (macOS 上 pyautogui.position() 首次调用可能慢/需权限,易卡住主循环)
+            self.floating_indicator.show(cursor_pos=cursor_pos)
+            if focus_hwnd:
+                restore_focus_later(focus_hwnd, delay_ms=50)
+        except Exception as e:
+            logger.warning(f"显示录音指示器失败: {e}")
 
     def show_processing(self, cursor_pos=None):
         """显示处理中指示器"""
         if not self.use_floating_indicator:
             return
-        focus_hwnd = get_foreground_window()
-        if cursor_pos is None:
-            cursor_pos = get_input_cursor_position()
-        self.processing_indicator.show(cursor_pos=cursor_pos)
-        if focus_hwnd:
-            restore_focus_later(focus_hwnd, delay_ms=50)
+        try:
+            focus_hwnd = get_foreground_window()
+            self.processing_indicator.show(cursor_pos=cursor_pos)
+            if focus_hwnd:
+                restore_focus_later(focus_hwnd, delay_ms=50)
+        except Exception as e:
+            logger.warning(f"显示处理中指示器失败: {e}")
 
     def set_processing_status(self, text: str, color: str):
         """更新处理中指示器状态"""
@@ -505,17 +737,21 @@ class IndicatorManager:
     def process_events(self, timeout: int = 0):
         """处理指示器事件"""
         try:
-            if (self.floating_indicator
-                    and hasattr(self.floating_indicator, 'is_visible')
-                    and self.floating_indicator.is_visible):
+            if (
+                self.floating_indicator
+                and hasattr(self.floating_indicator, "is_visible")
+                and self.floating_indicator.is_visible
+            ):
                 self.floating_indicator.process_events(timeout=timeout)
         except Exception as e:
             logger.warning(f"Floating indicator error: {e}")
 
         try:
-            if (self.processing_indicator
-                    and hasattr(self.processing_indicator, 'is_visible')
-                    and self.processing_indicator.is_visible):
+            if (
+                self.processing_indicator
+                and hasattr(self.processing_indicator, "is_visible")
+                and self.processing_indicator.is_visible
+            ):
                 self.processing_indicator.process_events(timeout=timeout)
         except Exception as e:
             logger.warning(f"Processing indicator error: {e}")
