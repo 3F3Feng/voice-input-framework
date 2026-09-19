@@ -97,7 +97,15 @@ if [[ "$BUNDLES" == *dmg* ]]; then
   warn "打 DMG 需要 Finder 自动化权限(bundle_dmg.sh 用 osascript 排版窗口);
   在 ssh / CI / 受限终端里会失败。失败时改用默认的只打 .app。"
 fi
-(cd "$GUI_DIR" && npm run tauri build -- --bundles "$BUNDLES")
+# 关掉更新器产物。tauri.conf.json 里 `createUpdaterArtifacts` 是开的(发版流水线
+# 要靠它产出 .app.tar.gz 和签名),而一旦它开着、配置里又有 updater pubkey,
+# tauri 就**要求**必须有 TAURI_SIGNING_PRIVATE_KEY,否则直接报错退出:
+#   "A public key has been found, but no private key."
+# 本地构建只是为了自己装一个来用,不发布、没人会去更新它,没有理由要求开发者
+# 手里有发布签名私钥。所以在这里用命令行覆盖把它关掉。
+(cd "$GUI_DIR" && npm run tauri build -- \
+   --bundles "$BUNDLES" \
+   --config src-tauri/tauri.no-updater.conf.json)
 
 APP_PATH="$GUI_DIR/src-tauri/target/release/bundle/macos/$APP_NAME"
 [[ -d "$APP_PATH" ]] || die "构建产物未找到: $APP_PATH"

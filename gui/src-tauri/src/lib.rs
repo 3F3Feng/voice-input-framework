@@ -918,6 +918,11 @@ async fn detect_local_server() -> Result<server_manager::DetectResult, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 更新器插件以前只在 Cargo.toml 里挂着,从没注册过:update.rs 自己用
+        // reqwest 下载再启动安装器,`latest.json` 里的签名一眼都没看。注册它之后
+        // 端点和公钥统一由 tauri.conf.json 的 plugins.updater 提供,签名验不过
+        // 就装不上。
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(

@@ -121,3 +121,51 @@ CI 产物还是 ad-hoc 签名(runner 上没有证书),仅适合做跨平台构�
 但要接受权限每次重新授予。
 
 **权限授了却显示未授权** —— 辅助功能常见需要**重启应用**才生效,退出重开一次。
+
+## 和发布构建的关系
+
+这个脚本产出的是**给你自己装的**包,不是发布包。两者有一处刻意的不同:
+
+脚本用 `--config src-tauri/tauri.no-updater.conf.json` 关掉了更新器产物
+(`.app.tar.gz` 和它的 minisign 签名)。原因是 `tauri.conf.json` 里配了 updater
+`pubkey`,只要 `createUpdaterArtifacts` 开着,tauri 就**要求**必须有
+`TAURI_SIGNING_PRIVATE_KEY`,否则直接报错:
+
+```
+A public key has been found, but no private key.
+```
+
+本地构建没有理由要求开发者手里有发布签名私钥,所以关掉。发布签名只在
+`.github/workflows/build-release.yml` 里做,密钥存在仓库 secrets 里。
+
+## 发版怎么走
+
+版本号**只有一个来源**:`gui/src-tauri/Cargo.toml` 的 `package.version`。
+`tauri.conf.json` 不写 `version`(tauri 缺省回落到 Cargo.toml)。
+
+```bash
+# 1. 改版本号(只改这一处)+ 写 CHANGELOG
+#    client/__init__.py 的 __version__ 也要跟上,发版流水线会校验
+# 2. 打 tag 推上去
+git tag v2.2.0 && git push origin v2.2.0
+```
+
+流水线会在这些情况下**主动失败**,而不是发出一个装不上的版本:
+
+| 情况 | 为什么必须拦住 |
+|------|----------------|
+| tag 和 `Cargo.toml` / `client/__init__.py` 的版本号对不上 | 客户端自报的版本和清单里的对不上,会陷入「发现新版本 → 更新 → 还是老版本」的死循环 |
+| 构建没产出任何 `.sig` | 签名为空的 `latest.json` 会让每个客户端的更新都失败,且报错和「没网」长得一样 |
+| 私钥和 `tauri.conf.json` 里的 pubkey 不是一对 | tauri 本身只警告一句就照常出包,签出来的更新包客户端一个都验不过 |
+| 某个平台缺更新产物或签名 | 同上,那个平台的用户会一直更新失败 |
+
+### 轮换签名密钥
+
+```bash
+cd gui && npx tauri signer generate -w ~/.tauri/vif.key
+```
+
+把私钥内容存成仓库 secret `TAURI_SIGNING_PRIVATE_KEY`(有密码的话再存
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`),把 `~/.tauri/vif.key.pub` 的内容填进
+`tauri.conf.json` 的 `plugins.updater.pubkey`。两者必须同时换 ——
+**换了 pubkey 之后,用旧密钥签的历史版本就升不上来了**,老用户需要手动装一次新包。

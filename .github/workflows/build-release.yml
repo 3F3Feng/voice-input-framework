@@ -67,6 +67,7 @@ jobs:
         with:
           name: python-windows
           path: dist/*.exe
+          if-no-files-found: error
 
   build-python-macos:
     runs-on: macos-latest
@@ -117,7 +118,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: python-macos
-          path: dist/*
+          # 只要重命名后的那个单文件。用 `dist/*` 会把 pyinstaller 在 macOS 上
+          # 顺带产出的 VoiceInput-v<ver>.app 包整个收走,摊平之后包里的
+          # CodeResources / Info.plist / icon-windowed.icns / 可执行文件就成了
+          # release 资产 —— v2.0.10 的 release 里这四个至今还挂着。
+          path: dist/VoiceInput-v${{ steps.version.outputs.VERSION }}-macos-x64
+          if-no-files-found: error
 
   # ── Tauri GUI Client (Windows + macOS + Linux) ──
   build-tauri:
@@ -163,37 +169,56 @@ jobs:
 
       - name: Build Tauri app
         working-directory: gui
-        run: npx tauri build --target ${{ matrix.target }}
-
-      - name: Get version
-        id: version
-        shell: pwsh
+        # 签名密钥必须传进来。少了它 `createUpdaterArtifacts: true` 会直接让构建
+        # 失败——这是好事:以前的做法是密钥只挂在 build.yml(那条流水线的产物 30 天
+        # 后就删,没人安装),真正出 release 的这条反而没有,于是每次发版都没有 .sig,
+        # latest.json 里三个平台的 signature 全是空串。客户端配了 pubkey,空签名
+        # 一律验不过——用户点「下载安装」永远失败,而且失败得毫无线索。
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          $content = Get-Content "gui/src-tauri/tauri.conf.json" -Raw
-          if ($content -match '"version"\s*:\s*"([^"]+)"') {
-            $version = $matches[1]
-          } else {
-            $version = "0.0.0"
-          }
-          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
-          echo "Version: $version"
+          set -o pipefail
+          npx tauri build --target ${{ matrix.target }} 2>&1 | tee build.log
+
+          # 私钥和配置里的 pubkey 对不上时,tauri 只**警告**一句就照常出包:
+          #   "The updater secret key from `TAURI_SIGNING_PRIVATE_KEY` does not
+          #    match the public key from `plugins > updater > pubkey`"
+          # 那样发出去的签名每一个客户端都验不过,而发版这边一路绿灯,要等用户
+          # 点了更新失败才发现。在这里把它升级成硬失败。
+          if grep -q "does not match the public key" build.log; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY 和 tauri.conf.json 里的 updater pubkey 不是一对,签出来的更新包客户端一个都验不过。"
+            exit 1
+          fi
+
+      # 这里原本有一步从 tauri.conf.json 里正则抠 version,抠不到就退回 "0.0.0"。
+      # 版本号现在只写在 gui/src-tauri/Cargo.toml 里(Tauri 缺省回落到它),
+      # tauri.conf.json 已经没有 version 字段,所以那一步只会稳定产出 "0.0.0";
+      # 而它抠出来的值下面压根没被用到。整步删掉,版本号由 release job 从 tag 取。
 
       - name: Collect artifacts
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist
-          version="${{ steps.version.outputs.VERSION }}"
-          if [ -d "gui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle" ]; then
-            find gui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle -name "*.deb" -exec cp {} dist/ \;
-            find gui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle -name "*.AppImage" -exec cp {} dist/ \;
+          bundle="gui/src-tauri/target/${{ matrix.target }}/release/bundle"
+          [ -d "$bundle" ] || { echo "没有 bundle 目录: $bundle"; exit 1; }
+
+          # 给人下载的安装包
+          find "$bundle" \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" \
+                          -o -name "*setup*.exe" \) -exec cp {} dist/ \;
+
+          # 自动更新用的产物和它们的签名。和安装包是两回事:macOS 的更新器吃的是
+          # .app.tar.gz,不是 .dmg —— 以前 latest.json 指着 .dmg,就算签名对了
+          # 更新器也装不了。
+          find "$bundle" \( -name "*.tar.gz" -o -name "*.sig" \) -exec cp {} dist/ \;
+
+          echo "── dist ──"; ls -la dist/
+          if ! ls dist/*.sig >/dev/null 2>&1; then
+            echo "::error::没有生成任何 .sig,自动更新会装不上。检查 TAURI_SIGNING_PRIVATE_KEY 和 bundle.createUpdaterArtifacts。"
+            exit 1
           fi
-          if [ -d "gui/src-tauri/target/aarch64-apple-darwin/release/bundle" ]; then
-            find gui/src-tauri/target/aarch64-apple-darwin/release/bundle -name "*.dmg" -exec cp {} dist/ \;
-          fi
-          if [ -d "gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle" ]; then
-            find gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle -name "*setup*.exe" -exec cp {} dist/ \;
-          fi
-          ls -la dist/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -211,8 +236,29 @@ jobs:
       - name: Get version
         id: version
         run: |
+          set -euo pipefail
           version="${GITHUB_REF#refs/tags/v}"
           echo "VERSION=$version" >> $GITHUB_OUTPUT
+
+          # tag 是唯一决定产物叫什么名字的东西,但**决定客户端自认为是哪个版本的
+          # 是 Cargo.toml**(Tauri 从它取 version,更新器拿它和 latest.json 比)。
+          # 两者不一致,自动更新就会错乱:比如 tag 打成 v2.3.0 而 Cargo.toml 还是
+          # 2.2.0,装上去的客户端自报 2.2.0,于是每次启动都发现「有新版本 2.3.0」,
+          # 下载装完还是 2.2.0——无限提示更新。所以这里挡住。
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' gui/src-tauri/Cargo.toml | head -1)"
+          if [ "$version" != "$cargo_version" ]; then
+            echo "::error::tag v$version 和 gui/src-tauri/Cargo.toml 的 $cargo_version 对不上。发版前先改 Cargo.toml(版本号唯一来源)。"
+            exit 1
+          fi
+
+          # Python 老客户端自己带一个 __version__,产物文件名按 tag 改过所以看不出来,
+          # 但它是编进二进制里的:v2.0.10 那次发版里就混进了一个 VoiceInput-v2.0.0。
+          py_version="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' client/__init__.py | head -1)"
+          if [ "$version" != "$py_version" ]; then
+            echo "::error::tag v$version 和 client/__init__.py 的 $py_version 对不上。"
+            exit 1
+          fi
+          echo "版本号一致: $version"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -224,33 +270,47 @@ jobs:
 
       - name: Rename assets for clarity
         run: |
+          set -euo pipefail
           cd release-assets
           version="${{ steps.version.outputs.VERSION }}"
-          # Rename all files with clear prefixes
-          for f in */*; do
+
+          # **先摊平,再改名,最后清垃圾。** 顺序不是随手排的:原来是「改名 → 清垃圾
+          # → 摊平」,而清垃圾那一步在根目录执行,垃圾那时还躺在 tauri-macos-latest/
+          # 里面,摊平之后就再没人清了。v2.0.10 的 release 里因此挂着 CodeResources、
+          # Info.plist、icon-windowed.icns、VoiceInput-v2.0.0 四个文件
+          # (pyinstaller 在 macOS 上除了单文件还会产出一个 .app 包,upload-artifact
+          #  的 `path: dist/*` 把包里的内容一并收走了)。
+          find . -mindepth 2 -type f -exec mv -n {} . \;
+          find . -mindepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
+
+          # pyinstaller 的 .app 包内容,不该出现在 release 资产里
+          rm -f CodeResources Info.plist PkgInfo icon-windowed.icns
+
+          # 改名时必须把 .sig 一起带走,否则 latest.json 就和签名配不上对了。
+          ren() {
+            mv "$1" "$2"
+            [ -f "$1.sig" ] && mv "$1.sig" "$2.sig"
+            return 0
+          }
+
+          for f in *; do
             [ -f "$f" ] || continue
-            base=$(basename "$f")
-            if [[ "$base" == *".deb" ]]; then
-              mv "$f" "GUI-Linux-${version}-x64.deb"
-            elif [[ "$base" == *".AppImage" ]]; then
-              mv "$f" "GUI-Linux-${version}-x64.AppImage"
-            elif [[ "$base" == *".dmg" ]]; then
-              mv "$f" "GUI-macOS-${version}-aarch64.dmg"
-            elif [[ "$base" == *"setup"*".exe" ]]; then
-              mv "$f" "GUI-Windows-${version}-x64.exe"
-            elif [[ "$base" == *".msi" ]]; then
-              rm "$f"
-            elif [[ "$base" == *"windows"* ]]; then
-              mv "$f" "GUI-Python-Windows-${version}-x64.exe"
-            elif [[ "$base" == *"macos"* ]]; then
-              mv "$f" "GUI-Python-macOS-${version}-x64"
-            fi
+            case "$f" in
+              # 签名由 ren() 跟着主文件一起改,这里跳过,免得改两次
+              *.sig) continue ;;
+              # 更新器产物。macOS 更新器吃的是 .app.tar.gz,Linux 是 .AppImage.tar.gz;
+              # 这两条必须排在 *.AppImage / *.dmg 前面之外,还要排在任何 *.tar.gz 前面。
+              *.app.tar.gz)      ren "$f" "GUI-macOS-${version}-aarch64.app.tar.gz" ;;
+              *.AppImage.tar.gz) ren "$f" "GUI-Linux-${version}-x64.AppImage.tar.gz" ;;
+              *.deb)             ren "$f" "GUI-Linux-${version}-x64.deb" ;;
+              *.AppImage)        ren "$f" "GUI-Linux-${version}-x64.AppImage" ;;
+              *.dmg)             ren "$f" "GUI-macOS-${version}-aarch64.dmg" ;;
+              *setup*.exe)       ren "$f" "GUI-Windows-${version}-x64.exe" ;;
+              *.msi)             rm -f "$f" "$f.sig" ;;
+              *windows*)         ren "$f" "GUI-Python-Windows-${version}-x64.exe" ;;
+              *macos*)           ren "$f" "GUI-Python-macOS-${version}-x64" ;;
+            esac
           done
-          # Remove extra files
-          rm -f CodeResources icon-windowed.icns Info.plist VoiceInput-v* 2>/dev/null || true
-          # Flatten
-          find . -mindepth 2 -type f -exec mv {} . \; 2>/dev/null || true
-          rm -rf tauri-* python-* 2>/dev/null || true
           ls -la
 
       - name: Generate latest.json for Tauri updater
@@ -289,6 +349,18 @@ jobs:
             - LLM 后处理（可选）
             - 多模型支持：Qwen3-ASR、Whisper
             - 跨平台：Windows、macOS、Linux
+
+            ### 🔄 自动更新
+            客户端会在启动时检查更新,也可以在「设置 → 关于」里手动检查。
+            更新包由 minisign 签名,签名验不过就不会安装。
+
+            > **macOS 首次安装**:这个 `.dmg` 没有经过 Apple 公证,第一次打开会提示
+            > 「已损坏,无法打开」。这是 Gatekeeper 的隔离属性,不是文件真的坏了:
+            > 装进「应用程序」后执行一次
+            > `xattr -dr com.apple.quarantine "/Applications/Voice Input.app"` 即可。
+            > 装好之后的**自动更新不受影响**——更新包是客户端自己下载并原地替换的,
+            > 不会再被打上隔离属性。想完全避开这一步,可以用仓库里的
+            > `scripts/build-macos.sh` 自己签名构建(见 `docs/macos-signed-build.md`)。
 
             ### 📋 服务端要求
             - STT 服务运行在 `localhost:6544`

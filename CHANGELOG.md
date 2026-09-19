@@ -31,6 +31,25 @@
 
 ### Fixed
 
+- **自动更新从来就没有能用过(发版流水线 + 客户端两处都坏)**。
+  - 更新包的签名密钥只挂在 `build.yml`(那条流水线的产物 30 天后就删,没人安装),
+    真正出 release 的 `build-release.yml` 反而没有,于是每次发版都没有 `.sig`;
+    `latest.json` 里三个平台的 `signature` 全是空串(v2.0.10 的线上清单至今如此)。
+  - `bundle.createUpdaterArtifacts` 没开,所以就算给了密钥也不会产出更新器产物。
+  - `latest.json` 把 macOS 指向 `.dmg`。更新器要的是 `.app.tar.gz`,`.dmg` 装不了。
+  - 客户端**根本没用更新器插件**:`update.rs` 自己用 reqwest 下载,按操作系统
+    硬编码扩展名再 `open` 一下,`latest.json` 里的 `signature` 读进来就丢掉 ——
+    等于从一个 URL 下载任意二进制直接执行,完全没有校验。
+  - 现在:发版流水线传签名密钥、开更新器产物、清单指向正确的产物,并且
+    **签名缺失或密钥与 pubkey 对不上时直接让发版失败**(tauri 原本只警告一句);
+    客户端改用 `tauri-plugin-updater`,签名验不过就装不上。
+- **发版资产里混着 pyinstaller 的 `.app` 包内容**:`CodeResources`、`Info.plist`、
+  `icon-windowed.icns`、以及一个版本号还停在 2.0.0 的可执行文件,四个都挂在
+  v2.0.10 的 release 上。起因是 `path: dist/*` 把整个 `.app` 收走,而清理那一步
+  排在摊平之前,只清到了根目录。
+- **发版时不再检查 tag 和源码版本号是否一致**:两者不一致会让客户端陷入
+  「发现新版本 → 更新 → 还是老版本」的死循环。现在对不上直接让发版失败。
+
 - **关闭按钮直接退掉整个应用**:`CloseRequested` 里先 `hide()` 了窗口却没有
   `prevent_close()`,窗口照样被真正关掉,主窗口一关应用就跟着退了 —— 用户点 ✕
   只想收起界面,结果全局快捷键一起没了。现在退出只有托盘菜单一条路。

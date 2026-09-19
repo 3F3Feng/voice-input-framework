@@ -75,14 +75,18 @@ jobs:
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         id: build
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: gui
           bundleIdentifier: com.voiceinput.app
           tauriScript: npm run tauri
-          args: --target ${{ matrix.target }}
+          # 这条流水线只是编译冒烟测试,产物 30 天后就删,没人安装 —— 不需要
+          # 更新器产物,所以把 tauri.conf.json 里的 createUpdaterArtifacts 覆盖掉。
+          #
+          # 这不只是省事:开着它而配置里又有 updater pubkey,tauri 就**要求**
+          # TAURI_SIGNING_PRIVATE_KEY,没有就直接报错。而 PR 如果来自 fork,
+          # GitHub 不会把 secrets 给它 —— 那样每个外部 PR 都会红。发布签名只在
+          # 真正发版的 build-release.yml 里做,那里也有密钥对不对得上的校验。
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.no-updater.conf.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
