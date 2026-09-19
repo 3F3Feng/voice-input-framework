@@ -958,13 +958,23 @@ async function restartSrv(kind: ServerKind) {
 
 /** 保存本地模式的路径 / 端口 / 自启设置，并回显路径是否可用。 */
 async function saveLocal() {
+  // `set_local_server_config` 是整段替换 `cfg.server.local`，不是打补丁。所以凡是
+  // 这个界面上没有对应输入框的字段，都得先读回来带上——以前这里把 stt_model /
+  // llm_model 硬写成 null，用户手改 config.json 固定的模型，会在下一次改端口、
+  // 点自动探测或拨「随应用启动」时被悄悄抹掉（这两个字段是 spawn 时的
+  // VIF_STT_MODEL / VIF_LLM_MODEL）。读不回来就退回 null，和改动前一致。
+  let keep: Pick<LocalServerConfig, "stt_model" | "llm_model"> = { stt_model: null, llm_model: null };
+  try {
+    const cur = (await getConfig()).server?.local;
+    if (cur) keep = { stt_model: cur.stt_model ?? null, llm_model: cur.llm_model ?? null };
+  } catch (e) { console.error("get_config before saveLocal failed:", e); }
   const local: LocalServerConfig = {
     repo_path: repoPath.value.trim() || null,
     python_path: pythonPath.value.trim() || null,
     stt_port: sttPort.value || 6544,
     llm_port: llmPort.value || 6545,
-    stt_model: null,
-    llm_model: null,
+    stt_model: keep.stt_model,
+    llm_model: keep.llm_model,
     auto_start: localAutoStart.value,
   };
   try {

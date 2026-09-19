@@ -240,8 +240,32 @@ impl VoiceInputConfig {
 
         // Try loading Tauri config first
         if let Ok(data) = fs::read_to_string(&path) {
-            if let Ok(cfg) = serde_json::from_str::<VoiceInputConfig>(&data) {
-                return cfg;
+            match serde_json::from_str::<VoiceInputConfig>(&data) {
+                Ok(cfg) => return cfg,
+                // 文件在,但读不懂。以前这里是一句静默的 `if let Ok`,于是所有设置
+                // (仓库路径、端口、快捷键、随应用启动……)悄悄回到出厂值,用户看到的
+                // 是「怎么像刚装上一样」,而下面那条兜底分支紧接着就用默认值把这个
+                // 文件覆盖掉 —— 原来的内容再也找不回来。
+                //
+                // 所以:说出来,并且先把残文件挪到一边再走兜底。挪走而不是留在原地,
+                // 是因为兜底那一步一定会写同名文件;备份存在才谈得上「还能救」。
+                Err(e) => {
+                    crate::log_error!(
+                        "[config] {} 解析失败({}),本次用默认配置启动",
+                        path.display(),
+                        e
+                    );
+                    let backup = path.with_extension("json.corrupt");
+                    match fs::rename(&path, &backup) {
+                        Ok(()) => crate::log_error!(
+                            "[config] 原文件已保留为 {},修好后可改回 config.json",
+                            backup.display()
+                        ),
+                        Err(e) => {
+                            crate::log_error!("[config] 原文件没能备份,将被覆盖: {}", e)
+                        }
+                    }
+                }
             }
         }
 
@@ -284,7 +308,16 @@ impl VoiceInputConfig {
         }
         let json =
             serde_json::to_string_pretty(self).map_err(|e| format!("序列化配置失败: {}", e))?;
-        fs::write(&path, json).map_err(|e| format!("写入配置失败: {}", e))?;
+        // 先写临时文件再 rename 覆盖,而不是直接 `fs::write`。`fs::write` 是
+        // 「先截断、再写」:写到一半断电或被强杀,留下的就是一个半截的 config.json,
+        // 下次启动解析不了 —— 全部设置作废。rename 在同一个目录内是原子的,
+        // 要么是完整的旧文件,要么是完整的新文件,不存在中间态。
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, json).map_err(|e| format!("写入配置失败: {}", e))?;
+        fs::rename(&tmp, &path).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("替换配置文件失败: {}", e)
+        })?;
         Ok(())
     }
 

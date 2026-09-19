@@ -10,6 +10,7 @@ Voice Input Framework - Speaker Diarization Engine
 """
 
 import asyncio
+import importlib.util
 import logging
 import os
 import time
@@ -30,6 +31,7 @@ class DiarizationEngine:
         self._is_loaded = False
         self._loading = False
         self._load_lock = None  # asyncio.Lock, 动态创建
+        self._pyannote_available: bool | None = None  # 见 _is_pyannote_available
         self._model_id = DIARIZE_MODEL_ID
         self._device = "cpu"
         self._stats = {
@@ -114,13 +116,26 @@ class DiarizationEngine:
                 self._loading = False
 
     def _is_pyannote_available(self) -> bool:
-        """检查 pyannote.audio 是否可导入"""
-        try:
-            import pyannote.audio  # noqa
+        """pyannote.audio 装了没有。算一次,之后一直用缓存的结果。
 
-            return True
-        except ImportError:
-            return False
+        这个函数是 `get_health()` 调的,而 `/health` 是 `async def`——它在事件循环上
+        跑。以前这里写的是 `import pyannote.audio`:装了的话,第一次 /health 会在
+        事件循环上连带把 torch / torchaudio / lightning 一起导进来,几秒钟之内整个
+        服务不响应任何请求。客户端的健康探测超时只有 1.5 秒,于是明明服务好好的,
+        「服务器」面板上却显示还没起来。
+
+        改用 `find_spec`:它只在 sys.path 上找模块**存在不存在**,不执行模块本身,
+        所以 torch 一个字节都不会被导入。真要用的时候由 `load()` 去 import。
+        """
+        if self._pyannote_available is None:
+            try:
+                self._pyannote_available = (
+                    importlib.util.find_spec("pyannote.audio") is not None
+                )
+            except (ImportError, ValueError):
+                # 父包 pyannote 本身有问题时 find_spec 会抛,不是「装了」。
+                self._pyannote_available = False
+        return self._pyannote_available
 
     # ── 推理 ──
     async def diarize(

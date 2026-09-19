@@ -470,6 +470,36 @@ async def get_model_status(model_name: str):
     }
 
 
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+async def _read_capped(file: UploadFile, limit: int = MAX_UPLOAD_SIZE) -> bytes:
+    """分块读上传体,累计超过 limit 立刻 413。
+
+    不要写成 `content = await file.read()` 再比大小:那一行返回的时候整个 body
+    已经变成一个 bytes 对象躺在内存里了,后面再判上限已经晚了——上限存在的目的
+    就是不让这件事发生。边读边累计的话,最多只多读一个 chunk 就能停手。
+    WebSocket 那条路径(`receive_loop` 里的 `received_bytes`)一直就是这么做的。
+
+    能管到的是内存。Starlette 在调到这个 handler 之前就已经把 multipart body
+    落到临时文件里了,那部分磁盘占用要拦得靠 ASGI 中间件,不在这里。
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(UPLOAD_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Audio too large: exceeds {limit} bytes",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @app.post("/transcribe", response_model=TranscriptionResult)
 async def transcribe(
     file: UploadFile = File(...),
@@ -478,12 +508,7 @@ async def transcribe(
     """转写音频文件"""
     req_id = request_id_ctx.get()
     try:
-        audio_content = await file.read()
-        if len(audio_content) > MAX_UPLOAD_SIZE:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Audio too large: {len(audio_content)} > {MAX_UPLOAD_SIZE} bytes",
-            )
+        audio_content = await _read_capped(file)
         result = await engine.transcribe(
             audio_content,
             language=language,
@@ -761,12 +786,7 @@ async def diarize(
     tmp.close()
 
     try:
-        content = await file.read()
-        if len(content) > MAX_UPLOAD_SIZE:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Audio too large: {len(content)} > {MAX_UPLOAD_SIZE} bytes",
-            )
+        content = await _read_capped(file)
         async with aiofiles.open(tmp_path, "wb") as f:
             await f.write(content)
 

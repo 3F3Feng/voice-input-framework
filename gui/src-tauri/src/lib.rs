@@ -421,12 +421,6 @@ impl BuildInfo {
             built_at: env!("VIF_BUILD_TIME").to_string(),
         }
     }
-
-    /// 构建 ID 的前 8 位。界面上摆不下整条 UUID,而前 8 位已经足够认人。
-    pub fn short_id(&self) -> &str {
-        let n = self.build_id.len().min(8);
-        &self.build_id[..n]
-    }
 }
 
 #[tauri::command]
@@ -552,6 +546,24 @@ fn cache_llm_enabled(app: &tauri::AppHandle, state: &AppState, enabled: bool) {
 ///
 /// 远程模式下没有本地进程可管,两个分支都退化成「只翻标志位」,和改动前逐字
 /// 相同(见 `local_managed`)。
+/// 开启后处理的中途失败时,把本次拉起的 LLM 服务收回去。
+///
+/// 只收 `ServerOwner::App` 那一档,和 `plan_llm_shutdown` 用的是同一条规则——
+/// 端口上那个服务完全可能是 `start` 采纳来的、用户自己在终端里跑的进程。
+async fn rollback_llm_start(
+    servers: &std::sync::Arc<Mutex<server_manager::ServerManager>>,
+    cfg: &config::ServerConfig,
+) {
+    let status = server_manager::status(servers, cfg, server_manager::ServerKind::Llm).await;
+    if server_manager::plan_llm_shutdown(&status) != server_manager::LlmShutdownPlan::Stop {
+        return;
+    }
+    match server_manager::stop(servers, cfg, server_manager::ServerKind::Llm) {
+        Ok(msg) => log_info!("[llm] 后处理没能开起来,已把刚拉起的 LLM 服务收回去:{}", msg),
+        Err(e) => log_error!("[llm] 后处理没能开起来,收回 LLM 服务也失败了:{}", e),
+    }
+}
+
 #[tauri::command]
 async fn set_llm_enabled(
     app: tauri::AppHandle,
@@ -583,7 +595,19 @@ async fn set_llm_enabled(
             }
             notes.push("LLM 服务已就绪".into());
         }
-        stt::SttClient::new(&host).set_llm_enabled(true).await?;
+        if let Err(e) = stt::SttClient::new(&host).set_llm_enabled(true).await {
+            // 服务已经起来了、模型也加载完了,偏偏最后这一步没成。直接返回错误
+            // 会留下一个谁也不会去停的进程:前端会把开关拨回「关」,而「关」那条
+            // 分支只在用户主动拨动时才跑——开关看着已经是关的,用户没有理由再碰它,
+            // 于是几个 G 的模型就这么占到应用退出为止。
+            //
+            // 收的时候照样只收自己拉起的:`start` 有可能是采纳了用户在终端里
+            // 跑着的那个服务,那不是我们能动的东西。
+            if local_managed {
+                rollback_llm_start(&servers, &cfg).await;
+            }
+            return Err(e);
+        }
         notes.push("LLM 后处理已启用".into());
     } else {
         stt::SttClient::new(&host).set_llm_enabled(false).await?;

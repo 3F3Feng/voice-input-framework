@@ -346,7 +346,7 @@ impl ServerManager {
         // 用户改了端口:新端口探测为空,于是走到这里,而老进程还在老端口上跑。
         if let Some(mut old) = self.slot(kind).take() {
             if old.alive() {
-                let _ = self.stop_slot(kind, old);
+                let _ = Self::stop_slot(kind, old);
             }
         }
 
@@ -407,21 +407,10 @@ impl ServerManager {
         Ok(pid)
     }
 
-    /// 停止一个服务。
-    ///
-    /// 手里有句柄就走 `stop_slot`;没有句柄不再一律拒绝,而是交给
-    /// `stop_external` 去核实身份——认得出是本项目的服务才停。
-    fn stop(
-        &mut self,
-        kind: ServerKind,
-        local: &crate::config::LocalServerConfig,
-    ) -> Result<String, String> {
-        // 句柄直接取走:无论停成没停成,这个 slot 都不该再留着。
-        // (丢弃 `Child` 不会杀进程,所以取走是安全的。)
-        match self.slot(kind).take() {
-            Some(slot) => self.stop_slot(kind, slot),
-            None => self.stop_external(kind, local),
-        }
+    /// 把句柄从管理器里取走。取走之后等待进程退出的那几秒就不必再占着锁了,
+    /// 见 `stop`。丢弃 `Child` 不会杀进程,所以取走本身是安全的。
+    fn take_slot(&mut self, kind: ServerKind) -> Option<Slot> {
+        self.slot(kind).take()
     }
 
     /// 停一个不是本应用启动、但校验过确实属于本项目的服务。
@@ -431,7 +420,6 @@ impl ServerManager {
     /// 之间隔着几秒,这几秒里进程完全可能已经退出、pid 被系统分配给了别的程序。
     /// 拿旧结论去杀新 pid,就是在赌。
     fn stop_external(
-        &mut self,
         kind: ServerKind,
         local: &crate::config::LocalServerConfig,
     ) -> Result<String, String> {
@@ -472,12 +460,13 @@ impl ServerManager {
         ))
     }
 
-    /// 停止本应用拉起(或认领)的进程。调用方负责把 slot 取出来交进来。
-    fn stop_slot(&mut self, kind: ServerKind, mut slot: Slot) -> Result<String, String> {
+    /// 停止本应用拉起(或认领)的进程。调用方负责把 slot 取出来交进来,
+    /// 并在返回之后自己更新 pid 记账(`persist_pids`)——这个函数会在里面
+    /// 干等最多 `TERM_GRACE`,不该在这段时间里占着管理器的锁。
+    fn stop_slot(kind: ServerKind, mut slot: Slot) -> Result<String, String> {
         let pid = slot.pid;
 
         if !slot.alive() {
-            self.persist_pids();
             return Ok(format!("{} 服务(pid {})已经不在运行", kind.label(), pid));
         }
 
@@ -505,7 +494,6 @@ impl ServerManager {
         };
 
         drop(slot);
-        self.persist_pids();
         Ok(if forced {
             format!("{} 服务(pid {})未响应,已强制结束", kind.label(), pid)
         } else {
@@ -519,7 +507,7 @@ impl ServerManager {
             // 只带走自己手里的句柄。退出应用**不该**顺手停掉用户自己在终端里
             // 跑的服务,哪怕现在已经有能力停了——那是用户的进程,不是我们的。
             if let Some(slot) = self.slot(kind).take() {
-                let _ = self.stop_slot(kind, slot);
+                let _ = Self::stop_slot(kind, slot);
             }
         }
         // 全停干净了,记账文件也清掉,免得下次启动去认领已经不存在的 pid。
@@ -1036,13 +1024,30 @@ pub async fn start(
 }
 
 /// 停止一个服务。只停本应用拉起 / 认领的,以及校验过属于本项目的外部进程。
+///
+/// 停一个进程要先 SIGTERM 再最多干等 `TERM_GRACE`,这几秒**不能占着管理器的锁**:
+/// 设置面板每 3 秒拉一次 `get_server_report`,而那条路也要这把锁,占着就等于让
+/// 整个服务器面板跟着卡住。所以这里只在「把句柄取出来」和「更新 pid 记账」两个
+/// 瞬间加锁,中间的等待在锁外做。
+///
+/// 代价是这几秒里句柄不在管理器手上,`status` 会把那个正在退出的进程按「外部」
+/// 报一下(端口还通着,而手里没句柄)。这是个会自己消失的瞬态:进程一退,端口
+/// 就不通了,下一轮轮询报的就是「未运行」。
 pub fn stop(
     manager: &Mutex<ServerManager>,
     cfg: &crate::config::ServerConfig,
     kind: ServerKind,
 ) -> Result<String, String> {
-    let mut guard = manager.lock().map_err(|e| e.to_string())?;
-    guard.stop(kind, &cfg.local)
+    let taken = manager.lock().map_err(|e| e.to_string())?.take_slot(kind);
+    let result = match taken {
+        Some(slot) => ServerManager::stop_slot(kind, slot),
+        None => ServerManager::stop_external(kind, &cfg.local),
+    };
+    // 记账文件里那条已经没意义了,清掉——否则下次启动会去认领一个死 pid。
+    if let Ok(mut guard) = manager.lock() {
+        guard.persist_pids();
+    }
+    result
 }
 
 /// 重启:停再起。
@@ -1054,14 +1059,19 @@ pub async fn restart(
     // 探测放在加锁之前:`Mutex` 的 guard 不是 Send,跨 await 持有会让整个
     // 命令的 Future 不满足 tauri 的 Send 约束(而且会把别的调用者堵死)。
     let healthy = probe(port_of(kind, &cfg.local)).await.is_some();
-    {
-        let mut guard = manager.lock().map_err(|e| e.to_string())?;
-        // 手里有句柄、或者端口上有健康服务,都得先停掉再拉起。外部进程里认得出
-        // 是本项目的那些现在也停得掉;认不出来源的会在这里报错——「重启」在那种
-        // 情况下只会变成「又拉起一个」,与其偷偷只做一半,不如直说。
-        if guard.slot(kind).is_some() || healthy {
-            guard.stop(kind, &cfg.local)?;
-        }
+    // 手里有句柄、或者端口上有健康服务,都得先停掉再拉起。外部进程里认得出
+    // 是本项目的那些现在也停得掉;认不出来源的会在这里报错——「重启」在那种
+    // 情况下只会变成「又拉起一个」,与其偷偷只做一半,不如直说。
+    //
+    // 走上面那个 `stop` 而不是自己锁起来做:停进程要等最多 TERM_GRACE,
+    // 那几秒不该把状态轮询一起堵死(理由见 `stop`)。
+    let has_slot = manager
+        .lock()
+        .map_err(|e| e.to_string())?
+        .slot(kind)
+        .is_some();
+    if has_slot || healthy {
+        stop(manager, cfg, kind)?;
     }
     start(manager, cfg, kind).await
 }

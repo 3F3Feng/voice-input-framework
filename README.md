@@ -172,15 +172,22 @@ npm run tauri build
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `VIF_STT_PORT` | 6544 | STT 服务端口 |
-| `VIF_STT_HOST` | 0.0.0.0 | STT 服务监听地址 |
+| `VIF_STT_HOST` | 127.0.0.1 | STT 服务监听地址 |
 | `VIF_STT_MODEL` | 平台默认 | 默认 STT 模型(Apple Silicon 为 qwen_asr_mlx_native,否则 whisper_turbo) |
 | `VIF_LLM_PORT` | 6545 | LLM 服务端口 |
-| `VIF_LLM_HOST` | localhost | LLM 服务地址(STT 转发用) |
+| `VIF_LLM_HOST` | 127.0.0.1 | LLM 服务监听地址;在 STT 服务里是转发目标地址 |
 | `VIF_LLM_ENABLED` | true | 是否启用 LLM 后处理 |
 | `VIF_LLM_MODEL` | Qwen3.5-4B-OptiQ | 默认 LLM 模型 |
+| `VIF_CORS_ORIGINS` | 本地 GUI 的几个来源 | 允许的跨域来源,逗号分隔;见 `shared/constants.py` 的 `DEFAULT_CORS_ORIGINS` |
 | `VIF_REQUEST_TIMEOUT` | 300.0 | 请求超时(秒) |
 | `VIF_LOG_LEVEL` | INFO | 日志级别 |
 
+> **两个服务默认只绑回环地址 `127.0.0.1`,不是 `0.0.0.0`。** 它们都没有鉴权,
+> 默认就不该暴露到局域网。所以**要从别的机器连过来,必须显式设置**
+> `VIF_STT_HOST=0.0.0.0`(LLM 服务同理用 `VIF_LLM_HOST`),并且相应地把
+> `VIF_CORS_ORIGINS` 设成客户端的来源 —— 不设的话请求会被 CORS 挡掉。
+> 暴露到局域网之前请自行确认网络是可信的。
+>
 > 完整模型元数据见 `shared/model_registry.py`(单一来源)。
 >
 > **注意**:客户端与服务端默认使用 `127.0.0.1` 而非 `localhost`——Windows 上
