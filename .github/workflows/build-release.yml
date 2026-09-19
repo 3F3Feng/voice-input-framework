@@ -209,10 +209,20 @@ jobs:
           find "$bundle" \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" \
                           -o -name "*setup*.exe" \) -exec cp {} dist/ \;
 
-          # 自动更新用的产物和它们的签名。和安装包是两回事:macOS 的更新器吃的是
-          # .app.tar.gz,不是 .dmg —— 以前 latest.json 指着 .dmg,就算签名对了
-          # 更新器也装不了。
-          find "$bundle" \( -name "*.tar.gz" -o -name "*.sig" \) -exec cp {} dist/ \;
+          # 自动更新用的产物和签名。每个平台的形状都不一样,是实际跑了一遍
+          # 三平台构建看出来的,别照着直觉猜:
+          #   macOS   → Voice Input.app.tar.gz + .sig   (不是 .dmg,更新器装不了 dmg)
+          #   Linux   → ...amd64.AppImage + .sig        (**没有** .AppImage.tar.gz,
+          #                                              AppImage 本体就是更新产物)
+          #           → ...amd64.deb + .sig             (用 deb 装的用户走这条)
+          #   Windows → ...x64-setup.exe + .sig         (NSIS 安装器本体就是更新产物)
+          # 上面收安装包那一步已经把 AppImage / deb / setup.exe 拿到了,这里只补
+          # macOS 的 tar.gz 和所有签名。
+          #
+          # 注意 `-name "*.app.tar.gz"` 不能写成 `*.tar.gz`:Linux 的 bundle 目录里
+          # 还躺着 deb 拆出来的 control.tar.gz 和 data.tar.gz(7MB),一并收走的话
+          # 它们会被当成 release 资产发出去。
+          find "$bundle" \( -name "*.app.tar.gz" -o -name "*.sig" \) -exec cp {} dist/ \;
 
           # 扔掉「主文件没被收进来」的孤儿签名。`targets: "all"` 在 Windows 上还会
           # 出 .msi、在 Linux 上还会出 .rpm,它们各自带一个 .sig;上面按名字只收了
@@ -309,8 +319,10 @@ jobs:
               *.sig) continue ;;
               # 更新器产物。macOS 更新器吃的是 .app.tar.gz,Linux 是 .AppImage.tar.gz;
               # 这两条必须排在 *.AppImage / *.dmg 前面之外,还要排在任何 *.tar.gz 前面。
+              # macOS 的更新产物是独立的一个 tar.gz;Linux / Windows 则是安装包
+              # 本体兼做更新产物,所以下面 .AppImage / .deb / setup.exe 三条既是
+              # 给人下载的,也是 latest.json 指向的。ren() 会把 .sig 一起带走。
               *.app.tar.gz)      ren "$f" "GUI-macOS-${version}-aarch64.app.tar.gz" ;;
-              *.AppImage.tar.gz) ren "$f" "GUI-Linux-${version}-x64.AppImage.tar.gz" ;;
               *.deb)             ren "$f" "GUI-Linux-${version}-x64.deb" ;;
               *.AppImage)        ren "$f" "GUI-Linux-${version}-x64.AppImage" ;;
               *.dmg)             ren "$f" "GUI-macOS-${version}-aarch64.dmg" ;;

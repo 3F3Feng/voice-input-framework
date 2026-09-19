@@ -27,7 +27,10 @@ ASSETS_DIR = "release-assets"
 # 一个文件,所以那一项和下载表里的是同一个 .exe。
 PLATFORM_SUFFIX = {
     "darwin-aarch64": ".app.tar.gz",
-    "linux-x86_64": ".AppImage.tar.gz",
+    # 注意是 .AppImage 本体,不是 .AppImage.tar.gz —— tauri 2.10 实测直接给
+    # AppImage 签名,不另出 tar.gz。插件的 install_appimage() 两种都吃:字节流
+    # 是 gz 就解包,不是就整个覆盖写回去。
+    "linux-x86_64": ".AppImage",
     "windows-x86_64": ".exe",
 }
 
