@@ -129,9 +129,7 @@ class DiarizationEngine:
         """
         if self._pyannote_available is None:
             try:
-                self._pyannote_available = (
-                    importlib.util.find_spec("pyannote.audio") is not None
-                )
+                self._pyannote_available = importlib.util.find_spec("pyannote.audio") is not None
             except (ImportError, ValueError):
                 # 父包 pyannote 本身有问题时 find_spec 会抛,不是「装了」。
                 self._pyannote_available = False
