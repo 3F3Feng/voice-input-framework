@@ -85,21 +85,34 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
     let version = update.version.clone();
     let _ = app.emit("update-progress", "正在下载更新...");
 
-    // 进度回调只用来喂界面。总长度可能是 None(服务端没给 Content-Length),
-    // 那时就只报已下载的字节数,不要算出一个假的百分比。
+    // 进度回调只用来喂界面。两处要当心:
+    //
+    // 1. 回调是**每收到一块数据**就调一次,几十兆的包能有上千块。每块都 emit
+    //    一次到 webview 会把 IPC 刷爆、界面反而卡住。所以只在百分比真的变了
+    //    (或没有总长时每攒够 1 MB)才发一次。
+    // 2. 总长度可能是 None(服务端没给 Content-Length),那时不要拿它算百分比,
+    //    算出来的是假的;老老实实报已下载的字节数。
     let app_for_progress = app.clone();
     let mut downloaded: u64 = 0;
+    let mut last_tick: u64 = u64::MAX;
     update
         .download_and_install(
             move |chunk, total| {
                 downloaded += chunk as u64;
-                let msg = match total {
+                let (tick, msg) = match total {
                     Some(total) if total > 0 => {
-                        format!("下载中 {}%", downloaded * 100 / total)
+                        let pct = downloaded * 100 / total;
+                        (pct, format!("下载中 {}%", pct))
                     }
-                    _ => format!("下载中 {} KB", downloaded / 1024),
+                    _ => {
+                        let mb = downloaded / (1024 * 1024);
+                        (mb, format!("下载中 {} MB", mb))
+                    }
                 };
-                let _ = app_for_progress.emit("update-progress", msg);
+                if tick != last_tick {
+                    last_tick = tick;
+                    let _ = app_for_progress.emit("update-progress", msg);
+                }
             },
             || {},
         )

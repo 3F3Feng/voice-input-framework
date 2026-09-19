@@ -542,6 +542,7 @@ const PERM_META: { key: PermissionKey; label: string; desc: string }[] = [
 // Update
 interface UpdateInfo { available: boolean; current_version: string; latest_version: string; body: string; }
 const updateInfo = ref<UpdateInfo | null>(null);
+let installStallTimer: ReturnType<typeof setInterval> | null = null;
 const updateStatus = ref("");
 const updateStatusType = ref<"info" | "ok">("info");
 const updateChecking = ref(false);
@@ -1316,16 +1317,40 @@ async function doInstallUpdate() {
   updateInstalling.value = true;
   updateStatus.value = "正在下载...";
   updateStatusType.value = "info";
-  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("下载超时")), 120000));
+  // 原来这里是 120 秒硬超时。Windows 的 NSIS 安装包三四十兆,网络慢一点就会在
+  // 下载还好好地进行时弹「下载超时」,而后端其实还在下、下完照样会退出应用 ——
+  // 用户看到的是「失败了,然后程序自己关了」。
+  //
+  // 改成:预算放宽到 10 分钟,并且**只要还在收到进度事件就不算超时**。真卡住了
+  // (一个事件都没有)才认输。后端每收到一块数据就 emit 一次 update-progress。
+  const INSTALL_STALL_MS = 600000;
+  let lastProgress = Date.now();
+  const stall = new Promise((_, reject) => {
+    const t = setInterval(() => {
+      if (Date.now() - lastProgress > INSTALL_STALL_MS) {
+        clearInterval(t);
+        reject(new Error("更新长时间没有进展"));
+      }
+    }, 5000);
+    installStallTimer = t;
+  });
+  const un = await listen<string>("update-progress", e => {
+    lastProgress = Date.now();
+    updateStatus.value = e.payload;
+  });
   try {
     const msg = await Promise.race([
       invoke<string>("install_update"),
-      timeout
+      stall
     ]) as string;
     updateStatus.value = msg;
     updateStatusType.value = "ok";
     toast("更新已安装，重启后生效", "ok");
   } catch (e) { updateStatus.value = `安装失败: ${e}`; }
+  finally {
+    un();
+    if (installStallTimer) { clearInterval(installStallTimer); installStallTimer = null; }
+  }
   updateInstalling.value = false;
 }
 
