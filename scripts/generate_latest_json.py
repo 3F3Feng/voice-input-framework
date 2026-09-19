@@ -31,6 +31,18 @@ PLATFORM_SUFFIX = {
     "windows-x86_64": ".exe",
 }
 
+# 按「当前这个应用是怎么装上的」细分的 key。插件查清单的顺序是
+# `{os}-{arch}-{installer}`,查不到才回落到 `{os}-{arch}`。
+#
+# 为什么 Linux 必须多这一条:插件在 Linux 上是按安装方式分派的 —— 用 .deb 装的
+# 走 `install_deb()`,而那个函数会先 `is_deb(bytes)` 校验,拿到 AppImage 的 tar.gz
+# 只会报 InvalidUpdaterFormat。没有这一条,所有用 .deb 装的用户点更新必然失败。
+#
+# 这些是「有就更好」:对应的产物没签名就跳过(并在日志里说清楚),不让发版失败。
+OPTIONAL_PLATFORM_SUFFIX = {
+    "linux-x86_64-deb": ".deb",
+}
+
 
 def die(msg: str) -> None:
     # ::error:: 让这条直接出现在 GitHub Actions 的摘要里,不用翻日志
@@ -75,6 +87,30 @@ def main() -> None:
 
         platforms[key] = {
             "signature": signature,
+            "url": f"{base}/{os.path.basename(asset)}",
+        }
+        print(f"  ✅ {key}: {os.path.basename(asset)}")
+
+    # 可选项:拿得到就挂上,拿不到只提醒,不挡发版
+    for key, suffix in OPTIONAL_PLATFORM_SUFFIX.items():
+        matches = [
+            f
+            for f in sorted(glob.glob(f"{ASSETS_DIR}/GUI-*{suffix}"))
+            if "-Python-" not in os.path.basename(f)
+        ]
+        if len(matches) != 1:
+            print(f"  ⏭  {key}: 没有唯一的 GUI-*{suffix},跳过")
+            continue
+        asset = matches[0]
+        sig_path = f"{asset}.sig"
+        if not os.path.exists(sig_path) or not open(sig_path).read().strip():
+            print(
+                f"  ⏭  {key}: {os.path.basename(asset)} 没有签名,跳过"
+                f"(用这种方式安装的用户只能手动更新)"
+            )
+            continue
+        platforms[key] = {
+            "signature": open(sig_path).read().strip(),
             "url": f"{base}/{os.path.basename(asset)}",
         }
         print(f"  ✅ {key}: {os.path.basename(asset)}")
