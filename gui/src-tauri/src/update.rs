@@ -5,7 +5,6 @@
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use tauri::Emitter;
-use tauri_plugin_updater::UpdaterExt;
 
 /// GitHub release asset manifest
 #[derive(Deserialize)]

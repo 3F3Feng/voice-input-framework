@@ -77,6 +77,18 @@ else
   export APPLE_SIGNING_IDENTITY="$IDENTITY"
 fi
 
+# ── 构建标识 ───────────────────────────────────────────────────────────────
+# 每次构建现生成一个 UUID 传给 build.rs。版本号只在发版时才动,而两次发版之间
+# 可能有几十次本地构建 —— 没有这个 ID,装到 /Applications 里的产物根本认不出是
+# 哪一次构建的。ID 会出现在启动日志、设置界面的「关于」里。
+#
+# build.rs 声明了 rerun-if-env-changed=VIF_BUILD_ID,所以每换一个 ID 都会真的
+# 重新编译进二进制,不会被增量编译跳过。
+BUILD_ID="$(uuidgen | tr 'A-Z' 'a-z')"
+BUILD_TIME="$(date -u '+%Y-%m-%d %H:%M UTC')"
+export VIF_BUILD_ID="$BUILD_ID" VIF_BUILD_TIME="$BUILD_TIME"
+say "构建 ID: $BUILD_ID  ($BUILD_TIME)"
+
 # ── 构建 ───────────────────────────────────────────────────────────────────
 [[ -d "$GUI_DIR/node_modules" ]] || { say "安装前端依赖..."; (cd "$GUI_DIR" && npm ci); }
 
@@ -118,6 +130,14 @@ if [[ "$FLAGS" == *"runtime"* ]]; then
   fi
 fi
 
+if grep -qa "$BUILD_ID" "$APP_PATH/Contents/MacOS/voice-input" 2>/dev/null; then
+  echo "    构建 ID: $BUILD_ID ✓"
+else
+  die "构建 ID 没有进到产物里(增量编译跳过了 build.rs?)。
+  界面上会显示上一次构建的 ID,比没有 ID 更容易认错人。
+  清一次缓存再来: rm -rf \"$GUI_DIR/src-tauri/target/release/build\""
+fi
+
 # 本地构建的产物不带隔离属性(那是浏览器下载时才加的),这里顺带确认一下。
 if xattr -p com.apple.quarantine "$APP_PATH" >/dev/null 2>&1; then
   warn "产物带有 com.apple.quarantine,按理不该出现。清除: xattr -dr com.apple.quarantine \"$APP_PATH\""
@@ -125,7 +145,7 @@ else
   echo "    隔离属性: 无 ✓"
 fi
 
-say "构建完成: $APP_PATH"
+say "构建完成: $APP_PATH  (build $BUILD_ID)"
 
 # ── 安装 ───────────────────────────────────────────────────────────────────
 if [[ $DO_INSTALL -eq 1 ]]; then

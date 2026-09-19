@@ -292,6 +292,50 @@ class TestModels:
         assert "error_code" in error.to_dict()
 
 
+class TestLLMProxyError:
+    """_llm_error:转发失败必须带非 2xx 状态码"""
+
+    def _body(self, response):
+        import json
+
+        return json.loads(bytes(response.body))
+
+    def test_default_status_is_bad_gateway(self):
+        """默认 502:调用方只看状态码也不会把失败当成功(回归)"""
+        from services.stt_server import _llm_error
+
+        resp = _llm_error("LLM 不可达")
+        assert resp.status_code == 502
+        body = self._body(resp)
+        assert body["error_code"] == "LLM_PROXY_ERROR"
+        assert body["error_message"] == "LLM 不可达"
+        assert "details" in body
+
+    def test_upstream_status_is_passed_through(self):
+        """上游给了状态码就原样带回去"""
+        from services.stt_server import _llm_error
+
+        assert _llm_error("模型加载失败", 503).status_code == 503
+
+    def test_upstream_message_extracted(self):
+        """从上游失败响应里挖出可读原因"""
+        import httpx
+
+        from services.stt_server import _upstream_message
+
+        resp = httpx.Response(503, json={"status": "failed", "message": "模型 X 加载失败"})
+        assert _upstream_message(resp) == "模型 X 加载失败"
+
+    def test_upstream_message_falls_back_to_status(self):
+        """上游没给消息时退回状态码,不能返回空串"""
+        import httpx
+
+        from services.stt_server import _upstream_message
+
+        resp = httpx.Response(500, text="boom")
+        assert "500" in _upstream_message(resp)
+
+
 class TestTranscriptionRequest:
     """Test TranscriptionRequest model"""
 

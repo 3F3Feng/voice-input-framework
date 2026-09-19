@@ -9,6 +9,7 @@ Port: 6545
 import asyncio
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -18,6 +19,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 # 添加项目路径
@@ -105,6 +107,34 @@ class HealthStatus(BaseModel):
     loaded_models: list[str]
     active_connections: int = 0
     is_processing: bool = False
+
+
+# ============== 输出清洗 ==============
+
+
+def clean_llm_output(response: str) -> str:
+    """把模型原始输出清洗成可以直接敲进用户文档的文本。
+
+    只做两件事:
+
+    1. 去掉思考块 —— 即使 ``enable_thinking=False`` 已经从根上关掉了推理,
+       老模板走退回分支时仍可能漏出 ``<think>`` 标签。
+    2. 去掉 markdown 粗体标记 —— 模型偶尔会给关键词加粗,而 ``**`` 会被原样
+       敲进用户的文档;用户也不可能"说"出这两个星号,删掉是净收益。
+
+    其余一概不动。这里曾经还会删掉所有双引号和撇号、按行去重、并把多行压成
+    一行,那些都是 ``enable_thinking=False`` 之前用来压制思考泄漏的土办法。
+    泄漏已经修好,这些规则剩下的只有破坏:
+    ``I don't know, he said "okay"`` 会变成 ``I dont know, he said okay``,
+    诗句里重复的叠句会被整行删掉,分段会被压成一行。
+    """
+    # 移除 <think>...</think> 标签(DOTALL:思考块通常跨多行)
+    cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
+    # 移除单独的 <think> 或 </think> 标签(只有半边标签时上面的正则匹配不到)
+    cleaned = re.sub(r"</?think>", "", cleaned)
+    # 移除 markdown 粗体标记
+    cleaned = cleaned.replace("**", "")
+    return cleaned.strip()
 
 
 # ============== LLM Engine ==============
@@ -302,30 +332,7 @@ class LLMEngine:
                 max_tokens=256,
             )
 
-            # 清理响应 - 移除思考标签
-            import re
-
-            # 移除 <think>...</think> 标签(DOTALL:思考块通常跨多行)
-            cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
-            # 移除单独的 <think> 或 </think> 标签
-            cleaned = re.sub(r"</?think>", "", cleaned)
-            # 移除 markdown 标记和引号
-            cleaned = cleaned.replace("**", "")
-            cleaned = cleaned.replace('"', "")
-            cleaned = cleaned.replace("'", "")
-            cleaned = cleaned.strip()
-
-            # 处理重复内容：如果有多行相同内容，只保留一行
-            lines = cleaned.split("\n")
-            unique_lines = []
-            for line in lines:
-                line = line.strip()
-                if line and line not in unique_lines:
-                    unique_lines.append(line)
-            cleaned = " ".join(unique_lines)
-            # 移除开头的 \nquirer 或 thinker
-            cleaned = re.sub(r"^\s*(?:quirer|thinker)\s*", "", cleaned)
-            cleaned = cleaned.strip()
+            cleaned = clean_llm_output(response)
 
             latency = (time.time() - start_time) * 1000
 
@@ -441,11 +448,19 @@ async def select_model(model_name: str = Form(...)):
     try:
         logger.info(f"Switching to model: {model_name}")
         success = await engine.load(model_name)
-        return {
+        body = {
             "status": "success" if success else "failed",
             "current_model": engine.current_model_name,
             "is_loaded": engine.is_model_loaded(),
         }
+        if not success:
+            # 加载失败必须用非 2xx 状态码回答。以前这里连失败也发 200,
+            # 中间的转发层和客户端都只看状态码,一路把失败当成功传到界面上,
+            # 用户会收到一条「已切换」的提示,而模型其实没换。
+            logger.error(f"Model load failed: {model_name}")
+            body["message"] = f"模型 {model_name} 加载失败"
+            return JSONResponse(status_code=503, content=body)
+        return body
     except Exception as e:
         logger.error(f"Error switching model: {e}")
         raise HTTPException(status_code=500, detail=str(e))

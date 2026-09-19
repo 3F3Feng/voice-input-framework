@@ -52,6 +52,14 @@ pub(crate) fn server_message(data: &Value) -> &str {
         .unwrap_or("")
 }
 
+/// 模型切换是否失败。两种失败都要认:
+/// - HTTP 非 2xx —— 服务端现在这么答;
+/// - 200 但 `status: "failed"` —— 老服务端的答法,也正是「切换明明失败、
+///   界面却弹『已切换』」的来源:调用方只看有没有 HTTP 错误就下结论了。
+pub(crate) fn switch_failed(http_ok: bool, data: &Value) -> bool {
+    !http_ok || data["status"].as_str() == Some("failed")
+}
+
 pub struct SttClient {
     pub stt_url: String,
 }
@@ -364,6 +372,18 @@ impl SttClient {
             .send()
             .await
             .map_err(|e| e.to_string())?;
+        // 转发失败现在带 5xx + 结构化错误体;直接按 LlmModelsResponse 解只会
+        // 得到一句「missing field `models`」,把服务端写好的原因盖掉。
+        let status = resp.status();
+        if !status.is_success() {
+            let data: Value = resp.json().await.unwrap_or(Value::Null);
+            let msg = server_message(&data);
+            return Err(if msg.is_empty() {
+                format!("获取 LLM 模型列表失败(HTTP {})", status.as_u16())
+            } else {
+                msg.to_string()
+            });
+        }
         let data: LlmModelsResponse = resp.json().await.map_err(|e| e.to_string())?;
         Ok(data.models)
     }
@@ -377,7 +397,17 @@ impl SttClient {
             .send()
             .await
             .map_err(|e| e.to_string())?;
+        let status = resp.status();
         let data: Value = resp.json().await.map_err(|e| e.to_string())?;
+        // 切换失败必须变成 Err,否则前端照样弹「LLM 已切换」。
+        if switch_failed(status.is_success(), &data) {
+            let msg = server_message(&data);
+            return Err(if msg.is_empty() {
+                format!("切换失败(HTTP {})", status.as_u16())
+            } else {
+                msg.to_string()
+            });
+        }
         Ok(server_message(&data).to_string())
     }
 

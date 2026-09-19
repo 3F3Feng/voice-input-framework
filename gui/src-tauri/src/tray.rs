@@ -3,7 +3,6 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
 };
 
 pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -20,10 +19,7 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .tooltip("Voice Input")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                crate::show_main_window(app);
             }
             "quit" => {
                 app.exit(0);
@@ -37,11 +33,7 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } = event
             {
-                let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                crate::show_main_window(tray.app_handle());
             }
         })
         .build(app)?;

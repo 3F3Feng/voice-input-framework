@@ -84,19 +84,23 @@ class TestLLMProxyContract:
 
         两种状态都合法——取决于 LLM 服务(6545)是否在运行(TestClient 内联 STT app,
         会按 LLM_SERVER_URL 转发)。契约测试验证的是结构而非具体业务值。
+
+        转发失败必须带 5xx:这些端点以前无论成败都回 200,只看状态码的调用方
+        (Rust 客户端 / client/network.py)于是把失败当成了成功。
         """
         for path in ("/llm/models", "/llm/health", "/llm/prompt"):
             r = client.get(path)
-            assert r.status_code == 200  # 转发端点恒返回 200
             body = r.json()
-            if "error_code" in body:
-                # LLM 不可达:M7 结构化错误
+            if r.status_code != 200:
+                # LLM 不可达:M7 结构化错误 + 非 2xx 状态码
+                assert r.status_code >= 500
                 assert body["error_code"] == "LLM_PROXY_ERROR"
                 assert "error_message" in body
                 assert "details" in body
             else:
                 # LLM 可达:返回 LLM 服务真实响应(结构为 dict/含模型数据)
                 assert isinstance(body, dict)
+                assert "error_code" not in body
 
 
 class TestTranscribeContract:

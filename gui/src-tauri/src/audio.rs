@@ -65,6 +65,13 @@ impl AudioRecorder {
         self.chunk_receiver.take()
     }
 
+    /// 当前是否正在录音。调用方要先问这个再动任何状态:`start()` 自己也会挡
+    /// 重复启动,但那时 `create_stream_channel` 已经把正在跑的回调的 sender
+    /// 换掉了,而失败分支的 `reset()` 更会把采样缓冲一起清空。
+    pub fn is_recording(&self) -> bool {
+        self.is_recording.load(Ordering::SeqCst)
+    }
+
     /// Get a clone of the peak level Arc for external monitoring.
     pub fn get_peak_level_arc(&self) -> Arc<AtomicU32> {
         self.peak_level.clone()
