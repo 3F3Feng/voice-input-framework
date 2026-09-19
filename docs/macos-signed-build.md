@@ -159,6 +159,54 @@ git tag v2.2.0 && git push origin v2.2.0
 | 私钥和 `tauri.conf.json` 里的 pubkey 不是一对 | tauri 本身只警告一句就照常出包,签出来的更新包客户端一个都验不过 |
 | 某个平台缺更新产物或签名 | 同上,那个平台的用户会一直更新失败 |
 
+### 各平台的更新产物
+
+这张表是**在 CI 上真跑了一遍三平台构建、把产物拉下来数出来的**,不是照文档抄的
+—— 其中 Linux 那两行和直觉不一样,照直觉写会坏:
+
+| 平台 | 给人下载的 | 更新器用的 | `latest.json` 的 key |
+|------|-----------|-----------|---------------------|
+| macOS | `...aarch64.dmg` | `Voice Input.app.tar.gz` + `.sig` | `darwin-aarch64` |
+| Linux (AppImage) | `...amd64.AppImage` | **同一个文件** + `.sig` | `linux-x86_64` |
+| Linux (deb) | `...amd64.deb` | **同一个文件** + `.sig` | `linux-x86_64-deb` |
+| Windows | `...x64-setup.exe` | **同一个文件** + `.sig` | `windows-x86_64` |
+
+几个容易踩的点:
+
+- **Linux 没有 `.AppImage.tar.gz`。** tauri 2.10 直接给 AppImage 本体签名。
+  (插件的 `install_appimage()` 两种都吃:字节流是 gz 就解包,不是就整个覆盖写回去。)
+- **`.deb` 必须单独挂一条。** 插件在 Linux 上按**安装方式**分派:用 deb 装的走
+  `install_deb()`,那个函数会先校验字节流是不是 deb,拿到 AppImage 只会报
+  `InvalidUpdaterFormat`。插件查清单的顺序是 `{os}-{arch}-{installer}` 再回落
+  `{os}-{arch}`,所以 `linux-x86_64-deb` 这条是 deb 用户能不能自动更新的全部依靠。
+  (装 deb 需要 root,插件会依次尝试 pkexec → zenity/kdialog → sudo。)
+- **只有 macOS 的更新产物是独立文件**,另外三个都是安装包本体兼做更新产物。
+- **collect 那一步不能写 `-name "*.tar.gz"`。** Linux 的 bundle 目录里还躺着
+  deb 拆出来的 `control.tar.gz` / `data.tar.gz`(7MB),会被一并发成 release 资产。
+- `targets: "all"` 还会产出 `.msi`(Windows)和 `.rpm`(Linux)。这两个不发布,
+  但它们各自带一个 `.sig`,collect 之后要把这种「主文件没收进来」的孤儿签名清掉。
+
+### 怎么自己验一遍签名
+
+不用等发版。把某次构建的产物拉下来,用配置里的 pubkey 验:
+
+```bash
+gh run download <run-id> -n tauri-ubuntu-latest -D /tmp/a
+python3 - <<'EOF'
+import base64, hashlib, json
+from nacl.signing import VerifyKey          # pip install pynacl
+pk = json.load(open('gui/src-tauri/tauri.conf.json'))['plugins']['updater']['pubkey']
+raw = base64.b64decode(base64.b64decode(pk).decode().strip().splitlines()[1])
+vk  = VerifyKey(raw[10:42])
+f   = '/tmp/a/Voice Input_2.2.0_amd64.AppImage'
+sig = base64.b64decode(open(f + '.sig','rb').read()).decode().strip().splitlines()[1]
+sig = base64.b64decode(sig)
+data = open(f,'rb').read()
+msg  = hashlib.blake2b(data, digest_size=64).digest() if sig[:2] == b'ED' else data
+vk.verify(msg, sig[10:74]); print('签名验证通过')
+EOF
+```
+
 ### 轮换签名密钥
 
 ```bash

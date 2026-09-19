@@ -43,6 +43,21 @@
   - 现在:发版流水线传签名密钥、开更新器产物、清单指向正确的产物,并且
     **签名缺失或密钥与 pubkey 对不上时直接让发版失败**(tauri 原本只警告一句);
     客户端改用 `tauri-plugin-updater`,签名验不过就装不上。
+- **Linux / Windows 的更新路径**(在 CI 上真跑了一遍三平台构建、把产物拉下来核对过):
+  - Linux 的更新产物**不是** `.AppImage.tar.gz` —— tauri 2.10 直接给 AppImage 本体
+    签名。清单原先指着一个根本不存在的文件。
+  - 用 `.deb` 装的用户单独需要一条 `linux-x86_64-deb`:插件在 Linux 上按安装方式
+    分派,deb 走 `install_deb()`,拿到 AppImage 只会报 `InvalidUpdaterFormat`。
+  - collect 那一步的 `*.tar.gz` 会把 deb 拆出来的 `control.tar.gz` / `data.tar.gz`
+    (7MB)一并收走发成 release 资产,收窄成 `*.app.tar.gz`。
+  - `.msi` / `.rpm` 不发布但各自带一个 `.sig`,这类孤儿签名现在会被清掉。
+  - 四个平台产物的签名已用配置里的 pubkey 逐个验过(Ed25519 + BLAKE2b 预哈希,
+    和客户端做的是同一件事),仓库 secret 里那把私钥确实是配套的。
+- **更新下载在慢网络上会谎报超时**:前端给 `install_update` 套了 120 秒硬超时,
+  而 Windows 的 NSIS 包三四十兆 —— 下载还好好地进行时就弹「下载超时」,后端其实
+  还在下、下完照样退出应用。改成按「有没有进展」判断。顺带接上从来没人监听的
+  `update-progress` 事件(此前整个下载过程界面上只有一句不动的「正在下载...」),
+  并给它加了节流,免得上千个事件把 IPC 刷爆。
 - **发版资产里混着 pyinstaller 的 `.app` 包内容**:`CodeResources`、`Info.plist`、
   `icon-windowed.icns`、以及一个版本号还停在 2.0.0 的可执行文件,四个都挂在
   v2.0.10 的 release 上。起因是 `path: dist/*` 把整个 `.app` 收走,而清理那一步
