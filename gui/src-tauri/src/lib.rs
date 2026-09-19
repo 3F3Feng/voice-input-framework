@@ -397,6 +397,43 @@ async fn switch_llm_model(state: State<'_, AppState>, name: String) -> Result<St
 
 // ── Config commands ──
 
+/// 版本号与构建标识。
+///
+/// **版本号只有一个来源:`gui/src-tauri/Cargo.toml` 的 `package.version`。**
+/// `tauri.conf.json` 里不再写 `version`(Tauri 缺省就回落到 Cargo.toml),
+/// `gui/package.json` 的 `version` 字段也删掉了 —— 那两处从来没人读,却总
+/// 和真版本号对不上,界面上一度显示的还是配置文件的 schema 版本「2.0」。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BuildInfo {
+    /// 应用版本,来自 `CARGO_PKG_VERSION`。
+    pub version: String,
+    /// 每次构建都不同的 UUID,见 `build.rs`。
+    pub build_id: String,
+    /// 构建时刻,`YYYY-MM-DD HH:MM UTC`。
+    pub built_at: String,
+}
+
+impl BuildInfo {
+    pub fn current() -> Self {
+        Self {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            build_id: env!("VIF_BUILD_ID").to_string(),
+            built_at: env!("VIF_BUILD_TIME").to_string(),
+        }
+    }
+
+    /// 构建 ID 的前 8 位。界面上摆不下整条 UUID,而前 8 位已经足够认人。
+    pub fn short_id(&self) -> &str {
+        let n = self.build_id.len().min(8);
+        &self.build_id[..n]
+    }
+}
+
+#[tauri::command]
+async fn get_build_info() -> Result<BuildInfo, String> {
+    Ok(BuildInfo::current())
+}
+
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<config::VoiceInputConfig, String> {
     Ok(state.config.lock().map_err(|e| e.to_string())?.clone())
@@ -929,6 +966,14 @@ pub fn run() {
 
             log::init(app.handle());
 
+            let build = BuildInfo::current();
+            log_info!(
+                "[app] Voice Input v{} · build {} · {}",
+                build.version,
+                build.build_id,
+                build.built_at
+            );
+
             let _ = tray::setup(app);
 
             // 启动时只查询三项权限并记录,不一次性把三个弹窗全甩给用户。
@@ -1035,6 +1080,7 @@ pub fn run() {
             get_models,
             switch_model,
             get_llm_models,
+            get_build_info,
             switch_llm_model,
             get_config,
             update_config,

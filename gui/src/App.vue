@@ -26,7 +26,13 @@
     <!-- Settings Panel -->
     <transition name="slide">
       <div v-if="showSettings" class="settings-panel">
+        <nav class="tabs">
+          <button v-for="t in visibleTabs" :key="t.id"
+            :class="['tab', { active: tab === t.id }]" @click="tab = t.id">{{ t.label }}</button>
+        </nav>
         <div class="settings-scroll">
+          <!-- 服务 -->
+          <template v-if="tab === 'service'">
           <!-- 服务器 -->
           <div class="s-section">
             <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -100,14 +106,16 @@
 
               <div v-if="pathProblem" class="s-tip srv-problem">⚠ {{ pathProblem }}</div>
 
-              <!-- 子进程输出：起不来的时候唯一能看的东西 -->
-              <div v-if="serverLogLines.length" class="srv-logs">
-                <div v-for="(l, i) in serverLogLines" :key="i" class="srv-log-line">{{ l }}</div>
+              <!-- 子进程输出搬到「日志」标签页去了：两个日志框并排摆在设置里，
+                   谁也分不清哪个是客户端自己的、哪个是 Python 服务打出来的。 -->
+              <div class="s-row" style="margin-top:6px">
+                <span class="s-tip" style="margin:0;flex:1">服务起不来时，输出在「日志」里按 STT / LLM 分开看。</span>
+                <button class="s-btn" @click="openLog('stt')">查看日志</button>
               </div>
-              <div v-if="serverLogPaths.length" class="s-tip">日志文件：{{ serverLogPaths.join('　') }}</div>
-              <div class="s-tip">
-                端口上已经有服务就直接连接，不会重复启动。你自己在终端里跑的服务，只要工作目录就是上面这个仓库，会标成「外部（本项目）」，照样可以从这里停止和重启；认不出来源的进程标成「外部（未识别）」，本应用只连接、绝不停它。
-              </div>
+              <details class="s-help">
+                <summary>进程归属是怎么判断的？</summary>
+                <div class="s-tip">端口上已经有服务就直接连接，不会重复启动。你自己在终端里跑的服务，只要工作目录就是上面这个仓库，会标成「外部（本项目）」，照样可以从这里停止和重启；认不出来源的进程标成「外部（未识别）」，本应用只连接、绝不停它。</div>
+              </details>
             </template>
           </div>
 
@@ -149,6 +157,20 @@
             </div>
           </div>
 
+          <!-- LLM Prompt -->
+          <div v-if="llmEnabled" class="s-section">
+            <div class="s-title">提示词</div>
+            <textarea class="s-textarea" v-model="promptText" rows="3" placeholder="LLM 后处理提示词..." />
+            <div class="s-row" style="margin-top:4px">
+              <button class="s-btn" @click="loadPrompt" :disabled="promptLoading">加载</button>
+              <button class="s-btn" @click="savePrompt" :disabled="promptLoading">保存</button>
+              <span v-if="promptStatus" class="s-tip">{{ promptStatus }}</span>
+            </div>
+          </div>
+          </template>
+
+          <!-- 常规 -->
+          <template v-else-if="tab === 'general'">
           <!-- Audio -->
           <div class="s-section">
             <div class="s-title">麦克风</div>
@@ -160,34 +182,6 @@
                 </option>
               </select>
               <button class="s-btn" @click="refreshDevices" title="刷新">🔄</button>
-            </div>
-          </div>
-
-          <!-- macOS 系统权限 -->
-          <div class="s-section" v-if="perms?.is_macos">
-            <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
-              <span>系统权限</span>
-              <button class="s-btn" @click="refreshPermissions" :disabled="permsLoading">
-                {{ permsLoading ? '...' : '刷新' }}
-              </button>
-            </div>
-            <div v-for="row in permissionRows" :key="row.key" class="perm-row">
-              <div class="perm-info">
-                <div class="perm-head">
-                  <span class="s-label">{{ row.label }}</span>
-                  <span :class="['perm-state', permStateClass(row.status)]">{{ permStateText(row.status) }}</span>
-                </div>
-                <div class="s-tip" style="margin-top:2px">{{ row.desc }}</div>
-              </div>
-              <div class="perm-actions">
-                <button v-if="row.canRequest" class="s-btn" @click="requestPerm(row.key)" :disabled="permBusy === row.key">
-                  {{ permBusy === row.key ? '...' : '请求授权' }}
-                </button>
-                <button class="s-btn" @click="openPermSettings(row.key)">打开设置</button>
-              </div>
-            </div>
-            <div class="s-tip" style="margin-top:6px">
-              已拒绝的权限系统不会再弹窗，需在「系统设置 → 隐私与安全性」中手动勾选；辅助功能改动后可能需要重启本应用。
             </div>
           </div>
 
@@ -218,15 +212,84 @@
               <span class="s-label">启动时最小化</span>
             </div>
           </div>
+          </template>
 
-          <!-- LLM Prompt -->
-          <div v-if="llmEnabled" class="s-section">
-            <div class="s-title">提示词</div>
-            <textarea class="s-textarea" v-model="promptText" rows="3" placeholder="LLM 后处理提示词..." />
+          <!-- 权限（仅 macOS 显示，这一页也只在 macOS 下出现在标签栏里） -->
+          <template v-else-if="tab === 'perm'">
+          <!-- macOS 系统权限 -->
+          <div class="s-section" v-if="perms?.is_macos">
+            <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
+              <span>系统权限</span>
+              <button class="s-btn" @click="refreshPermissions" :disabled="permsLoading">
+                {{ permsLoading ? '...' : '刷新' }}
+              </button>
+            </div>
+            <div v-for="row in permissionRows" :key="row.key" class="perm-row">
+              <div class="perm-info">
+                <div class="perm-head">
+                  <span class="s-label">{{ row.label }}</span>
+                  <span :class="['perm-state', permStateClass(row.status)]">{{ permStateText(row.status) }}</span>
+                </div>
+                <div class="s-tip" style="margin-top:2px">{{ row.desc }}</div>
+              </div>
+              <div class="perm-actions">
+                <button v-if="row.canRequest" class="s-btn" @click="requestPerm(row.key)" :disabled="permBusy === row.key">
+                  {{ permBusy === row.key ? '...' : '请求授权' }}
+                </button>
+                <button class="s-btn" @click="openPermSettings(row.key)">打开设置</button>
+              </div>
+            </div>
+            <div class="s-tip" style="margin-top:6px">
+              已拒绝的权限系统不会再弹窗，需在「系统设置 → 隐私与安全性」中手动勾选；辅助功能改动后可能需要重启本应用。
+            </div>
+          </div>
+          </template>
+
+          <!-- 日志 -->
+          <template v-else-if="tab === 'logs'">
+          <!-- 合并后的日志：客户端自己的日志和两个 Python 服务的输出共用一个框，
+               用上面的来源按钮切。不做时间线交织——三路日志的时间戳格式各不相同，
+               按猜测把它们排在一起只会造出一条看着可信、其实是编的时间线。 -->
+          <div class="s-section">
+            <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
+              <span>日志</span>
+              <span style="color:var(--muted);font-size:0.65rem">{{ activeLog.length }} 行</span>
+            </div>
+            <div class="s-row mode-switch">
+              <button v-for="s in logSources" :key="s.id"
+                :class="['s-btn', 'mode-btn', { active: logSource === s.id }]"
+                @click="logSource = s.id">{{ s.label }}</button>
+            </div>
+            <div class="log-box" ref="logBoxRef">
+              <div v-for="(entry, i) in activeLog" :key="i" :class="['log-entry', entry.level]">
+                {{ entry.msg }}
+              </div>
+              <div v-if="activeLog.length === 0" class="log-empty">{{ logEmptyText }}</div>
+            </div>
             <div class="s-row" style="margin-top:4px">
-              <button class="s-btn" @click="loadPrompt" :disabled="promptLoading">加载</button>
-              <button class="s-btn" @click="savePrompt" :disabled="promptLoading">保存</button>
-              <span v-if="promptStatus" class="s-tip">{{ promptStatus }}</span>
+              <button v-if="logSource === 'client'" class="s-btn" @click="guiLogs = []">清空</button>
+              <button v-else class="s-btn" @click="refreshServers" :disabled="serversLoading">
+                {{ serversLoading ? '...' : '刷新' }}
+              </button>
+            </div>
+            <div v-if="activeLogPath" class="s-tip" style="margin-top:4px">文件：{{ activeLogPath }}</div>
+          </div>
+          </template>
+
+          <!-- 关于 -->
+          <template v-else>
+          <!-- 关于：版本号只有一个来源(gui/src-tauri/Cargo.toml)，构建 ID 每次构建都换，
+               本地反复构建时全靠它认出手里跑的是哪个产物。 -->
+          <div class="s-section">
+            <div class="s-title">关于</div>
+            <div class="about-row"><span class="s-label">版本</span><span class="about-val">v{{ build.version }}</span></div>
+            <div class="about-row">
+              <span class="s-label">构建</span>
+              <span class="about-val mono" :title="build.build_id">{{ buildShort }}</span>
+            </div>
+            <div class="about-row"><span class="s-label">构建时间</span><span class="about-val mono">{{ build.built_at }}</span></div>
+            <div class="s-row" style="margin-top:6px">
+              <button class="s-btn" @click="copyBuildId">复制完整构建 ID</button>
             </div>
           </div>
 
@@ -250,23 +313,7 @@
               </button>
             </div>
           </div>
-
-          <!-- Debug Log -->
-          <div class="s-section">
-            <div class="s-title" style="display:flex;justify-content:space-between">
-              <span>调试日志</span>
-              <span style="color:var(--muted);font-size:0.65rem">{{ guiLogs.length }} 条</span>
-            </div>
-            <div class="log-box" ref="logBoxRef">
-              <div v-for="(entry, i) in guiLogs" :key="i" :class="['log-entry', entry.level]">
-                {{ entry.msg }}
-              </div>
-              <div v-if="guiLogs.length === 0" class="log-empty">暂无日志</div>
-            </div>
-            <div class="s-row" style="margin-top:4px">
-              <button class="s-btn" @click="guiLogs = []">清空</button>
-            </div>
-          </div>
+          </template>
         </div>
       </div>
     </transition>
@@ -343,13 +390,13 @@
 
     <!-- Footer -->
     <footer class="footer">
-      <span class="footer-text">v{{ version }}</span>
+      <span v-if="build.version" class="footer-text" :title="`build ${build.build_id} · ${build.built_at}`">v{{ build.version }} · {{ buildShort }}</span>
     </footer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -430,7 +477,6 @@ const connected = ref(false);
 const connecting = ref(false);
 const loading = ref(false);
 const result = ref("");
-const version = ref("2.0.2");
 const showSettings = ref(false);
 const copyFeedback = ref(false);
 const history = ref<HistoryItem[]>([]);
@@ -503,7 +549,72 @@ const updateInstalling = ref(false);
 
 // Logs
 const guiLogs = ref<{ msg: string; level: string }[]>([]);
+
+// ── 设置面板的标签页 ──
+// 以前是十个 s-section 在一个 400×500 的窗口里一路往下堆，找一个开关要滚三屏。
+// 按「改什么」分页：服务（连哪儿、起停、模型）／常规（日常开关）／权限（macOS）／
+// 日志／关于。权限页只在 macOS 下出现，别的平台连标签都不显示。
+type SettingsTab = "service" | "general" | "perm" | "logs" | "about";
+const tab = ref<SettingsTab>("service");
+const visibleTabs = computed(() => [
+  { id: "service" as const, label: "服务" },
+  { id: "general" as const, label: "常规" },
+  ...(perms.value?.is_macos ? [{ id: "perm" as const, label: "权限" }] : []),
+  { id: "logs" as const, label: "日志" },
+  { id: "about" as const, label: "关于" },
+]);
+
+// ── 日志来源 ──
+// 客户端自己的日志和两个 Python 服务的输出原本是两个独立的日志框（一个在
+// 「服务器」一段里，一个在面板最底下），并排摆着没人分得清哪个是哪个。
+// 现在共用一个框，用来源按钮切。远程模式下没有本地子进程，只剩「客户端」。
+//
+// 不做时间线交织：三路日志的时间戳格式各不相同，按猜测把它们排到一起只会造出
+// 一条看着可信、其实是编的时间线。
+type LogSource = "client" | "stt" | "llm";
+const logSource = ref<LogSource>("client");
+const logSources = computed(() => [
+  { id: "client" as const, label: "客户端" },
+  ...(serverMode.value === "local"
+    ? [{ id: "stt" as const, label: "STT" }, { id: "llm" as const, label: "LLM" }]
+    : []),
+]);
+const activeLog = computed<{ msg: string; level: string }[]>(() => {
+  if (logSource.value === "client") return guiLogs.value;
+  const st = serverReport.value?.[logSource.value];
+  // 子进程的 stdout 没有分级，全按 info 渲染，不去猜哪行是错误。
+  return (st?.recent_logs ?? []).map(msg => ({ msg, level: "info" }));
+});
+const activeLogPath = computed(() => {
+  if (logSource.value === "client") return null;
+  return serverReport.value?.[logSource.value]?.log_path ?? null;
+});
+const logEmptyText = computed(() => {
+  if (logSource.value === "client") return "暂无日志";
+  if (serverMode.value !== "local") return "远程模式下没有本地服务日志";
+  return "这个服务还没被本应用启动过";
+});
+/** 从别处跳到日志页并选好来源（「服务器」一段里的「查看日志」用）。 */
+function openLog(src: LogSource) { logSource.value = src; tab.value = "logs"; }
+
+// ── 构建信息 ──
+// 版本号只有一个来源：gui/src-tauri/Cargo.toml。以前底栏显示的是配置文件的
+// schema 版本（"2.0"），tauri.conf.json 和 gui/package.json 里还各有一个，
+// 三个数字互相打架。现在全部由后端的 get_build_info 供给。
+const build = ref({ version: "", build_id: "", built_at: "" });
+const buildShort = computed(() => build.value.build_id.slice(0, 8) || "—");
+async function copyBuildId() {
+  try { await navigator.clipboard.writeText(build.value.build_id); toast("构建 ID 已复制", "ok"); }
+  catch (e) { toast(`复制失败: ${e}`, "err"); }
+}
 const logBoxRef = ref<HTMLElement | null>(null);
+// 日志框以前绑了 ref 却没人用：刷过一屏之后最新的一行就落在可视区外，
+// 而看日志的时候要的恰恰是最后几行。切来源时也要回到底部。
+watch([activeLog, logSource], async () => {
+  await nextTick();
+  const el = logBoxRef.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}, { flush: "post" });
 
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let levelInterval: ReturnType<typeof setInterval> | null = null;
@@ -624,19 +735,6 @@ const sttState = computed<ServerState | null>(() => serverReport.value?.stt.stat
 const pathProblem = computed(() =>
   serverMode.value === "local" ? serverReport.value?.local_paths.problem ?? null : null
 );
-/** 两个服务的日志尾巴合起来给用户看，各自带前缀。 */
-const serverLogLines = computed(() => {
-  const r = serverReport.value;
-  if (!r || serverMode.value !== "local") return [];
-  const take = (s: ServerStatus, tag: string) => s.recent_logs.slice(-8).map(l => `[${tag}] ${l}`);
-  return [...take(r.stt, "STT"), ...take(r.llm, "LLM")];
-});
-const serverLogPaths = computed(() => {
-  const r = serverReport.value;
-  if (!r || serverMode.value !== "local") return [];
-  return [r.stt.log_path, r.llm.log_path].filter((p): p is string => !!p);
-});
-
 const missingPermLabels = computed(() =>
   perms.value?.is_macos
     ? permissionRows.value.filter(r => r.status !== "granted").map(r => r.label)
@@ -778,6 +876,9 @@ async function refreshServers() {
   serversLoading.value = false;
 }
 
+// 切到远程模式时 STT / LLM 两个来源没了，选中它们只会看到一个永远空的框。
+watch(serverMode, m => { if (m !== "local" && logSource.value !== "client") logSource.value = "client"; });
+
 /** 只在设置面板打开且处于本地模式时轮询：启动中要看着它变成运行中。 */
 function syncServerPolling() {
   const want = showSettings.value && serverMode.value === "local";
@@ -896,7 +997,6 @@ async function loadConfig() {
     const cfg = await getConfig();
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
-    version.value = cfg._version;
     hotkeyStr.value = cfg.hotkey.key;
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
@@ -1260,6 +1360,8 @@ watch(sttState, (next, prev) => {
 });
 
 onMounted(async () => {
+  try { build.value = await invoke<{ version: string; build_id: string; built_at: string }>("get_build_info"); }
+  catch (e) { console.error("get_build_info error:", e); }
   await loadConfig();
   await loadAutostart();
   await refreshDevices();
@@ -1409,8 +1511,19 @@ html, body, #app { height: 100%; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-8px); }
 
 /* ── Settings Panel ── */
-.settings-panel { position: absolute; top: 44px; left: 0; right: 0; bottom: 24px; background: var(--bg); z-index: 50; overflow: hidden; }
-.settings-scroll { height: 100%; overflow-y: auto; padding: 12px 14px; }
+.settings-panel { position: absolute; top: 44px; left: 0; right: 0; bottom: 24px; background: var(--bg); z-index: 50; overflow: hidden; display: flex; flex-direction: column; }
+/* 标签栏固定在面板顶部，只有下面的内容区滚动 —— 滚到第三屏还能一键换页。 */
+.tabs { display: flex; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.tab { flex: 1; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-size: 0.72rem; padding: 8px 0; cursor: pointer; font-family: inherit; }
+.tab:hover { color: var(--fg); }
+.tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+.settings-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px; }
+.about-row { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; }
+.about-val { font-size: 0.72rem; color: var(--fg); }
+.about-val.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.66rem; }
+/* 长说明收进折叠块：需要的时候点开，不需要的时候不占三行。 */
+.s-help > summary { font-size: 0.65rem; color: var(--muted); cursor: pointer; margin-top: 6px; }
+.s-help > summary:hover { color: var(--fg); }
 .slide-enter-active, .slide-leave-active { transition: transform 0.2s ease; }
 .slide-enter-from, .slide-leave-to { transform: translateX(100%); }
 .slide-enter-to, .slide-leave-from { transform: translateX(0); }
@@ -1458,8 +1571,6 @@ html, body, #app { height: 100%; }
 .mode-btn:last-child { border-radius: 0 6px 6px 0; border-left: none; }
 .mode-btn.active { background: rgba(96, 165, 250, 0.15); color: var(--blue); border-color: rgba(96, 165, 250, 0.4); }
 .srv-problem { color: var(--yellow); }
-.srv-logs { margin-top: 6px; max-height: 110px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
-.srv-log-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.62rem; color: var(--muted); line-height: 1.45; white-space: pre-wrap; word-break: break-all; }
 
 /* Update */
 .update-info { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
