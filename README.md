@@ -203,7 +203,7 @@ npm run tauri build
 ```bash
 pip install pytest pytest-asyncio fastapi uvicorn pydantic httpx websockets python-multipart numpy
 pytest -m "not integration"
-# 94 passed / 26 skipped / 25 deselected(含 9 个端点契约测试 tests/test_contract.py)
+# 177 passed / 1 skipped / 31 deselected(含端点契约测试 tests/test_contract.py)
 ```
 
 `tests/test_contract.py` 用 TestClient 断言 HTTP/WS 端点契约,与修复前基线等价(见 `docs/ARCHITECTURE_REVIEW.md` §7)。
@@ -226,7 +226,7 @@ bash scripts/run_integration.sh   # 启动 STT+LLM,跑 tests/test_e2e.py + test_
 
 ```bash
 # 逻辑测试(任意平台,无需 tauri 系统库)
-cd gui/stt-logic-tests && cargo test          # 9 passed
+cd gui/stt-logic-tests && cargo test          # 16 passed
 
 # 完整 Tauri crate(Linux 需 webkit2gtk/gtk/alsa/xdo dev 包)
 cd gui/src-tauri && cargo check && cargo test
