@@ -22,3 +22,6 @@ gui/src-tauri/icons/icon.iconset/
 __pycache__/
 client/gui_v1_backup.py
 server/models/__pycache__/
+
+# macOS Finder 每进一个目录就留一个,和项目无关
+.DS_Store
