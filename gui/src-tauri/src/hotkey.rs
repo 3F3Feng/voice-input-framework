@@ -605,8 +605,8 @@ mod mac_tap {
     use super::*;
     use core_foundation::runloop::*;
     use core_graphics::event::{
-        CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
-        CGEventTapPlacement, CGEventType, EventField,
+        CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+        CGEventType, EventField,
     };
 
     // macOS HID keycode → HotkeyKey (ANSI layout; letters A=0x00, not Windows VK).

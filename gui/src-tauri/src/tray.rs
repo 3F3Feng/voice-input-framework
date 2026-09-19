@@ -3,7 +3,6 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
 };
 
 pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {

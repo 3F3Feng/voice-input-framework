@@ -10,7 +10,6 @@
         <span class="conn-text">{{ connected ? currentModelName : connecting ? '连接中…' : '未连接' }}</span>
       </div>
       <div class="header-right">
-        <button class="header-btn" @click="minimizeToTray" title="最小化到托盘">─</button>
         <button class="header-btn" @click="showSettings = !showSettings" :class="{ active: showSettings }">
           {{ showSettings ? '✕' : '⚙' }}
         </button>
@@ -135,11 +134,18 @@
               LLM 服务跟着这个开关走：打开时启动（加载模型要几秒），关闭时停止，不用一直占着内存。只停本应用启动的那个；你自己在终端里跑的服务会保留。
             </div>
             <div v-if="llmEnabled" style="margin-top: 8px;">
-              <select class="s-select" v-model="llmModel" @change="switchLlm">
+              <select v-if="llmModels.length" class="s-select" v-model="llmModel" @change="switchLlm">
                 <option v-for="m in llmModels" :key="m.name" :value="m.name">
                   {{ m.name }} {{ m.is_loaded ? '✓' : '' }}
                 </option>
               </select>
+              <!-- 空下拉框什么也不说明。拿不到列表基本只有一个原因:LLM 服务
+                   还没起来(或刚起来还在加载),所以直说,并给一个重试按钮。 -->
+              <div v-else class="s-tip">
+                取不到 LLM 模型列表——LLM 服务可能还没就绪。
+                <button class="s-btn" style="margin-left:6px" @click="loadLlmModels"
+                  :disabled="llmModelsLoading">{{ llmModelsLoading ? '...' : '重试' }}</button>
+              </div>
             </div>
           </div>
 
@@ -431,6 +437,7 @@ const history = ref<HistoryItem[]>([]);
 
 const sttModels = ref<ModelInfo[]>([]);
 const llmModels = ref<ModelInfo[]>([]);
+const llmModelsLoading = ref(false);
 const sttModel = ref("");
 const llmModel = ref("");
 const sttLoading = ref(false);
@@ -763,6 +770,10 @@ async function refreshServers() {
     const r = await invoke<ServerReport>("get_server_report");
     serverReport.value = r;
     serverMode.value = r.mode;
+    // LLM 服务不一定是从这个界面上打开的:自动启动、启动后对账补起、或者用户
+    // 点了服务器面板上的「启动」,都会让它在列表还空着的时候跑起来。轮询到这一刻
+    // 就补拉一次,不然下拉框会一直空着。
+    if (r.llm.state === "running" && llmModels.value.length === 0) await loadLlmModels();
   } catch (e) { console.error("get_server_report failed:", e); }
   serversLoading.value = false;
 }
@@ -1013,13 +1024,32 @@ async function loadModels(): Promise<boolean> {
     if (list.length > 0) { const loaded = list.find(m => m.is_loaded); sttModel.value = loaded?.name || list[0].name; }
     ok = true;
   } catch (e) { console.error("get_models error:", e); }
+  await loadLlmModels();
+  try { llmEnabled.value = await invoke<boolean>("get_llm_enabled"); } catch {}
+  return ok;
+}
+
+/**
+ * 拉 LLM 模型列表。单独一个函数是因为它和 STT 的列表**不是同时可用的**:
+ * LLM 服务跟着后处理开关起停,关着的时候这个请求必然失败。
+ *
+ * 以前它只在 `loadModels()` 里跟着 STT 一起拉一次,失败了就空着,之后再没人
+ * 补过——于是「打开后处理开关 → LLM 服务起来了 → 下拉框还是空的,没法选模型」。
+ * 现在开关打开后、以及服务器面板看到 LLM 跑起来时都会再拉一次。
+ */
+async function loadLlmModels(): Promise<boolean> {
+  llmModelsLoading.value = true;
   try {
     const llmList = await invoke<ModelInfo[]>("get_llm_models");
     llmModels.value = llmList;
     if (llmList.length > 0) { const loaded = llmList.find(m => m.is_loaded); llmModel.value = loaded?.name || llmList[0].name; }
-  } catch {}
-  try { llmEnabled.value = await invoke<boolean>("get_llm_enabled"); } catch {}
-  return ok;
+    return llmList.length > 0;
+  } catch (e) {
+    console.error("get_llm_models error:", e);
+    // 留着上一轮的陈列表会让用户以为还能选:服务已经停了,选了也切不动。
+    llmModels.value = [];
+    return false;
+  } finally { llmModelsLoading.value = false; }
 }
 
 async function switchStt() {
@@ -1057,6 +1087,9 @@ async function toggleLlm() {
     toast(`${e}`, "err");
   }
   llmToggling.value = false;
+  // 后端在返回成功之前已经等到 LLM 服务能应答了,这时候列表一定拉得到。
+  // 关掉的时候不用拉:服务正要停,下拉框也已经收起来了。
+  if (llmEnabled.value) await loadLlmModels();
   // 服务的状态刚刚被改过,面板上那一行得跟着更新。
   if (serverMode.value === "local") await refreshServers();
 }
@@ -1204,10 +1237,6 @@ async function doAutoInput() {
   }
 }
 function clearResult() { result.value = ""; }
-async function minimizeToTray() {
-  try { await invoke("minimize_to_tray"); } catch {}
-}
-
 // ── Lifecycle ──
 // 打开设置面板时重新查一次:用户可能刚在系统设置里改过授权
 watch(showSettings, open => { if (open) refreshPermissions(); });

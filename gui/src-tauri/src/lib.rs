@@ -1004,10 +1004,17 @@ pub fn run() {
                 show_main_window(app.handle());
             }
 
+            // 标题栏上的关闭按钮只藏窗口,不退应用;退出只有托盘菜单里的「退出」
+            // 一条路。
+            //
+            // `prevent_close()` 这一句是关键:少了它,下面 `hide()` 藏起来的窗口
+            // 紧接着还是会被真正关掉,而主窗口一关整个应用就跟着退了——用户点个
+            // ✕ 想收起界面,结果连全局快捷键一起没了。以前就是这个样子。
             if let Some(window) = app.get_webview_window("main") {
                 let win = window.clone();
                 window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
                         hotkey::reset_state();
                         let _ = win.hide();
                     }
