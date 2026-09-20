@@ -64,10 +64,36 @@ STT_PORT = int(os.getenv("VIF_STT_PORT", str(DEFAULT_STT_PORT)))
 CORS_ORIGINS = [
     o.strip() for o in os.getenv("VIF_CORS_ORIGINS", "").split(",") if o.strip()
 ] or DEFAULT_CORS_ORIGINS
-STT_MODEL = os.getenv(
-    "VIF_STT_MODEL",
-    get_default_model(),
-)
+
+
+def _resolve_stt_model() -> str:
+    """定这次用哪个 STT 模型。
+
+    优先级:`VIF_STT_MODEL` > 按硬件推荐 > 静态兜底。
+
+    「按硬件推荐」会量后端、核数、内存和显存 —— 默认值配不上机器,用户开箱
+    看到的要么是慢得不能用,要么直接 OOM。实测在 6 核 i5 / 8GB 上,
+    whisper_small 是 2.31x 实时(说 10 秒等 23 秒),而 whisper_base 是 0.70x;
+    同一份代码在有独显的机器上就该自动用更大的模型,不该一刀切。
+    """
+    # 模块级的 logger 在本函数被调用之后才定义,这里自己取一个同名的。
+    log = logging.getLogger("stt-server")
+    explicit = os.getenv("VIF_STT_MODEL")
+    if explicit:
+        return explicit
+    try:
+        from services.device import profile, recommend_stt_model
+
+        model, why = recommend_stt_model(profile())
+        log.info(f"按硬件选定 STT 模型: {model}({why});可用 VIF_STT_MODEL 覆盖")
+        return model
+    except Exception as e:  # noqa: BLE001 - 探测失败不该让服务起不来
+        fallback = get_default_model()
+        log.warning(f"硬件探测失败({e}),退回默认模型 {fallback}")
+        return fallback
+
+
+STT_MODEL = _resolve_stt_model()
 LOG_LEVEL = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
 REQUEST_TIMEOUT = float(os.getenv("VIF_REQUEST_TIMEOUT", "300.0"))
 MAX_RETRIES = int(os.getenv("VIF_MAX_RETRIES", "3"))
@@ -269,6 +295,9 @@ async def health_check():
         total_requests=engine.total_requests,
         failed_requests=engine.failed_requests,
         diarize=diarize_engine.get_health() if diarize_engine else {"status": "disabled"},
+        # 实际选中的后端与机器画像。用户(和我们)得能一眼看出这台机器到底
+        # 跑在 GPU 上还是 CPU 上、为什么给了这个模型 —— 以前这些全靠猜。
+        hardware=engine.backend_info() or {"status": "模型尚未加载"},
     )
 
 

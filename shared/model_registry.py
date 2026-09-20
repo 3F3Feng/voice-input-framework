@@ -74,19 +74,61 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "memory_gb": 3,
         "description": "Whisper V3 Large via whisper.cpp (Metal GPU, accurate)",
     },
-    # ── Whisper Transformers 模型 (通用备选) ──
+    # ── Whisper Transformers 模型(跨平台:Windows / Linux / macOS 都能跑)──
+    #
+    # 非 Apple 平台以前**只有 whisper_turbo 一个选择**,而它是个 1.6GB 的大模型
+    # —— 在没有独显的机器上又慢又占内存,想换小一点的却没得换。这里按大小补齐一
+    # 条梯度,让用户能按自己的硬件挑。
+    #
+    # memory_gb 是 fp16 权重加推理开销的粗估;CPU 上跑 fp32 大约要乘 2。
+    "whisper_tiny": {
+        "model_id": "openai/whisper-tiny",
+        "engine": "whisper_turbo",
+        "memory_gb": 0.3,
+        "description": "Whisper Tiny (transformers, 最快, 精度一般, 适合低配 / 纯 CPU)",
+    },
+    "whisper_base": {
+        "model_id": "openai/whisper-base",
+        "engine": "whisper_turbo",
+        "memory_gb": 0.5,
+        "description": "Whisper Base (transformers, 纯 CPU 上的推荐起点)",
+    },
+    "whisper_small": {
+        "model_id": "openai/whisper-small",
+        "engine": "whisper_turbo",
+        "memory_gb": 1.0,
+        "description": "Whisper Small (transformers, 速度与精度折中)",
+    },
+    "whisper_medium": {
+        "model_id": "openai/whisper-medium",
+        "engine": "whisper_turbo",
+        "memory_gb": 2.5,
+        "description": "Whisper Medium (transformers, 有独显时适用)",
+    },
     "whisper_turbo": {
         "model_id": "openai/whisper-large-v3-turbo",
         "engine": "whisper_turbo",
         "memory_gb": 3,
-        "description": "Whisper Large V3 Turbo (transformers, fast)",
+        "description": "Whisper Large V3 Turbo (transformers, 精度最好, 建议配 GPU)",
     },
 }
 
 
 def get_default_model() -> str:
-    """返回当前平台推荐的默认模型"""
-    return "qwen_asr_mlx_native_small" if IS_APPLE_SILICON else "whisper_turbo"
+    """返回当前平台推荐的默认模型。
+
+    这是**不看硬件的静态兜底**,取的是「哪台机器上都跑得动」的那一档。
+    真正的选型在 `services.device.recommend_stt_model()`:那里会量核数、
+    内存和显存,配得上更大的模型就自动升上去。这里之所以还要保守,是因为
+    这个函数是 `STTEngine.__init__` 的默认参数,在模块导入时就会求值 ——
+    不能在这里 import torch。
+
+    非 Apple 的兜底不用 `whisper_turbo`(1.6GB):实测在 6 核 i5 上
+    large 一档远慢于实时,默认给个跑不动的只会让人以为程序坏了。
+
+    可用 `VIF_STT_MODEL` 覆盖。
+    """
+    return "qwen_asr_mlx_native_small" if IS_APPLE_SILICON else "whisper_base"
 
 
 def get_apple_silicon_only_models() -> list:

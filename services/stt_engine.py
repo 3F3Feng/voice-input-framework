@@ -65,6 +65,9 @@ class HealthStatus(BaseModel):
     total_requests: int = 0
     failed_requests: int = 0
     diarize: dict[str, Any] | None = None
+    #: 实际选中的推理后端与机器画像(设备 / 精度 / 核数 / 内存 / 显存)。
+    #: 客户端和排查问题的人靠它判断这台机器到底跑在 GPU 上还是 CPU 上。
+    hardware: dict[str, Any] | None = None
 
 
 # ============== STT Engine ==============
@@ -81,6 +84,9 @@ class STTEngine:
         self._is_loaded = False
         self._loading = False
         self._load_lock = asyncio.Lock()
+        # 实际选中的推理后端,加载模型时填上。/health 会如实报出来 —— 用户
+        # (和我们)得能一眼看出这台机器到底跑在 GPU 上还是 CPU 上。
+        self._backend = None
         self._model_info = self.AVAILABLE_MODELS.get(
             default_model, self.AVAILABLE_MODELS["qwen_asr_mlx_native_small"]
         )
@@ -127,18 +133,16 @@ class STTEngine:
 
     def _load_model_sync(self):
         """同步加载主模型"""
-        import torch
-
         model_id = self._model_info["model_id"]
         engine_type = self._model_info.get("engine", "qwen_asr_mlx_native")
 
-        # 检测设备
-        if torch.backends.mps.is_available():
-            device = "mps"
-        elif torch.cuda.is_available():
-            device = "cuda"
-        else:
-            device = "cpu"
+        # 后端选择集中在 services/device.py:那里认得出 ROCm(否则 A 卡会被
+        # 报成 N 卡)和 Intel XPU,也会按硬件挑精度,而不是「只有 CUDA 用 fp16」。
+        from services.device import detect as detect_backend
+
+        backend = detect_backend()
+        device = backend.torch_device
+        self._backend = backend
 
         # ── Whisper MLX 引擎 ──
         if engine_type == "whisper_mlx":
@@ -189,11 +193,11 @@ class STTEngine:
         if engine_type == "whisper_turbo":
             from transformers import pipeline
 
-            logger.info(f"Loading Whisper turbo on {device}...")
+            logger.info(f"Loading Whisper on {backend.detail} [{backend.dtype_name}]...")
             self._model = pipeline(
                 "automatic-speech-recognition",
                 model=model_id,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                torch_dtype=backend.torch_dtype(),
                 device=device,
             )
             self._model_type = "whisper_turbo"
@@ -385,6 +389,10 @@ class STTEngine:
 
     def is_loading(self) -> bool:
         return self._loading
+
+    def backend_info(self) -> dict | None:
+        """选中的推理后端(设备 / 精度 / 说明)。还没加载模型时为 None。"""
+        return self._backend.as_dict() if self._backend else None
 
     def is_model_loaded(self) -> bool:
         return self._is_loaded
