@@ -985,6 +985,14 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
 }
 
 /// 当前是不是 Wayland 会话。是的话返回它的名字,好原样写进日志。
+///
+/// 在 Ubuntu 24.04 上实测过五种环境:`XDG_SESSION_TYPE` 为 tty / x11 时返回
+/// None,为 wayland / Wayland(大小写不敏感)时返回 Some;只要 `WAYLAND_DISPLAY`
+/// 有值就算 Wayland,哪怕 `XDG_SESSION_TYPE` 说的是别的。
+///
+/// 同一台机器上还确认了:拿不到显示服务时 `rdev::listen` 是**很快返回
+/// `Err(KeyboardError)`**(实测 4.5ms),不是卡住不返回 —— 所以下面那段错误
+/// 提示真的会打印出来,不会石沉大海。
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 fn wayland_session() -> Option<&'static str> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
