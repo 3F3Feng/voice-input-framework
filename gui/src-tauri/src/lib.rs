@@ -699,8 +699,19 @@ async fn reconcile_llm_after_start(
 }
 
 #[tauri::command]
-async fn register_hotkey(app: tauri::AppHandle, shortcut: String) -> Result<(), String> {
-    if let Some(keys) = hotkey::parse_hotkey(&shortcut) {
+async fn register_hotkey(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    shortcut: String,
+) -> Result<(), String> {
+    // 分不分左右由配置说了算。这个开关以前只存不读 —— 前端有、配置文件里有、
+    // 迁移代码里也有,就是没有任何地方拿它做过判断。
+    let distinguish = state
+        .config
+        .lock()
+        .map(|c| c.hotkey.distinguish_left_right)
+        .unwrap_or(true);
+    if let Some(keys) = hotkey::parse_hotkey(&shortcut, distinguish) {
         hotkey::start_listener(app.clone(), keys);
         eprintln!("[hotkey] Re-registered: {}", shortcut);
         Ok(())
@@ -968,6 +979,7 @@ pub fn run() {
             // 老配置没有 mode 字段 → 默认 Remote → 和以前完全一样。
             let stt_url = cfg.server.effective_stt_url();
             let shortcut = cfg.hotkey.key.clone();
+            let distinguish_sides = cfg.hotkey.distinguish_left_right;
             let start_minimized = cfg.ui.start_minimized;
             let local_mode = cfg.server.mode == config::ServerMode::Local;
             let auto_start = local_mode && cfg.server.local.auto_start;
@@ -1025,9 +1037,11 @@ pub fn run() {
                 log_error!("[perm] 缺少输入监控权限,全局快捷键将不工作;请在设置中授权");
             }
 
-            if let Some(keys) = hotkey::parse_hotkey(&shortcut) {
+            if let Some(keys) = hotkey::parse_hotkey(&shortcut, distinguish_sides) {
                 hotkey::start_listener(app.handle().clone(), keys);
                 eprintln!("[hotkey] Started listener for: {}", shortcut);
+            } else {
+                log_error!("[hotkey] 快捷键「{}」无法解析,全局快捷键未注册", shortcut);
             }
 
             // 本地模式 + 用户勾了「随应用启动」才自动拉起。`start` 内部照样

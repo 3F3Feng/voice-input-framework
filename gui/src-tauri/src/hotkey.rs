@@ -104,18 +104,103 @@ pub enum HotkeyKey {
     KeyZ,
 }
 
-/// Parse a hotkey string like `"left_ctrl+left_alt"` or `"capslock"` into key list.
-pub fn parse_hotkey(s: &str) -> Option<Vec<HotkeyKey>> {
-    let tokens: Vec<&str> = s.split('+').collect();
+/// 快捷键里的一「项」:满足它的物理键有哪些,按下任意一个就算满足。
+///
+/// 需要这一层是因为「Ctrl」这个说法本身就是有歧义的,而**业界通行的做法是
+/// 不写边就两边都认**(Discord / OBS / 各家推话器都是这样):用户写 `ctrl+alt`,
+/// 按左边右边都该响应;只有明确写了 `left_ctrl` 才只认左边。
+///
+/// 另外配置里一直有个 `hotkey.distinguish_left_right` 开关,但 Rust 客户端从来
+/// 没读过它 —— 存了、迁移了、前端类型里也有,就是没人用。关掉它的意思就是
+/// 「别分左右」,现在由这里落实。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeySpec {
+    /// 满足这一项的物理键(任一即可)。
+    alts: Vec<HotkeyKey>,
+}
+
+impl KeySpec {
+    fn exact(k: HotkeyKey) -> Self {
+        Self { alts: vec![k] }
+    }
+
+    /// 这一项现在满足了吗:交给 `is_down` 去问每个候选键的状态。
+    pub fn satisfied(&self, mut is_down: impl FnMut(HotkeyKey) -> bool) -> bool {
+        self.alts.iter().copied().any(&mut is_down)
+    }
+}
+
+/// 一个修饰键的左右两侧。不是修饰键就返回 None。
+fn both_sides(k: HotkeyKey) -> Option<[HotkeyKey; 2]> {
+    Some(match k {
+        HotkeyKey::ControlLeft | HotkeyKey::ControlRight => {
+            [HotkeyKey::ControlLeft, HotkeyKey::ControlRight]
+        }
+        HotkeyKey::ShiftLeft | HotkeyKey::ShiftRight => {
+            [HotkeyKey::ShiftLeft, HotkeyKey::ShiftRight]
+        }
+        HotkeyKey::Alt | HotkeyKey::AltGr => [HotkeyKey::Alt, HotkeyKey::AltGr],
+        _ => return None,
+    })
+}
+
+/// 解析 `"left_ctrl+left_alt"` / `"ctrl+alt"` / `"capslock"` 这样的快捷键串。
+///
+/// `distinguish_sides` 为 false 时,写了边的修饰键也按两边都认处理
+/// (对应配置里的 `hotkey.distinguish_left_right`)。不带边的写法(`ctrl`、
+/// `alt`、`shift`)**无论这个开关怎样都是两边都认** —— 用户没说边,就不该替他挑一边。
+pub fn parse_hotkey(s: &str, distinguish_sides: bool) -> Option<Vec<KeySpec>> {
+    let tokens: Vec<&str> = s
+        .split('+')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
     if tokens.is_empty() {
         return None;
     }
-    let keys: Vec<HotkeyKey> = tokens.iter().filter_map(|t| parse_key(t.trim())).collect();
-    if keys.len() == tokens.len() {
-        Some(keys)
+    let specs: Vec<KeySpec> = tokens
+        .iter()
+        .filter_map(|t| {
+            let sided = is_sided_token(t);
+            let key = parse_key(t)?;
+            // 没写边 → 永远两边都认;写了边 → 看开关。
+            if !sided || !distinguish_sides {
+                if let Some(pair) = both_sides(key) {
+                    return Some(KeySpec {
+                        alts: pair.to_vec(),
+                    });
+                }
+            }
+            Some(KeySpec::exact(key))
+        })
+        .collect();
+    if specs.len() == tokens.len() {
+        Some(specs)
     } else {
         None
     }
+}
+
+/// 这个写法有没有明确指定左右。
+fn is_sided_token(token: &str) -> bool {
+    let t = token.to_lowercase();
+    matches!(
+        t.as_str(),
+        "left_ctrl"
+            | "left_control"
+            | "lctrl"
+            | "right_ctrl"
+            | "right_control"
+            | "rctrl"
+            | "left_alt"
+            | "lalt"
+            | "right_alt"
+            | "ralt"
+            | "left_shift"
+            | "lshift"
+            | "right_shift"
+            | "rshift"
+    )
 }
 
 fn parse_key(token: &str) -> Option<HotkeyKey> {
@@ -240,7 +325,7 @@ fn report_stop_failed(app: &tauri::AppHandle, err: &str) {
 // ── Windows implementation: pure GetAsyncKeyState polling ──
 
 #[cfg(target_os = "windows")]
-pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
+pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
     if hotkey_keys.is_empty() {
         return;
     }
@@ -277,7 +362,10 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
                     break;
                 }
 
-                let all_down = hotkey_keys.iter().all(|k| win_key_down(k));
+                // 每一项只要有一个候选键按下就算满足(不分左右时 Ctrl 有两个候选)。
+                let all_down = hotkey_keys
+                    .iter()
+                    .all(|spec| spec.satisfied(|k| win_key_down(&k)));
 
                 // ── Rising edge: keys just became fully pressed ──
                 if all_down && !prev_all_down {
@@ -522,7 +610,7 @@ fn spawn_hotkey_worker(
 #[cfg(not(target_os = "windows"))]
 struct HotkeyMatcher {
     pressed: Vec<HotkeyKey>,
-    keys: Vec<HotkeyKey>,
+    keys: Vec<KeySpec>,
     /// True between an emitted Press and its matching Release. Pairing
     /// Press/Release explicitly (instead of suppressing releases that arrive
     /// within a time window) keeps a quick tap from losing its Release and
@@ -532,7 +620,7 @@ struct HotkeyMatcher {
 
 #[cfg(not(target_os = "windows"))]
 impl HotkeyMatcher {
-    fn new(keys: Vec<HotkeyKey>) -> Self {
+    fn new(keys: Vec<KeySpec>) -> Self {
         Self {
             pressed: Vec::new(),
             keys,
@@ -548,7 +636,10 @@ impl HotkeyMatcher {
         } else {
             self.pressed.retain(|&x| x != key);
         }
-        let all_pressed = self.keys.iter().all(|k| self.pressed.contains(k));
+        let all_pressed = self
+            .keys
+            .iter()
+            .all(|spec| spec.satisfied(|k| self.pressed.contains(&k)));
         if all_pressed && !self.press_active {
             self.press_active = true;
             return Some(HotkeyCmd::Press);
@@ -571,7 +662,7 @@ impl HotkeyMatcher {
 // never touches TextServices, so it is crash-free.
 
 #[cfg(target_os = "macos")]
-pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
+pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
     let my_gen = LISTENER_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<HotkeyCmd>();
     spawn_hotkey_worker(app.clone(), cmd_rx, my_gen);
@@ -830,7 +921,7 @@ mod mac_tap {
 // ── Linux (and other non-Windows/non-macOS): rdev listener ──
 
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
+pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
     use std::sync::mpsc;
 
     let my_gen = LISTENER_GEN.fetch_add(1, Ordering::SeqCst) + 1;
@@ -843,8 +934,22 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
             let mut matcher = HotkeyMatcher::new(hotkey_keys.clone());
             let a = app.clone();
 
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _ = rdev::listen(move |event: rdev::Event| {
+            // rdev 在 Linux 上走的是 X11。Wayland 会话里拿不到全局按键
+            // (Wayland 的设计就是不让普通客户端窥探别的窗口的输入),
+            // `listen` 要么直接失败,要么装上去却一个事件都收不到。
+            //
+            // 以前这里是 `let _ = rdev::listen(...)`,失败被整个丢掉:用户看到的
+            // 是快捷键毫无反应,日志里一个字都没有,无从查起。至少要说出来。
+            if let Some(kind) = wayland_session() {
+                crate::log_error!(
+                    "[hotkey] 检测到 {} 会话。全局快捷键依赖 X11,在 Wayland 下拿不到\
+                     其它窗口的按键,多半不会工作。可改用 Xorg 会话登录,或在界面上\
+                     按住录音按钮说话。",
+                    kind
+                );
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                rdev::listen(move |event: rdev::Event| {
                     let (key, is_press) = match event.event_type {
                         rdev::EventType::KeyPress(k) => (Some(k), true),
                         rdev::EventType::KeyRelease(k) => (Some(k), false),
@@ -863,9 +968,32 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<HotkeyKey>) {
                             (),
                         );
                     }
-                });
+                })
             }));
+            match result {
+                Ok(Err(e)) => crate::log_error!(
+                    "[hotkey] 全局按键监听启动失败,快捷键不可用: {:?}。\
+                     Linux 上常见原因:Wayland 会话,或当前用户不在 input 组\
+                     (`sudo usermod -aG input $USER` 后重新登录)。",
+                    e
+                ),
+                Err(_) => crate::log_error!("[hotkey] 全局按键监听线程 panic,快捷键不可用"),
+                // listen() 正常情况下不会返回;真返回了说明监听结束了。
+                Ok(Ok(())) => crate::log_error!("[hotkey] 全局按键监听已结束,快捷键不再工作"),
+            }
         });
+}
+
+/// 当前是不是 Wayland 会话。是的话返回它的名字,好原样写进日志。
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn wayland_session() -> Option<&'static str> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        return Some("Wayland");
+    }
+    match std::env::var("XDG_SESSION_TYPE") {
+        Ok(t) if t.eq_ignore_ascii_case("wayland") => Some("Wayland"),
+        _ => None,
+    }
 }
 
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
@@ -1009,45 +1137,128 @@ fn hotkey_to_vk(k: &HotkeyKey) -> Option<i32> {
 mod tests {
     use super::*;
 
+    /// 把解析结果摊平成「每一项的候选键」,方便断言。
+    fn alts(s: &str, distinguish: bool) -> Option<Vec<Vec<HotkeyKey>>> {
+        parse_hotkey(s, distinguish).map(|v| v.into_iter().map(|k| k.alts).collect())
+    }
+
     #[test]
     fn single_letters_parse_including_f() {
         // 回归:"f" 以前会被 F1–F12 那条分支吃掉(`t[1..]` 是空串,parse 失败,
         // `?` 让整个 parse_key 返回 None,match 又不会往下落),于是字母 F
         // 永远配不出快捷键 —— 设成 "ctrl+f" 会被判成非法组合,静默失效。
-        assert_eq!(parse_hotkey("f"), Some(vec![HotkeyKey::KeyF]));
+        assert_eq!(alts("f", true), Some(vec![vec![HotkeyKey::KeyF]]));
         assert_eq!(
-            parse_hotkey("ctrl+f"),
-            Some(vec![HotkeyKey::ControlLeft, HotkeyKey::KeyF])
+            alts("left_ctrl+f", true),
+            Some(vec![vec![HotkeyKey::ControlLeft], vec![HotkeyKey::KeyF]])
         );
-        // 其余 25 个字母本来就没问题,一起钉住
-        for (i, c) in ('a'..='z').enumerate() {
-            let parsed = parse_hotkey(&c.to_string());
+        for c in 'a'..='z' {
+            let parsed = parse_hotkey(&c.to_string(), true);
             assert!(parsed.is_some(), "字母 {} 解析失败", c);
             assert_eq!(parsed.unwrap().len(), 1, "字母 {} 解析出多个键", c);
-            let _ = i;
         }
     }
 
     #[test]
     fn function_keys_parse() {
-        assert_eq!(parse_hotkey("f1"), Some(vec![HotkeyKey::F1]));
-        assert_eq!(parse_hotkey("f12"), Some(vec![HotkeyKey::F12]));
-        // 超出 F1–F12 的不认
-        assert_eq!(parse_hotkey("f13"), None);
-        assert_eq!(parse_hotkey("f0"), None);
+        assert_eq!(alts("f1", true), Some(vec![vec![HotkeyKey::F1]]));
+        assert_eq!(alts("f12", true), Some(vec![vec![HotkeyKey::F12]]));
+        assert_eq!(alts("f13", true), None);
+        assert_eq!(alts("f0", true), None);
     }
 
     #[test]
-    fn modifiers_and_combos_parse() {
+    fn invalid_combos_are_rejected_whole() {
+        // 别把 "ctrl+nosuchkey" 悄悄降级成 "ctrl"
+        assert_eq!(alts("left_ctrl+nosuchkey", true), None);
+        assert_eq!(alts("", true), None);
+        assert_eq!(alts("+", true), None);
+    }
+
+    /// 不写边就两边都认 —— 业界通行做法(Discord / OBS 等推话器都是这样)。
+    /// 用户写 `ctrl`,按左右哪个都该响应;`distinguish_left_right` 也管不着它,
+    /// 因为用户压根没说边,不该替他挑一边。
+    #[test]
+    fn bare_modifier_matches_either_side() {
+        for distinguish in [true, false] {
+            assert_eq!(
+                alts("ctrl", distinguish),
+                Some(vec![vec![HotkeyKey::ControlLeft, HotkeyKey::ControlRight]]),
+                "distinguish={}",
+                distinguish
+            );
+            assert_eq!(
+                alts("alt", distinguish),
+                Some(vec![vec![HotkeyKey::Alt, HotkeyKey::AltGr]]),
+                "distinguish={}",
+                distinguish
+            );
+            assert_eq!(
+                alts("shift", distinguish),
+                Some(vec![vec![HotkeyKey::ShiftLeft, HotkeyKey::ShiftRight]]),
+                "distinguish={}",
+                distinguish
+            );
+        }
+    }
+
+    /// 写了边时,`distinguish_left_right` 才起作用。这个开关配置里一直有,
+    /// 但 Rust 客户端从来没读过 —— 关掉它以前完全没有效果。
+    #[test]
+    fn sided_modifier_honors_the_distinguish_setting() {
         assert_eq!(
-            parse_hotkey("left_ctrl+left_alt"),
-            Some(vec![HotkeyKey::ControlLeft, HotkeyKey::Alt])
+            alts("left_ctrl", true),
+            Some(vec![vec![HotkeyKey::ControlLeft]]),
+            "开着分左右时,left_ctrl 只认左边"
         );
-        assert_eq!(parse_hotkey("capslock"), Some(vec![HotkeyKey::CapsLock]));
-        assert_eq!(parse_hotkey("right_alt"), Some(vec![HotkeyKey::AltGr]));
-        // 任何一段认不出来,整条都不认 —— 别把 "ctrl+нет" 悄悄降级成 "ctrl"
-        assert_eq!(parse_hotkey("ctrl+nosuchkey"), None);
-        assert_eq!(parse_hotkey(""), None);
+        assert_eq!(
+            alts("left_ctrl", false),
+            Some(vec![vec![HotkeyKey::ControlLeft, HotkeyKey::ControlRight]]),
+            "关掉分左右时,left_ctrl 两边都认"
+        );
+        // 默认快捷键在两种设置下的完整形态
+        assert_eq!(
+            alts("left_ctrl+left_alt", true),
+            Some(vec![vec![HotkeyKey::ControlLeft], vec![HotkeyKey::Alt]])
+        );
+        assert_eq!(
+            alts("left_ctrl+left_alt", false),
+            Some(vec![
+                vec![HotkeyKey::ControlLeft, HotkeyKey::ControlRight],
+                vec![HotkeyKey::Alt, HotkeyKey::AltGr],
+            ])
+        );
+    }
+
+    /// 非修饰键没有左右之分,开关不该影响它们。
+    #[test]
+    fn non_modifiers_are_unaffected_by_the_setting() {
+        for distinguish in [true, false] {
+            assert_eq!(
+                alts("space", distinguish),
+                Some(vec![vec![HotkeyKey::Space]])
+            );
+            assert_eq!(
+                alts("capslock", distinguish),
+                Some(vec![vec![HotkeyKey::CapsLock]])
+            );
+            assert_eq!(alts("f5", distinguish), Some(vec![vec![HotkeyKey::F5]]));
+        }
+    }
+
+    #[test]
+    fn key_spec_is_satisfied_by_any_alternative() {
+        let spec = &parse_hotkey("ctrl", true).unwrap()[0];
+        assert!(spec.satisfied(|k| k == HotkeyKey::ControlLeft));
+        assert!(spec.satisfied(|k| k == HotkeyKey::ControlRight));
+        assert!(!spec.satisfied(|k| k == HotkeyKey::ShiftLeft));
+
+        let strict = &parse_hotkey("left_ctrl", true).unwrap()[0];
+        assert!(strict.satisfied(|k| k == HotkeyKey::ControlLeft));
+        assert!(
+            !strict.satisfied(|k| k == HotkeyKey::ControlRight),
+            "明确写了 left_ctrl 就不该被右 Ctrl 满足"
+        );
     }
 
     /// `left_alt` 在 Windows 上必须映射到 VK_LMENU(0xA4),不能是 VK_MENU(0x12)。

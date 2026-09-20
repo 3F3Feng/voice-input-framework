@@ -195,6 +195,14 @@
               <button class="s-btn" @click="applyHotkey" :disabled="!hotkeyChanged">应用</button>
             </div>
             <div v-if="hotkeyRecording" class="s-tip">请按下快捷键组合...</div>
+            <div class="s-row" style="margin-top:6px">
+              <label class="toggle"><input type="checkbox" v-model="distinguishSides" @change="toggleDistinguishSides" /><span class="slider"></span></label>
+              <span class="s-label">区分左右修饰键</span>
+            </div>
+            <div class="s-tip">
+              关掉之后,录下来的 <code>left_ctrl</code> 左右两个 Ctrl 都能触发。
+              不写左右的写法(如 <code>ctrl+alt</code>)本来就两边都认,不受这个开关影响。
+            </div>
           </div>
 
           <!-- Toggles -->
@@ -523,6 +531,7 @@ const llmProcessing = ref(false);
 
 const hotkeyStr = ref("");
 const hotkeyRecording = ref(false);
+const distinguishSides = ref(true);
 const hotkeyChanged = ref(false);
 const hotkeyMsg = ref("");
 const defaultHotkey = "left_ctrl+left_alt";
@@ -1009,6 +1018,7 @@ async function loadConfig() {
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
     hotkeyStr.value = cfg.hotkey.key;
+    distinguishSides.value = cfg.hotkey.distinguish_left_right ?? true;
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     selectedDevice.value = cfg.audio.device;
@@ -1035,6 +1045,21 @@ async function toggleAutoStart() {
   try { await invoke("set_autostart", { enabled: autoStart.value }); } catch { autoStart.value = !autoStart.value; }
 }
 function toggleStartMinimized() { saveConfigPatch(cfg => { cfg.ui.start_minimized = startMinimized.value; }); }
+/**
+ * 「区分左右修饰键」。配置里一直有 hotkey.distinguish_left_right，但此前
+ * Rust 端从来没读过它，界面上也没有入口——存了个谁也够不着、也不起作用的值。
+ *
+ * 改完要重新注册监听器：解析成哪些候选键是在 parse_hotkey 那一刻定下来的，
+ * 光存配置不会让正在跑的监听器改主意。
+ */
+async function toggleDistinguishSides() {
+  const ok = await saveConfigPatch(cfg => { cfg.hotkey.distinguish_left_right = distinguishSides.value; });
+  if (!ok) { distinguishSides.value = !distinguishSides.value; return; }
+  try {
+    await invoke("register_hotkey", { shortcut: hotkeyStr.value });
+    toast(distinguishSides.value ? "已改为区分左右" : "已改为左右通用", "ok");
+  } catch (e) { toast(`快捷键重新注册失败: ${e}`, "err"); }
+}
 function onAutoInputToggle() { saveConfigPatch(cfg => { cfg.ui.auto_input = autoInputEnabled.value; }); }
 
 // ── Connection ──
