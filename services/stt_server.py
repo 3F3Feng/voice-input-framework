@@ -738,8 +738,12 @@ async def websocket_stream(websocket: WebSocket):
 
     try:
         await websocket.close()
-    except:
-        pass
+    except Exception as e:
+        # 只吞「这个连接已经关掉了」这类正常异常。写成裸 `except:` 会连
+        # asyncio.CancelledError 和 KeyboardInterrupt 一起吞掉 —— 它们继承的是
+        # BaseException,不是 Exception。服务关停时任务取消正好投递在这一行,
+        # 吞掉就等于把取消信号丢了。
+        logger.debug(f"WebSocket close failed (already closed?): {e}")
     engine.decrement_connections()
 
 

@@ -13,7 +13,12 @@ pynput = pytest.importorskip("pynput")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from client.hotkey_manager import HotkeyParser, HotkeyPresets, ModifierKey
+from client.hotkey_manager import (
+    HotkeyParser,
+    HotkeyPresets,
+    ModifierKey,
+    modifier_is_pressed,
+)
 
 
 class TestHotkeyParser:
@@ -170,6 +175,61 @@ class TestModifierKey:
 
             for kc in keycodes:
                 assert isinstance(kc, KeyCode)
+
+
+class TestModifierIsPressed:
+    """CGEventTap 修饰键按下判定(macOS)
+
+    这段逻辑原本只看设备无关位,左右共用一个掩码,于是「左右 Ctrl 同时按住、
+    松开其中一个」会被读成按下,那个键永远留在按下集合里,快捷键卡死。
+    """
+
+    CTRL_L, CTRL_R = 0x3B, 0x3E
+    ALT_L, ALT_R = 0x3A, 0x3D
+    DEV_LCTL, DEV_RCTL = 0x00000001, 0x00002000
+    DEV_LALT, DEV_RALT = 0x00000020, 0x00000040
+    FLAG_CONTROL, FLAG_ALTERNATE = 0x00040000, 0x00080000
+
+    def test_unknown_keycode_returns_none(self):
+        # 0x39 是 Caps Lock,不在修饰键表里;0xFF 是键码取不到时的哨兵
+        assert modifier_is_pressed(0x39, 0) is None
+        assert modifier_is_pressed(0xFF, 0) is None
+
+    def test_single_side_held(self):
+        flags = self.FLAG_CONTROL | self.DEV_LCTL
+        assert modifier_is_pressed(self.CTRL_L, flags) is True
+        assert modifier_is_pressed(self.CTRL_R, flags) is False
+
+    def test_releasing_one_side_while_other_held(self):
+        """回归:两侧都按住时松开左边,左边必须报「抬起」。
+
+        设备无关的 Control 位这时仍然亮着(右边还按着),只看它就会把这次
+        抬起读成按下。
+        """
+        both = self.FLAG_CONTROL | self.DEV_LCTL | self.DEV_RCTL
+        assert modifier_is_pressed(self.CTRL_L, both) is True
+        assert modifier_is_pressed(self.CTRL_R, both) is True
+
+        # 松开左 Ctrl:设备位里只剩右边,而 Control 位依旧亮着
+        only_right = self.FLAG_CONTROL | self.DEV_RCTL
+        assert modifier_is_pressed(self.CTRL_L, only_right) is False
+        assert modifier_is_pressed(self.CTRL_R, only_right) is True
+
+    def test_falls_back_to_device_independent_bit(self):
+        """合成事件可能不带设备位,这时退回旧行为,不要一律判成抬起。"""
+        flags = self.FLAG_ALTERNATE  # 只有设备无关位
+        assert modifier_is_pressed(self.ALT_L, flags) is True
+        assert modifier_is_pressed(self.ALT_R, flags) is True
+
+    def test_all_released(self):
+        assert modifier_is_pressed(self.CTRL_L, 0) is False
+        assert modifier_is_pressed(self.ALT_R, 0) is False
+
+    def test_modifier_families_do_not_bleed(self):
+        """按住 Alt 不该让 Ctrl 报按下。"""
+        flags = self.FLAG_ALTERNATE | self.DEV_LALT
+        assert modifier_is_pressed(self.ALT_L, flags) is True
+        assert modifier_is_pressed(self.CTRL_L, flags) is False
 
 
 if __name__ == "__main__":

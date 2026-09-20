@@ -52,6 +52,56 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+# ── CGEventTap 修饰键按下判定 ───────────────────────────────────────────────
+#
+# flagsChanged 事件带的是「哪个修饰键变了」的键码,按下还是抬起要看 flags 里
+# 对应的位还在不在。但**设备无关位左右共用**(Control 就是 Control,不分左右):
+# 左右 Ctrl 同时按住、再松开其中一个时,Control 位仍然亮着,那次抬起会被读成
+# 「按下」,那个键就永远留在按下集合里 —— 快捷键从此卡住。
+#
+# macOS 另有一组设备相关位能分左右(IOLLEvent.h 的 NX_DEVICE*KEYMASK),真实
+# 键盘事件都会带;优先用它们,拿不到再回落到设备无关位(也就是改动前的行为)。
+#
+# 掩码在这里写成字面量而不是引 Quartz 常量:这样这个判定是个纯函数,不装
+# Quartz 也能导入和测试(Quartz 只有 macOS 有)。
+_FLAG_SHIFT = 0x00020000
+_FLAG_CONTROL = 0x00040000
+_FLAG_ALTERNATE = 0x00080000
+_FLAG_COMMAND = 0x00100000
+
+_DEV_LCTL = 0x00000001
+_DEV_RCTL = 0x00002000
+_DEV_LSHIFT = 0x00000002
+_DEV_RSHIFT = 0x00000004
+_DEV_LCMD = 0x00000008
+_DEV_RCMD = 0x00000010
+_DEV_LALT = 0x00000020
+_DEV_RALT = 0x00000040
+
+# vk → (自己那一侧的设备位, 左右两侧并集, 设备无关回落位)
+_MODIFIER_BITS = {
+    0x3B: (_DEV_LCTL, _DEV_LCTL | _DEV_RCTL, _FLAG_CONTROL),  # ctrl_l
+    0x3E: (_DEV_RCTL, _DEV_LCTL | _DEV_RCTL, _FLAG_CONTROL),  # ctrl_r
+    0x38: (_DEV_LSHIFT, _DEV_LSHIFT | _DEV_RSHIFT, _FLAG_SHIFT),  # shift_l
+    0x3C: (_DEV_RSHIFT, _DEV_LSHIFT | _DEV_RSHIFT, _FLAG_SHIFT),  # shift_r
+    0x3A: (_DEV_LALT, _DEV_LALT | _DEV_RALT, _FLAG_ALTERNATE),  # alt_l
+    0x3D: (_DEV_RALT, _DEV_LALT | _DEV_RALT, _FLAG_ALTERNATE),  # alt_r
+    0x37: (_DEV_LCMD, _DEV_LCMD | _DEV_RCMD, _FLAG_COMMAND),  # cmd_l
+    0x36: (_DEV_RCMD, _DEV_LCMD | _DEV_RCMD, _FLAG_COMMAND),  # cmd_r
+}
+
+
+def modifier_is_pressed(vk: int, flags: int) -> bool | None:
+    """这个修饰键现在是按下状态吗。不是已知修饰键则返回 None。"""
+    bits = _MODIFIER_BITS.get(vk)
+    if bits is None:
+        return None
+    side, family, fallback = bits
+    if flags & family:
+        return bool(flags & side)
+    return bool(flags & fallback)
+
+
 # 左右修饰键的 KeyCode (跨平台)
 # 参考：https://pynput.readthedocs.io/en/latest/keyboard.html
 class ModifierKey:
@@ -276,8 +326,9 @@ class HotkeyManager:
         if self.listener:
             try:
                 self.listener.stop()
-            except:
-                pass
+            except Exception as e:
+                # 不用裸 except:那会连 KeyboardInterrupt 一起吞掉
+                logger.debug(f"停止旧监听器失败(可能已经停了): {e}")
 
         if sys.platform == "darwin":
             # macOS:pynput 的 keyboard.Listener 启动时调用 keycode_context()
@@ -340,8 +391,8 @@ class HotkeyManager:
         if self.listener:
             try:
                 self.listener.stop()
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"停止监听器失败(可能已经停了): {e}")
             self.listener = None
             logger.info("快捷键监听器已停止")
 
@@ -929,21 +980,14 @@ class _MacOSEventTapListener:
                 # 用 flags&mask 判断可靠,不依赖事件计数(翻转方案会因
                 # macOS 偶发重复事件而错位,导致释放永不触发)。
                 flags = CGEventGetFlags(event)
-                mod_flag_map = {
-                    0x37: kCGEventFlagMaskCommand,  # cmd_l
-                    0x36: kCGEventFlagMaskCommand,  # cmd_r
-                    0x38: kCGEventFlagMaskShift,  # shift_l
-                    0x3C: kCGEventFlagMaskShift,  # shift_r
-                    0x3A: kCGEventFlagMaskAlternate,  # alt_l
-                    0x3D: kCGEventFlagMaskAlternate,  # alt_r
-                    0x3B: kCGEventFlagMaskControl,  # ctrl_l
-                    0x3E: kCGEventFlagMaskControl,  # ctrl_r
-                }
-                mask = mod_flag_map.get(vk)
-                if mask is None:
+                # 左右要靠设备相关位分开,不能只看共用的设备无关位,
+                # 否则左右同侧同时按住时,松开一个会被读成按下(见
+                # modifier_is_pressed 的注释)。
+                pressed = modifier_is_pressed(vk, flags)
+                if pressed is None:
                     # 键码不可用(个别情况为 0xFF):回退到 flags diff
                     self._handle_modifier_flags_diff(flags)
-                elif flags & mask:
+                elif pressed:
                     logger.debug(f"CGEventTap 修饰键按下: {key}")
                     self.on_press(key)
                 else:

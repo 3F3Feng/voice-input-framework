@@ -137,7 +137,11 @@ fn parse_key(token: &str) -> Option<HotkeyKey> {
         "escape" | "esc" => Some(HotkeyKey::Escape),
         "delete" | "del" => Some(HotkeyKey::Delete),
         "backspace" => Some(HotkeyKey::Backspace),
-        _ if t.starts_with('f') && t.len() <= 3 => {
+        // 长度必须 >= 2。写成 `t.len() <= 3` 时,单个字母 "f" 也会进这一条:
+        // `t[1..]` 是空串,parse 失败,`?` 直接让整个 parse_key 返回 None ——
+        // match 的分支不会往下落,所以字母 F 永远配不出快捷键(设成 "ctrl+f"
+        // 会被判成非法组合,快捷键静默失效)。
+        _ if t.starts_with('f') && (2..=3).contains(&t.len()) => {
             let n: u8 = t[1..].parse().ok()?;
             if !(1..=12).contains(&n) {
                 return None;
@@ -669,17 +673,74 @@ mod mac_tap {
         })
     }
 
-    // Modifier HID keycodes → flag mask. FlagsChanged events carry the
-    // keycode of the changed modifier; CGEventGetFlags decides press vs
-    // release (kCGEventFlagMaskControl = 0x40000; after release the flag
-    // is gone, so flags&mask is reliable — no event-count toggling).
-    fn mod_flag(vk: i64) -> Option<CGEventFlags> {
-        Some(match vk {
-            0x37 | 0x36 => CGEventFlags::CGEventFlagCommand,
-            0x38 | 0x3C => CGEventFlags::CGEventFlagShift,
-            0x3A | 0x3D => CGEventFlags::CGEventFlagAlternate,
-            0x3B | 0x3E => CGEventFlags::CGEventFlagControl,
+    // FlagsChanged 事件带的是「哪个修饰键变了」的 keycode,按下还是抬起要看
+    // CGEventGetFlags 里对应的位还在不在。
+    //
+    // 但**不能只看设备无关位**(CGEventFlagControl 之类):那一位左右共用。
+    // 左右 Ctrl 同时按住、再松开其中一个时,Control 位仍然亮着,于是那次抬起会
+    // 被读成「按下」,那个键就永远留在 `pressed` 里 —— 快捷键从此卡住。
+    //
+    // macOS 另有一组**设备相关**位能分左右(IOLLEvent.h 里的 NX_DEVICE*KEYMASK),
+    // 优先用它们;真实键盘事件都会带。个别合成事件不带,那时回落到设备无关位,
+    // 也就是改动前的行为,不会更坏。
+    const NX_DEVICE_LCTL: u64 = 0x0000_0001;
+    const NX_DEVICE_RCTL: u64 = 0x0000_2000;
+    const NX_DEVICE_LSHIFT: u64 = 0x0000_0002;
+    const NX_DEVICE_RSHIFT: u64 = 0x0000_0004;
+    const NX_DEVICE_LALT: u64 = 0x0000_0020;
+    const NX_DEVICE_RALT: u64 = 0x0000_0040;
+
+    /// 这个修饰键现在是按下状态吗。
+    ///
+    /// `side` 是它自己那一侧的设备位,`family` 是左右两侧的并集,
+    /// `fallback` 是左右共用的设备无关位。
+    fn mod_is_down(vk: i64, flags: CGEventFlags) -> Option<bool> {
+        let bits = flags.bits();
+        let (side, family, fallback) = match vk {
+            0x3B => (
+                NX_DEVICE_LCTL,
+                NX_DEVICE_LCTL | NX_DEVICE_RCTL,
+                CGEventFlags::CGEventFlagControl,
+            ),
+            0x3E => (
+                NX_DEVICE_RCTL,
+                NX_DEVICE_LCTL | NX_DEVICE_RCTL,
+                CGEventFlags::CGEventFlagControl,
+            ),
+            0x38 => (
+                NX_DEVICE_LSHIFT,
+                NX_DEVICE_LSHIFT | NX_DEVICE_RSHIFT,
+                CGEventFlags::CGEventFlagShift,
+            ),
+            0x3C => (
+                NX_DEVICE_RSHIFT,
+                NX_DEVICE_LSHIFT | NX_DEVICE_RSHIFT,
+                CGEventFlags::CGEventFlagShift,
+            ),
+            0x3A => (
+                NX_DEVICE_LALT,
+                NX_DEVICE_LALT | NX_DEVICE_RALT,
+                CGEventFlags::CGEventFlagAlternate,
+            ),
+            0x3D => (
+                NX_DEVICE_RALT,
+                NX_DEVICE_LALT | NX_DEVICE_RALT,
+                CGEventFlags::CGEventFlagAlternate,
+            ),
+            // Caps Lock 没有左右之分,也没有物理按下/抬起可言:它只有「灯亮着
+            // 没有」这一个状态,按一下亮、再按一下灭。所以用它当快捷键在 macOS 上
+            // 是**按一下开始、再按一下结束**,而不是别的键那样按住说话。
+            //
+            // 以前这里根本没有 0x39 这一条,于是 FlagsChanged 分支要求
+            // (mod_flag, hid_to_hotkey) 都是 Some 才处理,Caps Lock 被整个忽略
+            // —— parse_key 明明认 "capslock",设了却什么都不会发生。
+            0x39 => return Some(flags.contains(CGEventFlags::CGEventFlagAlphaShift)),
             _ => return None,
+        };
+        Some(if bits & family != 0 {
+            bits & side != 0
+        } else {
+            flags.contains(fallback)
         })
     }
 
@@ -727,8 +788,8 @@ mod mac_tap {
                     CGEventType::FlagsChanged => {
                         let vk = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
                         let flags = event.get_flags();
-                        match (mod_flag(vk), hid_to_hotkey(vk)) {
-                            (Some(mask), Some(k)) => h(k, flags.contains(mask)),
+                        match (mod_is_down(vk, flags), hid_to_hotkey(vk)) {
+                            (Some(is_down), Some(k)) => h(k, is_down),
                             _ => TapAction::Continue,
                         }
                     }
@@ -884,7 +945,13 @@ fn win_key_down(k: &HotkeyKey) -> bool {
 #[cfg(target_os = "windows")]
 fn hotkey_to_vk(k: &HotkeyKey) -> Option<i32> {
     Some(match k {
-        HotkeyKey::Alt => 0x12,          // VK_MENU
+        // VK_LMENU(左 Alt),**不是** VK_MENU(0x12,任意 Alt)。
+        //
+        // 用 VK_MENU 会让默认快捷键 left_ctrl+left_alt 在欧洲键盘布局上乱触发:
+        // Windows 上按 AltGr 会**同时合成一个左 Ctrl 按下**再加右 Alt,于是
+        // VK_LCONTROL 和 VK_MENU 同时为真 —— 德语/法语/波兰语等布局的用户每打一个
+        // @ € { } 都会开始录音。换成 VK_LMENU 后右 Alt 不再满足条件。
+        HotkeyKey::Alt => 0xA4,          // VK_LMENU
         HotkeyKey::AltGr => 0xA5,        // VK_RMENU
         HotkeyKey::ControlLeft => 0xA2,  // VK_LCONTROL
         HotkeyKey::ControlRight => 0xA3, // VK_RCONTROL
@@ -936,4 +1003,61 @@ fn hotkey_to_vk(k: &HotkeyKey) -> Option<i32> {
         HotkeyKey::KeyY => 0x59,
         HotkeyKey::KeyZ => 0x5A,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_letters_parse_including_f() {
+        // 回归:"f" 以前会被 F1–F12 那条分支吃掉(`t[1..]` 是空串,parse 失败,
+        // `?` 让整个 parse_key 返回 None,match 又不会往下落),于是字母 F
+        // 永远配不出快捷键 —— 设成 "ctrl+f" 会被判成非法组合,静默失效。
+        assert_eq!(parse_hotkey("f"), Some(vec![HotkeyKey::KeyF]));
+        assert_eq!(
+            parse_hotkey("ctrl+f"),
+            Some(vec![HotkeyKey::ControlLeft, HotkeyKey::KeyF])
+        );
+        // 其余 25 个字母本来就没问题,一起钉住
+        for (i, c) in ('a'..='z').enumerate() {
+            let parsed = parse_hotkey(&c.to_string());
+            assert!(parsed.is_some(), "字母 {} 解析失败", c);
+            assert_eq!(parsed.unwrap().len(), 1, "字母 {} 解析出多个键", c);
+            let _ = i;
+        }
+    }
+
+    #[test]
+    fn function_keys_parse() {
+        assert_eq!(parse_hotkey("f1"), Some(vec![HotkeyKey::F1]));
+        assert_eq!(parse_hotkey("f12"), Some(vec![HotkeyKey::F12]));
+        // 超出 F1–F12 的不认
+        assert_eq!(parse_hotkey("f13"), None);
+        assert_eq!(parse_hotkey("f0"), None);
+    }
+
+    #[test]
+    fn modifiers_and_combos_parse() {
+        assert_eq!(
+            parse_hotkey("left_ctrl+left_alt"),
+            Some(vec![HotkeyKey::ControlLeft, HotkeyKey::Alt])
+        );
+        assert_eq!(parse_hotkey("capslock"), Some(vec![HotkeyKey::CapsLock]));
+        assert_eq!(parse_hotkey("right_alt"), Some(vec![HotkeyKey::AltGr]));
+        // 任何一段认不出来,整条都不认 —— 别把 "ctrl+нет" 悄悄降级成 "ctrl"
+        assert_eq!(parse_hotkey("ctrl+nosuchkey"), None);
+        assert_eq!(parse_hotkey(""), None);
+    }
+
+    /// `left_alt` 在 Windows 上必须映射到 VK_LMENU(0xA4),不能是 VK_MENU(0x12)。
+    /// 用 VK_MENU 的话,AltGr 会同时点亮 VK_LCONTROL 和 VK_MENU,默认快捷键
+    /// left_ctrl+left_alt 在欧洲布局上每打一个 @ € { } 都会误触发。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn left_alt_maps_to_left_menu_not_any_menu() {
+        assert_eq!(hotkey_to_vk(&HotkeyKey::Alt), Some(0xA4));
+        assert_eq!(hotkey_to_vk(&HotkeyKey::AltGr), Some(0xA5));
+        assert_ne!(hotkey_to_vk(&HotkeyKey::Alt), Some(0x12));
+    }
 }
