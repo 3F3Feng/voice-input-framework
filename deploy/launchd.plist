@@ -9,7 +9,7 @@
     <array>
         <string>/Users/shifengzhang/.openclaw/workspace/.venv/bin/python3</string>
         <string>-c</string>
-        <string>import sys; sys.path.insert(0, '/Users/shifengzhang/voice-input-framework'); from server.api import main; main()</string>
+        <string>import sys; sys.path.insert(0, '/Users/shifengzhang/voice-input-framework'); from services.stt_server import main; main()</string>
     </array>
 
     <key>WorkingDirectory</key>

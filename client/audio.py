@@ -11,9 +11,8 @@
 
 import logging
 import queue
-import threading
+import sys
 import time
-from typing import Optional, Callable
 
 import numpy as np
 
@@ -28,9 +27,12 @@ AUDIO_CHUNK_SIZE = 1024
 class AudioRecorder:
     """音频录制器 — 封装 sounddevice 录制逻辑"""
 
-    def __init__(self, sample_rate: int = AUDIO_SAMPLE_RATE,
-                 channels: int = AUDIO_CHANNELS,
-                 chunk_size: int = AUDIO_CHUNK_SIZE):
+    def __init__(
+        self,
+        sample_rate: int = AUDIO_SAMPLE_RATE,
+        channels: int = AUDIO_CHANNELS,
+        chunk_size: int = AUDIO_CHUNK_SIZE,
+    ):
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_size = chunk_size
@@ -39,8 +41,8 @@ class AudioRecorder:
         self._recording = False
         self._audio_buffer: list[bytes] = []
         self._audio_queue: queue.Queue = queue.Queue()
-        self._record_start_time: Optional[float] = None
-        self._selected_device: Optional[int] = None  # None = 默认设备
+        self._record_start_time: float | None = None
+        self._selected_device: int | None = None  # None = 默认设备
 
     # ──────────────────── 属性 ────────────────────
 
@@ -64,14 +66,77 @@ class AudioRecorder:
         return 0.0
 
     @property
-    def selected_device(self) -> Optional[int]:
+    def selected_device(self) -> int | None:
         return self._selected_device
 
     @selected_device.setter
-    def selected_device(self, device_id: Optional[int]):
+    def selected_device(self, device_id: int | None):
         self._selected_device = device_id
 
     # ──────────────────── 设备管理 ────────────────────
+
+    @staticmethod
+    def check_mic_permission() -> bool | None:
+        """检测麦克风权限(macOS)
+
+        sounddevice 采集麦克风需要"麦克风"权限(与输入监控/辅助功能不同)。
+        通过短暂打开输入流实测:PortAudioError 提示权限 → 未授权。
+        非 macOS 或无法判定时返回 None。
+
+        Returns:
+            True:可打开输入流(已授权);False:打开失败(疑似权限/设备问题);
+            None:无法判定
+        """
+        if sys.platform != "darwin":
+            return None
+        try:
+            import sounddevice as sd
+
+            # 用默认输入设备短开 50ms 验证权限
+            sd.check_input_settings()
+            stream = sd.InputStream(samplerate=16000, channels=1, dtype="int16")
+            stream.start()
+            import time as _t
+
+            _t.sleep(0.05)
+            stream.stop()
+            stream.close()
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"麦克风输入探测失败(可能未授权): {e}")
+            return False
+
+    @staticmethod
+    def _resolve_input_device(sd) -> int | None:
+        """解析实际输入设备:优先系统默认输入(若有输入通道),否则第一个有输入的设备
+
+        修复 macOS 上系统默认输入可能错乱指向 0 输入通道设备(如 Speakers)导致静音。
+        注意:sounddevice 的 default.device 可能是 (input, output) 元组,且
+        query_devices(单设备id) 在部分版本会抛 "Input and output device are
+        different",故用 try 逐设备探测。
+
+        Returns:
+            设备 id;无可用输入设备时返回 None(交给 sounddevice 报错)
+        """
+        try:
+            # 优先系统默认输入设备
+            default_input = (
+                sd.default.device[0] if isinstance(sd.default.device, tuple) else sd.default.device
+            )
+            if default_input is not None:
+                try:
+                    info = sd.query_devices(int(default_input))
+                    if info.get("max_input_channels", 0) > 0:
+                        return int(default_input)
+                except Exception:  # noqa: BLE001 查询单设备失败,继续回退
+                    pass
+            # 回退:第一个有输入通道的设备
+            for i, dev in enumerate(sd.query_devices()):
+                if dev.get("max_input_channels", 0) > 0:
+                    return i
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"解析输入设备失败: {e}")
+        return None
 
     @staticmethod
     def get_devices() -> dict:
@@ -82,10 +147,11 @@ class AudioRecorder:
         """
         try:
             import sounddevice as sd
+
             devices = sd.query_devices()
             input_devices = {}
             for i, device in enumerate(devices):
-                if device['max_input_channels'] > 0:
+                if device["max_input_channels"] > 0:
                     input_devices[i] = f"{device['name']}"
             return input_devices if input_devices else {-1: "默认设备"}
         except Exception as e:
@@ -115,6 +181,14 @@ class AudioRecorder:
             except queue.Empty:
                 break
 
+        # 解析实际使用的输入设备:
+        # - 用户显式选择 → 用之
+        # - 未选择(None)→ 不信任系统默认输入(可能指向 0 输入通道的设备,如
+        #   macOS 上默认输入错乱为 Speakers),改为选第一个有输入通道的设备
+        device = self._selected_device
+        if device is None:
+            device = self._resolve_input_device(sd)
+
         def callback(indata, frames, time_info, status):
             if status:
                 logger.warning(f"Audio status: {status}")
@@ -128,10 +202,10 @@ class AudioRecorder:
 
         try:
             self._stream = sd.InputStream(
-                device=self._selected_device,
+                device=device,
                 samplerate=self.sample_rate,
                 channels=self.channels,
-                dtype='int16',
+                dtype="int16",
                 blocksize=self.chunk_size,
                 callback=callback,
             )
@@ -187,7 +261,7 @@ class AudioRecorder:
             if not self._audio_buffer:
                 return 0, 0
 
-            last_chunk = self._audio_buffer[-1] if self._audio_buffer else b''
+            last_chunk = self._audio_buffer[-1] if self._audio_buffer else b""
             if not last_chunk:
                 return 0, 0
 

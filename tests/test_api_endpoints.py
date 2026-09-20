@@ -8,12 +8,15 @@ Requires servers running:
   - Main: localhost:6544
 """
 
-import pytest
 import httpx
+import os
 
-STT_URL = "http://localhost:6544"
-LLM_URL = "http://localhost:6545"
-MAIN_URL = "http://localhost:6544"
+import pytest
+
+# 环境变量可覆盖;默认 127.0.0.1 避免 Windows/macOS IPv6 解析延迟
+STT_URL = os.getenv("STT_URL", "http://127.0.0.1:6544")
+LLM_URL = os.getenv("LLM_URL", "http://127.0.0.1:6545")
+MAIN_URL = os.getenv("STT_URL", "http://127.0.0.1:6544")
 
 pytestmark = pytest.mark.integration
 

@@ -8,21 +8,18 @@ Voice Input Framework - Speaker Diarization Engine
 
 运行环境: Apple Silicon (MPS) 优先, 回退 CPU
 """
+
 import asyncio
-import json
+import importlib.util
 import logging
 import os
-import sys
 import time
-from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 logger = logging.getLogger("diarize-engine")
 
 # ── 配置 ──
-DIARIZE_MODEL_ID = os.getenv(
-    "VIF_DIARIZE_MODEL", "pyannote/speaker-diarization-3.1"
-)
+DIARIZE_MODEL_ID = os.getenv("VIF_DIARIZE_MODEL", "pyannote/speaker-diarization-3.1")
 DIARIZE_ENABLED = os.getenv("VIF_DIARIZE_ENABLED", "true").lower() == "true"
 
 
@@ -34,6 +31,7 @@ class DiarizationEngine:
         self._is_loaded = False
         self._loading = False
         self._load_lock = None  # asyncio.Lock, 动态创建
+        self._pyannote_available: bool | None = None  # 见 _is_pyannote_available
         self._model_id = DIARIZE_MODEL_ID
         self._device = "cpu"
         self._stats = {
@@ -62,7 +60,7 @@ class DiarizationEngine:
         return self._device
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         return dict(self._stats)
 
     # ── 加载 ──
@@ -88,8 +86,8 @@ class DiarizationEngine:
                 logger.info(f"Loading diarization model: {self._model_id}")
 
                 def _load_sync():
-                    from pyannote.audio import Pipeline
                     import torch
+                    from pyannote.audio import Pipeline
 
                     # 检测设备
                     if torch.backends.mps.is_available():
@@ -118,21 +116,33 @@ class DiarizationEngine:
                 self._loading = False
 
     def _is_pyannote_available(self) -> bool:
-        """检查 pyannote.audio 是否可导入"""
-        try:
-            import pyannote.audio  # noqa
-            return True
-        except ImportError:
-            return False
+        """pyannote.audio 装了没有。算一次,之后一直用缓存的结果。
+
+        这个函数是 `get_health()` 调的,而 `/health` 是 `async def`——它在事件循环上
+        跑。以前这里写的是 `import pyannote.audio`:装了的话,第一次 /health 会在
+        事件循环上连带把 torch / torchaudio / lightning 一起导进来,几秒钟之内整个
+        服务不响应任何请求。客户端的健康探测超时只有 1.5 秒,于是明明服务好好的,
+        「服务器」面板上却显示还没起来。
+
+        改用 `find_spec`:它只在 sys.path 上找模块**存在不存在**,不执行模块本身,
+        所以 torch 一个字节都不会被导入。真要用的时候由 `load()` 去 import。
+        """
+        if self._pyannote_available is None:
+            try:
+                self._pyannote_available = importlib.util.find_spec("pyannote.audio") is not None
+            except (ImportError, ValueError):
+                # 父包 pyannote 本身有问题时 find_spec 会抛,不是「装了」。
+                self._pyannote_available = False
+        return self._pyannote_available
 
     # ── 推理 ──
     async def diarize(
         self,
         audio_path: str,
-        num_speakers: Optional[int] = None,
-        min_speakers: Optional[int] = None,
-        max_speakers: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        num_speakers: int | None = None,
+        min_speakers: int | None = None,
+        max_speakers: int | None = None,
+    ) -> dict[str, Any]:
         """
         对音频文件进行说话人分离
 
@@ -166,6 +176,7 @@ class DiarizationEngine:
         t0 = time.time()
 
         try:
+
             def _run_diarize():
                 kwargs = {}
                 if num_speakers is not None:
@@ -185,24 +196,28 @@ class DiarizationEngine:
             if hasattr(diarization, "itertracks"):
                 # 旧版 API: Annotation
                 for turn, _, speaker in diarization.itertracks(yield_label=True):
-                    segments.append({
-                        "speaker": speaker,
-                        "start": round(turn.start, 3),
-                        "end": round(turn.end, 3),
-                        "duration": round(turn.end - turn.start, 3),
-                    })
+                    segments.append(
+                        {
+                            "speaker": speaker,
+                            "start": round(turn.start, 3),
+                            "end": round(turn.end, 3),
+                            "duration": round(turn.end - turn.start, 3),
+                        }
+                    )
                 if diarization.get_timeline():
                     duration = diarization.get_timeline().extent().end
             else:
                 # 新版 API: DiarizeOutput (3.4+, 4.0+)
                 if hasattr(diarization, "speaker_diarization"):
                     for turn, speaker in diarization.speaker_diarization:
-                        segments.append({
-                            "speaker": speaker,
-                            "start": round(turn.start, 3),
-                            "end": round(turn.end, 3),
-                            "duration": round(turn.end - turn.start, 3),
-                        })
+                        segments.append(
+                            {
+                                "speaker": speaker,
+                                "start": round(turn.start, 3),
+                                "end": round(turn.end, 3),
+                                "duration": round(turn.end - turn.start, 3),
+                            }
+                        )
                     # 尝试获取总时长
                     try:
                         duration = diarization.end
@@ -212,12 +227,15 @@ class DiarizationEngine:
                     # 其他格式兜底
                     data = diarization.for_json()
                     for seg in data.get("content", []):
-                        segments.append({
-                            "speaker": seg.get("label", "?"),
-                            "start": seg.get("segment", {}).get("start", 0),
-                            "end": seg.get("segment", {}).get("end", 0),
-                            "duration": seg.get("segment", {}).get("end", 0) - seg.get("segment", {}).get("start", 0),
-                        })
+                        segments.append(
+                            {
+                                "speaker": seg.get("label", "?"),
+                                "start": seg.get("segment", {}).get("start", 0),
+                                "end": seg.get("segment", {}).get("end", 0),
+                                "duration": seg.get("segment", {}).get("end", 0)
+                                - seg.get("segment", {}).get("start", 0),
+                            }
+                        )
 
             # 获取说话人数量
             speakers = set(s["speaker"] for s in segments)
@@ -242,7 +260,7 @@ class DiarizationEngine:
             raise
 
     # ── 工具 ──
-    def get_health(self) -> Dict[str, Any]:
+    def get_health(self) -> dict[str, Any]:
         """健康检查信息"""
         return {
             "status": "ok" if self._is_loaded else ("loading" if self._loading else "unloaded"),
@@ -258,7 +276,9 @@ class DiarizationEngine:
     def unload(self):
         """释放模型内存"""
         import gc
+
         import torch
+
         if self._pipeline is not None:
             del self._pipeline
             self._pipeline = None

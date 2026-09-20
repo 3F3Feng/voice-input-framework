@@ -24,7 +24,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; u
   <div class="level-bar" id="level-bar"><div class="level-fill" id="level"></div></div>
 </div>
 <script>
-const start = Date.now();
+const start0 = Date.now();
+let start = start0;
 const timerEl = document.getElementById('timer');
 const levelEl = document.getElementById('level');
 const levelBar = document.getElementById('level-bar');
@@ -33,7 +34,23 @@ const labelEl = document.getElementById('label');
 const invoke = window.__TAURI__?.core?.invoke;
 const listen = window.__TAURI__?.event?.listen;
 
+// 诊断信号:页面加载成功后改窗口标题(主进程 1s 后读标题判断加载状态)
+try { window.__TAURI__?.window?.getCurrentWindow()?.setTitle('indicator-loaded'); } catch (_) {}
+
 let mode = 'recording'; // 'recording' | 'processing' | 'done'
+
+// Window reused across recordings — reset timer/mode on each show
+if (listen) {
+  listen('indicator-reset', () => {
+    mode = 'recording';
+    start = Date.now();
+    if (labelEl) labelEl.textContent = '🎙️ ';
+    if (timerEl) timerEl.textContent = '0.0s';
+    if (levelBar) levelBar.style.display = '';
+    if (levelEl) levelEl.style.width = '0%';
+    if (dotEl) { dotEl.classList.remove('processing', 'done'); dotEl.classList.add('recording'); }
+  });
+}
 
 // Listen for result time (emitted after transcription completes)
 if (listen) {

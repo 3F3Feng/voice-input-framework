@@ -9,11 +9,13 @@ Voice Input Framework - 版本检查和更新管理模块
 - 提供更新下载链接和下载进度
 """
 
-import logging, json, threading, time
+import json
+import logging
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Optional, Callable
-from urllib.request import Request, urlopen
 from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +34,19 @@ class VersionInfo:
     latest_version: str
     is_outdated: bool
     release_url: str
-    download_url: Optional[str] = None
-    release_notes: Optional[str] = None
+    download_url: str | None = None
+    release_notes: str | None = None
 
 
 def parse_version(v: str) -> tuple:
     v = v.lstrip("v")
     parts = v.split(".")
     try:
-        return (int(parts[0]) if len(parts) > 0 else 0,
-                int(parts[1]) if len(parts) > 1 else 0,
-                int(parts[2]) if len(parts) > 2 else 0)
+        return (
+            int(parts[0]) if len(parts) > 0 else 0,
+            int(parts[1]) if len(parts) > 1 else 0,
+            int(parts[2]) if len(parts) > 2 else 0,
+        )
     except ValueError:
         return (0, 0, 0)
 
@@ -52,10 +56,13 @@ def compare_versions(v1: str, v2: str) -> int:
     return -1 if a < b else 1 if a > b else 0
 
 
-def check_for_updates() -> Optional[VersionInfo]:
+def check_for_updates() -> VersionInfo | None:
     """检查 GitHub 最新版本（HTTP API，10秒超时）"""
     try:
-        req = Request(GITHUB_API, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "VoiceInput/2.0"})
+        req = Request(
+            GITHUB_API,
+            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "VoiceInput/2.0"},
+        )
         with urlopen(req, timeout=CHECK_TIMEOUT) as r:
             data = json.loads(r.read())
     except URLError as e:
@@ -92,12 +99,27 @@ def check_for_updates() -> Optional[VersionInfo]:
     )
 
 
+def format_version_message(info: VersionInfo | None) -> str:
+    """将版本信息格式化为人类可读消息"""
+    if info is None:
+        return "检查更新失败(GitHub API 不可达)"
+    if not info.is_outdated:
+        return f"已是最新版本 v{info.latest_version}"
+    msg = (
+        f"发现新版本 v{info.latest_version}(当前 v{info.current_version})\n"
+        f"下载: {info.download_url or info.release_url}"
+    )
+    if info.release_notes:
+        msg += f"\n更新说明: {info.release_notes}"
+    return msg
+
+
 class UpdateChecker:
     """后台更新检查器（定时检查 + 回调通知）"""
 
-    def __init__(self, on_update_available: Optional[Callable[[VersionInfo], None]] = None):
+    def __init__(self, on_update_available: Callable[[VersionInfo], None] | None = None):
         self._on_update = on_update_available
-        self._timer: Optional[threading.Timer] = None
+        self._timer: threading.Timer | None = None
         self._running = False
 
     def start(self):
@@ -130,6 +152,6 @@ class UpdateChecker:
             logger.exception("后台更新检查异常")
         self._schedule()
 
-    def check_now(self) -> Optional[VersionInfo]:
+    def check_now(self) -> VersionInfo | None:
         """立即检查一次"""
         return check_for_updates()

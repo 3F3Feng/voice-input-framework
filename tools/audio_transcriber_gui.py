@@ -16,7 +16,7 @@ import tempfile, os.path
 
 # ── 配置 ──
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audiogui_config.json")
-DEFAULT_SERVER = os.environ.get("STT_SERVER", "http://shifengmacbook-pro:6544")
+DEFAULT_SERVER = os.environ.get("STT_SERVER", "http://127.0.0.1:6544")
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -343,7 +343,7 @@ class AudioTranscriberGUI:
 
         ws = ws_lib.create_connection(ws_url, timeout=30)
         ws.recv()  # ready
-        ws.send(json.dumps({"type": "config", "language": self.lang.get(), "return_timestamps": False}))
+        ws.send(json.dumps({"type": "config", "language": self.lang.get()}))
         ws.recv()  # config_ack
 
         # 发送音频

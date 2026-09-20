@@ -16,6 +16,10 @@ Environment Variables:
 
 import sys
 import os
+from shared.version_check import check_python_version
+
+check_python_version()
+
 from client.app import VoiceInputApp
 from client.config_manager import ConfigManager
 
@@ -40,9 +44,9 @@ if __name__ == "__main__":
             print(f"Error: Port must be a number, got '{sys.argv[2]}'")
             sys.exit(1)
 
-    print(f"🎤 Voice Input Framework")
+    print("🎤 Voice Input Framework")
     print(f"📍 Server: {host}:{port}")
-    print(f"\nStarting GUI client...\n")
+    print("\nStarting GUI client...\n")
 
     # 创建并运行客户端
     client = VoiceInputApp(server_host=host, server_port=port)
@@ -54,5 +58,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

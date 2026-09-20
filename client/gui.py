@@ -27,27 +27,28 @@ import queue
 import threading
 import time
 from datetime import datetime
-from typing import Optional
-import PySimpleGUI as sg
+
 import numpy as np
+import PySimpleGUI as sg
 
 # 焦点管理（Windows）
 try:
     import ctypes
-    import win32gui
+
     import win32con
+    import win32gui
     WINAPI_AVAILABLE = True
 except ImportError:
     WINAPI_AVAILABLE = False
 
 # 导入新模块
+from .auto_start import AutoStartManager
+from .config_manager import ConfigManager
+from .floating_indicator import FloatingIndicator, ProcessingIndicator
 from .hotkey_manager import HotkeyManager, HotkeyPresets
 from .tray_manager import TrayIconManager, TrayStatus
-from .floating_indicator import FloatingIndicator, ProcessingIndicator
-from .config_manager import ConfigManager
 from .update_checker import check_for_updates, format_version_message
-from .auto_start import AutoStartManager
-from .websocket_keepalive import WebSocketKeepAlive, ConnectionState
+from .websocket_keepalive import ConnectionState, WebSocketKeepAlive
 
 # 日志配置
 logging.basicConfig(
@@ -176,7 +177,7 @@ class HotkeyVoiceInputV2:
         self.hotkey_manager.set_hotkey(self.config_manager.hotkey)
 
         # WebSocket 保活管理器
-        self.keepalive: Optional[WebSocketKeepAlive] = None
+        self.keepalive: WebSocketKeepAlive | None = None
         self.connection_state = ConnectionState.DISCONNECTED
 
         # 系统托盘
@@ -634,7 +635,7 @@ class HotkeyVoiceInputV2:
                 self.ws = None
                 return False
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.log("✗ 连接超时")
             self.set_status("连接超时", "red")
             if self.tray_manager:
@@ -1029,7 +1030,7 @@ class HotkeyVoiceInputV2:
         
         self.log(f"⚠️ 轮询超时: 模型 {model_name} 加载时间过长")
 
-    async def send_audio_to_server(self) -> Optional[str]:
+    async def send_audio_to_server(self) -> str | None:
         """发送音频到服务器并获取识别结果"""
         if not self.audio_buffer:
             self.log("没有音频数据")
@@ -1116,12 +1117,12 @@ class HotkeyVoiceInputV2:
                         await ws.close()
                         return None
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self.log("识别超时（5分钟） - 模型可能还在加载中")
                     await ws.close()
                     return None
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.log("连接超时")
         except Exception as e:
             self.log(f"发送音频失败: {e}")
@@ -1223,7 +1224,7 @@ class HotkeyVoiceInputV2:
                         self.log("服务器已准备就绪，开始流式传输...")
                     else:
                         self.log(f"服务器响应异常: {data}")
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self.log("等待服务器准备超时")
                     return
                 
@@ -1291,7 +1292,7 @@ class HotkeyVoiceInputV2:
                             self.stream_error = error_msg
                             break
                             
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self.log("等待结果超时")
                         break
                         
@@ -1823,11 +1824,11 @@ class HotkeyVoiceInputV2:
 def main():
     """主程序入口"""
     try:
-        import sounddevice
-        import websockets
         import httpx
         import pyautogui
         import pynput
+        import sounddevice
+        import websockets
     except ImportError as e:
         print(f"缺少依赖: {e}")
         print("\n请运行以下命令安装依赖:")

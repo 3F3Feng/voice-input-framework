@@ -1,9 +1,11 @@
 """
 Tests for LLM Server
 """
-import pytest
+
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add project path
 project_dir = Path(__file__).parent.parent
@@ -26,10 +28,7 @@ class TestProcessRequest:
         """Test request with options"""
         from services.llm_server import ProcessRequest
 
-        req = ProcessRequest(
-            text="Test",
-            options={"temperature": 0.7, "max_tokens": 100}
-        )
+        req = ProcessRequest(text="Test", options={"temperature": 0.7, "max_tokens": 100})
         assert req.options["temperature"] == 0.7
         assert req.options["max_tokens"] == 100
 
@@ -45,7 +44,7 @@ class TestProcessResult:
             text="Processed text",
             original_text="Original text",
             llm_latency_ms=100.0,
-            model="Qwen3.5-4B-OptiQ"
+            model="Qwen3.5-4B-OptiQ",
         )
         assert result.text == "Processed text"
         assert result.original_text == "Original text"
@@ -56,11 +55,7 @@ class TestProcessResult:
         from services.llm_server import ProcessResult
 
         result = ProcessResult(
-            text="",
-            original_text="Original",
-            llm_latency_ms=0.0,
-            model="",
-            success=False
+            text="", original_text="Original", llm_latency_ms=0.0, model="", success=False
         )
         assert result.success is False
 
@@ -76,7 +71,7 @@ class TestModelInfo:
             name="Qwen3.5-4B-OptiQ",
             description="Fast optimization model",
             is_loaded=True,
-            is_current=True
+            is_current=True,
         )
         assert info.name == "Qwen3.5-4B-OptiQ"
         assert info.is_loaded is True
@@ -95,7 +90,7 @@ class TestHealthStatus:
             current_model="Qwen3.5-4B-OptiQ",
             loaded_models=["Qwen3.5-4B-OptiQ"],
             active_connections=5,
-            is_processing=False
+            is_processing=False,
         )
         assert health.status == "ok"
         assert health.uptime_seconds == 3600.0
@@ -206,8 +201,72 @@ class TestProcessingLogic:
             if "<think>" in cleaned:
                 # Remove think tags
                 import re
-                cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL)
+
+                cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
             assert cleaned == expected
+
+
+class TestCleanLLMOutput:
+    """clean_llm_output:只去思考块和粗体标记,正文一个字都不能动"""
+
+    def test_apostrophes_and_quotes_survive(self):
+        """撇号和引号必须原样保留(回归:曾被无条件删掉)"""
+        from services.llm_server import clean_llm_output
+
+        text = 'I don\'t know, he said "okay"'
+        assert clean_llm_output(text) == text
+
+    def test_chinese_quotes_survive(self):
+        """中文引号同样不能动"""
+        from services.llm_server import clean_llm_output
+
+        text = "他说「好的」,我说'知道了'。"
+        assert clean_llm_output(text) == text
+
+    def test_repeated_lines_survive(self):
+        """重复的行不能被去重(回归:副歌/强调句曾被整行删掉)"""
+        from services.llm_server import clean_llm_output
+
+        text = "再见\n再见\n再见"
+        assert clean_llm_output(text) == text
+
+    def test_line_breaks_survive(self):
+        """多行不能被压成一行(回归:分段曾被空格拼接)"""
+        from services.llm_server import clean_llm_output
+
+        text = "第一段\n第二段"
+        assert clean_llm_output(text) == text
+        assert "\n" in clean_llm_output(text)
+
+    def test_leading_words_survive(self):
+        """开头是普通词时不能被砍掉(回归:^(quirer|thinker) 土办法)"""
+        from services.llm_server import clean_llm_output
+
+        assert clean_llm_output("thinker 是个乐队") == "thinker 是个乐队"
+
+    def test_think_block_removed(self):
+        """跨行思考块整块删掉"""
+        from services.llm_server import clean_llm_output
+
+        assert clean_llm_output("<think>\n盘算一下\n</think>\n你好世界") == "你好世界"
+
+    def test_orphan_think_tag_removed(self):
+        """只剩半边标签时也要删"""
+        from services.llm_server import clean_llm_output
+
+        assert clean_llm_output("</think>你好") == "你好"
+
+    def test_bold_markers_removed(self):
+        """markdown 粗体标记会被原样敲进文档,删掉"""
+        from services.llm_server import clean_llm_output
+
+        assert clean_llm_output("这是**重点**内容") == "这是重点内容"
+
+    def test_surrounding_whitespace_trimmed(self):
+        """首尾空白仍然清掉"""
+        from services.llm_server import clean_llm_output
+
+        assert clean_llm_output("  你好  ") == "你好"
 
 
 class TestErrorResponse:

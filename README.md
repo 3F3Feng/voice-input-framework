@@ -1,11 +1,11 @@
 # Voice Input Framework
 
-基于大模型的语音识别框架，支持实时流式语音识别、LLM 后处理。
+基于大模型的语音识别框架，支持实时音频采集与离线转写、LLM 后处理。
 
 ## ✨ 特性
 
 - 🎤 **实时音频采集**：支持麦克风实时录音，6种采样格式自动适配
-- 🚀 **流式识别**：录音期间实时传输音频，低延迟响应
+- 🚀 **流式上传**：录音期间音频分块上传，录音结束后统一转写（当前模型非流式推理）
 - 🤖 **多模型支持**：
   - **Qwen3-ASR-1.7B** (推荐) - 52种语言/方言，加载快 (~27秒)
   - **Qwen3-ASR-0.6B** - 更快，适合实时场景
@@ -41,7 +41,10 @@
 ```bash
 git clone https://github.com/3F3Feng/voice-input-framework.git
 cd voice-input-framework
-pip install -r requirements.txt
+
+# 分离架构:STT 与 LLM 依赖分环境安装(避免 transformers 版本冲突)
+pip install -r requirements-stt.txt   # STT 服务依赖
+pip install -r requirements-llm.txt   # LLM 服务依赖(Apple Silicon + MLX)
 
 # 启动 STT 服务 (端口 6544)
 python -m services.stt_server
@@ -49,6 +52,8 @@ python -m services.stt_server
 # 启动 LLM 服务 (端口 6545，可选)
 python -m services.llm_server
 ```
+
+> 非 Apple Silicon 机器会自动回落 `whisper_turbo`(transformers),无需 MLX 依赖。
 
 ### Python 客户端
 
@@ -70,14 +75,47 @@ npm run tauri dev
 
 ### 功能
 
-- **按住说话**：支持鼠标按钮和全局快捷键录音
-- **实时流式传输**：录音期间音频实时发送到服务器，非录完再发
+- **按住说话**：支持鼠标按钮和全局快捷键录音（快捷键行为见下方「快捷键」一节）
+- **音频上传**：录音结束后将音频发送到服务器转写（分块上传，非真流式推理）
 - **LLM 后处理**：可选开启，录音后自动优化识别结果
-- **悬浮胶囊**：录音时显示计时器和音量条，处理中显示状态
-- **系统托盘**：支持最小化到托盘，快捷键全局可用
+- **悬浮胶囊**：录音时显示计时器和音量条，处理中显示状态；macOS 上可浮于全屏应用之上
+- **系统托盘**：macOS 以菜单栏应用（accessory）身份运行，**不占用 Dock 图标**，主窗口从托盘菜单打开；
+  窗口的关闭按钮只收起界面，**退出程序只能从托盘菜单**
+- **本地服务管理**：设置面板内启停本地 STT / LLM 服务，也可切到「远程连接」只连不管
 - **自动更新**：检测 GitHub Releases 新版本，一键更新
-- **调试日志**：内置日志面板，方便排查问题
+- **日志面板**：客户端日志与 STT / LLM 子进程输出共用一个面板，按来源切换
 - **音频设备选择**：支持选择系统中任意输入设备
+- **macOS 权限**：设置面板内查看/申请麦克风、输入监控、辅助功能三项权限，详见 `docs/macos-permissions.md`
+
+设置面板按「服务 / 常规 / 权限 / 日志 / 关于」分页。「关于」里能看到版本号、
+构建 ID 和构建时间 —— **版本号唯一的来源是 `gui/src-tauri/Cargo.toml`**
+（`tauri.conf.json` 不再写 `version`，Tauri 缺省回落到它），而构建 ID 是每次
+构建现生成的 UUID，用来分辨本地反复构建出来的产物（版本号在两次发版之间是不动的）。
+
+### 快捷键
+
+默认 `left_ctrl+left_alt`，按住说话、松开转写。
+
+**不写左右就两边都认。** 写 `ctrl+alt` 时左右两侧都能触发；只有明确写
+`left_ctrl` 才只认左边。想让录制出来的 `left_ctrl+left_alt` 也左右通用，
+在「设置 → 常规」里关掉「区分左右修饰键」即可。
+
+平台差异（都是系统限制，不是实现偷懒）：
+
+| 平台 | 实现 | 需要注意的 |
+|------|------|-----------|
+| Windows | `GetAsyncKeyState` 轮询 | 不受窗口最小化影响 |
+| macOS | CGEventTap | 需要「输入监控」权限；**Caps Lock 是按一下开始、再按一下结束**，见下 |
+| Linux | rdev（X11） | **Wayland 会话下不工作**，见下 |
+
+- **macOS 的 Caps Lock**：系统只暴露「灯亮着没有」这一个状态，没有物理按下/抬起
+  事件，所以用它当快捷键只能是切换式（按一下开始录，再按一下停），不像别的键
+  那样按住说话。Windows 上 Caps Lock 是正常的按住说话。
+- **Linux 的 Wayland**：全局按键监听走的是 X11，而 Wayland 按设计就不让普通客户端
+  窥探别的窗口的输入。在 Wayland 会话里快捷键不会工作，应用启动时会在日志面板里
+  明确说明。解决办法是改用 Xorg 会话登录，或者直接在界面上按住录音按钮说话。
+  另外某些发行版需要当前用户在 `input` 组里：
+  `sudo usermod -aG input $USER`，然后重新登录。
 
 ### 架构
 
@@ -91,7 +129,8 @@ npm run tauri dev
 │  lib.rs    (命令注册 + 应用生命周期)        │
 │  audio.rs  (cpal 音频采集 + 流式通道)       │
 │  stt.rs    (WebSocket 流式转写)            │
-│  hotkey.rs (rdev 全局快捷键)               │
+│  hotkey.rs (全局快捷键；macOS 用 CGEventTap)│
+│  permissions.rs (macOS 权限查询/申请)      │
 │  indicator.rs (悬浮胶囊窗口管理)           │
 │  update.rs (GitHub Releases 更新检查)      │
 │  log.rs    (全局日志，emit 到前端)          │
@@ -104,17 +143,24 @@ npm run tauri dev
 
 ### 构建
 
+**macOS 推荐走脚本**，它会用本机证书签名、校验产物、并安装到 `/Applications`：
+
 ```bash
-# 前端
+scripts/build-macos.sh --install
+```
+
+签名不是可选项：macOS 的隐私权限（TCC）按**代码签名身份**记录授权，
+而不带证书构建时 Tauri 只做 ad-hoc 签名、身份每次构建都变 ——
+后果是麦克风、输入监控、辅助功能三项权限**每构建一次就要重新授予一遍**。
+脚本还会校验 hardened runtime 所需的 entitlement 确实进了产物（缺了麦克风会静默失效）。
+
+完整说明见 [docs/macos-signed-build.md](docs/macos-signed-build.md)。
+
+其它平台（或只想编译不签名）：
+
+```bash
 cd gui
 npm install
-npm run build
-
-# 后端
-cd gui/src-tauri
-cargo build --release
-
-# 完整打包
 npm run tauri build
 ```
 
@@ -129,7 +175,7 @@ npm run tauri build
 | `/models/select` | POST | 切换模型 |
 | `/models/status/{model}` | GET | 查询模型加载状态 |
 | `/transcribe` | POST | 转写音频文件 |
-| `/ws/stream` | WebSocket | 流式识别 |
+| `/ws/stream` | WebSocket | 流式上传（录音结束后统一转写） |
 | `/llm/models` | GET | 获取 LLM 模型列表 |
 | `/llm/models/select` | POST | 切换 LLM 模型 |
 | `/llm/prompt` | GET/PUT | 获取/保存 LLM 提示词 |
@@ -151,18 +197,74 @@ npm run tauri build
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `VIF_STT_PORT` | 6544 | STT 服务端口 |
-| `VIF_STT_HOST` | 0.0.0.0 | STT 服务监听地址 |
+| `VIF_STT_HOST` | 127.0.0.1 | STT 服务监听地址 |
+| `VIF_STT_MODEL` | 平台默认 | 默认 STT 模型(Apple Silicon 为 qwen_asr_mlx_native,否则 whisper_turbo) |
 | `VIF_LLM_PORT` | 6545 | LLM 服务端口 |
-| `VIF_LLM_HOST` | 127.0.0.1 | LLM 服务监听地址 (仅本地) |
-| `VIF_DEFAULT_MODEL` | qwen_asr | 默认 STT 模型 |
+| `VIF_LLM_HOST` | 127.0.0.1 | LLM 服务监听地址;在 STT 服务里是转发目标地址 |
+| `VIF_LLM_ENABLED` | true | 是否启用 LLM 后处理 |
+| `VIF_LLM_MODEL` | Qwen3.5-4B-OptiQ | 默认 LLM 模型 |
+| `VIF_CORS_ORIGINS` | 本地 GUI 的几个来源 | 允许的跨域来源,逗号分隔;见 `shared/constants.py` 的 `DEFAULT_CORS_ORIGINS` |
+| `VIF_REQUEST_TIMEOUT` | 300.0 | 请求超时(秒) |
+| `VIF_LOG_LEVEL` | INFO | 日志级别 |
+
+> **两个服务默认只绑回环地址 `127.0.0.1`,不是 `0.0.0.0`。** 它们都没有鉴权,
+> 默认就不该暴露到局域网。所以**要从别的机器连过来,必须显式设置**
+> `VIF_STT_HOST=0.0.0.0`(LLM 服务同理用 `VIF_LLM_HOST`),并且相应地把
+> `VIF_CORS_ORIGINS` 设成客户端的来源 —— 不设的话请求会被 CORS 挡掉。
+> 暴露到局域网之前请自行确认网络是可信的。
+>
+> 完整模型元数据见 `shared/model_registry.py`(单一来源)。
+>
+> **注意**:客户端与服务端默认使用 `127.0.0.1` 而非 `localhost`——Windows 上
+> `localhost` 会优先解析到 IPv6(`::1`),每次连接先尝试 IPv6 超时再回落 IPv4,
+> 造成数秒延迟。如确需 IPv6 连接,可用环境变量/配置文件显式指定 host。
 
 ### 客户端配置
 
-客户端配置保存在 `~/.voice-input/config.json`，支持：
+客户端配置保存在 `~/.voice_input_config.json`，支持：
 - 服务器地址和端口
 - 快捷键设置
 - LLM 启用/禁用
 - UI 设置（透明度、最小化等）
+- LLM 直连端口(默认 6545)可用 `VIF_LLM_HOST`/`VIF_LLM_PORT` 环境变量覆盖
+
+## 🧪 测试
+
+### 1. 单测 + 端点契约(无需模型,CI 运行)
+
+```bash
+pip install pytest pytest-asyncio fastapi uvicorn pydantic httpx websockets python-multipart numpy
+pytest -m "not integration"
+# 177 passed / 1 skipped / 31 deselected(含端点契约测试 tests/test_contract.py)
+```
+
+`tests/test_contract.py` 用 TestClient 断言 HTTP/WS 端点契约,与修复前基线等价(见 `docs/ARCHITECTURE_REVIEW.md` §7)。
+
+### 2. 端点等价性对比(基线 vs 当前)
+
+```bash
+git worktree add /tmp/vif-baseline <修复前commit>
+python scripts/compare_endpoints.py --baseline /tmp/vif-baseline
+# 输出差异清单:应全部为已知有意变更(H4/M7),无意外回归
+```
+
+### 3. 真实模型集成测试(需模型/GPU 环境)
+
+```bash
+bash scripts/run_integration.sh   # 启动 STT+LLM,跑 tests/test_e2e.py + test_api_endpoints.py
+```
+
+### 4. Rust 客户端
+
+```bash
+# 逻辑测试(任意平台,无需 tauri 系统库)
+cd gui/stt-logic-tests && cargo test          # 16 passed
+
+# 完整 Tauri crate(Linux 需 webkit2gtk/gtk/alsa/xdo dev 包)
+cd gui/src-tauri && cargo check && cargo test
+```
+
+Rust 客户端人工验证清单见 `docs/rust-client-verification.md`。
 
 ## 📄 许可证
 

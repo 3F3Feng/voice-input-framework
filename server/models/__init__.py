@@ -6,10 +6,10 @@ STT 模型引擎实现和统一注册。
 """
 
 from server.models.base import BaseSTTEngine, STTEngineError
-from server.models.whisper import WhisperEngine
-from server.models.whisper_mlx import WhisperMLXEngine
-from server.models.whisper_cpp import WhisperCppEngine
 from server.models.qwen3_asr_mlx_native import Qwen3ASRMLXNativeEngine
+from server.models.whisper import WhisperEngine
+from server.models.whisper_cpp import WhisperCppEngine
+from server.models.whisper_mlx import WhisperMLXEngine
 from shared.model_registry import MODELS_CONFIG
 
 # 引擎类映射：engine_type → EngineClass
@@ -39,12 +39,12 @@ for name, config in MODELS_CONFIG.items():
         )
 
 __all__ = [
-    "BaseSTTEngine",
-    "STTEngineError",
-    "WhisperEngine",
-    "WhisperMLXEngine",
-    "WhisperCppEngine",
-    "Qwen3ASRMLXNativeEngine",
     "AVAILABLE_MODELS",
     "MODELS_CONFIG",
+    "BaseSTTEngine",
+    "Qwen3ASRMLXNativeEngine",
+    "STTEngineError",
+    "WhisperCppEngine",
+    "WhisperEngine",
+    "WhisperMLXEngine",
 ]
