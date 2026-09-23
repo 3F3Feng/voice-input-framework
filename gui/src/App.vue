@@ -1001,7 +1001,7 @@ function toast(msg: string, type = "info", log = true) {
 // 「自动启动失败」全都到不了日志页。setup() 里打的那些发生在 webview 加载之前，
 // 光听事件也收不到，所以挂载时先补拉 Rust 的缓冲。
 const toGuiLog = (l: RustLogLine): GuiLogEntry =>
-  ({ msg: l.text, level: l.level === "ERROR" ? "err" : "info", seq: l.seq });
+  ({ msg: l.text, level: l.level === "ERROR" ? "err" : l.level === "WARN" ? "warn" : "info", seq: l.seq });
 /** 目前见过的最大 Rust 日志序号。用来判断「某个动作之后有没有冒出新的错误」。 */
 const lastRustLogSeq = () => guiLogs.value.reduce((m, l) => Math.max(m, l.seq ?? 0), 0);
 
@@ -1709,6 +1709,20 @@ function stopHotkeyListening() {
   }
 }
 
+// 录制新快捷键期间暂停全局快捷键:否则按下旧组合的那一刻就开始录音了。
+watch(hotkeyRecording, on => {
+  invoke("set_hotkey_suspended", { suspended: on }).catch(e => console.error("set_hotkey_suspended:", e));
+});
+// 录到一半离开(关设置面板、切标签页、窗口被收起)就取消录制 —— 不然全局快捷键
+// 会一直停在暂停状态,用户只会觉得快捷键坏了。
+function cancelHotkeyRecordingIfActive() {
+  if (hotkeyRecording.value) startHotkeyRecording();  // 录制中再调一次就是「取消」
+}
+watch([showSettings, tab], cancelHotkeyRecordingIfActive);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) cancelHotkeyRecordingIfActive();
+});
+
 function startHotkeyRecording() {
   hotkeyRecording.value = !hotkeyRecording.value;
   setHotkeyMsg("");
@@ -2263,6 +2277,7 @@ html, body, #app { height: 100%; }
 .log-box { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px; max-height: 200px; overflow-y: auto; font-size: 0.65rem; font-family: monospace; line-height: 1.5; }
 .log-entry { word-break: break-all; margin-bottom: 2px; }
 .log-entry.err { color: var(--red); }
+.log-entry.warn { color: var(--yellow); }
 .log-entry.ok { color: var(--green); }
 .log-empty { color: var(--muted); font-style: italic; font-size: 0.7rem; padding: 8px; }
 

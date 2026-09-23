@@ -31,6 +31,16 @@ macro_rules! log_error {
     }};
 }
 
+/// 值得注意、但不是故障的事(比如回落到默认麦克风)。以前这类提示只能用
+/// `log_error!`,日志页里一片红,真正的错误反而不显眼。
+#[macro_export]
+macro_rules! log_warn {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        $crate::log::__log_inner("WARN", &msg);
+    }};
+}
+
 pub struct AppState {
     pub stt: Mutex<stt::SttClient>,
     pub recorder: Mutex<audio::AudioRecorder>,
@@ -151,7 +161,7 @@ fn check_microphone_permission() -> Result<(), String> {
 /// 这些以前要么只 `eprintln`,要么干脆不说 —— 打包后的应用没有终端,
 /// 等于没人看得见。
 pub(crate) fn emit_app_warning(app: &tauri::AppHandle, msg: &str) {
-    log_error!("[warning] {}", msg);
+    log_warn!("{}", msg);
     let _ = app.emit("app-warning", msg.to_string());
 }
 
@@ -835,6 +845,13 @@ fn validate_hotkey(shortcut: String) -> Result<(), String> {
     hotkey::parse_hotkey_checked(&shortcut, true).map(|_| ())
 }
 
+/// 设置页开始 / 结束录制新快捷键时调用,录制期间旧快捷键不触发录音。
+#[tauri::command]
+async fn set_hotkey_suspended(suspended: bool) -> Result<(), String> {
+    hotkey::set_suspended(suspended);
+    Ok(())
+}
+
 #[tauri::command]
 async fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
     app.autolaunch().is_enabled().map_err(|e| e.to_string())
@@ -1411,6 +1428,7 @@ pub fn run() {
             request_permission,
             open_permission_settings,
             register_hotkey,
+            set_hotkey_suspended,
             validate_hotkey,
             get_autostart,
             set_autostart,

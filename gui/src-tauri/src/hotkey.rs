@@ -31,6 +31,21 @@ use std::time::{Duration, Instant};
 /// Old poller threads check this and exit when they detect a newer generation.
 static LISTENER_GEN: AtomicU64 = AtomicU64::new(0);
 
+/// 设置页正在录制新快捷键时暂停触发。
+///
+/// 以前录制期间旧快捷键照样生效:用户想把快捷键从 Ctrl+Alt 改成 Ctrl+Alt+Space,
+/// 按下 Ctrl+Alt 的那一刻就开始录音了。暂停期间按键状态照常跟踪(否则恢复后左右
+/// 键的按下 / 抬起对不上),只是不发起录音。
+static SUSPENDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_suspended(suspended: bool) {
+    SUSPENDED.store(suspended, Ordering::SeqCst);
+}
+
+fn suspended() -> bool {
+    SUSPENDED.load(Ordering::SeqCst)
+}
+
 // ── Key representation ──
 
 /// Cross-platform key identifier for hotkey combos.
@@ -468,7 +483,7 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                 }
 
                 // ── Debounced Press trigger ──
-                if all_down && !recording.load(Ordering::SeqCst) {
+                if all_down && !recording.load(Ordering::SeqCst) && !suspended() {
                     if let Some(start) = all_down_start {
                         if start.elapsed() >= Duration::from_millis(PRESS_DEBOUNCE_MS) {
                             // All keys held debounce duration → start recording
@@ -744,7 +759,10 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                     eprintln!("[hotkey] Tap gen {} superseded, stopping runloop", my_gen);
                     return mac_tap::TapAction::Stop;
                 }
-                if let Some(cmd) = matcher.on_change(key, is_press) {
+                if let Some(cmd) = matcher
+                    .on_change(key, is_press)
+                    .filter(|c| !(suspended() && matches!(c, HotkeyCmd::Press)))
+                {
                     let _ = cmd_tx.send(cmd);
                     let _ = a.emit(
                         if is_press {
@@ -1022,7 +1040,10 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                     };
                     let Some(rk) = key else { return };
                     let Some(k) = rdev_to_hotkey(&rk) else { return };
-                    if let Some(cmd) = matcher.on_change(k, is_press) {
+                    if let Some(cmd) = matcher
+                        .on_change(k, is_press)
+                        .filter(|c| !(suspended() && matches!(c, HotkeyCmd::Press)))
+                    {
                         let _ = cmd_tx.send(cmd);
                         let _ = a.emit(
                             if is_press {
