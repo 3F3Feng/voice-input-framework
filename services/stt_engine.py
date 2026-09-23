@@ -184,6 +184,71 @@ def _infer_sync(model, model_type, audio_array, sample_rate: int, lang: str | No
     return "", lang
 
 
+# ============== 识别语言 ==============
+# 客户端(Tauri 的 `audio.language`)一律发 ISO 639 风格的代码:"zh" / "en" / "yue" /
+# "ja" / "ko",或者 "auto"。可各引擎要的写法并不一样:
+#   - Whisper 系(mlx-whisper / transformers / whisper.cpp)要的就是代码;
+#   - Qwen3-ASR(mlx-audio)要的是英文名 —— 它把 language 原样拼进提示词
+#     `language {name}<asr_text>`,只在 config.support_languages("Chinese"、
+#     "Cantonese"…)里按大小写不敏感查一次,查不到就照抄。以前直接传 "zh" 过去,
+#     提示词变成 `language zh<asr_text>`,模型从没见过这种写法,指定语言等于白指定。
+# 换算统一放在这里,客户端就不必知道服务端此刻跑的是哪个模型。
+
+#: 代码 → Qwen3-ASR 的语言名(名字取自模型 config.json 的 support_languages)。
+QWEN_LANGUAGE_NAMES: dict[str, str] = {
+    "zh": "Chinese",
+    "en": "English",
+    "yue": "Cantonese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "ru": "Russian",
+    "ar": "Arabic",
+    "th": "Thai",
+    "vi": "Vietnamese",
+    "id": "Indonesian",
+    "tr": "Turkish",
+    "hi": "Hindi",
+}
+_CODE_BY_QWEN_NAME = {name.lower(): code for code, name in QWEN_LANGUAGE_NAMES.items()}
+
+
+def resolve_language(
+    language: str | None, model_type: str | None, supports_yue: bool = True
+) -> str | None:
+    """把客户端发来的语言换成当前引擎认的写法;自动检测返回 None。
+
+    - 也接受 "Chinese" 这种英文名、"zh-CN" 这种带地区的写法,先统一成代码。
+    - Whisper 只有 large-v3 一代(100 种语言)才有粤语 token;更小的模型拿到
+      "yue" 会直接抛错,整句识别失败。所以这些模型上粤语退回 "zh" —— 粤语按
+      中文识别出来的字大体可用,总好过一个字都没有。
+    """
+    lang = (language or "").strip()
+    if not lang or lang.lower() == "auto":
+        return None
+    lower = lang.lower()
+    code = _CODE_BY_QWEN_NAME.get(lower) or lower.replace("_", "-").split("-")[0]
+
+    if (model_type or "").startswith("whisper"):
+        if code == "yue" and not supports_yue:
+            logger.info("当前 Whisper 模型不支持粤语,按中文(zh)识别")
+            return "zh"
+        return code
+    # Qwen3-ASR:认不出的就原样交给它,mlx-audio 自己还会再按名字匹配一次。
+    return QWEN_LANGUAGE_NAMES.get(code, lang)
+
+
+def _whisper_supports_yue(model_info: dict[str, Any] | None) -> bool:
+    """只有 large-v3 / large-v3-turbo 的词表里有粤语(yue)。"""
+    info = model_info or {}
+    hint = f"{info.get('model_id', '')} {info.get('whisper_model', '')}".lower()
+    return "large-v3" in hint or "v3-large" in hint
+
+
 # ============== STT Engine ==============
 class STTEngine:
     """STT 引擎管理器"""
@@ -486,15 +551,15 @@ class STTEngine:
                     model=self.current_model_name,
                 )
 
-            # 执行转写
-            lang = None if language == "auto" else language
-
             # 取本地引用:并发的 switch_model() 会把 _model/_model_type 置空,
             # 本地引用保证本次转写用同一个(且完整的)实例跑完。
             model = self._model
             model_type = getattr(self, "_model_type", None)
             if model is None:
                 raise RuntimeError("STT model is not available (switching?)")
+
+            # 执行转写。语言按当前引擎换成它认的写法(见 resolve_language)。
+            lang = resolve_language(language, model_type, _whisper_supports_yue(self._model_info))
 
             if model_type == "whisper_cpp":
                 # whisper.cpp 是外部进程,自己就在线程池里跑,不占事件循环。

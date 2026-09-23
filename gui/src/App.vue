@@ -186,6 +186,19 @@
             </div>
           </div>
 
+          <!-- 识别语言:配置里一直有 audio.language,每次转写也会发给服务端,
+               但界面上没有入口,只能手改 config.json。 -->
+          <div class="s-section">
+            <div class="s-title">识别语言</div>
+            <select class="s-select" v-model="language" @change="onLanguageChange">
+              <option v-for="o in languageOptions" :key="o.code" :value="o.code">{{ o.label }}</option>
+            </select>
+            <div class="s-tip">
+              明确只说一种语言时指定它,能少一些误判;中英混说选「自动」。
+              粤语需要 Qwen3-ASR 或 Whisper large-v3 系列,较小的 Whisper 模型会按中文识别。
+            </div>
+          </div>
+
           <!-- Hotkey -->
           <div class="s-section">
             <div class="s-title">快捷键</div>
@@ -553,6 +566,10 @@ const savedHotkey = ref("");
 const defaultHotkey = "left_ctrl+left_alt";
 /** 录制中已经按住的修饰键,实时显示在输入框里,用户知道自己按到了哪一步。 */
 const hotkeyPreview = ref("");
+const language = ref("auto");
+/** 上一次成功存进配置的识别语言;存失败时下拉框退回它。 */
+let savedLanguage = "auto";
+
 const IS_MAC = navigator.userAgent.includes("Mac");
 const MOD_LABEL: Record<string, [mac: string, other: string]> = {
   ctrl: ["⌃", "Ctrl"], control: ["⌃", "Ctrl"], alt: ["⌥", "Alt"], shift: ["⇧", "Shift"],
@@ -1077,6 +1094,8 @@ async function loadConfig() {
     hotkeyStr.value = cfg.hotkey.key;
     savedHotkey.value = cfg.hotkey.key;
     distinguishSides.value = cfg.hotkey.distinguish_left_right ?? true;
+    language.value = cfg.audio.language || "auto";
+    savedLanguage = language.value;
     void checkSavedHotkey();
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
@@ -1481,6 +1500,28 @@ async function applyHotkey() {
   if (await saveConfigPatch(cfg => { cfg.hotkey.key = shortcut; })) {
     toast(`快捷键已更新为 ${formatHotkey(shortcut)}`, "ok");
   }
+}
+
+// ── 识别语言 ──
+/** 客户端一律发代码;服务端按当前模型换成它要的写法(stt_engine.resolve_language)。 */
+const LANGUAGE_OPTIONS = [
+  { code: "auto", label: "自动" },
+  { code: "zh", label: "中文" },
+  { code: "en", label: "English" },
+  { code: "yue", label: "粤语" },
+  { code: "ja", label: "日本語" },
+  { code: "ko", label: "한국어" },
+];
+// 手改过 config.json 填了别的语言时也照实显示,不让下拉框变成空白。
+const languageOptions = computed(() =>
+  LANGUAGE_OPTIONS.some(o => o.code === language.value)
+    ? LANGUAGE_OPTIONS
+    : [...LANGUAGE_OPTIONS, { code: language.value, label: language.value }]
+);
+async function onLanguageChange() {
+  const next = language.value;
+  if (await saveConfigPatch(cfg => { cfg.audio.language = next; })) savedLanguage = next;
+  else language.value = savedLanguage;
 }
 
 // ── Prompt ──
