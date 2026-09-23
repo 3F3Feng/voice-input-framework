@@ -266,12 +266,46 @@ impl Default for VoiceInputConfig {
     }
 }
 
+/// 用户主目录。Windows 上通常没有 `HOME`,只有 `USERPROFILE`;以前只读 `HOME`,
+/// 退回到 "." 之后老配置找不到、兜底目录也落在了当前工作目录里。
+pub fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// 旧版快捷键录制存坏的写法,能修就返回修好的。
+///
+/// 旧录制用 `e.key` 取主键名:空格的 `e.key` 是 `" "`,于是 Ctrl+Space 被存成
+/// `"left_ctrl+ "`。以前解析时空白段被悄悄丢掉,它就成了单按 Ctrl 触发;现在
+/// 解析器会拒绝空段,这种配置启动后快捷键直接不生效。存坏的只可能是空格这一种
+/// (别的键的 `e.key` 都不是空白),所以按空格修回来。
+pub fn repair_legacy_hotkey(key: &str) -> Option<String> {
+    let parts: Vec<&str> = key.split('+').collect();
+    if parts.len() < 2 || !parts.iter().any(|p| !p.is_empty() && p.trim().is_empty()) {
+        return None;
+    }
+    let fixed: Vec<String> = parts
+        .iter()
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            if p.trim().is_empty() {
+                "space".to_string()
+            } else {
+                p.trim().to_string()
+            }
+        })
+        .collect();
+    Some(fixed.join("+"))
+}
+
 impl VoiceInputConfig {
     fn config_path(app: &tauri::AppHandle) -> PathBuf {
-        let dir = app.path().app_data_dir().unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(home).join(".config/voice-input")
-        });
+        let dir = app
+            .path()
+            .app_data_dir()
+            .unwrap_or_else(|_| home_dir().join(".config/voice-input"));
         dir.join("config.json")
     }
 
@@ -286,8 +320,7 @@ impl VoiceInputConfig {
     }
 
     fn old_config_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        PathBuf::from(home).join(".voice_input_config.json")
+        home_dir().join(".voice_input_config.json")
     }
 
     pub fn load(app: &tauri::AppHandle) -> Self {
@@ -296,7 +329,20 @@ impl VoiceInputConfig {
         // Try loading Tauri config first
         if let Ok(data) = fs::read_to_string(&path) {
             match serde_json::from_str::<VoiceInputConfig>(&data) {
-                Ok(cfg) => return cfg,
+                Ok(mut cfg) => {
+                    if let Some(fixed) = repair_legacy_hotkey(&cfg.hotkey.key) {
+                        crate::log_info!(
+                            "[config] 快捷键「{}」是旧版录制功能存坏的,已修正为「{}」",
+                            cfg.hotkey.key,
+                            fixed
+                        );
+                        cfg.hotkey.key = fixed;
+                        if let Err(e) = cfg.save(app) {
+                            crate::log_error!("[config] 修正后的快捷键没能写回配置: {}", e);
+                        }
+                    }
+                    return cfg;
+                }
                 // 文件在,但读不懂。以前这里是一句静默的 `if let Ok`,于是所有设置
                 // (仓库路径、端口、快捷键、随应用启动……)悄悄回到出厂值,用户看到的
                 // 是「怎么像刚装上一样」,而下面那条兜底分支紧接着就用默认值把这个
@@ -441,6 +487,22 @@ impl VoiceInputConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_space_hotkey_is_repaired() {
+        use super::repair_legacy_hotkey;
+        assert_eq!(
+            repair_legacy_hotkey("left_ctrl+ ").as_deref(),
+            Some("left_ctrl+space")
+        );
+        assert_eq!(
+            repair_legacy_hotkey("left_ctrl+left_alt+ ").as_deref(),
+            Some("left_ctrl+left_alt+space")
+        );
+        assert_eq!(repair_legacy_hotkey("left_ctrl+left_alt"), None);
+        assert_eq!(repair_legacy_hotkey("left_ctrl+space"), None);
+        assert_eq!(repair_legacy_hotkey(" "), None);
+    }
+
     use super::*;
 
     /// 用户磁盘上真实存在的老配置(只有 `{host, port}`,没有 `mode` / `local`)。
