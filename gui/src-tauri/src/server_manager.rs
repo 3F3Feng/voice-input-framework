@@ -914,10 +914,33 @@ struct Health {
     error: Option<String>,
 }
 
-/// 打一次 `/health`。通了返回模型名,不通返回 `None`。
-///
-/// 这是「采纳还是拉起」的唯一判据:能应答 `/health` 的就是可用的服务,
-/// 不关心它是谁起的。
+/// 端口上那个服务说它的模型怎么样了。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Answer {
+    /// `status == "ok"`,能用。
+    Ready,
+    /// 还在加载(或者是个不认识的状态——老服务端只会说 ok / loading)。
+    Loading,
+    /// 加载失败,带原因。服务不会自己好起来。
+    Failed(String),
+}
+
+impl Health {
+    fn answer(&self) -> Answer {
+        match self.status.as_str() {
+            "ok" => Answer::Ready,
+            "error" => Answer::Failed(
+                self.error
+                    .clone()
+                    .filter(|e| !e.trim().is_empty())
+                    .unwrap_or_else(|| "原因未知,见日志".into()),
+            ),
+            _ => Answer::Loading,
+        }
+    }
+}
+
+/// 打一次 `/health`,只有模型就绪(`status == "ok"`)才算数。
 async fn probe(port: u16) -> Option<Health> {
     probe_raw(port).await.filter(|health| health.status == "ok")
 }
@@ -980,11 +1003,17 @@ pub async fn status(
 ) -> ServerStatus {
     let port = port_of(kind, &cfg.local);
     let raw = probe_raw(port).await;
-    // 进程活着、端口也应答,但模型加载失败了:得和「还在加载」分开报。
-    let load_error = raw
+    // 端口有应答、但模型还没就绪(加载中 / 加载失败)。下面两类分支都要它:
+    // 自己的进程要分开报「加载中」和「加载失败」,别人的进程也不能当成「未运行」。
+    let pending = raw
         .as_ref()
-        .filter(|h| h.status == "error")
-        .map(|h| h.error.clone().unwrap_or_else(|| "原因未知,见日志".into()));
+        .map(Health::answer)
+        .filter(|a| *a != Answer::Ready);
+    // 进程活着、端口也应答,但模型加载失败了:得和「还在加载」分开报。
+    let load_error = match &pending {
+        Some(Answer::Failed(reason)) => Some(reason.clone()),
+        _ => None,
+    };
     let health = raw.filter(|h| h.status == "ok");
 
     let snapshot = manager.lock().ok().and_then(|mut m| m.snapshot(kind));
@@ -1066,6 +1095,17 @@ pub async fn status(
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
         },
+        // 端口有应答、模型还没就绪,但应答的**不是**本应用手里那个进程——典型是
+        // 用户在终端里起的服务正在加载模型。以前这里要么落进下面的「未运行」
+        // (用户于是点「启动」,又拉起一个进程去抢端口),要么落进「进程已退出」
+        // (手里还攥着一个早就死掉的旧句柄时)。
+        (None, other) if pending.is_some() => external_pending_status(
+            kind,
+            port,
+            pending.unwrap_or(Answer::Loading),
+            identify_external(kind, &cfg.local),
+            other,
+        ),
         // 进程没了且端口也不通 = 起失败了,把退出原因和日志尾巴一起给出去。
         (None, Some(snap)) => ServerStatus {
             kind,
@@ -1114,6 +1154,92 @@ pub async fn status(
     }
 }
 
+/// 端口上有别人的服务在应答,但模型还没就绪时的状态。纯函数:身份识别
+/// (`identify_external`,要查 lsof / ps)由调用方做好传进来,这里只管怎么报。
+fn external_pending_status(
+    kind: ServerKind,
+    port: u16,
+    answer: Answer,
+    external_pid: Option<u32>,
+    stale: Option<SlotSnapshot>,
+) -> ServerStatus {
+    let (owner, pid, owner_note) = match external_pid {
+        Some(pid) => (
+            ServerOwner::ExternalProject,
+            Some(pid),
+            "不是本应用启动的,但确认是本项目的服务,可以从这里停止",
+        ),
+        None => (
+            ServerOwner::ExternalUnknown,
+            None,
+            "外部进程(不是本应用启动的),只能连接,不能从这里停止",
+        ),
+    };
+    let (state, what) = match answer {
+        Answer::Failed(reason) => (ServerState::Failed, format!("模型加载失败:{}", reason)),
+        _ => (ServerState::Starting, "正在加载模型...".to_string()),
+    };
+    ServerStatus {
+        kind,
+        state,
+        port,
+        owner,
+        can_stop: owner.can_manage(),
+        pid,
+        current_model: None,
+        detail: Some(format!("{}({})", what, owner_note)),
+        log_path: stale.as_ref().map(|s| s.log_path.clone()),
+        recent_logs: stale.map(|s| s.recent_logs).unwrap_or_default(),
+    }
+}
+
+/// 端口上已经有服务在应答时,`start` 怎么回答。纯函数,便于单测。
+///
+/// 以前只采纳 `status == "ok"` 的服务:用户在终端里起的服务正在加载模型时点
+/// 「启动」,会再拉一个进程去抢端口——新进程绑不上端口直接退出,界面报失败,
+/// 而终端里那个其实好好的。现在只要端口有应答就不再拉起:
+///
+/// - 就绪 / 加载中:采纳,如实说在干什么;
+/// - 加载失败:返回错误并带上原因。再起一个也绑不上端口,只能先停掉它。
+fn adopt_existing(
+    kind: ServerKind,
+    port: u16,
+    answer: &Answer,
+    ours: bool,
+    external_pid: Option<u32>,
+) -> Result<String, String> {
+    let who = if ours {
+        "本应用启动".to_string()
+    } else {
+        match external_pid {
+            Some(pid) => format!("外部进程 pid {},确认是本项目的服务", pid),
+            None => "外部进程".to_string(),
+        }
+    };
+    match answer {
+        Answer::Ready if ours => Ok(format!("{} 服务已在运行(本应用启动)", kind.label())),
+        Answer::Ready => Ok(format!(
+            "{} 服务已在 {} 端口运行({}),已直接连接,未重复启动",
+            kind.label(),
+            port,
+            who
+        )),
+        Answer::Loading => Ok(format!(
+            "{} 服务已在 {} 端口运行({}),正在加载模型,未重复启动",
+            kind.label(),
+            port,
+            who
+        )),
+        Answer::Failed(reason) => Err(format!(
+            "{} 服务已在 {} 端口运行({}),但模型加载失败:{}。端口被它占着,再启动一个也起不来——请先停止它,排除原因后再启动",
+            kind.label(),
+            port,
+            who,
+            reason
+        )),
+    }
+}
+
 /// 两个服务 + 模式 + 路径可用性,一次性报告。
 pub async fn report(
     manager: &Mutex<ServerManager>,
@@ -1136,31 +1262,22 @@ pub async fn start(
 ) -> Result<String, String> {
     let port = port_of(kind, &cfg.local);
 
-    // 关键的一步:端口上已经有健康服务就绝不再 spawn。用户自己在终端跑着的
+    // 关键的一步:端口上已经有服务在应答就绝不再 spawn——不管它的模型是就绪、
+    // 还在加载,还是加载失败了(见 `adopt_existing`)。用户自己在终端跑着的
     // 进程、或者上次会话遗留下来的,都在这里被采纳。
-    if probe(port).await.is_some() {
+    if let Some(health) = probe_raw(port).await {
         let ours = manager
             .lock()
             .ok()
             .and_then(|mut m| m.snapshot(kind))
             .map(|s| s.alive && s.port == port)
             .unwrap_or(false);
-        if ours {
-            return Ok(format!("{} 服务已在运行(本应用启动)", kind.label()));
-        }
-        return Ok(match identify_external(kind, &cfg.local) {
-            Some(pid) => format!(
-                "{} 服务已在 {} 端口运行(外部进程 pid {},确认是本项目的服务),已直接连接,未重复启动",
-                kind.label(),
-                port,
-                pid
-            ),
-            None => format!(
-                "{} 服务已在 {} 端口运行(外部进程),已直接连接,未重复启动",
-                kind.label(),
-                port
-            ),
-        });
+        let external_pid = if ours {
+            None
+        } else {
+            identify_external(kind, &cfg.local)
+        };
+        return adopt_existing(kind, port, &health.answer(), ours, external_pid);
     }
 
     let opts = SpawnOptions::from_config(&cfg.local)?;
@@ -1208,8 +1325,12 @@ pub async fn restart(
 ) -> Result<String, String> {
     // 探测放在加锁之前:`Mutex` 的 guard 不是 Send,跨 await 持有会让整个
     // 命令的 Future 不满足 tauri 的 Send 约束(而且会把别的调用者堵死)。
-    let healthy = probe(port_of(kind, &cfg.local)).await.is_some();
-    // 手里有句柄、或者端口上有健康服务,都得先停掉再拉起。外部进程里认得出
+    //
+    // 看的是「端口有没有应答」,不是「模型是否就绪」:正在加载、或者加载失败的
+    // 外部服务同样占着端口,不先停掉它,后面的 `start` 只会原样采纳它(或者报
+    // 「加载失败」)——「重启」就成了什么都没做。
+    let answering = probe_raw(port_of(kind, &cfg.local)).await.is_some();
+    // 手里有句柄、或者端口上有服务在应答,都得先停掉再拉起。外部进程里认得出
     // 是本项目的那些现在也停得掉;认不出来源的会在这里报错——「重启」在那种
     // 情况下只会变成「又拉起一个」,与其偷偷只做一半,不如直说。
     //
@@ -1220,7 +1341,7 @@ pub async fn restart(
         .map_err(|e| e.to_string())?
         .slot(kind)
         .is_some();
-    if has_slot || healthy {
+    if has_slot || answering {
         stop(manager, cfg, kind)?;
     }
     start(manager, cfg, kind).await
@@ -1772,6 +1893,80 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    fn health(status: &str, error: Option<&str>) -> Health {
+        Health {
+            status: status.into(),
+            current_model: Some("m".into()),
+            error: error.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn health_answer_tells_loading_from_failed() {
+        assert_eq!(health("ok", None).answer(), Answer::Ready);
+        assert_eq!(health("loading", None).answer(), Answer::Loading);
+        assert_eq!(
+            health("error", Some("OOM")).answer(),
+            Answer::Failed("OOM".into())
+        );
+        // 失败却没给原因,也不能报成空串。
+        assert!(
+            matches!(health("error", Some(" ")).answer(), Answer::Failed(r) if !r.trim().is_empty())
+        );
+    }
+
+    /// R14:端口上有应答就不再拉起;加载失败时说清原因,而不是再起一个抢端口的。
+    #[test]
+    fn start_adopts_any_answering_port() {
+        let ok = adopt_existing(ServerKind::Stt, 6544, &Answer::Ready, true, None).unwrap();
+        assert!(ok.contains("本应用启动"), "{}", ok);
+
+        let loading =
+            adopt_existing(ServerKind::Stt, 6544, &Answer::Loading, false, Some(42)).unwrap();
+        assert!(
+            loading.contains("正在加载模型") && loading.contains("pid 42"),
+            "{}",
+            loading
+        );
+        assert!(loading.contains("未重复启动"), "{}", loading);
+
+        let err = adopt_existing(
+            ServerKind::Llm,
+            6545,
+            &Answer::Failed("No module named 'mlx_lm'".into()),
+            false,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("mlx_lm") && err.contains("外部进程"),
+            "{}",
+            err
+        );
+    }
+
+    /// R14:外部服务在加载 → 启动中;加载失败 → 失败并带原因。以前两者都报「未运行」。
+    #[test]
+    fn an_external_server_that_is_not_ready_is_not_reported_as_stopped() {
+        let st = external_pending_status(ServerKind::Stt, 6544, Answer::Loading, Some(7), None);
+        assert_eq!(st.state, ServerState::Starting);
+        assert_eq!(st.owner, ServerOwner::ExternalProject);
+        assert!(st.can_stop);
+        assert_eq!(st.pid, Some(7));
+
+        let st = external_pending_status(
+            ServerKind::Stt,
+            6544,
+            Answer::Failed("OOM".into()),
+            None,
+            None,
+        );
+        assert_eq!(st.state, ServerState::Failed);
+        assert_eq!(st.owner, ServerOwner::ExternalUnknown);
+        assert!(!st.can_stop, "认不出身份的照样不能停");
+        assert!(st.detail.unwrap().contains("OOM"));
+    }
+
     #[test]
     fn tasklist_pid_match_is_exact() {
         let out = "\"python.exe\",\"1234\",\"Console\",\"1\",\"12,345 K\"\r\n";
@@ -1818,18 +2013,21 @@ mod e2e {
     const TEST_LLM_PORT: u16 = 7545;
 
     /// 假服务:先睡 1.5 秒(模拟加载模型,好让 `Starting` 状态可观测),
-    /// 再在指定端口上应答 `/health`。
+    /// 再在指定端口上应答 `/health`。`FAKE_HEALTH_STATUS` 可以让它一直报
+    /// `loading` / `error`,模拟「模型还在加载」「模型加载失败」。
     fn fake_server_py(port_env: &str) -> String {
         format!(
             r#"
 import http.server, json, os, sys, time
 PORT = int(os.environ["{port_env}"])
+STATUS = os.environ.get("FAKE_HEALTH_STATUS", "ok")
+ERROR = "fake load failure" if STATUS == "error" else None
 print("fake server booting on", PORT, flush=True)
 time.sleep(1.5)
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
-            body = json.dumps({{"status": "ok", "current_model": "fake-model"}}).encode()
+            body = json.dumps({{"status": STATUS, "current_model": "fake-model", "error": ERROR}}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -2020,6 +2218,77 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
 
         let st = status(&manager, &cfg, ServerKind::Stt).await;
         assert_eq!(st.state, ServerState::Stopped);
+    }
+
+    /// 轮询等待端口「有应答」(不管模型状态)变成期望值。
+    async fn wait_answering(port: u16, want: bool, secs: u64) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        while Instant::now() < deadline {
+            if probe_raw(port).await.is_some() == want {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        false
+    }
+
+    /// R14:用户在终端里起的服务还在加载 / 已经加载失败时点「启动」,不能再拉一个
+    /// 进程去抢端口;状态也不能报成「未运行」。
+    #[tokio::test]
+    #[ignore = "会真的拉起子进程并绑 7544 端口"]
+    async fn an_external_server_still_loading_or_failed_is_adopted_not_duplicated() {
+        let repo = FakeRepo::create("pending");
+        let cfg = repo.config();
+        let manager = Mutex::new(ServerManager::new(repo.data_dir()));
+        assert!(probe_raw(TEST_STT_PORT).await.is_none(), "测试端口不干净");
+
+        for (fake_status, want_state) in [
+            ("loading", ServerState::Starting),
+            ("error", ServerState::Failed),
+        ] {
+            let mut external = Command::new(system_python())
+                .arg("-m")
+                .arg("services.stt_server")
+                .current_dir(&repo.root)
+                .env("VIF_STT_PORT", TEST_STT_PORT.to_string())
+                .env("FAKE_HEALTH_STATUS", fake_status)
+                .env("PYTHONUNBUFFERED", "1")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            assert!(
+                wait_answering(TEST_STT_PORT, true, 15).await,
+                "外部假服务没起来"
+            );
+
+            let st = status(&manager, &cfg, ServerKind::Stt).await;
+            assert_eq!(st.state, want_state, "{}: {:?}", fake_status, st);
+            assert_eq!(st.owner, ServerOwner::ExternalProject, "{:?}", st);
+            assert_eq!(st.pid, Some(external.id()));
+
+            let started = start(&manager, &cfg, ServerKind::Stt).await;
+            match fake_status {
+                "loading" => {
+                    let msg = started.unwrap();
+                    assert!(msg.contains("正在加载模型"), "{}", msg);
+                }
+                _ => {
+                    let err = started.unwrap_err();
+                    assert!(err.contains("fake load failure"), "{}", err);
+                    assert!(st.detail.unwrap().contains("fake load failure"));
+                }
+            }
+            assert!(
+                manager.lock().unwrap().snapshot(ServerKind::Stt).is_none(),
+                "不该另拉起一个进程"
+            );
+            assert!(pid_alive(external.id()), "外部进程不该被碰");
+
+            external.kill().ok();
+            external.wait().ok();
+            assert!(wait_answering(TEST_STT_PORT, false, 10).await);
+        }
     }
 
     /// 负面用例:端口是健康的,但监听它的**不是**本项目的服务。
