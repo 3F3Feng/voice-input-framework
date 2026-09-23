@@ -11,6 +11,7 @@ import logging
 # 添加项目路径
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
@@ -135,6 +136,48 @@ def is_hallucination(text: str) -> bool:
     return normalized in _HALLUCINATIONS
 
 
+def _infer_sync(model, model_type, audio_array, sample_rate: int, lang: str | None):
+    """在模型线程上跑一次推理,返回 (文本, 识别出的语言)。"""
+    # ── MLX 原生引擎 (mlx-audio) ──
+    if model_type == "qwen_asr_mlx_native":
+        return model.transcribe_sync(audio_array, lang or "auto")
+
+    # ── Whisper MLX 引擎 ──
+    if model_type == "whisper_mlx":
+        import mlx_whisper
+
+        # 不能传 return_timestamps:那是 transformers pipeline 的参数,mlx_whisper
+        # 会把它转给 DecodingOptions,每次都抛 TypeError —— whisper_mlx* 这组模型
+        # 以前一句都转写不出来(实测 mlx-whisper 0.4.x)。mlx_whisper 自己就按
+        # 30 秒一段处理长音频,不需要它。
+        result = mlx_whisper.transcribe(
+            audio_array,
+            path_or_hf_repo=model["model_id"],
+            language=lang,
+        )
+        return result.get("text", "").strip(), result.get("language", lang or "en")
+
+    # ── Whisper Turbo (transformers) ──
+    if model_type == "whisper_turbo":
+        # return_timestamps=True 不能省:音频超过 30 秒(3000 帧 mel)时
+        # transformers 会自动走长音频逐段生成,而那条路要求模型预测时间戳,
+        # 不开就直接抛 ValueError。以前 Windows / Linux 上(默认就是这个
+        # 引擎)说话超过 30 秒必然转写失败。实测 transformers 5.17 +
+        # whisper-tiny:35 秒音频不带它报错,带上正常出结果。
+        result = model(
+            audio_array,
+            return_timestamps=True,
+            generate_kwargs={"language": lang},
+        )
+        return result.get("text", "").strip(), lang or "en"
+
+    # ── Qwen3-ASR (transformers 或 MLX 环境) ──
+    results = model.transcribe(audio=(audio_array, sample_rate), language=lang)
+    if results and len(results) > 0:
+        return results[0].text, results[0].language
+    return "", lang
+
+
 # ============== STT Engine ==============
 class STTEngine:
     """STT 引擎管理器"""
@@ -159,6 +202,15 @@ class STTEngine:
         self._model_info = self.AVAILABLE_MODELS.get(
             default_model, self.AVAILABLE_MODELS["qwen_asr_mlx_native_small"]
         )
+        #: 所有模型操作(加载 + 推理)共用的**单个**工作线程。
+        #:
+        #: MLX 的 Metal stream 是线程局部的,加载和推理必须在同一个线程上 ——
+        #: 以前的做法是两者都直接在事件循环线程上同步跑,代价是加载(含首次下载)
+        #: 和每次推理期间整个服务不应答:本机实测一段 2.4 秒的转写期间 /health
+        #: 超时(1.5 秒),客户端的服务状态随之在「运行中 / 启动中」之间乱跳。
+        #: 一个专用线程同样满足「同一线程」,又不占事件循环;单线程也顺带把推理
+        #: 串行化了(模型实例本来就不是线程安全的)。
+        self._model_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt-model")
         self.start_time = time.time()
         self.total_requests = 0
         self.failed_requests = 0
@@ -182,14 +234,11 @@ class STTEngine:
                 logger.info(f"Loading STT model: {self._model_info['model_id']}")
                 loop = asyncio.get_event_loop()
 
-                # 加载主模型
+                # 加载主模型。一律放到专用的模型线程上(见 `_model_thread`):
+                # 以前 MLX 为了「和推理同一个线程」直接在事件循环上同步加载,
+                # 首次下载模型的几分钟里整个服务不应答,连 /health 都答不上来。
                 if not self._is_loaded:
-                    engine_type = self._model_info.get("engine", "")
-                    if engine_type == "qwen_asr_mlx_native":
-                        # MLX 原生引擎：Metal stream 是 thread-local，必须在主线程加载
-                        self._load_model_sync()
-                    else:
-                        await loop.run_in_executor(None, self._load_model_sync)
+                    await loop.run_in_executor(self._model_thread, self._load_model_sync)
                     self._is_loaded = True
                     logger.info("STT model loaded successfully")
 
@@ -441,69 +490,28 @@ class STTEngine:
             if model is None:
                 raise RuntimeError("STT model is not available (switching?)")
 
-            # ── MLX 原生引擎 (mlx-audio) ── 必须在加载模型的同一线程执行
-            if model_type == "qwen_asr_mlx_native":
+            if model_type == "whisper_cpp":
+                # whisper.cpp 是外部进程,自己就在线程池里跑,不占事件循环。
+                audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
                 result = await model.transcribe(
-                    audio=(audio_array, sample_rate),
+                    audio_data=audio_bytes,
                     language=lang or "auto",
                     sample_rate=sample_rate,
                 )
                 text, detected_lang = result.text, result.language
             else:
-                text, detected_lang = "", lang or language
-
-                # ── Whisper MLX 引擎 ──
-                if model_type == "whisper_mlx":
-                    import mlx_whisper
-
-                    model_id = model["model_id"]
-                    result = mlx_whisper.transcribe(
-                        audio_array,
-                        path_or_hf_repo=model_id,
-                        language=lang,
-                        return_timestamps=True,
-                    )
-                    text = result.get("text", "").strip()
-                    detected_lang = result.get("language", lang or "en")
-
-                # ── Whisper.cpp 引擎 ──
-                elif model_type == "whisper_cpp":
-                    import numpy as np
-
-                    # whisper.cpp 需要 bytes
-                    audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
-                    result = await model.transcribe(
-                        audio_data=audio_bytes,
-                        language=lang or "auto",
-                        sample_rate=sample_rate,
-                    )
-                    text = result.text
-                    detected_lang = result.language
-
-                # ── Whisper Turbo (transformers) ──
-                elif model_type == "whisper_turbo":
-                    # return_timestamps=True 不能省:音频超过 30 秒(3000 帧 mel)时
-                    # transformers 会自动走长音频逐段生成,而那条路要求模型预测时间戳,
-                    # 不开就直接抛 ValueError。以前 Windows / Linux 上(默认就是这个
-                    # 引擎)说话超过 30 秒必然转写失败。实测 transformers 5.17 +
-                    # whisper-tiny:35 秒音频不带它报错,带上正常出结果。
-                    result = model(
-                        audio_array,
-                        return_timestamps=True,
-                        generate_kwargs={"language": lang},
-                    )
-                    text = result.get("text", "").strip()
-                    detected_lang = lang or "en"
-
-                # ── Qwen3-ASR (transformers 或 MLX 环境) ──
-                else:
-                    results = model.transcribe(
-                        audio=(audio_array, sample_rate),
-                        language=lang,
-                    )
-                    if results and len(results) > 0:
-                        text = results[0].text
-                        detected_lang = results[0].language
+                # 其余引擎都是同步调用,放到模型线程上跑(MLX 必须和加载同一线程)。
+                loop = asyncio.get_running_loop()
+                text, detected_lang = await loop.run_in_executor(
+                    self._model_thread,
+                    _infer_sync,
+                    model,
+                    model_type,
+                    audio_array,
+                    sample_rate,
+                    lang,
+                )
+                detected_lang = detected_lang or lang or language
             text = text.strip()
             if is_hallucination(text):
                 logger.info(f"Dropping hallucinated transcript: {text!r}")

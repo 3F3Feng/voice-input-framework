@@ -247,13 +247,22 @@ class TestSTTEngine:
         import types
 
         fake_mlx_whisper = types.ModuleType("mlx_whisper")
-        fake_mlx_whisper.transcribe = lambda *a, **k: {"text": "hello", "language": "en"}
+        seen = {}
+
+        def fake_transcribe(*a, **k):
+            seen.update(k)
+            return {"text": "hello", "language": "en"}
+
+        fake_mlx_whisper.transcribe = fake_transcribe
         monkeypatch.setitem(sys.modules, "mlx_whisper", fake_mlx_whisper)
 
         audio = _tone()
         result = await engine.transcribe(audio)
         assert isinstance(result, TranscriptionResult)
         assert result.text == "hello"
+        # mlx_whisper 不认 return_timestamps(那是 transformers 的参数),传了必抛
+        # TypeError —— whisper_mlx* 以前一句都转写不出来(R40)
+        assert "return_timestamps" not in seen
 
     @pytest.mark.asyncio
     async def test_transcribe_whisper_cpp_returns_result(self, monkeypatch):
