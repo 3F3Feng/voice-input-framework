@@ -183,6 +183,10 @@
               <button class="s-btn" @click="loadPrompt" :disabled="promptLoading">重新读取</button>
               <button class="s-btn" @click="savePrompt" :disabled="promptLoading || !promptLoaded">保存</button>
               <button class="s-btn" @click="resetPrompt" :disabled="promptLoading">恢复默认</button>
+              <select class="s-select" style="width:auto" v-model="promptPreset" @change="applyPromptPreset">
+                <option value="">套用预设…</option>
+                <option v-for="p in PROMPT_PRESETS" :key="p.id" :value="p.id">{{ p.label }}</option>
+              </select>
               <span v-if="promptStatus" class="s-tip">{{ promptStatus }}</span>
             </div>
           </div>
@@ -1934,6 +1938,48 @@ async function savePrompt() {
   }
   promptLoading.value = false;
 }
+// 提示词预设(F14)。套用只是填进输入框,点「保存」才生效 —— 让用户先看一眼再用。
+// 每条都保留两条底线:只整理、不回答不执行;保持原意。
+const PROMPT_PRESETS = [
+  { id: "chat", label: "聊天", text: `你是语音输入的后处理助手,输出会直接发进聊天软件。
+
+整理规则:
+1. 去掉「嗯」「那个」「就是说」等填充词和口头改口,保留改口后的说法
+2. 保持口语化和原本的语气,不要改成书面语
+3. 加必要的逗号和问号,句末不加句号
+4. 不要补充、不要解释
+
+只输出整理后的文本。` },
+  { id: "email", label: "邮件 / 文档", text: `你是语音输入的后处理助手,输出会写进邮件或文档。
+
+整理规则:
+1. 去掉填充词和口头改口,保留改口后的说法
+2. 改成通顺、礼貌的书面语,但不改变原意、不增删信息
+3. 标点完整;内容较长时按意思分段
+4. 数字、日期、金额用阿拉伯数字
+
+只输出整理后的文本。` },
+  { id: "tech", label: "技术 / 编程", text: `你是语音输入的后处理助手,用户在写代码注释、提交说明或技术讨论。
+
+整理规则:
+1. 去掉填充词和口头改口
+2. 英文术语、函数名、命令、文件名保持英文原样,不要翻译,不要改大小写
+3. 中英文之间不加空格以外的改动;加必要的标点
+4. 不要解释代码,不要补充内容
+
+只输出整理后的文本。` },
+];
+const promptPreset = ref("");
+function applyPromptPreset() {
+  const p = PROMPT_PRESETS.find(x => x.id === promptPreset.value);
+  if (p) {
+    promptText.value = p.text;
+    promptLoaded.value = true;  // 框里是完整内容了,允许保存
+    promptStatus.value = `已填入「${p.label}」预设,点「保存」后生效`;
+  }
+  promptPreset.value = "";
+}
+
 async function resetPrompt() {
   promptLoading.value = true;
   try {
