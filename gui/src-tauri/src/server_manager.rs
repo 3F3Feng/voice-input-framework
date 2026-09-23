@@ -366,6 +366,10 @@ impl ServerManager {
             // 不加这个,Python 的 stdout 会攒在块缓冲里,日志要等进程退出才出来,
             // 「实时看启动进度」就无从谈起。
             .env("PYTHONUNBUFFERED", "1")
+            // 管道另一头是我们,不是终端。Python 这时按系统区域设置编码输出,
+            // 中文 Windows 上就是 GBK——日志里全是乱码。明确要 UTF-8。
+            .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONUTF8", "1")
             // 只绑回环:本应用连的是 127.0.0.1,没有理由把服务暴露到局域网。
             .env("VIF_STT_HOST", "127.0.0.1")
             .env("VIF_LLM_HOST", "127.0.0.1")
@@ -574,9 +578,61 @@ impl SpawnOptions {
 
 // ── 日志抽水线程 ──
 
+/// 单行日志的字节上限。一直不换行的输出(比如某个库把整个进度条画在一行里)
+/// 攒到这么长就先切一刀,免得内存里的「半行」无限长大。
+const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
+
+/// 把字节流切成日志行。`\n` 和 `\r` 都算换行。
+///
+/// 以前用的是 `BufRead::lines()`,它有两个问题:
+///
+/// - **遇到一行非 UTF-8 就返回 Err,抽水线程随之 `break` 退出。** 之后再没人读
+///   这根管道,缓冲写满(约 64 KB)后 Python 服务阻塞在 write 上,整个服务卡死,
+///   而界面上看到的只是「一直在加载」。中文 Windows 上 Python 很可能按 GBK 输出,
+///   这不是理论风险。现在一律 `from_utf8_lossy`,坏字节变成 `�`,绝不停止读取。
+/// - **只认 `\n`。** 下载模型时 tqdm 用 `\r` 原地刷新进度条,整个下载过程在它
+///   看来是同一行,内存里攒成一个越来越长的字符串,日志尾巴上也一直看不到进度。
+#[derive(Default)]
+struct LineSplitter {
+    pending: Vec<u8>,
+}
+
+impl LineSplitter {
+    /// 喂一段字节,吐出其中已经完整的行(空行丢掉:`\r\n` 会切出一个空行)。
+    fn feed(&mut self, chunk: &[u8]) -> Vec<String> {
+        let mut out = Vec::new();
+        for &b in chunk {
+            if b == b'\n' || b == b'\r' {
+                self.flush_into(&mut out);
+            } else {
+                self.pending.push(b);
+                if self.pending.len() >= MAX_LOG_LINE_BYTES {
+                    self.flush_into(&mut out);
+                }
+            }
+        }
+        out
+    }
+
+    /// 流结束时剩下的那半行。
+    fn finish(mut self) -> Option<String> {
+        let mut out = Vec::new();
+        self.flush_into(&mut out);
+        out.pop()
+    }
+
+    fn flush_into(&mut self, out: &mut Vec<String>) {
+        if !self.pending.is_empty() {
+            out.push(String::from_utf8_lossy(&self.pending).into_owned());
+            self.pending.clear();
+        }
+    }
+}
+
 /// 把子进程的一个输出流读进环形缓冲 + 追加写日志文件。
 ///
-/// 必须消费掉管道:不读的话管道缓冲写满后子进程会阻塞在 write 上卡死。
+/// 必须消费掉管道:不读的话管道缓冲写满后子进程会阻塞在 write 上卡死。所以
+/// 这个线程只在 EOF(进程退了)或读出错时才退出,内容再怪也照读不误。
 fn pump<R: std::io::Read + Send + 'static>(
     stream: R,
     logs: Arc<Mutex<VecDeque<String>>>,
@@ -587,10 +643,10 @@ fn pump<R: std::io::Read + Send + 'static>(
     let _ = std::thread::Builder::new()
         .name(format!("{}-{}-log", kind.state_key(), tag))
         .spawn(move || {
-            let reader = BufReader::new(stream);
+            let mut reader = BufReader::new(stream);
             let mut file = OpenOptions::new().append(true).open(&log_path).ok();
-            for line in reader.lines() {
-                let Ok(line) = line else { break };
+            let mut splitter = LineSplitter::default();
+            let mut record = |line: String| {
                 if let Some(f) = file.as_mut() {
                     let _ = writeln!(f, "{}", line);
                 }
@@ -600,6 +656,22 @@ fn pump<R: std::io::Read + Send + 'static>(
                     }
                     buf.push_back(line);
                 }
+            };
+            loop {
+                let chunk = match reader.fill_buf() {
+                    Ok([]) => break,
+                    Ok(chunk) => chunk,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                };
+                let n = chunk.len();
+                for line in splitter.feed(chunk) {
+                    record(line);
+                }
+                reader.consume(n);
+            }
+            if let Some(line) = splitter.finish() {
+                record(line);
             }
         });
 }
@@ -1554,6 +1626,76 @@ mod tests {
         assert_eq!(plan_llm_reconcile(false, true), LlmReconcile::StartLlm);
         // 缓存说开、服务端说关:把刚拉起的收回去。
         assert_eq!(plan_llm_reconcile(true, false), LlmReconcile::StopLlm);
+    }
+
+    #[test]
+    fn a_non_utf8_line_does_not_stop_the_log_pump() {
+        // GBK 编码的「加载」后面跟一行正常输出。以前第一行就让读取线程退出了。
+        let mut s = LineSplitter::default();
+        let mut lines = s.feed(b"\xbc\xd3\xd4\xd8\nnext line\n");
+        assert_eq!(lines.len(), 2, "{:?}", lines);
+        assert!(
+            lines[0].contains('\u{FFFD}'),
+            "坏字节应替换成 �: {:?}",
+            lines[0]
+        );
+        assert_eq!(lines.pop().unwrap(), "next line");
+    }
+
+    #[test]
+    fn carriage_returns_split_progress_bars_into_lines() {
+        let mut s = LineSplitter::default();
+        // 跨块到达的半行要拼起来;\r\n 不能多切出一个空行。
+        assert!(s.feed(b" 10%|#").is_empty());
+        assert_eq!(
+            s.feed(b"   |\r 50%|#####|\r\n"),
+            vec![" 10%|#   |", " 50%|#####|"]
+        );
+        assert_eq!(s.feed(b"tail without newline"), Vec::<String>::new());
+        assert_eq!(s.finish().as_deref(), Some("tail without newline"));
+    }
+
+    #[test]
+    fn a_line_that_never_ends_is_cut_instead_of_growing_forever() {
+        let mut s = LineSplitter::default();
+        let lines = s.feed(&vec![b'x'; MAX_LOG_LINE_BYTES * 2 + 10]);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(s.finish().map(|l| l.len()), Some(10));
+    }
+
+    /// 真管道:一行坏字节之后照样能读到后面的内容,而且一直读到 EOF。
+    #[test]
+    fn pump_keeps_draining_after_invalid_utf8() {
+        let dir = std::env::temp_dir().join(format!("vif-pump-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("pump.log");
+        File::create(&log_path).unwrap();
+        let mut data = b"\xff\xfe broken\n".to_vec();
+        for i in 0..2000 {
+            data.extend_from_slice(format!("line {}\n", i).as_bytes());
+        }
+        let logs = Arc::new(Mutex::new(VecDeque::new()));
+        pump(
+            std::io::Cursor::new(data),
+            logs.clone(),
+            log_path.clone(),
+            ServerKind::Stt,
+            "test",
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if logs.lock().unwrap().back().map(String::as_str) == Some("line 1999") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            logs.lock().unwrap().back().map(String::as_str),
+            Some("line 1999")
+        );
+        let text = std::fs::read_to_string(&log_path).unwrap();
+        assert!(text.contains("line 1999"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
