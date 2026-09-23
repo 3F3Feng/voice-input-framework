@@ -149,35 +149,69 @@ fn both_sides(k: HotkeyKey) -> Option<[HotkeyKey; 2]> {
 /// `distinguish_sides` 为 false 时,写了边的修饰键也按两边都认处理
 /// (对应配置里的 `hotkey.distinguish_left_right`)。不带边的写法(`ctrl`、
 /// `alt`、`shift`)**无论这个开关怎样都是两边都认** —— 用户没说边,就不该替他挑一边。
+///
+/// 只要结果、不关心原因的地方用它;要给用户看原因用 [`parse_hotkey_checked`]。
 pub fn parse_hotkey(s: &str, distinguish_sides: bool) -> Option<Vec<KeySpec>> {
-    let tokens: Vec<&str> = s
-        .split('+')
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .collect();
-    if tokens.is_empty() {
-        return None;
+    parse_hotkey_checked(s, distinguish_sides).ok()
+}
+
+/// 同 [`parse_hotkey`],失败时带一句能直接给用户看的中文原因。
+///
+/// **空段一律拒绝**。以前是把 trim 之后为空的段悄悄丢掉:录制器用 `e.key` 拼串,
+/// 空格键的 `e.key` 是 `" "`,Ctrl+Space 被存成 `"left_ctrl+ "`,丢掉空段后剩下
+/// 合法的 `left_ctrl` —— 于是注册成功,之后每按一次 Ctrl 都开始录音,用户完全
+/// 不知道发生了什么。少了一段就说明录错了,宁可当场报错。
+pub fn parse_hotkey_checked(s: &str, distinguish_sides: bool) -> Result<Vec<KeySpec>, String> {
+    if s.trim().is_empty() {
+        return Err("快捷键为空".to_string());
     }
-    let specs: Vec<KeySpec> = tokens
+    let tokens: Vec<&str> = s.split('+').map(str::trim).collect();
+    if tokens.iter().any(|t| t.is_empty()) {
+        return Err(format!(
+            "快捷键「{}」里有空的一段(多了「+」或少了一个键),请重新录制",
+            s
+        ));
+    }
+    tokens
         .iter()
-        .filter_map(|t| {
+        .map(|t| {
             let sided = is_sided_token(t);
-            let key = parse_key(t)?;
+            let key = parse_key(t)
+                .ok_or_else(|| format!("快捷键「{}」无效:{}", s, unsupported_reason(t)))?;
             // 没写边 → 永远两边都认;写了边 → 看开关。
             if !sided || !distinguish_sides {
                 if let Some(pair) = both_sides(key) {
-                    return Some(KeySpec {
+                    return Ok(KeySpec {
                         alts: pair.to_vec(),
                     });
                 }
             }
-            Some(KeySpec::exact(key))
+            Ok(KeySpec::exact(key))
         })
-        .collect();
-    if specs.len() == tokens.len() {
-        Some(specs)
-    } else {
-        None
+        .collect()
+}
+
+/// `parse_key` 不认的键,说清楚是哪一类不支持。只说「格式不对」的话,用户
+/// 根本不知道是 Cmd 不行、数字不行,还是自己录错了。
+fn unsupported_reason(token: &str) -> String {
+    let t = token.to_lowercase();
+    let t = t
+        .strip_prefix("left_")
+        .or_else(|| t.strip_prefix("right_"))
+        .unwrap_or(&t);
+    match t {
+        "cmd" | "command" | "meta" | "super" | "win" | "windows" | "os" => {
+            "暂不支持 Cmd / Win 键".to_string()
+        }
+        "up" | "down" | "left" | "right" | "arrowup" | "arrowdown" | "arrowleft" | "arrowright" => {
+            "暂不支持方向键".to_string()
+        }
+        "fn" | "globe" => "暂不支持 Fn 键".to_string(),
+        _ if t.len() == 1 && t.as_bytes()[0].is_ascii_digit() => "暂不支持数字键".to_string(),
+        _ if t.starts_with('f') && t.len() > 1 && t[1..].bytes().all(|b| b.is_ascii_digit()) => {
+            "功能键只支持 F1–F12".to_string()
+        }
+        _ => format!("不认识的键「{}」", token),
     }
 }
 
@@ -1228,6 +1262,83 @@ mod tests {
         assert_eq!(alts("left_ctrl+nosuchkey", true), None);
         assert_eq!(alts("", true), None);
         assert_eq!(alts("+", true), None);
+    }
+
+    /// 回归 R6:录制器以前拿 `e.key` 拼串,Ctrl+Space 被存成 `"left_ctrl+ "`;
+    /// 旧的 parse_hotkey 把空段丢掉,注册成单独一个 left_ctrl,之后每按一次 Ctrl
+    /// 都开始录音。空段必须让整串失败,而不是被悄悄忽略。
+    #[test]
+    fn empty_tokens_reject_the_whole_combo() {
+        for bad in [
+            "left_ctrl+ ",
+            "left_ctrl+",
+            "+left_ctrl",
+            "ctrl++alt",
+            " + ",
+            "   ",
+        ] {
+            assert_eq!(alts(bad, true), None, "{:?} 应该被拒绝", bad);
+            assert!(parse_hotkey_checked(bad, true).is_err(), "{:?}", bad);
+        }
+        // 段两边的空白照样容忍 —— 只是不许整段为空。
+        assert_eq!(
+            alts(" left_ctrl + space ", true),
+            Some(vec![vec![HotkeyKey::ControlLeft], vec![HotkeyKey::Space]])
+        );
+    }
+
+    /// 失败原因要能直接给用户看:说清楚是哪个键、为什么不行,而不是一句
+    /// 「Invalid hotkey format」。
+    #[test]
+    fn rejection_reasons_are_specific() {
+        let reason = |s: &str| parse_hotkey_checked(s, true).unwrap_err();
+        assert!(reason("left_ctrl+ ").contains("空的一段"));
+        assert!(reason("").contains("为空"));
+        assert!(reason("left_cmd+a").contains("Cmd"));
+        assert!(reason("ctrl+meta").contains("Cmd"));
+        assert!(reason("ctrl+5").contains("数字"));
+        assert!(reason("ctrl+f13").contains("F1–F12"));
+        assert!(reason("ctrl+arrowup").contains("方向键"));
+        let r = reason("ctrl+å");
+        assert!(r.contains("å"), "{}", r);
+        // 原串要带在原因里,用户能对上是哪一次录制
+        assert!(reason("ctrl+5").contains("ctrl+5"));
+    }
+
+    /// 录制器按 `e.code` 映射出来的每个 token 都必须是这里认的 —— 两边的
+    /// 名单一旦对不上,录得下来、应用时报错,就又回到 R6 的老样子。
+    /// (名单对应 App.vue 里的 `codeToToken`。)
+    #[test]
+    fn every_token_the_recorder_emits_parses() {
+        let mut tokens: Vec<String> = vec![
+            "left_ctrl",
+            "right_ctrl",
+            "left_alt",
+            "right_alt",
+            "left_shift",
+            "right_shift",
+            "space",
+            "enter",
+            "tab",
+            "esc",
+            "backspace",
+            "delete",
+            "capslock",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        tokens.extend(('a'..='z').map(|c| c.to_string()));
+        tokens.extend((1..=12).map(|n| format!("f{}", n)));
+        for t in &tokens {
+            assert!(
+                parse_hotkey(t, true).is_some(),
+                "录制器会产出 {} 但解析器不认",
+                t
+            );
+            let combo = format!("left_ctrl+{}", t);
+            assert!(parse_hotkey(&combo, true).is_some(), "{}", combo);
+        }
     }
 
     /// 不写边就两边都认 —— 业界通行做法(Discord / OBS 等推话器都是这样)。

@@ -745,13 +745,20 @@ async fn register_hotkey(
         .lock()
         .map(|c| c.hotkey.distinguish_left_right)
         .unwrap_or(true);
-    if let Some(keys) = hotkey::parse_hotkey(&shortcut, distinguish) {
-        hotkey::start_listener(app.clone(), keys);
-        eprintln!("[hotkey] Re-registered: {}", shortcut);
-        Ok(())
-    } else {
-        Err(format!("Invalid hotkey format: {}", shortcut))
-    }
+    // 失败原因原样交给前端显示。以前只回一句英文「Invalid hotkey format」,
+    // 前端再把它吞成「更新失败」——用户不知道是 Cmd 不支持还是自己录错了。
+    let keys = hotkey::parse_hotkey_checked(&shortcut, distinguish)?;
+    hotkey::start_listener(app.clone(), keys);
+    eprintln!("[hotkey] Re-registered: {}", shortcut);
+    Ok(())
+}
+
+/// 只校验、不注册。录制一结束前端就拿它问一次,用的是和注册同一个解析器:
+/// 录得下来却注册不了的组合当场就能说出原因,而不是等用户点了「应用」才失败。
+#[tauri::command]
+fn validate_hotkey(shortcut: String) -> Result<(), String> {
+    // 分不分左右不影响合法性,随便给一个即可。
+    hotkey::parse_hotkey_checked(&shortcut, true).map(|_| ())
 }
 
 #[tauri::command]
@@ -1192,6 +1199,7 @@ pub fn run() {
             request_permission,
             open_permission_settings,
             register_hotkey,
+            validate_hotkey,
             get_autostart,
             set_autostart,
             check_update,

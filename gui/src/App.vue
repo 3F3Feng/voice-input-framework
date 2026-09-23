@@ -190,12 +190,18 @@
           <div class="s-section">
             <div class="s-title">快捷键</div>
             <div class="s-row">
-              <input class="s-input hotkey-field" v-model="hotkeyStr" readonly :placeholder="defaultHotkey"
-                :class="{ recording: hotkeyRecording }" @click="startHotkeyRecording" />
+              <!-- 显示成人能读的形式(macOS 上 ⌃⌥⇧,其它平台 Ctrl+Alt),配置里存的串不变;
+                   悬停能看到原串,排查问题时对得上 config.json。 -->
+              <input class="s-input hotkey-field" :value="hotkeyFieldText" readonly
+                :placeholder="hotkeyRecording ? '请按下快捷键…' : formatHotkey(defaultHotkey)"
+                :title="hotkeyStr" :class="{ recording: hotkeyRecording }" @click="startHotkeyRecording" />
               <button class="s-btn" @click="startHotkeyRecording">{{ hotkeyRecording ? '取消' : '录制' }}</button>
               <button class="s-btn" @click="applyHotkey" :disabled="!hotkeyChanged">应用</button>
             </div>
-            <div v-if="hotkeyRecording" class="s-tip">请按下快捷键组合...</div>
+            <div v-if="hotkeyRecording" class="s-tip">
+              请按下快捷键组合…支持 {{ IS_MAC ? '⌃ ⌥ ⇧' : 'Ctrl / Alt / Shift' }} 加字母、空格、回车、Tab、Esc、F1–F12 等。
+            </div>
+            <div v-if="hotkeyMsg" :class="['s-tip', hotkeyMsgErr ? 's-err' : 'srv-problem']">{{ hotkeyMsg }}</div>
             <div class="s-row" style="margin-top:6px">
               <label class="toggle"><input type="checkbox" v-model="distinguishSides" @change="toggleDistinguishSides" /><span class="slider"></span></label>
               <span class="s-label">区分左右修饰键</span>
@@ -540,7 +546,48 @@ const hotkeyRecording = ref(false);
 const distinguishSides = ref(true);
 const hotkeyChanged = ref(false);
 const hotkeyMsg = ref("");
+/** hotkeyMsg 是错误(红字)还是提醒(黄字)。 */
+const hotkeyMsgErr = ref(false);
+/** 已经注册生效并存进配置的快捷键。录制出来还没「应用」的在 hotkeyStr 里。 */
+const savedHotkey = ref("");
 const defaultHotkey = "left_ctrl+left_alt";
+/** 录制中已经按住的修饰键,实时显示在输入框里,用户知道自己按到了哪一步。 */
+const hotkeyPreview = ref("");
+const IS_MAC = navigator.userAgent.includes("Mac");
+const MOD_LABEL: Record<string, [mac: string, other: string]> = {
+  ctrl: ["⌃", "Ctrl"], control: ["⌃", "Ctrl"], alt: ["⌥", "Alt"], shift: ["⇧", "Shift"],
+};
+const KEY_LABEL: Record<string, [mac: string, other: string]> = {
+  space: ["Space", "Space"], enter: ["↩", "Enter"], return: ["↩", "Enter"], tab: ["⇥", "Tab"],
+  esc: ["Esc", "Esc"], escape: ["Esc", "Esc"], backspace: ["⌫", "Backspace"],
+  delete: ["⌦", "Delete"], del: ["⌦", "Delete"], capslock: ["⇪", "CapsLock"], caps: ["⇪", "CapsLock"],
+};
+
+/**
+ * 把存储用的 `left_ctrl+left_alt` 变成给人看的样子:macOS 上 `⌃⌥`,其它平台
+ * `Ctrl+Alt`。只在开了「区分左右」时才标出左 / 右 —— 关掉时两边都能触发,
+ * 标出来反而误导。配置里存的串不变。
+ */
+function formatHotkey(s: string): string {
+  let sided = false;
+  const labels = s.split("+").map(raw => {
+    const t = raw.trim().toLowerCase();
+    if (!t) return "?";  // 空段(旧 bug 录出来的 `left_ctrl+ `)要看得见,别显示成完整的样子
+    const m = /^(left|right)_(\w+)$/.exec(t) || /^([lr])(ctrl|alt|shift)$/.exec(t);
+    const base = m ? m[2] : t;
+    const mod = MOD_LABEL[base];
+    if (mod) {
+      const side = m && distinguishSides.value ? (m[1].startsWith("l") ? "左" : "右") : "";
+      if (side) sided = true;
+      return side + (IS_MAC ? mod[0] : mod[1]);
+    }
+    const key = KEY_LABEL[base];
+    if (key) return IS_MAC ? key[0] : key[1];
+    return /^([a-z]|f\d+)$/.test(base) ? base.toUpperCase() : raw.trim();
+  });
+  // macOS 惯例是符号连写(⌃⌥Space);带了「左 / 右」时连写就读不清了,用空格隔开。
+  return labels.join(IS_MAC ? (sided ? " " : "") : "+");
+}
 const audioDevices = ref<AudioDeviceInfo[]>([]);
 const selectedDevice = ref<string | null>(null);
 
@@ -642,7 +689,11 @@ const currentModelName = computed(() => {
   const loaded = sttModels.value.find(m => m.is_loaded);
   return loaded?.name || sttModel.value || "";
 });
-const displayHotkey = computed(() => hotkeyStr.value || defaultHotkey);
+// 主界面上「按住说话 · …」显示的是**已生效**的快捷键,不是录了还没应用的那个。
+const displayHotkey = computed(() => formatHotkey(savedHotkey.value || defaultHotkey));
+const hotkeyFieldText = computed(() =>
+  hotkeyRecording.value ? hotkeyPreview.value : (hotkeyStr.value ? formatHotkey(hotkeyStr.value) : "")
+);
 const timerText = computed(() => {
   const s = Math.floor(elapsedMs.value / 1000);
   const ms = elapsedMs.value % 1000;
@@ -1024,7 +1075,9 @@ async function loadConfig() {
     serverHost.value = cfg.server.host;
     serverPort.value = cfg.server.port;
     hotkeyStr.value = cfg.hotkey.key;
+    savedHotkey.value = cfg.hotkey.key;
     distinguishSides.value = cfg.hotkey.distinguish_left_right ?? true;
+    void checkSavedHotkey();
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     selectedDevice.value = cfg.audio.device;
@@ -1062,7 +1115,9 @@ async function toggleDistinguishSides() {
   const ok = await saveConfigPatch(cfg => { cfg.hotkey.distinguish_left_right = distinguishSides.value; });
   if (!ok) { distinguishSides.value = !distinguishSides.value; return; }
   try {
-    await invoke("register_hotkey", { shortcut: hotkeyStr.value });
+    // 注册已生效的那个。以前用的是输入框里的 hotkeyStr:录了新快捷键还没点
+    // 「应用」时拨这个开关,新快捷键就被悄悄注册上了,配置里却还是旧的。
+    await invoke("register_hotkey", { shortcut: savedHotkey.value || defaultHotkey });
     toast(distinguishSides.value ? "已改为区分左右" : "已改为左右通用", "ok");
   } catch (e) { toast(`快捷键重新注册失败: ${e}`, "err"); }
 }
@@ -1269,77 +1324,163 @@ async function toggleLlm() {
 // 当前录制监听器(用于取消/卸载时移除;防止残留监听重复触发)
 let hotkeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
+/**
+ * 物理键(`e.code`)→ 后端 `parse_key`(hotkey.rs)认的名字。**只列后端真认的键**,
+ * 这张表和 hotkey.rs 的 `every_token_the_recorder_emits_parses` 测试是一一对应的。
+ *
+ * 以前用的是 `e.key`,它是「这个键打出来的字符」而不是「哪个键」:空格是 `" "`,
+ * 拼出 `left_ctrl+ `,后端把空段丢掉后注册成单独一个 Ctrl,之后每按一次 Ctrl 都
+ * 开始录音;macOS 上 Option+A 的 `e.key` 是 `å`,直接非法。`e.code` 与键盘布局、
+ * 修饰键状态都无关,正是全局监听那边看到的东西。
+ */
+function codeToToken(code: string): string | null {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+  const f = /^F(\d{1,2})$/.exec(code);
+  if (f) { const n = Number(f[1]); return n >= 1 && n <= 12 ? `f${n}` : null; }
+  const named: Record<string, string> = {
+    Space: "space", Enter: "enter", NumpadEnter: "enter", Tab: "tab", Escape: "esc",
+    Backspace: "backspace", Delete: "delete", CapsLock: "capslock",
+  };
+  return named[code] ?? null;
+}
+
+/** 不支持的键叫什么,用于「暂不支持 X 键」。 */
+function unsupportedKeyName(e: KeyboardEvent): string {
+  if (/^(Digit|Numpad)\d$/.test(e.code)) return `数字 ${e.code.slice(-1)}`;
+  if (e.code.startsWith("Arrow")) return "方向";
+  if (/^F\d+$/.test(e.code)) return e.code;
+  if (e.key === "Fn" || e.key === "FnLock") return "Fn";
+  // 标点之类:e.key 可读就用它,否则退回物理键名
+  if (e.key && e.key.trim() && e.key.length <= 2 && e.key !== "Unidentified") return e.key;
+  return e.code || e.key || "这个";
+}
+
+/** 单独按下时和平时打字分不开的键:光一个它(或只加 Shift)当快捷键,每次打字都会误触发。 */
+const TYPING_TOKENS = new Set(["space", "enter", "tab", "backspace", "delete"]);
+const isTypingKey = (t: string) => TYPING_TOKENS.has(t) || /^[a-z]$/.test(t);
+
+function setHotkeyMsg(msg: string, err = true) { hotkeyMsg.value = msg; hotkeyMsgErr.value = err; }
+
+/** 已存的快捷键本身是不是坏的(比如旧版录出来的 `left_ctrl+ `)。坏的话启动时
+ *  根本没注册上,而那条日志用户看不到,只能在这里说。 */
+async function checkSavedHotkey() {
+  if (!savedHotkey.value) return;
+  try { await invoke("validate_hotkey", { shortcut: savedHotkey.value }); }
+  catch (e) { setHotkeyMsg(`当前快捷键没有生效:${e}`); }
+}
+
+function stopHotkeyListening() {
+  if (hotkeyHandler) {
+    document.removeEventListener('keydown', hotkeyHandler);
+    document.removeEventListener('keyup', hotkeyHandler);
+    hotkeyHandler = null;
+  }
+}
+
 function startHotkeyRecording() {
   hotkeyRecording.value = !hotkeyRecording.value;
-  hotkeyMsg.value = "";
-  if (hotkeyRecording.value) {
-    // 修饰键跨事件累积(按 ctrl 再按 alt 不结束;主键按下或纯修饰键
-    // 组合全部松开时才结束)。旧实现每次事件新建 parts,且按下 ctrl
-    // 就因 parts 非空立即结束——只能录到单个键。
-    let mods: string[] = [];
-    const modName = (e: KeyboardEvent): string | null => {
-      switch (e.code) {
-        case 'ControlLeft': return 'left_ctrl';
-        case 'ControlRight': return 'right_ctrl';
-        case 'AltLeft': return 'left_alt';
-        case 'AltRight': return 'right_alt';
-        case 'ShiftLeft': return 'left_shift';
-        case 'ShiftRight': return 'right_shift';
-        case 'MetaLeft': return 'left_cmd';
-        case 'MetaRight': return 'right_cmd';
-        default: return null;
-      }
-    };
-    const cleanup = () => {
-      if (hotkeyHandler) {
-        document.removeEventListener('keydown', hotkeyHandler);
-        document.removeEventListener('keyup', hotkeyHandler);
-        hotkeyHandler = null;
-      }
-    };
-    const finish = (mainKey: string | null) => {
-      const parts = [...mods];
-      if (mainKey) parts.push(mainKey.length === 1 ? mainKey.toLowerCase() : mainKey.toLowerCase());
-      if (parts.length === 0) return;  // 无内容不结束
-      hotkeyStr.value = parts.join('+');
-      hotkeyChanged.value = true;
-      hotkeyRecording.value = false;
-      cleanup();
-    };
-    const handler = (e: KeyboardEvent) => {
-      e.preventDefault(); e.stopPropagation();
-      const m = modName(e);
-      if (e.type === 'keydown') {
-        if (m) {
-          if (!mods.includes(m)) mods.push(m);
-          return;  // 只累积修饰键,等待主键
-        }
-        finish(e.key);  // 主键按下 → 结束
-      } else if (e.type === 'keyup') {
-        // 纯修饰键组合:全部松开时结束(如 ctrl+alt 无主键)
-        if (m && mods.length > 0) finish(null);
-      }
-    };
-    hotkeyHandler = handler;
-    document.addEventListener('keydown', handler);
-    document.addEventListener('keyup', handler);
-  } else {
-    // 用户点"取消":移除监听
-    if (hotkeyHandler) {
-      document.removeEventListener('keydown', hotkeyHandler);
-      document.removeEventListener('keyup', hotkeyHandler);
-      hotkeyHandler = null;
+  setHotkeyMsg("");
+  hotkeyPreview.value = "";
+  if (!hotkeyRecording.value) { stopHotkeyListening(); return; }  // 用户点「取消」
+  // 修饰键跨事件累积(按 ctrl 再按 alt 不结束;主键按下或纯修饰键
+  // 组合全部松开时才结束)。旧实现每次事件新建 parts,且按下 ctrl
+  // 就因 parts 非空立即结束——只能录到单个键。
+  let mods: string[] = [];
+  const modName = (code: string): string | null => {
+    switch (code) {
+      case 'ControlLeft': return 'left_ctrl';
+      case 'ControlRight': return 'right_ctrl';
+      case 'AltLeft': return 'left_alt';
+      case 'AltRight': return 'right_alt';
+      case 'ShiftLeft': return 'left_shift';
+      case 'ShiftRight': return 'right_shift';
+      default: return null;
     }
-  }
+  };
+  const showPreview = () => {
+    hotkeyPreview.value = mods.length ? `${formatHotkey(mods.join('+'))}${IS_MAC ? "" : "+"}…` : "";
+  };
+  /** 不能用的组合:当场说原因,清掉已按的修饰键,继续录。 */
+  const reject = (msg: string) => { setHotkeyMsg(msg); mods = []; showPreview(); };
+  const finish = (mainKey: string | null) => {
+    const parts = mainKey ? [...mods, mainKey] : [...mods];
+    if (parts.length === 0) return;  // 无内容不结束
+    const previous = hotkeyStr.value;
+    const candidate = parts.join('+');
+    hotkeyStr.value = candidate;
+    hotkeyChanged.value = candidate !== savedHotkey.value;
+    hotkeyRecording.value = false;
+    stopHotkeyListening();
+    if (!mainKey && mods.length === 1) {
+      setHotkeyMsg("只用一个修饰键时,平时每次按它(比如 Ctrl+C 里的 Ctrl)都会开始录音。", false);
+    }
+    // 用和注册时同一个解析器再验一遍:录得下来却注册不了的组合当场说出原因,
+    // 而不是等点了「应用」才冒出一句「更新失败」。
+    invoke("validate_hotkey", { shortcut: candidate }).catch(e => {
+      if (hotkeyStr.value !== candidate) return;  // 用户已经又录了一次
+      hotkeyStr.value = previous;
+      hotkeyChanged.value = previous !== savedHotkey.value;
+      setHotkeyMsg(`${e}`);
+    });
+  };
+  const handler = (e: KeyboardEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    const m = modName(e.code);
+    if (e.type === 'keydown') {
+      if (e.repeat) return;
+      // Cmd / Win:后端的全局监听认不出它,录下来也用不了。以前会录成
+      // `left_cmd`,点「应用」才失败。
+      if (e.code.startsWith('Meta') || e.metaKey) {
+        // 按着 Cmd 再按别的键时 e.code 是那个键,名字不能从它取。
+        reject(`暂不支持 ${IS_MAC ? '⌘ Cmd' : 'Win'} 键,请用 ${IS_MAC ? '⌃ ⌥ ⇧' : 'Ctrl / Alt / Shift'} 组合`);
+        return;
+      }
+      if (m) {
+        if (!mods.includes(m)) mods.push(m);
+        setHotkeyMsg("");
+        showPreview();
+        return;  // 只累积修饰键,等待主键
+      }
+      const token = codeToToken(e.code);
+      if (!token) { reject(`暂不支持 ${unsupportedKeyName(e)} 键`); return; }
+      // 修饰键在点「录制」之前就按下了的话,收不到它自己的 keydown,只能从
+      // 主键事件的标志位上补回来。分不出左右,就用两边都认的写法。
+      for (const [flag, bare] of [[e.ctrlKey, "ctrl"], [e.altKey, "alt"], [e.shiftKey, "shift"]] as const) {
+        if (flag && !mods.some(x => x.endsWith(bare))) mods.push(bare);
+      }
+      if (isTypingKey(token) && mods.every(x => x.endsWith('shift'))) {
+        const what = mods.length ? `${IS_MAC ? '⇧' : 'Shift+'}${formatHotkey(token)}` : `单独的 ${formatHotkey(token)} 键`;
+        reject(`${what}平时打字就会按到,请配合 ${IS_MAC ? '⌃ 或 ⌥' : 'Ctrl 或 Alt'} 使用`);
+        return;
+      }
+      finish(token);  // 主键按下 → 结束
+    } else if (e.type === 'keyup') {
+      // 纯修饰键组合:全部松开时结束(如 ctrl+alt 无主键)
+      if (m && mods.length > 0) finish(null);
+    }
+  };
+  hotkeyHandler = handler;
+  document.addEventListener('keydown', handler);
+  document.addEventListener('keyup', handler);
 }
 async function applyHotkey() {
   if (!hotkeyStr.value) return;
+  const shortcut = hotkeyStr.value;
   try {
-    await invoke("register_hotkey", { shortcut: hotkeyStr.value });
-    hotkeyChanged.value = false;
-    toast("快捷键已更新", "ok");
-    saveConfigPatch(cfg => { cfg.hotkey.key = hotkeyStr.value; });
-  } catch (e) { toast("更新失败", "err"); }
+    await invoke("register_hotkey", { shortcut });
+  } catch (e) {
+    // 后端给的是中文原因(哪个键、为什么不行)。以前这里只有一句「更新失败」。
+    setHotkeyMsg(`${e}`);
+    toast(`快捷键没有更新:${e}`, "err");
+    return;
+  }
+  // 注册成功之后才落盘:注册不了的快捷键存进配置,下次启动就是一个静默失效的快捷键。
+  savedHotkey.value = shortcut;
+  hotkeyChanged.value = false;
+  setHotkeyMsg("");
+  if (await saveConfigPatch(cfg => { cfg.hotkey.key = shortcut; })) {
+    toast(`快捷键已更新为 ${formatHotkey(shortcut)}`, "ok");
+  }
 }
 
 // ── Prompt ──
@@ -1685,6 +1826,7 @@ html, body, #app { height: 100%; }
 /* 开关生效中(本地模式下是在等 LLM 加载模型):换个颜色,别让这几秒看起来像卡死 */
 .s-label.llm-busy { color: var(--yellow); }
 .s-tip { font-size: 0.68rem; color: var(--muted); margin-top: 4px; }
+.s-tip.s-err { color: var(--red); }
 .s-textarea { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 0.75rem; width: 100%; resize: vertical; font-family: inherit; outline: none; }
 .s-textarea:focus { border-color: var(--blue); }
 .hotkey-field { cursor: pointer; text-align: center; font-family: monospace; }
