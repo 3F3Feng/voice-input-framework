@@ -16,6 +16,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::i18n::t;
+use crate::tr;
+
 /// 体检脚本的时限。import torch + transformers + mlx_audio 冷启动在慢盘上要十来秒,
 /// 再往上基本就是卡住了(比如某个包 import 时去连网)。
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -189,8 +192,16 @@ pub fn parse_probe(stdout: &str) -> Result<Probe, String> {
         .lines()
         .rev()
         .find_map(|l| l.trim().strip_prefix(MARKER))
-        .ok_or("体检脚本没有输出结果")?;
-    serde_json::from_str(line).map_err(|e| format!("体检结果解析失败:{e}"))
+        .ok_or(t(
+            "体检脚本没有输出结果",
+            "The check script produced no result",
+        ))?;
+    serde_json::from_str(line).map_err(|e| {
+        tr!(
+            "体检结果解析失败:{e}",
+            "Couldn't parse the check result: {e}"
+        )
+    })
 }
 
 /// 最后几行 stderr,用来说明解释器为什么没跑起来。整段贴出来太长,Python 的
@@ -271,10 +282,19 @@ fn item(
     }
 }
 
-const REBUILD: &str = "运行下方的建环境命令重建环境";
+/// 「重建环境」这句修复建议,很多项都要接在后面。
+fn rebuild_hint() -> &'static str {
+    t(
+        "运行下方的建环境命令重建环境",
+        "Rebuild the environment with the setup command below",
+    )
+}
 
 pub fn build_report(input: ReportInput) -> EnvReport {
     use CheckStatus::*;
+    let rebuild = rebuild_hint();
+    let repo_label = t("仓库路径", "Repository path");
+    let python_label = t("Python 解释器", "Python interpreter");
     let mut items = Vec::new();
     let repo = input
         .repo_path
@@ -286,19 +306,34 @@ pub fn build_report(input: ReportInput) -> EnvReport {
     items.push(match (repo, input.repo_ok) {
         (None, _) => item(
             "repo",
-            "仓库路径",
+            repo_label,
             Fail,
-            "没有设置仓库路径".into(),
-            Some("点「自动探测」,或手动填写 voice-input-framework 仓库的位置".into()),
+            t("没有设置仓库路径", "No repository path set").into(),
+            Some(
+                t(
+                    "点「自动探测」,或手动填写 voice-input-framework 仓库的位置",
+                    "Click Auto-detect, or enter the location of the voice-input-framework repository",
+                )
+                .into(),
+            ),
         ),
         (Some(r), false) => item(
             "repo",
-            "仓库路径",
+            repo_label,
             Fail,
-            format!("{r} 下找不到 services/stt_server.py"),
-            Some("确认填的是仓库根目录(里面有 services、scripts 两个文件夹)".into()),
+            tr!(
+                "{r} 下找不到 services/stt_server.py",
+                "services/stt_server.py not found in {r}"
+            ),
+            Some(
+                t(
+                    "确认填的是仓库根目录(里面有 services、scripts 两个文件夹)",
+                    "Make sure this is the repository root (it contains the services and scripts folders)",
+                )
+                .into(),
+            ),
         ),
-        (Some(r), true) => item("repo", "仓库路径", Ok, r.to_string(), None),
+        (Some(r), true) => item("repo", repo_label, Ok, r.to_string(), None),
     });
 
     // ── 解释器 ──
@@ -307,7 +342,10 @@ pub fn build_report(input: ReportInput) -> EnvReport {
     } else {
         ".venv/bin/python"
     };
-    let rebuild_then_detect = format!("{REBUILD},建好后点「自动探测」选中仓库里的 {venv_hint}");
+    let rebuild_then_detect = tr!(
+        "{rebuild},建好后点「自动探测」选中仓库里的 {venv_hint}",
+        "{rebuild}, then click Auto-detect to select {venv_hint} in the repository"
+    );
     let probe = match &input.probe {
         ProbeOutcome::Ran(p) => Some(p),
         _ => None,
@@ -315,70 +353,96 @@ pub fn build_report(input: ReportInput) -> EnvReport {
     items.push(match &input.probe {
         ProbeOutcome::NotConfigured => item(
             "python",
-            "Python 解释器",
+            python_label,
             Fail,
-            "没有设置 Python 解释器路径".into(),
+            t("没有设置 Python 解释器路径", "No Python interpreter path set").into(),
             Some(rebuild_then_detect.clone()),
         ),
         ProbeOutcome::Missing(p) => item(
             "python",
-            "Python 解释器",
+            python_label,
             Fail,
-            format!("解释器不存在:{p}"),
+            tr!("解释器不存在:{p}", "Interpreter not found: {p}"),
             Some(rebuild_then_detect.clone()),
         ),
         ProbeOutcome::SpawnFailed(e) => item(
             "python",
-            "Python 解释器",
+            python_label,
             Fail,
-            format!("解释器运行不起来:{e}"),
+            tr!("解释器运行不起来:{e}", "The interpreter won't run: {e}"),
             Some(rebuild_then_detect.clone()),
         ),
         ProbeOutcome::TimedOut(s) => item(
             "python",
-            "Python 解释器",
+            python_label,
             Fail,
-            format!("体检脚本 {s} 秒内没有跑完(导入依赖卡住了)"),
-            Some("先确认磁盘和网络正常再点一次;反复超时就重建环境".into()),
+            tr!(
+                "体检脚本 {s} 秒内没有跑完(导入依赖卡住了)",
+                "The check script didn't finish within {s}s (stuck importing dependencies)"
+            ),
+            Some(
+                t(
+                    "先确认磁盘和网络正常再点一次;反复超时就重建环境",
+                    "Make sure the disk and network are OK, then try again; if it keeps timing out, rebuild the environment",
+                )
+                .into(),
+            ),
         ),
         ProbeOutcome::BadOutput { code, stderr_tail } => {
-            let code = code.map_or("被信号终止".to_string(), |c| format!("退出码 {c}"));
+            let code = code.map_or(t("被信号终止", "killed by a signal").to_string(), |c| {
+                tr!("退出码 {c}", "exit code {c}")
+            });
             let why = if stderr_tail.is_empty() {
                 String::new()
             } else {
-                format!(":{stderr_tail}")
+                tr!(":{stderr_tail}", ": {stderr_tail}")
             };
             item(
                 "python",
-                "Python 解释器",
+                python_label,
                 Fail,
-                format!("解释器能启动,但体检脚本没跑完({code}){why}"),
+                tr!(
+                    "解释器能启动,但体检脚本没跑完({code}){why}",
+                    "The interpreter starts, but the check script didn't finish ({code}){why}"
+                ),
                 Some(rebuild_then_detect.clone()),
             )
         }
         ProbeOutcome::Ran(p) if !version_supported(&p.version_info) => item(
             "python",
-            "Python 解释器",
+            python_label,
             Fail,
-            format!("Python {},需要 3.11 或 3.12", p.version),
-            Some(format!(
-                "依赖(numpy 1.x / mlx / torch)还没有这个版本的预编译包。{REBUILD}(uv 会自动准备 3.12)"
+            tr!(
+                "Python {},需要 3.11 或 3.12",
+                "Python {}; 3.11 or 3.12 is required",
+                p.version
+            ),
+            Some(tr!(
+                "依赖(numpy 1.x / mlx / torch)还没有这个版本的预编译包。{rebuild}(uv 会自动准备 3.12)",
+                "Dependencies (numpy 1.x / mlx / torch) don't have prebuilt packages for this version yet. {rebuild} (uv sets up 3.12 automatically)"
             )),
         ),
         // 在 Apple Silicon 上跑的是 x86_64 的 Python:经 Rosetta 转译,能跑,但
         // pyproject 里的 MLX 依赖按平台 marker 不会装,MLX 模型全都用不了。
         ProbeOutcome::Ran(p) if input.host_apple_silicon && p.machine == "x86_64" => item(
             "python",
-            "Python 解释器",
+            python_label,
             Warn,
-            format!("Python {}(x86_64,经 Rosetta 转译运行)", p.version),
-            Some(format!("MLX 模型用不了,推理也慢。{REBUILD}(会装 arm64 的 Python)")),
+            tr!(
+                "Python {}(x86_64,经 Rosetta 转译运行)",
+                "Python {} (x86_64, running under Rosetta)",
+                p.version
+            ),
+            Some(tr!(
+                "MLX 模型用不了,推理也慢。{rebuild}(会装 arm64 的 Python)",
+                "MLX models won't work and inference is slow. {rebuild} (installs an arm64 Python)"
+            )),
         ),
         ProbeOutcome::Ran(p) => item(
             "python",
-            "Python 解释器",
+            python_label,
             Ok,
-            format!("Python {}({})", p.version, p.machine),
+            tr!("Python {}({})", "Python {} ({})", p.version, p.machine),
             None,
         ),
     });
@@ -388,9 +452,13 @@ pub fn build_report(input: ReportInput) -> EnvReport {
     match probe {
         None => items.push(item(
             "packages",
-            "依赖包",
+            t("依赖包", "Dependencies"),
             Warn,
-            "解释器没跑起来,没法检查".into(),
+            t(
+                "解释器没跑起来,没法检查",
+                "Can't check: the interpreter didn't run",
+            )
+            .into(),
             None,
         )),
         Some(p) => {
@@ -421,8 +489,18 @@ pub fn build_report(input: ReportInput) -> EnvReport {
             "uv",
             "uv",
             Warn,
-            "没找到 uv(建环境要用,服务运行本身不需要)".into(),
-            Some("建环境脚本发现没有 uv 会自动安装".into()),
+            t(
+                "没找到 uv(建环境要用,服务运行本身不需要)",
+                "uv not found (needed to set up the environment, not to run the services)",
+            )
+            .into(),
+            Some(
+                t(
+                    "建环境脚本发现没有 uv 会自动安装",
+                    "The setup script installs uv automatically if it's missing",
+                )
+                .into(),
+            ),
         ),
     });
 
@@ -436,6 +514,7 @@ pub fn build_report(input: ReportInput) -> EnvReport {
 
 fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
     use CheckStatus::*;
+    let rebuild = rebuild_hint();
     let id = format!("pkg:{name}");
     let version = pkg.version.clone().unwrap_or_default();
     let error = pkg.error.clone().unwrap_or_default();
@@ -446,19 +525,35 @@ fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
     // llama.cpp 是可选的:只有非 Apple 平台的 LLM 后处理要它,语音识别本身不受影响。
     if name == "llama_cpp" {
         return if pkg.ok {
-            item(&id, "llama_cpp", Ok, format!("{version}(LLM 后处理)"), None)
+            item(
+                &id,
+                "llama_cpp",
+                Ok,
+                tr!("{version}(LLM 后处理)", "{version} (LLM post-processing)"),
+                None,
+            )
         } else {
             item(
                 &id,
                 "llama_cpp",
                 Warn,
-                "没装:LLM 后处理用不了(语音识别不受影响)".to_string(),
+                t(
+                    "没装:LLM 后处理用不了(语音识别不受影响)",
+                    "Not installed: LLM post-processing is unavailable (speech recognition is unaffected)",
+                )
+                .to_string(),
                 Some(if cfg!(target_os = "windows") {
-                    "要 LLM 后处理的话运行 scripts\\setup-env.ps1 -Llm(需要 CMake 和 C++ 编译器)"
-                        .to_string()
+                    t(
+                        "要 LLM 后处理的话运行 scripts\\setup-env.ps1 -Llm(需要 CMake 和 C++ 编译器)",
+                        "For LLM post-processing, run scripts\\setup-env.ps1 -Llm (requires CMake and a C++ compiler)",
+                    )
+                    .to_string()
                 } else {
-                    "要 LLM 后处理的话运行 scripts/setup-env.sh --llm(需要 CMake 和 C++ 编译器)"
-                        .to_string()
+                    t(
+                        "要 LLM 后处理的话运行 scripts/setup-env.sh --llm(需要 CMake 和 C++ 编译器)",
+                        "For LLM post-processing, run scripts/setup-env.sh --llm (requires CMake and a C++ compiler)",
+                    )
+                    .to_string()
                 }),
             )
         };
@@ -466,15 +561,28 @@ fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
 
     if name == "mlx" {
         return if pkg.ok {
-            item(&id, "mlx", Ok, format!("{version}(这个平台上用不到)"), None)
+            item(
+                &id,
+                "mlx",
+                Ok,
+                tr!(
+                    "{version}(这个平台上用不到)",
+                    "{version} (not used on this platform)"
+                ),
+                None,
+            )
         } else {
             item(
                 &id,
                 "mlx",
                 Warn,
-                format!("装了一个用不了的 mlx:{error}"),
-                Some(format!(
-                    "多半是照着旧的 requirements-stt.txt 装的;不影响非 MLX 模型,但建议{REBUILD}"
+                tr!(
+                    "装了一个用不了的 mlx:{error}",
+                    "A broken mlx is installed: {error}"
+                ),
+                Some(tr!(
+                    "多半是照着旧的 requirements-stt.txt 装的;不影响非 MLX 模型,但建议{rebuild}",
+                    "Probably installed from the old requirements-stt.txt; non-MLX models are unaffected. Recommended: {rebuild}"
                 )),
             )
         };
@@ -482,14 +590,27 @@ fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
 
     if !pkg.ok {
         let fix = match name {
-            "torch" if !p.apple_silicon => {
-                "torch 要按显卡选版本,建环境脚本会自动探测(也可以加 --backend cpu / cuda 指定)"
-                    .to_string()
-            }
-            "mlx_audio" | "mlx_whisper" => format!("Apple Silicon 上的 MLX 模型要用它。{REBUILD}"),
-            _ => format!("依赖没装全。{REBUILD}"),
+            "torch" if !p.apple_silicon => t(
+                "torch 要按显卡选版本,建环境脚本会自动探测(也可以加 --backend cpu / cuda 指定)",
+                "The torch build depends on your GPU; the setup script detects it automatically (or pass --backend cpu / cuda)",
+            )
+            .to_string(),
+            "mlx_audio" | "mlx_whisper" => tr!(
+                "Apple Silicon 上的 MLX 模型要用它。{rebuild}",
+                "Required for MLX models on Apple Silicon. {rebuild}"
+            ),
+            _ => tr!(
+                "依赖没装全。{rebuild}",
+                "Some dependencies are missing. {rebuild}"
+            ),
         };
-        return item(&id, name, Fail, format!("无法导入:{error}"), Some(fix));
+        return item(
+            &id,
+            name,
+            Fail,
+            tr!("无法导入:{error}", "Can't import: {error}"),
+            Some(fix),
+        );
     }
 
     // numpy 2.x 能 import,但和为 1.x 编译的二进制包冲突(`_ARRAY_API not found`),
@@ -505,8 +626,14 @@ fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
             &id,
             name,
             Warn,
-            format!("{version}:需要 1.x,2.x 会和部分二进制包冲突"),
-            Some(format!("{REBUILD}(会装回 numpy 1.26)")),
+            tr!(
+                "{version}:需要 1.x,2.x 会和部分二进制包冲突",
+                "{version}: 1.x is required; 2.x conflicts with some binary packages"
+            ),
+            Some(tr!(
+                "{rebuild}(会装回 numpy 1.26)",
+                "{rebuild} (reinstalls numpy 1.26)"
+            )),
         );
     }
     item(&id, name, Ok, version, None)
@@ -514,24 +641,38 @@ fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
 
 fn backend_item(probe: Option<&Probe>, repo_ok: bool) -> CheckItem {
     use CheckStatus::*;
-    let skip = |why: &str| item("backend", "加速后端", Warn, why.to_string(), None);
+    let rebuild = rebuild_hint();
+    let label = t("加速后端", "Acceleration backend");
+    let skip = |why: &str| item("backend", label, Warn, why.to_string(), None);
     let Some(p) = probe else {
-        return skip("解释器没跑起来,没法判断");
+        return skip(t(
+            "解释器没跑起来,没法判断",
+            "Can't tell: the interpreter didn't run",
+        ));
     };
     if !p.packages.get("torch").is_some_and(|t| t.ok) {
-        return skip("没有 torch,没法判断");
+        return skip(t(
+            "没有 torch,没法判断",
+            "Can't tell: torch isn't installed",
+        ));
     }
     if !repo_ok {
-        return skip("仓库路径无效,读不到 services/device.py");
+        return skip(t(
+            "仓库路径无效,读不到 services/device.py",
+            "Invalid repository path; can't read services/device.py",
+        ));
     }
     let Some(b) = &p.backend else {
         return item(
             "backend",
-            "加速后端",
+            label,
             Warn,
-            format!(
+            tr!(
                 "判断失败:{}",
-                p.backend_error.as_deref().unwrap_or("没有结果")
+                "Detection failed: {}",
+                p.backend_error
+                    .as_deref()
+                    .unwrap_or(t("没有结果", "no result"))
             ),
             None,
         );
@@ -540,24 +681,34 @@ fn backend_item(probe: Option<&Probe>, repo_ok: bool) -> CheckItem {
     if b.name == "cpu" && p.nvidia_smi {
         return item(
             "backend",
-            "加速后端",
+            label,
             Warn,
-            format!("有 NVIDIA 显卡,但装的是 CPU 版 torch:{detail}"),
-            Some(format!(
-                "{REBUILD},并加上 --backend cuda(Windows 上是 -Backend cuda)"
+            tr!(
+                "有 NVIDIA 显卡,但装的是 CPU 版 torch:{detail}",
+                "NVIDIA GPU found, but the CPU build of torch is installed: {detail}"
+            ),
+            Some(tr!(
+                "{rebuild},并加上 --backend cuda(Windows 上是 -Backend cuda)",
+                "{rebuild} with --backend cuda (-Backend cuda on Windows)"
             )),
         );
     }
     if b.name == "cpu" && p.apple_silicon {
         return item(
             "backend",
-            "加速后端",
+            label,
             Warn,
-            format!("Apple Silicon 上 MPS 不可用,只能用 CPU:{detail}"),
-            Some(format!("torch 可能太旧。{REBUILD}")),
+            tr!(
+                "Apple Silicon 上 MPS 不可用,只能用 CPU:{detail}",
+                "MPS is unavailable on Apple Silicon; falling back to CPU: {detail}"
+            ),
+            Some(tr!(
+                "torch 可能太旧。{rebuild}",
+                "torch may be too old. {rebuild}"
+            )),
         );
     }
-    item("backend", "加速后端", Ok, detail, None)
+    item("backend", label, Ok, detail, None)
 }
 
 // ── 跑起来 ──

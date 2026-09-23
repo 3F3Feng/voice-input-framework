@@ -10,6 +10,9 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::i18n::t;
+use crate::tr;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModelInfo {
     pub name: String,
@@ -58,7 +61,13 @@ impl LlmStatus {
     pub fn from_json(data: &Value) -> Result<Self, String> {
         let enabled = data["enabled"]
             .as_bool()
-            .ok_or_else(|| "读取后处理开关失败:服务端没有返回 enabled".to_string())?;
+            .ok_or_else(|| {
+                t(
+                    "读取后处理开关失败:服务端没有返回 enabled",
+                    "Reading the LLM post-processing setting failed: the server didn't return `enabled`",
+                )
+                .to_string()
+            })?;
         Ok(Self {
             enabled,
             supported: data["supported"].as_bool().unwrap_or(true),
@@ -72,11 +81,43 @@ impl LlmStatus {
 
 /// 连不上服务类错误的统一前缀。悬浮胶囊按前缀归类(`indicator::failure_display`),
 /// 以前按「连不上」「超时」这些词去猜,改一句文案就会悄悄归错类。
+///
+/// 界面是英文时错误以 [`ERR_UNREACHABLE_EN`] 开头。归类请用 [`is_unreachable`],
+/// 它两种语言都认——错误可能是切换语言之前生成的。
 pub const ERR_UNREACHABLE: &str = "连不上 STT 服务";
-/// 等识别结果超时类错误的统一前缀。
+pub const ERR_UNREACHABLE_EN: &str = "Can't reach the STT service";
+/// 等识别结果超时类错误的统一前缀。英文见 [`ERR_RESULT_TIMEOUT_EN`],归类用 [`is_result_timeout`]。
 pub const ERR_RESULT_TIMEOUT: &str = "等待识别结果超时";
+pub const ERR_RESULT_TIMEOUT_EN: &str = "Timed out waiting for the transcription result";
+
+/// 按当前界面语言取 [`ERR_UNREACHABLE`] / [`ERR_UNREACHABLE_EN`]。
+fn err_unreachable() -> &'static str {
+    t(ERR_UNREACHABLE, ERR_UNREACHABLE_EN)
+}
+
+/// 按当前界面语言取 [`ERR_RESULT_TIMEOUT`] / [`ERR_RESULT_TIMEOUT_EN`]。
+fn err_result_timeout() -> &'static str {
+    t(ERR_RESULT_TIMEOUT, ERR_RESULT_TIMEOUT_EN)
+}
+
+/// 是不是「连不上 STT 服务」类错误(中英文前缀都认)。
+// `indicator::failure_display` 改用这两个判断之前,主程序里还没有调用方。
+#[allow(dead_code)]
+pub fn is_unreachable(err: &str) -> bool {
+    err.starts_with(ERR_UNREACHABLE) || err.starts_with(ERR_UNREACHABLE_EN)
+}
+
+/// 是不是「等待识别结果超时」类错误(中英文前缀都认)。
+#[allow(dead_code)]
+pub fn is_result_timeout(err: &str) -> bool {
+    err.starts_with(ERR_RESULT_TIMEOUT) || err.starts_with(ERR_RESULT_TIMEOUT_EN)
+}
 
 /// 没录到任何音频时的错误。前端按这句话认出「没听到声音」,而不是当成故障。
+///
+/// 它是个**标记**,不随界面语言变:所有接收方(`indicator::failure_display`、
+/// App.vue、Onboarding.vue)都按相等比较认出它,换成各自的友好文案再显示,
+/// 从来不把它原样给用户看。翻译它反而会让这些比较在英文界面下失效。
 pub const NO_SPEECH: &str = "没有录到声音";
 
 /// 服务端给出的最终文本 → 转写结果。空的、只有空白的都算「没听到声音」。
@@ -211,30 +252,59 @@ fn api_token() -> Option<String> {
     API_TOKEN.read().ok().and_then(|t| t.clone())
 }
 
+/// 发给服务端的 `Accept-Language`:服务端按它挑错误信息的语言(F22)。
+pub fn accept_language() -> &'static str {
+    accept_language_for(crate::i18n::is_en())
+}
+
+pub fn accept_language_for(english: bool) -> &'static str {
+    if english {
+        "en"
+    } else {
+        "zh"
+    }
+}
+
 /// 带超时的 HTTP 客户端。以前每处都是 `Client::new()` —— 默认**没有任何超时**,
 /// 服务卡住时请求会一直挂着,前端连接循环的「截止时间」形同虚设。
+///
+/// 每个请求都现 new 一个,所以 `Accept-Language` 按发请求这一刻的界面语言走。
 fn http(timeout: Duration) -> Client {
-    let mut builder = Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(timeout);
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::ACCEPT_LANGUAGE,
+        reqwest::header::HeaderValue::from_static(accept_language()),
+    );
     if let Some(token) = api_token() {
-        let mut headers = reqwest::header::HeaderMap::new();
         if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)) {
             headers.insert(reqwest::header::AUTHORIZATION, v);
         }
-        builder = builder.default_headers(headers);
     }
-    builder.build().unwrap_or_else(|_| Client::new())
+    Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(timeout)
+        .default_headers(headers)
+        .build()
+        .unwrap_or_else(|_| Client::new())
 }
 
 /// 请求没发出去 / 没等到回答时,给用户看的那句话。
 fn request_error(what: &str, e: reqwest::Error) -> String {
     if e.is_timeout() {
-        format!("{}超时:服务没有应答", what)
+        tr!(
+            "{}超时:服务没有应答",
+            "{} timed out: no response from the service",
+            what
+        )
     } else if e.is_connect() {
-        format!("{}失败:连不上服务({})", what, e)
+        tr!(
+            "{}失败:连不上服务({})",
+            "{} failed: can't reach the service ({})",
+            what,
+            e
+        )
     } else {
-        format!("{}失败:{}", what, e)
+        tr!("{}失败:{}", "{} failed: {}", what, e)
     }
 }
 
@@ -245,9 +315,14 @@ async fn ensure_ok(resp: reqwest::Response, what: &str) -> Result<Value, String>
     if !status.is_success() {
         let msg = server_message(&data);
         return Err(if msg.is_empty() {
-            format!("{}失败(HTTP {})", what, status.as_u16())
+            tr!(
+                "{}失败(HTTP {})",
+                "{} failed (HTTP {})",
+                what,
+                status.as_u16()
+            )
         } else {
-            format!("{}失败:{}", what, msg)
+            tr!("{}失败:{}", "{} failed: {}", what, msg)
         });
     }
     Ok(data)
@@ -288,10 +363,20 @@ impl SttClient {
     ) -> Result<String, String> {
         let url = format!("{}/ws/stream", ws_base(&self.stt_url));
 
-        let mut request = url
-            .as_str()
-            .into_client_request()
-            .map_err(|e| format!("{}({}):地址不对:{}", ERR_UNREACHABLE, self.stt_url, e))?;
+        let mut request = url.as_str().into_client_request().map_err(|e| {
+            tr!(
+                "{}({}):地址不对:{}",
+                "{} ({}): invalid address: {}",
+                err_unreachable(),
+                self.stt_url,
+                e
+            )
+        })?;
+        // 服务端按它挑错误信息的语言,和 HTTP 请求一样(见 `http`)。
+        request.headers_mut().insert(
+            "Accept-Language",
+            tokio_tungstenite::tungstenite::http::HeaderValue::from_static(accept_language()),
+        );
         if let Some(token) = api_token() {
             if let Ok(v) = format!("Bearer {}", token).parse() {
                 request.headers_mut().insert("Authorization", v);
@@ -299,31 +384,68 @@ impl SttClient {
         }
         let (mut ws, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(request))
             .await
-            .map_err(|_| format!("{}({}):连接超时", ERR_UNREACHABLE, self.stt_url))?
-            .map_err(|e| format!("{}({}):{}", ERR_UNREACHABLE, self.stt_url, e))?;
+            .map_err(|_| {
+                tr!(
+                    "{}({}):连接超时",
+                    "{} ({}): connection timed out",
+                    err_unreachable(),
+                    self.stt_url
+                )
+            })?
+            .map_err(|e| {
+                tr!(
+                    "{}({}):{}",
+                    "{} ({}): {}",
+                    err_unreachable(),
+                    self.stt_url,
+                    e
+                )
+            })?;
 
         match tokio::time::timeout(QUERY_TIMEOUT, ws.next()).await {
             Ok(Some(Ok(Message::Text(json)))) => {
-                let data: Value = serde_json::from_str(&json)
-                    .map_err(|e| format!("服务端消息解析失败: {}", e))?;
+                let data: Value = serde_json::from_str(&json).map_err(|e| {
+                    tr!(
+                        "服务端消息解析失败: {}",
+                        "Couldn't parse the server message: {}",
+                        e
+                    )
+                })?;
                 if data["type"] != "ready" {
-                    return Err(format!("服务端返回了意外的消息: {}", json));
+                    return Err(tr!(
+                        "服务端返回了意外的消息: {}",
+                        "Unexpected message from the server: {}",
+                        json
+                    ));
                 }
                 eprintln!("[stt] Server ready, model: {}", data["model"]);
             }
             Err(_) => {
-                return Err(format!(
+                return Err(tr!(
                     "{}:服务没有应答(等待就绪消息超时)",
-                    ERR_UNREACHABLE
+                    "{}: no response from the service (timed out waiting for the ready message)",
+                    err_unreachable()
                 ))
             }
-            _ => return Err(format!("{}:服务没有发来就绪消息", ERR_UNREACHABLE)),
+            _ => {
+                return Err(tr!(
+                    "{}:服务没有发来就绪消息",
+                    "{}: the service didn't send a ready message",
+                    err_unreachable()
+                ))
+            }
         }
 
         let lang_msg = serde_json::json!({"type": "config", "language": language});
         SinkExt::send(&mut ws, Message::Text(lang_msg.to_string()))
             .await
-            .map_err(|e| format!("发送识别配置失败: {}", e))?;
+            .map_err(|e| {
+                tr!(
+                    "发送识别配置失败: {}",
+                    "Couldn't send the recognition settings: {}",
+                    e
+                )
+            })?;
 
         // Spawn task to stream audio chunks
         let (audio_done_tx, audio_done_rx) = tokio::sync::oneshot::channel::<()>();
@@ -359,7 +481,13 @@ impl SttClient {
             let mut ws = ws_sender.lock().await;
             SinkExt::send(&mut *ws, Message::Text(r#"{"type":"end"}"#.into()))
                 .await
-                .map_err(|e| format!("发送结束信号失败: {}", e))?;
+                .map_err(|e| {
+                    tr!(
+                        "发送结束信号失败: {}",
+                        "Couldn't send the end-of-audio signal: {}",
+                        e
+                    )
+                })?;
         }
 
         // Receive result(s)
@@ -378,26 +506,38 @@ impl SttClient {
 
             let msg = match msg_result {
                 Ok(Some(Ok(m))) => m,
-                Ok(Some(Err(e))) => return Err(format!("读取识别结果失败: {}", e)),
+                Ok(Some(Err(e))) => {
+                    return Err(tr!(
+                        "读取识别结果失败: {}",
+                        "Couldn't read the transcription result: {}",
+                        e
+                    ))
+                }
                 Ok(None) => break,
                 Err(_) => {
                     let _ = stream_task.await;
                     return Err(if saw_keepalive {
-                        format!(
+                        tr!(
                             "{}:识别服务 {} 秒没有动静,可能已经卡住",
-                            ERR_RESULT_TIMEOUT,
+                            "{}: the STT service has been silent for {}s and may be stuck",
+                            err_result_timeout(),
                             wait.as_secs()
                         )
                     } else {
-                        format!("{}(5 分钟)", ERR_RESULT_TIMEOUT)
+                        tr!("{}(5 分钟)", "{} (5 minutes)", err_result_timeout())
                     });
                 }
             };
 
             match msg {
                 Message::Text(json) => {
-                    let data: Value = serde_json::from_str(&json)
-                        .map_err(|e| format!("服务端消息解析失败: {}", e))?;
+                    let data: Value = serde_json::from_str(&json).map_err(|e| {
+                        tr!(
+                            "服务端消息解析失败: {}",
+                            "Couldn't parse the server message: {}",
+                            e
+                        )
+                    })?;
                     let msg_type = data["type"].as_str().unwrap_or("");
                     match msg_type {
                         "stt_result" => {
@@ -452,7 +592,7 @@ impl SttClient {
                             let _ = stream_task.await;
                             let msg = server_message(&data);
                             return Err(if msg.is_empty() {
-                                "未知错误".to_string()
+                                t("未知错误", "Unknown error").to_string()
                             } else {
                                 msg.to_string()
                             });
@@ -467,7 +607,11 @@ impl SttClient {
 
         let _ = stream_task.await;
         if final_text.is_empty() {
-            Err("服务在返回结果前断开了连接".to_string())
+            Err(t(
+                "服务在返回结果前断开了连接",
+                "The service disconnected before returning a result",
+            )
+            .to_string())
         } else {
             Ok(final_text)
         }
@@ -484,11 +628,12 @@ impl SttClient {
             .get(format!("{}/models", self.stt_url))
             .send()
             .await
-            .map_err(|e| request_error("获取模型列表", e))?;
-        let data = ensure_ok(resp, "获取模型列表").await?;
-        let models = data
-            .as_array()
-            .ok_or("获取模型列表失败:服务端返回的不是列表")?;
+            .map_err(|e| request_error(t("获取模型列表", "Loading the model list"), e))?;
+        let data = ensure_ok(resp, t("获取模型列表", "Loading the model list")).await?;
+        let models = data.as_array().ok_or(t(
+            "获取模型列表失败:服务端返回的不是列表",
+            "Loading the model list failed: the server didn't return a list",
+        ))?;
         Ok(models
             .iter()
             .filter_map(|m| serde_json::from_value::<ModelInfo>(m.clone()).ok())
@@ -502,13 +647,17 @@ impl SttClient {
             .form(&params)
             .send()
             .await
-            .map_err(|e| request_error("切换模型", e))?;
+            .map_err(|e| request_error(t("切换模型", "Switching the model"), e))?;
         let status = resp.status();
         let data: Value = resp.json().await.unwrap_or(Value::Null);
         if switch_failed(status.is_success(), &data) {
             let msg = server_message(&data);
             return Err(if msg.is_empty() {
-                format!("切换失败(HTTP {})", status.as_u16())
+                tr!(
+                    "切换失败(HTTP {})",
+                    "Switch failed (HTTP {})",
+                    status.as_u16()
+                )
             } else {
                 msg.to_string()
             });
@@ -522,8 +671,8 @@ impl SttClient {
             .get(format!("{}/models/status/{}", self.stt_url, name))
             .send()
             .await
-            .map_err(|e| request_error("查询模型状态", e))?;
-        ensure_ok(resp, "查询模型状态").await
+            .map_err(|e| request_error(t("查询模型状态", "Checking the model status"), e))?;
+        ensure_ok(resp, t("查询模型状态", "Checking the model status")).await
     }
 
     /// STT 服务的 `/health` 原样返回,前端用它区分「可达 / 模型就绪 / 加载中 / 加载失败」。
@@ -532,8 +681,8 @@ impl SttClient {
             .get(format!("{}/health", self.stt_url))
             .send()
             .await
-            .map_err(|e| request_error("健康检查", e))?;
-        ensure_ok(resp, "健康检查").await
+            .map_err(|e| request_error(t("健康检查", "Health check"), e))?;
+        ensure_ok(resp, t("健康检查", "Health check")).await
     }
 
     pub async fn get_llm_models(&self) -> Result<Vec<ModelInfo>, String> {
@@ -541,10 +690,10 @@ impl SttClient {
             .get(format!("{}/llm/models", self.stt_url))
             .send()
             .await
-            .map_err(|e| request_error("获取 LLM 模型列表", e))?;
+            .map_err(|e| request_error(t("获取 LLM 模型列表", "Loading the LLM model list"), e))?;
         // 转发失败现在带 5xx + 结构化错误体;直接按 LlmModelsResponse 解只会
         // 得到一句「missing field `models`」,把服务端写好的原因盖掉。
-        let data = ensure_ok(resp, "获取 LLM 模型列表").await?;
+        let data = ensure_ok(resp, t("获取 LLM 模型列表", "Loading the LLM model list")).await?;
         let data: LlmModelsResponse = serde_json::from_value(data).map_err(|e| e.to_string())?;
         Ok(data.models)
     }
@@ -556,14 +705,18 @@ impl SttClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| request_error("切换 LLM 模型", e))?;
+            .map_err(|e| request_error(t("切换 LLM 模型", "Switching the LLM model"), e))?;
         let status = resp.status();
         let data: Value = resp.json().await.map_err(|e| e.to_string())?;
         // 切换失败必须变成 Err,否则前端照样弹「LLM 已切换」。
         if switch_failed(status.is_success(), &data) {
             let msg = server_message(&data);
             return Err(if msg.is_empty() {
-                format!("切换失败(HTTP {})", status.as_u16())
+                tr!(
+                    "切换失败(HTTP {})",
+                    "Switch failed (HTTP {})",
+                    status.as_u16()
+                )
             } else {
                 msg.to_string()
             });
@@ -576,8 +729,8 @@ impl SttClient {
             .get(format!("{}/llm/prompt", self.stt_url))
             .send()
             .await
-            .map_err(|e| request_error("读取提示词", e))?;
-        let data = ensure_ok(resp, "读取提示词").await?;
+            .map_err(|e| request_error(t("读取提示词", "Loading the prompt"), e))?;
+        let data = ensure_ok(resp, t("读取提示词", "Loading the prompt")).await?;
         Ok(data["prompt"].as_str().unwrap_or("").to_string())
     }
 
@@ -588,8 +741,10 @@ impl SttClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| request_error("保存提示词", e))?;
-        ensure_ok(resp, "保存提示词").await.map(|_| ())
+            .map_err(|e| request_error(t("保存提示词", "Saving the prompt"), e))?;
+        ensure_ok(resp, t("保存提示词", "Saving the prompt"))
+            .await
+            .map(|_| ())
     }
 
     /// 上传一个音频文件转写(服务端 `/transcribe`,见 services/audio_io.py)。
@@ -609,8 +764,8 @@ impl SttClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| request_error("转写文件", e))?;
-        let data = ensure_ok(resp, "转写文件").await?;
+            .map_err(|e| request_error(t("转写文件", "Transcribing the file"), e))?;
+        let data = ensure_ok(resp, t("转写文件", "Transcribing the file")).await?;
         Ok(data["text"].as_str().unwrap_or("").to_string())
     }
 
@@ -620,8 +775,8 @@ impl SttClient {
             .get(format!("{}/vocabulary", self.stt_url))
             .send()
             .await
-            .map_err(|e| request_error("读取个人词库", e))?;
-        ensure_ok(resp, "读取个人词库").await
+            .map_err(|e| request_error(t("读取个人词库", "Loading the personal vocabulary"), e))?;
+        ensure_ok(resp, t("读取个人词库", "Loading the personal vocabulary")).await
     }
 
     pub async fn save_vocabulary(&self, entries: &[String]) -> Result<Value, String> {
@@ -630,8 +785,8 @@ impl SttClient {
             .json(&serde_json::json!({ "entries": entries }))
             .send()
             .await
-            .map_err(|e| request_error("保存个人词库", e))?;
-        ensure_ok(resp, "保存个人词库").await
+            .map_err(|e| request_error(t("保存个人词库", "Saving the personal vocabulary"), e))?;
+        ensure_ok(resp, t("保存个人词库", "Saving the personal vocabulary")).await
     }
 
     /// 恢复默认提示词,返回恢复后的内容。
@@ -640,8 +795,8 @@ impl SttClient {
             .delete(format!("{}/llm/prompt", self.stt_url))
             .send()
             .await
-            .map_err(|e| request_error("恢复默认提示词", e))?;
-        let data = ensure_ok(resp, "恢复默认提示词").await?;
+            .map_err(|e| request_error(t("恢复默认提示词", "Restoring the default prompt"), e))?;
+        let data = ensure_ok(resp, t("恢复默认提示词", "Restoring the default prompt")).await?;
         Ok(data["prompt"].as_str().unwrap_or("").to_string())
     }
 
@@ -654,8 +809,17 @@ impl SttClient {
             .get(format!("{}/llm/enabled", self.stt_url))
             .send()
             .await
-            .map_err(|e| request_error("读取后处理开关", e))?;
-        let data = ensure_ok(resp, "读取后处理开关").await?;
+            .map_err(|e| {
+                request_error(
+                    t("读取后处理开关", "Reading the LLM post-processing setting"),
+                    e,
+                )
+            })?;
+        let data = ensure_ok(
+            resp,
+            t("读取后处理开关", "Reading the LLM post-processing setting"),
+        )
+        .await?;
         LlmStatus::from_json(&data)
     }
 
@@ -666,7 +830,17 @@ impl SttClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| request_error("设置后处理开关", e))?;
-        ensure_ok(resp, "设置后处理开关").await.map(|_| ())
+            .map_err(|e| {
+                request_error(
+                    t("设置后处理开关", "Changing the LLM post-processing setting"),
+                    e,
+                )
+            })?;
+        ensure_ok(
+            resp,
+            t("设置后处理开关", "Changing the LLM post-processing setting"),
+        )
+        .await
+        .map(|_| ())
     }
 }

@@ -288,3 +288,30 @@ fn result_wait_shrinks_once_the_server_sends_keepalives() {
     assert_eq!(stt::result_wait(false).as_secs(), 300);
     assert_eq!(stt::result_wait(true).as_secs(), 60);
 }
+
+// ── 界面语言(F22)──
+
+#[test]
+fn accept_language_follows_ui_language() {
+    // 只测纯函数:别切全局语言,其它测试并行跑、断言的是中文。
+    assert_eq!(stt::accept_language_for(true), "en");
+    assert_eq!(stt::accept_language_for(false), "zh");
+    assert_eq!(stt::accept_language(), "zh");
+}
+
+#[test]
+fn error_kinds_are_recognized_in_both_languages() {
+    // 错误可能是切换语言之前生成的,归类两种语言都得认。
+    assert!(stt::is_unreachable(
+        "连不上 STT 服务(http://127.0.0.1:6544):连接超时"
+    ));
+    assert!(stt::is_unreachable(
+        "Can't reach the STT service (http://127.0.0.1:6544): connection timed out"
+    ));
+    assert!(!stt::is_unreachable("模型加载失败"));
+    assert!(stt::is_result_timeout("等待识别结果超时(5 分钟)"));
+    assert!(stt::is_result_timeout(
+        "Timed out waiting for the transcription result (5 minutes)"
+    ));
+    assert!(!stt::is_result_timeout("转写超时"));
+}

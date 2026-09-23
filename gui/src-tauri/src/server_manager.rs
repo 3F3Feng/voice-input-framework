@@ -35,6 +35,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::i18n::t;
+use crate::tr;
+
 /// UI 里回显的最近日志行数上限(同时也是内存环形缓冲的容量)。
 const LOG_TAIL_LINES: usize = 200;
 /// `/health` 探测超时。本地回环,给 1.5s 足够;太长会让「刷新状态」卡住 UI。
@@ -204,8 +207,12 @@ impl Slot {
                 Ok(Some(status)) => {
                     if self.exit_note.is_none() {
                         self.exit_note = Some(match status.code() {
-                            Some(code) => format!("进程已退出,退出码 {}", code),
-                            None => "进程被信号终止".to_string(),
+                            Some(code) => {
+                                tr!("进程已退出,退出码 {}", "Process exited with code {}", code)
+                            }
+                            None => {
+                                t("进程被信号终止", "Process was killed by a signal").to_string()
+                            }
                         });
                     }
                     false
@@ -214,7 +221,11 @@ impl Slot {
                 // 查不到状态时按「已退出」处理,总比一直显示运行中好。
                 Err(e) => {
                     if self.exit_note.is_none() {
-                        self.exit_note = Some(format!("无法查询子进程状态: {}", e));
+                        self.exit_note = Some(tr!(
+                            "无法查询子进程状态: {}",
+                            "Couldn't query the child process status: {}",
+                            e
+                        ));
                     }
                     false
                 }
@@ -333,13 +344,18 @@ impl ServerManager {
         let repo = Path::new(&opts.repo_path);
         let python = Path::new(&opts.python_path);
         if !repo.join("services/stt_server.py").exists() {
-            return Err(format!(
+            return Err(tr!(
                 "仓库路径不对:{} 下找不到 services/stt_server.py",
+                "Wrong repository path: services/stt_server.py not found in {}",
                 opts.repo_path
             ));
         }
         if !python.exists() {
-            return Err(format!("Python 解释器不存在:{}", opts.python_path));
+            return Err(tr!(
+                "Python 解释器不存在:{}",
+                "Python interpreter not found: {}",
+                opts.python_path
+            ));
         }
 
         // 下面会整个覆盖掉这个 slot,所以手里如果还攥着一个活的子进程,必须先
@@ -353,8 +369,14 @@ impl ServerManager {
 
         let log_path = self.data_dir.join(kind.log_file_name());
         // 每次启动截断:日志是用来看「这次为什么没起来」的,不是历史档案。
-        let log_file = File::create(&log_path)
-            .map_err(|e| format!("无法创建日志文件 {}: {}", log_path.display(), e))?;
+        let log_file = File::create(&log_path).map_err(|e| {
+            tr!(
+                "无法创建日志文件 {}: {}",
+                "Couldn't create log file {}: {}",
+                log_path.display(),
+                e
+            )
+        })?;
         drop(log_file);
 
         let mut cmd = Command::new(python);
@@ -390,9 +412,14 @@ impl ServerManager {
             cmd.env("HF_ENDPOINT", endpoint);
         }
 
-        let mut child = no_console(&mut cmd)
-            .spawn()
-            .map_err(|e| format!("启动 {} 服务失败: {}", kind.label(), e))?;
+        let mut child = no_console(&mut cmd).spawn().map_err(|e| {
+            tr!(
+                "启动 {} 服务失败: {}",
+                "Failed to start the {} service: {}",
+                kind.label(),
+                e
+            )
+        })?;
         let pid = child.id();
 
         let logs = Arc::new(Mutex::new(VecDeque::with_capacity(LOG_TAIL_LINES)));
@@ -436,13 +463,19 @@ impl ServerManager {
     ) -> Result<String, String> {
         // 这一句就是「发信号前重新校验」:`identify_external` 每次都现查 lsof + ps。
         let Some(pid) = identify_external(kind, local) else {
-            return Err(format!(
+            return Err(tr!(
                 "{} 服务不是由本应用启动的,也认不出是本项目的服务,无法从这里停止。请到启动它的终端里停。",
+                "The {} service wasn't started by this app and can't be identified as this project's service, so it can't be stopped from here. Stop it in the terminal where it was started.",
                 kind.label()
             ));
         };
         let repo = PathBuf::from(local.repo_path.clone().unwrap_or_default());
-        let stopped = format!("{} 服务(pid {},本项目的外部进程)已停止", kind.label(), pid);
+        let stopped = tr!(
+            "{} 服务(pid {},本项目的外部进程)已停止",
+            "{} service (pid {}, external process from this project) stopped",
+            kind.label(),
+            pid
+        );
 
         terminate(pid);
         let deadline = Instant::now() + TERM_GRACE;
@@ -464,8 +497,9 @@ impl ServerManager {
             return Ok(stopped);
         }
         force_kill(pid);
-        Ok(format!(
+        Ok(tr!(
             "{} 服务(pid {},本项目的外部进程)未响应,已强制结束",
+            "{} service (pid {}, external process from this project) didn't respond and was force-stopped",
             kind.label(),
             pid
         ))
@@ -478,7 +512,12 @@ impl ServerManager {
         let pid = slot.pid;
 
         if !slot.alive() {
-            return Ok(format!("{} 服务(pid {})已经不在运行", kind.label(), pid));
+            return Ok(tr!(
+                "{} 服务(pid {})已经不在运行",
+                "{} service (pid {}) is no longer running",
+                kind.label(),
+                pid
+            ));
         }
 
         // 先 SIGTERM:uvicorn 收到会走正常的 shutdown,释放端口、落盘状态。
@@ -506,9 +545,19 @@ impl ServerManager {
 
         drop(slot);
         Ok(if forced {
-            format!("{} 服务(pid {})未响应,已强制结束", kind.label(), pid)
+            tr!(
+                "{} 服务(pid {})未响应,已强制结束",
+                "{} service (pid {}) didn't respond and was force-stopped",
+                kind.label(),
+                pid
+            )
         } else {
-            format!("{} 服务(pid {})已停止", kind.label(), pid)
+            tr!(
+                "{} 服务(pid {})已停止",
+                "{} service (pid {}) stopped",
+                kind.label(),
+                pid
+            )
         })
     }
 
@@ -567,12 +616,18 @@ impl SpawnOptions {
             .repo_path
             .clone()
             .filter(|p| !p.trim().is_empty())
-            .ok_or("没有设置仓库路径,且自动探测没找到。请在「服务器」里手动填写。")?;
+            .ok_or(t(
+                "没有设置仓库路径,且自动探测没找到。请在「服务器」里手动填写。",
+                "Repository path isn't set and auto-detect didn't find it. Enter it under Server.",
+            ))?;
         let python_path = local
             .python_path
             .clone()
             .filter(|p| !p.trim().is_empty())
-            .ok_or("没有设置 Python 解释器路径,且自动探测没找到。请在「服务器」里手动填写。")?;
+            .ok_or(t(
+                "没有设置 Python 解释器路径,且自动探测没找到。请在「服务器」里手动填写。",
+                "Python interpreter path isn't set and auto-detect didn't find it. Enter it under Server.",
+            ))?;
         Ok(Self {
             repo_path,
             python_path,
@@ -941,13 +996,18 @@ struct LoadingProgress {
 /// 「正在加载模型...」,看不出是在下载、卡住了还是坏了。
 fn loading_text(progress: Option<&LoadingProgress>) -> String {
     match progress {
-        Some(p) if p.downloaded_bytes >= 1024 * 1024 => format!(
+        Some(p) if p.downloaded_bytes >= 1024 * 1024 => tr!(
             "正在下载模型… 已下载 {} MB({:.0} 秒)",
+            "Downloading model… {} MB downloaded ({:.0}s)",
             p.downloaded_bytes / (1024 * 1024),
             p.elapsed_s
         ),
-        Some(p) if p.elapsed_s >= 1.0 => format!("正在加载模型…({:.0} 秒)", p.elapsed_s),
-        _ => "正在加载模型...".to_string(),
+        Some(p) if p.elapsed_s >= 1.0 => tr!(
+            "正在加载模型…({:.0} 秒)",
+            "Loading model… ({:.0}s)",
+            p.elapsed_s
+        ),
+        _ => t("正在加载模型...", "Loading model...").to_string(),
     }
 }
 
@@ -970,7 +1030,7 @@ impl Health {
                 self.error
                     .clone()
                     .filter(|e| !e.trim().is_empty())
-                    .unwrap_or_else(|| "原因未知,见日志".into()),
+                    .unwrap_or_else(|| t("原因未知,见日志", "Unknown reason; see the log").into()),
             ),
             _ => Answer::Loading,
         }
@@ -993,6 +1053,11 @@ async fn probe_raw(port: u16) -> Option<Health> {
         .ok()?;
     let resp = client
         .get(format!("http://127.0.0.1:{}/health", port))
+        // 加载失败的原因(`error`)会显示在服务器面板上,让服务端按界面语言写。
+        .header(
+            reqwest::header::ACCEPT_LANGUAGE,
+            crate::stt::accept_language(),
+        )
         .send()
         .await
         .ok()?;
@@ -1085,12 +1150,18 @@ pub async fn status(
                 Some(pid) => (
                     ServerOwner::ExternalProject,
                     Some(pid),
-                    "这个服务不是本应用启动的,但确认是本项目的服务,可以从这里停止",
+                    t(
+                        "这个服务不是本应用启动的,但确认是本项目的服务,可以从这里停止",
+                        "Not started by this app, but confirmed as this project's service; it can be stopped from here",
+                    ),
                 ),
                 None => (
                     ServerOwner::ExternalUnknown,
                     None,
-                    "外部进程(不是本应用启动的),只能连接,不能从这里停止",
+                    t(
+                        "外部进程(不是本应用启动的),只能连接,不能从这里停止",
+                        "External process (not started by this app); connect only, it can't be stopped from here",
+                    ),
                 ),
             };
             ServerStatus {
@@ -1117,7 +1188,11 @@ pub async fn status(
                 can_stop: ServerOwner::App.can_manage(),
                 pid: Some(snap.pid),
                 current_model: None,
-                detail: Some(format!("模型加载失败:{}", load_error.unwrap_or_default())),
+                detail: Some(tr!(
+                    "模型加载失败:{}",
+                    "Model failed to load: {}",
+                    load_error.unwrap_or_default()
+                )),
                 log_path: Some(snap.log_path),
                 recent_logs: snap.recent_logs,
             }
@@ -1131,7 +1206,7 @@ pub async fn status(
             can_stop: ServerOwner::App.can_manage(),
             pid: Some(snap.pid),
             current_model: None,
-            detail: Some(format!("已启动,{}", loading)),
+            detail: Some(tr!("已启动,{}", "Started. {}", loading)),
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
         },
@@ -1160,12 +1235,15 @@ pub async fn status(
             current_model: None,
             detail: Some(if snap.alive {
                 // 活着但端口对不上:用户改了端口却没重启服务。
-                format!(
+                tr!(
                     "本应用启动的进程在 {} 端口,与当前配置的 {} 端口不一致,请重启服务以应用新端口。",
-                    snap.port, port
+                    "The process started by this app is on port {}, but port {} is configured. Restart the service to use the new port.",
+                    snap.port,
+                    port
                 )
             } else {
-                snap.exit_note.unwrap_or_else(|| "进程已退出".into())
+                snap.exit_note
+                    .unwrap_or_else(|| t("进程已退出", "Process exited").into())
             }),
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
@@ -1209,16 +1287,25 @@ fn external_pending_status(
         Some(pid) => (
             ServerOwner::ExternalProject,
             Some(pid),
-            "不是本应用启动的,但确认是本项目的服务,可以从这里停止",
+            t(
+                "不是本应用启动的,但确认是本项目的服务,可以从这里停止",
+                "not started by this app, but confirmed as this project's service; it can be stopped from here",
+            ),
         ),
         None => (
             ServerOwner::ExternalUnknown,
             None,
-            "外部进程(不是本应用启动的),只能连接,不能从这里停止",
+            t(
+                "外部进程(不是本应用启动的),只能连接,不能从这里停止",
+                "external process not started by this app; connect only, it can't be stopped from here",
+            ),
         ),
     };
     let (state, what) = match answer {
-        Answer::Failed(reason) => (ServerState::Failed, format!("模型加载失败:{}", reason)),
+        Answer::Failed(reason) => (
+            ServerState::Failed,
+            tr!("模型加载失败:{}", "Model failed to load: {}", reason),
+        ),
         _ => (ServerState::Starting, loading.to_string()),
     };
     ServerStatus {
@@ -1229,7 +1316,7 @@ fn external_pending_status(
         can_stop: owner.can_manage(),
         pid,
         current_model: None,
-        detail: Some(format!("{}({})", what, owner_note)),
+        detail: Some(tr!("{}({})", "{} ({})", what, owner_note)),
         log_path: stale.as_ref().map(|s| s.log_path.clone()),
         recent_logs: stale.map(|s| s.recent_logs).unwrap_or_default(),
     }
@@ -1251,29 +1338,40 @@ fn adopt_existing(
     external_pid: Option<u32>,
 ) -> Result<String, String> {
     let who = if ours {
-        "本应用启动".to_string()
+        t("本应用启动", "started by this app").to_string()
     } else {
         match external_pid {
-            Some(pid) => format!("外部进程 pid {},确认是本项目的服务", pid),
-            None => "外部进程".to_string(),
+            Some(pid) => tr!(
+                "外部进程 pid {},确认是本项目的服务",
+                "external process pid {}, confirmed as this project's service",
+                pid
+            ),
+            None => t("外部进程", "external process").to_string(),
         }
     };
     match answer {
-        Answer::Ready if ours => Ok(format!("{} 服务已在运行(本应用启动)", kind.label())),
-        Answer::Ready => Ok(format!(
+        Answer::Ready if ours => Ok(tr!(
+            "{} 服务已在运行(本应用启动)",
+            "{} service is already running (started by this app)",
+            kind.label()
+        )),
+        Answer::Ready => Ok(tr!(
             "{} 服务已在 {} 端口运行({}),已直接连接,未重复启动",
+            "{} service is already running on port {} ({}); connected to it instead of starting another",
             kind.label(),
             port,
             who
         )),
-        Answer::Loading => Ok(format!(
+        Answer::Loading => Ok(tr!(
             "{} 服务已在 {} 端口运行({}),正在加载模型,未重复启动",
+            "{} service is already running on port {} ({}) and loading its model; didn't start another",
             kind.label(),
             port,
             who
         )),
-        Answer::Failed(reason) => Err(format!(
+        Answer::Failed(reason) => Err(tr!(
             "{} 服务已在 {} 端口运行({}),但模型加载失败:{}。端口被它占着,再启动一个也起不来——请先停止它,排除原因后再启动",
+            "{} service is already running on port {} ({}), but its model failed to load: {}. It's holding the port, so another instance can't start. Stop it, fix the cause, then start again",
             kind.label(),
             port,
             who,
@@ -1325,8 +1423,9 @@ pub async fn start(
     let opts = SpawnOptions::from_config(&cfg.local)?;
     let mut guard = manager.lock().map_err(|e| e.to_string())?;
     let pid = guard.spawn(kind, &opts)?;
-    Ok(format!(
+    Ok(tr!(
         "{} 服务已启动(pid {}),正在加载模型...",
+        "{} service started (pid {}), loading model...",
         kind.label(),
         pid
     ))
@@ -1421,12 +1520,14 @@ impl LlmShutdownPlan {
     /// 保留了别人的进程时,给用户的解释。UI 直接显示,不要让开关看起来「没生效」。
     pub fn keep_reason(self) -> Option<&'static str> {
         match self {
-            LlmShutdownPlan::KeepForeign(ServerOwner::ExternalProject) => Some(
+            LlmShutdownPlan::KeepForeign(ServerOwner::ExternalProject) => Some(t(
                 "LLM 服务不是本应用启动的(外部/本项目),已保留——你在终端里跑的进程不该因为拨一下开关就消失。要停它请用「服务器」面板上的「停止」。",
-            ),
-            LlmShutdownPlan::KeepForeign(_) => Some(
+                "The LLM service wasn't started by this app (external, from this project), so it was left running: a process you started in a terminal shouldn't disappear because a switch was flipped. To stop it, use Stop in the Server panel.",
+            )),
+            LlmShutdownPlan::KeepForeign(_) => Some(t(
                 "LLM 端口上是认不出来源的外部进程,本应用只连接、不会碰它,已保留。",
-            ),
+                "The LLM port is held by an unidentified external process. This app only connects to it and won't touch it, so it was left running.",
+            )),
             _ => None,
         }
     }
@@ -1625,8 +1726,9 @@ pub fn detect() -> DetectResult {
         Some(repo) => {
             let python = find_python(Path::new(&repo));
             let problem = python.is_none().then(|| {
-                format!(
+                tr!(
                     "找到仓库 {},但里面没有 .venv/bin/python。请先创建虚拟环境,或手动指定解释器路径。",
+                    "Found the repository at {}, but it has no .venv/bin/python. Create the virtual environment first, or set the Python interpreter path manually.",
                     repo
                 )
             });
@@ -1640,8 +1742,11 @@ pub fn detect() -> DetectResult {
             repo_path: None,
             python_path: None,
             problem: Some(
-                "没有自动找到 voice-input-framework 仓库(在 ~ 下的常见位置都找过了)。请手动填写仓库路径。"
-                    .into(),
+                t(
+                    "没有自动找到 voice-input-framework 仓库(在 ~ 下的常见位置都找过了)。请手动填写仓库路径。",
+                    "Couldn't find the voice-input-framework repository automatically (checked the usual places under ~). Enter the repository path manually.",
+                )
+                .into(),
             ),
         },
     }
@@ -1661,10 +1766,24 @@ fn path_report(local: &crate::config::LocalServerConfig) -> LocalPathReport {
         .unwrap_or(false);
 
     let problem = match (local.repo_path.as_deref(), local.python_path.as_deref()) {
-        (None, _) | (Some(""), _) => Some("未设置仓库路径".to_string()),
-        (Some(repo), _) if !repo_ok => Some(format!("{} 下找不到 services/stt_server.py", repo)),
-        (_, None) | (_, Some("")) => Some("未设置 Python 解释器路径".to_string()),
-        (_, Some(py)) if !python_ok => Some(format!("解释器不存在:{}", py)),
+        (None, _) | (Some(""), _) => {
+            Some(t("未设置仓库路径", "Repository path not set").to_string())
+        }
+        (Some(repo), _) if !repo_ok => Some(tr!(
+            "{} 下找不到 services/stt_server.py",
+            "services/stt_server.py not found in {}",
+            repo
+        )),
+        (_, None) | (_, Some("")) => Some(
+            t(
+                "未设置 Python 解释器路径",
+                "Python interpreter path not set",
+            )
+            .to_string(),
+        ),
+        (_, Some(py)) if !python_ok => {
+            Some(tr!("解释器不存在:{}", "Interpreter not found: {}", py))
+        }
         _ => None,
     };
 
