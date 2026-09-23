@@ -2614,7 +2614,8 @@ onMounted(async () => {
       resultView.value = "final";
       resultOpen.value = true;
       addToHistory(text, resultOriginal.value);
-      toast("识别完成", "ok");
+      // 向导的「试一下」自己会显示结果,这里再弹一条就盖在向导上了。
+      if (!showOnboarding.value) toast("识别完成", "ok");
       // 自动输入失败(最常见是缺「辅助功能」权限)必须让用户看见:
       // 以前这里 catch 成空函数,转录一切正常但目标窗口什么都没出现。
       if (autoInputEnabled.value) {
