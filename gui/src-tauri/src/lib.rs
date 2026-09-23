@@ -792,7 +792,12 @@ async fn auto_input(
 ) -> Result<(), String> {
     if hand_back_focus.unwrap_or(false) {
         if let Some(window) = app.get_webview_window("main") {
-            let _ = window.hide();
+            // 托盘没建成时藏起来就再也找不回来了(R20),最小化同样能把焦点让出去。
+            if tray::available() {
+                let _ = window.hide();
+            } else {
+                let _ = window.minimize();
+            }
         }
         // macOS:只藏窗口不够,本应用仍是前台应用;`hide:` 会让系统把前台
         // 交还给上一个应用。AppKit 只能在主线程调用。

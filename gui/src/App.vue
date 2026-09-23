@@ -900,10 +900,12 @@ function pushGuiLog(entry: GuiLogEntry) {
   guiLogs.value.push(entry);
   if (guiLogs.value.length > GUI_LOG_CAP) guiLogs.value = guiLogs.value.slice(-GUI_LOG_CAP);
 }
-function toast(msg: string, type = "info") {
+/** `log: false` 用于 Rust 那边已经记过日志的消息（如 app-warning），免得日志页里一条出现两遍。 */
+function toast(msg: string, type = "info", log = true) {
   const id = ++toastId;
   toasts.value.push({ id, msg, type });
   setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id); }, 2500);
+  if (!log) return;
   const prefix = type === "err" ? "[ERROR]" : type === "ok" ? "[OK]" : "[INFO]";
   // 和 Rust 侧的日志行同一个样子（HH:MM:SS [LEVEL] ...），两边混在一个框里才读得顺。
   const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
@@ -1974,7 +1976,8 @@ onMounted(async () => {
 
   // 录音相关的提醒：配置的麦克风不在、改用了默认麦克风；录音中麦克风断开；
   // 录满 5 分钟自动停止。以前这些要么静默，要么只打到终端。
-  listen<string>("app-warning", (event) => toast(event.payload, "info"));
+  // Rust 的 emit_app_warning 已经 log_error! 过一次，日志页经 gui-log 就能看到，toast 不再重复记。
+  listen<string>("app-warning", (event) => toast(event.payload, "info", false));
 
   // Auto-check for updates (silent)
   try {
