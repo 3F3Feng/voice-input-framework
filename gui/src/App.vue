@@ -350,6 +350,17 @@
               </button>
             </div>
           </div>
+
+          <!-- 托盘建不成（Linux 缺 AppIndicator 等）时，托盘里的「退出」不存在，
+               关闭按钮又只是最小化——这里是唯一的退出口。 -->
+          <div class="s-section">
+            <div class="s-title">退出</div>
+            <div v-if="!trayOk" class="s-tip srv-problem">⚠ 系统托盘没能创建（原因见「日志」），关闭按钮只会最小化窗口；要退出请点下面的按钮。</div>
+            <div v-else class="s-tip">关闭按钮只是收起窗口，快捷键仍在后台工作；托盘菜单里也能退出。</div>
+            <div class="s-row" style="margin-top:4px">
+              <button class="s-btn" @click="quitApp">退出应用</button>
+            </div>
+          </div>
           </template>
         </div>
       </div>
@@ -655,6 +666,8 @@ const GUI_LOG_CAP = 500;
 const guiLogs = ref<GuiLogEntry[]>([]);
 /** 客户端日志文件路径。日志目录建不出来时为 null。 */
 const guiLogFile = ref<string | null>(null);
+/** 托盘建成了没有。建不成时关闭按钮只是最小化，「关于」里要给出退出口。 */
+const trayOk = ref(true);
 
 // ── 设置面板的标签页 ──
 // 以前是十个 s-section 在一个 400×500 的窗口里一路往下堆，找一个开关要滚三屏。
@@ -912,6 +925,9 @@ async function copyDiagnostics() {
     await navigator.clipboard.writeText(text);
     toast("诊断信息已复制，可以直接粘贴到问题反馈里", "ok");
   } catch (e) { toast(`复制失败: ${e}`, "err"); }
+}
+async function quitApp() {
+  try { await invoke("quit_app"); } catch (e) { toast(`退出失败: ${e}`, "err"); }
 }
 
 async function getConfig(): Promise<VoiceInputConfig> {
@@ -1767,6 +1783,12 @@ function clearResult() { result.value = ""; }
 // 打开设置面板时重新查一次:用户可能刚在系统设置里改过授权
 watch(showSettings, open => { if (open) refreshPermissions(); });
 
+// 托盘里的状态行跟着头部走。窗口藏着的时候，托盘是用户唯一能看状态的地方。
+const trayStatusText = computed(() =>
+  connected.value ? `● 已连接 · ${currentModelName.value || "模型未知"}`
+    : connecting.value ? "○ 连接中…" : "○ 未连接");
+watch(trayStatusText, text => { invoke("set_tray_status", { text }).catch(() => {}); }, { immediate: true });
+
 // 连接状态跟着观测到的服务健康走,而不是散在各个调用点上手动置 true / false。
 //
 // 只认「状态变了」的那一下,不是每个轮询 tick 都试:服务真起不来的时候,后者
@@ -1788,6 +1810,7 @@ watch(sttState, (next, prev) => {
 onMounted(async () => {
   // 最先做：后面每一步的 toast 都要排在启动日志后面，而不是被补拉的缓冲插到前头。
   await initGuiLogs();
+  try { trayOk.value = await invoke<boolean>("tray_available"); } catch {}
   try { build.value = await invoke<{ version: string; build_id: string; built_at: string }>("get_build_info"); }
   catch (e) { console.error("get_build_info error:", e); }
   await loadConfig();
@@ -1833,7 +1856,10 @@ onMounted(async () => {
     processingMs.value = 0;
     processingTimerInterval = setInterval(() => { processingMs.value += 100; }, 100);
   });
-  listen("tray-check-update", () => { showSettings.value = true; doCheckUpdate(); });
+  // 托盘菜单里的「检查更新」「设置」。以前前端听着 tray-check-update，却没有任何地方发它。
+  // 检查结果显示在「关于」页，得切过去，不然用户看到的是一个跟更新无关的页面。
+  listen("tray-check-update", () => { showSettings.value = true; tab.value = "about"; doCheckUpdate(); });
+  listen("tray-open-settings", () => { showSettings.value = true; });
 
   // 后台每 6 小时检查一次更新。启动时的那一次在本函数末尾(静默的那次),
   // 以前这里还有一个 30 秒后的,同一次启动要查两遍。

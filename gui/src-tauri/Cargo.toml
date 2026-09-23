@@ -20,6 +20,9 @@ tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
 # 双开 = 两套全局快捷键监听,按一次录两遍。第二个实例只负责把第一个的窗口叫出来。
 tauri-plugin-single-instance = "2"
+# 托盘「复制最近一条结果」:窗口藏着时 webview 的 navigator.clipboard 不可靠,
+# 只能从 Rust 侧写剪贴板。
+tauri-plugin-clipboard-manager = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

@@ -260,6 +260,7 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
                     *status = String::new();
                 }
                 indicator::hide_later(&app_handle, std::time::Duration::from_millis(500)).await;
+                tray::remember_result(&app_handle, &text);
                 let _ = app_handle.emit("transcribe-done", text);
             }
             Err(e) => {
@@ -990,6 +991,28 @@ async fn detect_local_server() -> Result<server_manager::DetectResult, String> {
 
 // ── 应用外壳:托盘、诊断、退出 ──
 
+/// 前端按连接状态更新托盘里的状态行(已连接 · 模型 / 连接中 / 未连接)。
+/// 状态只有前端知道得全(连接重试循环在那边),所以由它来推。
+#[tauri::command]
+async fn set_tray_status(app: tauri::AppHandle, text: String) -> Result<(), String> {
+    tray::set_status(&app, &text);
+    Ok(())
+}
+
+/// 托盘有没有建成。建不成时前端要告诉用户:关窗只是最小化,退出在「关于」里。
+#[tauri::command]
+async fn tray_available() -> Result<bool, String> {
+    Ok(tray::available())
+}
+
+/// 从界面退出。托盘建不成(典型:Linux 缺 AppIndicator)时,托盘菜单里那个
+/// 「退出」根本不存在,关窗按钮又只是最小化——没有这个按钮就退不出去。
+#[tauri::command]
+async fn quit_app(app: tauri::AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
+}
+
 /// 「复制诊断信息」的内容:版本、构建、系统、连接方式、日志文件位置和最近的日志。
 /// 用户报问题时一键粘过来,不用我们再一条条问「什么版本、什么系统」。
 #[tauri::command]
@@ -1003,7 +1026,7 @@ async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     let skip = snap.lines.len().saturating_sub(200);
     let tail: Vec<&str> = snap.lines[skip..].iter().map(|l| l.text.as_str()).collect();
     Ok(format!(
-        "Voice Input v{} · build {} · {}\n系统: {} {}\n连接: {:?} {}\n日志文件: {}\n\n── 最近 {} 行客户端日志 ──\n{}\n",
+        "Voice Input v{} · build {} · {}\n系统: {} {}\n连接: {:?} {}\n托盘: {}\n日志文件: {}\n\n── 最近 {} 行客户端日志 ──\n{}\n",
         build.version,
         build.build_id,
         build.built_at,
@@ -1011,6 +1034,7 @@ async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
         std::env::consts::ARCH,
         mode,
         stt_url,
+        if tray::available() { "正常" } else { "不可用" },
         snap.file.as_deref().unwrap_or("(未创建)"),
         tail.len(),
         tail.join("\n")
@@ -1034,6 +1058,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
@@ -1048,8 +1073,9 @@ pub fn run() {
             // 且层级提到 25,isOnActiveSpace 在全屏场景下仍然是 false。
             // accessory 应用则不受此限制。
             //
-            // 代价:Dock 图标和应用菜单栏消失。本应用由快捷键 + 托盘驱动
-            // (ui.use_tray 默认开启),主窗口通过托盘菜单打开,因此代价可接受。
+            // 代价:Dock 图标和应用菜单栏消失。本应用由快捷键 + 托盘驱动,
+            // 主窗口通过托盘菜单打开,因此代价可接受。托盘建不成时的退路见下面
+            // `tray::setup` 那一段。
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
@@ -1114,7 +1140,14 @@ pub fn run() {
                 build.built_at
             );
 
-            let _ = tray::setup(app);
+            // 托盘建不成(Linux GNOME 缺 AppIndicator 等)以前被 `let _` 吞掉:
+            // 再加上「启动时最小化」和「关窗只是隐藏」,应用就既看不见也退不出。
+            if let Err(e) = tray::setup(app) {
+                log_error!(
+                    "[tray] 系统托盘创建失败({}):主窗口不会被隐藏,关闭按钮改为最小化;退出请用「设置 → 关于 → 退出应用」",
+                    e
+                );
+            }
 
             // 启动时只查询三项权限并记录,不一次性把三个弹窗全甩给用户。
             // 唯一在启动时主动申请的是「输入监控」——全局快捷键监听器马上就要
@@ -1180,7 +1213,7 @@ pub fn run() {
                 }
             }
 
-            if start_minimized {
+            if start_minimized && tray::available() {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
@@ -1191,8 +1224,8 @@ pub fn run() {
                 show_main_window(app.handle());
             }
 
-            // 标题栏上的关闭按钮只藏窗口,不退应用;退出只有托盘菜单里的「退出」
-            // 一条路。
+            // 标题栏上的关闭按钮只藏窗口,不退应用;退出走托盘菜单里的「退出」。
+            // 托盘没建成时藏起来就再也找不回来了,所以改成最小化(任务栏里还在)。
             //
             // `prevent_close()` 这一句是关键:少了它,下面 `hide()` 藏起来的窗口
             // 紧接着还是会被真正关掉,而主窗口一关整个应用就跟着退了——用户点个
@@ -1203,7 +1236,11 @@ pub fn run() {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         hotkey::reset_state();
-                        let _ = win.hide();
+                        if tray::available() {
+                            let _ = win.hide();
+                        } else {
+                            let _ = win.minimize();
+                        }
                     }
                 });
             }
@@ -1251,6 +1288,9 @@ pub fn run() {
             log::get_gui_logs,
             log::open_log_dir,
             get_diagnostics,
+            set_tray_status,
+            tray_available,
+            quit_app,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
