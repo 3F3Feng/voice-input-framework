@@ -33,6 +33,7 @@ const PACKAGE_ORDER: &[&str] = &[
     "torch",
     "mlx_audio",
     "mlx_whisper",
+    "llama_cpp",
     "mlx",
 ];
 
@@ -76,6 +77,8 @@ for n in names:
     out["packages"][n] = probe(n)
 
 if not out["apple_silicon"]:
+    # LLM 后处理在非 Apple 平台走 llama.cpp(可选,不装只是后处理用不了)
+    out["packages"]["llama_cpp"] = probe("llama_cpp")
     try:
         import importlib.util
         if importlib.util.find_spec("mlx") is not None:
@@ -440,6 +443,27 @@ fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
     // 非 Apple 平台上装了 mlx:pyproject 用平台 marker 把它排除掉了,出现在这里
     // 多半是照着旧的 requirements-stt.txt 装的。Linux x86_64 的 mlx wheel 是残的,
     // 一 import 就报 libmlx.so 找不到。它不妨碍非 MLX 模型,所以只算 warn。
+    // llama.cpp 是可选的:只有非 Apple 平台的 LLM 后处理要它,语音识别本身不受影响。
+    if name == "llama_cpp" {
+        return if pkg.ok {
+            item(&id, "llama_cpp", Ok, format!("{version}(LLM 后处理)"), None)
+        } else {
+            item(
+                &id,
+                "llama_cpp",
+                Warn,
+                "没装:LLM 后处理用不了(语音识别不受影响)".to_string(),
+                Some(if cfg!(target_os = "windows") {
+                    "要 LLM 后处理的话运行 scripts\\setup-env.ps1 -Llm(需要 CMake 和 C++ 编译器)"
+                        .to_string()
+                } else {
+                    "要 LLM 后处理的话运行 scripts/setup-env.sh --llm(需要 CMake 和 C++ 编译器)"
+                        .to_string()
+                }),
+            )
+        };
+    }
+
     if name == "mlx" {
         return if pkg.ok {
             item(&id, "mlx", Ok, format!("{version}(这个平台上用不到)"), None)
@@ -749,6 +773,20 @@ mod tests {
         let m = get(&r, "pkg:mlx");
         assert_eq!(m.status, CheckStatus::Warn);
         assert!(m.detail.contains("libmlx.so"));
+    }
+
+    #[test]
+    fn missing_llama_cpp_is_only_a_warning() {
+        let mut p = healthy_probe();
+        p.packages.insert(
+            "llama_cpp".into(),
+            pkg_err("ModuleNotFoundError: No module named 'llama_cpp'"),
+        );
+        let r = build_report(input(ProbeOutcome::Ran(p)));
+        assert!(r.ok, "llama.cpp 是可选的,缺了不该判整体失败");
+        let l = get(&r, "pkg:llama_cpp");
+        assert_eq!(l.status, CheckStatus::Warn);
+        assert!(l.fix.as_deref().unwrap().contains("setup-env"));
     }
 
     #[test]
