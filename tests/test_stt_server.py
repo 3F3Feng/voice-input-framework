@@ -529,6 +529,41 @@ class TestLLMProxyError:
             assert "llm_error" in msg
             assert msg["llm_error"] == want
 
+    def test_ws_ready_does_not_wait_for_llm_health(self, monkeypatch):
+        """ready 消息不再先同步问一次 LLM /health(R29):LLM 卡住也不拖慢每句话"""
+        import asyncio
+        import json
+        import time
+
+        from fastapi.testclient import TestClient
+
+        import services.stt_server as srv
+
+        calls = []
+
+        async def slow_refresh():
+            calls.append(1)
+            await asyncio.sleep(2)  # 模拟卡住的 LLM
+            srv._llm_model_cache["refreshing"] = False
+
+        monkeypatch.setattr(srv, "_refresh_llm_model", slow_refresh)
+        monkeypatch.setattr(srv, "LLM_SUPPORTED", True)
+        monkeypatch.setattr(srv, "LLM_ENABLED", True)
+        monkeypatch.setitem(srv._llm_model_cache, "model", "Qwen3.5-2B-OptiQ")
+        monkeypatch.setitem(srv._llm_model_cache, "at", float("-inf"))
+        monkeypatch.setitem(srv._llm_model_cache, "refreshing", False)
+
+        started = time.monotonic()
+        with TestClient(srv.app).websocket_connect("/ws/stream") as ws:
+            ready = json.loads(ws.receive_text())
+            elapsed = time.monotonic() - started
+            ws.send_text(json.dumps({"type": "end"}))
+        assert ready["type"] == "ready"
+        assert ready["llm_enabled"] is True
+        assert ready["llm_model"] == "Qwen3.5-2B-OptiQ"  # 字段照旧,用缓存的值
+        assert elapsed < 1.5, f"ready 等了 {elapsed:.1f} 秒"
+        assert calls == [1]  # 缓存过期时在后台刷新一次
+
     def test_unsupported_platform_cannot_enable_llm(self, monkeypatch):
         """非 Apple 平台:开关报不支持和原因,打开返回 409,不落盘(F17)"""
         from fastapi.testclient import TestClient

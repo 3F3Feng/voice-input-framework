@@ -284,6 +284,41 @@ async def call_llm_server(text: str, request_id: str = "") -> tuple[str, float, 
     return data.get("text", text), latency, None
 
 
+# ============== LLM 模型名缓存(R29)==============
+#
+# WS 的 ready 消息要带 LLM 当前模型名,纯粹是给客户端看的信息。以前每条 WS
+# 连接(也就是每句话)都先同步问一次 LLM 的 /health 才发 ready:多一次往返,
+# LLM 卡住时要多等满 5 秒超时。现在只用缓存,过期了就在后台刷新,绝不挡在
+# 转写前面;刚启动还没问到时报 None,和以前 LLM 不可达时一样。
+LLM_MODEL_CACHE_TTL = 30.0
+_llm_model_cache: dict = {"model": None, "at": float("-inf"), "refreshing": False}
+
+
+async def _refresh_llm_model() -> None:
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
+            if resp.status_code == 200:
+                _llm_model_cache["model"] = resp.json().get("current_model")
+            else:
+                _llm_model_cache["model"] = None
+    except Exception as e:
+        logger.debug(f"Failed to get LLM status: {e}")
+        _llm_model_cache["model"] = None
+    finally:
+        _llm_model_cache["at"] = time.monotonic()
+        _llm_model_cache["refreshing"] = False
+
+
+def _cached_llm_model() -> str | None:
+    """LLM 当前模型名(可能稍旧)。过期就起一个后台刷新,本次照样立刻返回。"""
+    stale = time.monotonic() - _llm_model_cache["at"] > LLM_MODEL_CACHE_TTL
+    if stale and not _llm_model_cache["refreshing"]:
+        _llm_model_cache["refreshing"] = True
+        asyncio.get_running_loop().create_task(_refresh_llm_model())
+    return _llm_model_cache["model"]
+
+
 # ============== Diarization Engine ==============
 diarize_engine = DiarizationEngine() if DIARIZE_ENABLED else None
 
@@ -673,28 +708,17 @@ async def websocket_stream(websocket: WebSocket):
         except (RuntimeError, WebSocketDisconnect, Exception):  # noqa: BLE001
             return False
 
-    # 获取 LLM 服务器状态
-    llm_info = {"llm_enabled": llm_active(), "llm_model": None}
-    try:
-        async with httpx.AsyncClient() as client:
-            llm_resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
-            if llm_resp.status_code == 200:
-                llm_data = llm_resp.json()
-                llm_info = {
-                    "llm_enabled": llm_active(),
-                    "llm_model": llm_data.get("current_model", "unknown"),
-                }
-    except Exception as e:
-        logger.debug(f"Failed to get LLM status: {e}")
-
-    # 发送就绪消息
+    # 发送就绪消息。`llm_model` 用缓存的值,见 `_cached_llm_model`:以前这里每次
+    # 都先同步问一次 LLM 的 /health(5 秒超时)才发 ready——每句话多一次往返,
+    # LLM 卡住时说完话要多等 5 秒。
+    llm_enabled = llm_active()
     await _safe_send(
         {
             "type": "ready",
             "model": engine.current_model_name,
             "is_loading": engine.is_loading(),
-            "llm_enabled": llm_info["llm_enabled"],
-            "llm_model": llm_info["llm_model"],
+            "llm_enabled": llm_enabled,
+            "llm_model": _cached_llm_model() if llm_enabled else None,
         }
     )
 
