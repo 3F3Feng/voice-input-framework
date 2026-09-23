@@ -113,6 +113,11 @@
           <input class="s-input s-port" v-model.number="remotePort" type="number" min="1" max="65535" @keyup.enter="connectRemote" />
           <button class="s-btn" @click="connectRemote" :disabled="remoteBusy">{{ remoteBusy ? '…' : '连接' }}</button>
         </div>
+        <!-- 服务端设了 VIF_API_TOKEN 才需要(F20);空着 = 不带令牌。和设置页那一格存的是同一个值。 -->
+        <div class="s-row" style="margin-top:4px">
+          <input class="s-input" v-model="remoteToken" type="password" autocomplete="off"
+            placeholder="访问令牌(可选,服务端设了 VIF_API_TOKEN 才需要)" @keyup.enter="connectRemote" />
+        </div>
         <div v-if="remoteMsg" :class="['s-tip', remoteOk ? 'ob-good' : 's-err']">{{ remoteMsg }}</div>
         <div v-if="remoteOk && healthLine" class="s-tip">{{ healthLine }}</div>
         <div class="s-tip" style="margin-top:8px">本应用只连接,不管对端的进程;服务要在那边自己启动。</div>
@@ -210,7 +215,7 @@
       <span class="ob-spacer"></span>
       <span v-if="step === 'server' && !serverReady" class="s-tip ob-foot-tip">没就绪也可以先往下走</span>
       <button v-if="step === 'finish'" class="s-btn ob-primary" @click="finish" :disabled="finishing">开始使用</button>
-      <button v-else-if="step !== 'welcome'" class="s-btn ob-primary" @click="go(1)">下一步</button>
+      <button v-else class="s-btn ob-primary" @click="go(1)">下一步</button>
     </footer>
   </div>
 </template>
@@ -233,7 +238,7 @@ interface LocalCfg {
   stt_model: string | null; llm_model: string | null; auto_start: boolean; hf_endpoint?: string | null;
 }
 interface Cfg {
-  server: { host: string; port: number; mode: ServerMode; local: LocalCfg };
+  server: { host: string; port: number; mode: ServerMode; local: LocalCfg; token?: string | null };
   hotkey: { key: string; toggle?: boolean };
   ui: { auto_input?: boolean; input_method?: InputMethod; output_choice_made?: boolean; onboarding_done?: boolean };
   [k: string]: unknown;
@@ -435,7 +440,12 @@ async function maybeStartLlm() {
     llmNote.value = "LLM 后处理服务已启动(加载模型要几秒)。";
   } catch (e) { llmNote.value = `LLM 后处理服务没起来:${e}(不影响识别,可以在设置里关掉后处理)`; }
 }
-watch(sttState, s => { if (s === "running") void maybeStartLlm(); });
+watch(sttState, s => {
+  if (s !== "running") return;
+  // 「已启动,正在加载模型...」是点下去那一刻的话,跑起来之后留着就是在说反话。
+  if (!startErr.value) startMsg.value = "";
+  void maybeStartLlm();
+});
 
 // 本机这一步开着时轮询服务状态:「启动中 → 运行中」和下载进度要看得见。
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -448,6 +458,7 @@ function syncPolling() {
 // ── ② 远程 ──
 const remoteHost = ref("");
 const remotePort = ref(6544);
+const remoteToken = ref("");
 const remoteBusy = ref(false);
 const remoteMsg = ref("");
 const remoteOk = ref(false);
@@ -456,6 +467,7 @@ async function enterRemote() {
     const c = await getConfig();
     remoteHost.value = c.server.host;
     remotePort.value = c.server.port;
+    remoteToken.value = c.server.token ?? "";
   } catch (e) { console.error("get_config:", e); }
   // 已经连着一个好的服务(老用户服务刚好断过一下又回来了)就直接说,不逼他再点一次。
   if (!remoteOk.value && health.value?.state === "ready") {
@@ -473,7 +485,8 @@ async function connectRemote() {
   remoteBusy.value = true;
   remoteMsg.value = "";
   try {
-    await invoke("set_server_host", { host: remoteHost.value.trim() || "localhost", port });
+    // 令牌照原样传(空串 = 清掉),和设置页的「连接」一致。
+    await invoke("set_server_host", { host: remoteHost.value.trim() || "localhost", port, token: remoteToken.value.trim() });
     const url = await invoke<string>("connect_effective_server");
     // 能拉到模型列表才算连上,和主界面的判断一致。
     const models = await invoke<unknown[]>("get_models");
