@@ -589,6 +589,82 @@ async fn get_llm_status(
 /// 再拨一次(那时 `start` 会直接采纳,一秒就成)。
 const LLM_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// 打开后处理时 LLM 超过 `LLM_READY_TIMEOUT` 还没加载完,后台最多再等多久。
+/// 首次使用要下载好几 GB,慢网下十分钟不算离谱。
+const LLM_LATE_READY_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// 「还在加载」这类返回的固定开头,前端据此显示成提示而不是错误。
+pub(crate) const LLM_STILL_LOADING: &str = "LLM 服务还在加载模型";
+
+/// 后处理开关的操作代数,见 `set_llm_enabled`。
+static LLM_TOGGLE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 打开后处理超时之后,在后台接着等 LLM 服务。
+///
+/// - 等到了:替用户把后处理开上,通知前端(`llm-enabled-late`)把开关拨上;
+/// - 加载失败 / 等太久:把刚拉起的进程收回去(只收自己拉起的),通知前端原因;
+/// - 用户中途又拨了开关:这一次作废,什么都不做。
+async fn finish_llm_enable_late(
+    app: tauri::AppHandle,
+    servers: std::sync::Arc<Mutex<server_manager::ServerManager>>,
+    cfg: config::ServerConfig,
+    host: String,
+    gen: u64,
+) {
+    let stale = || LLM_TOGGLE_GEN.load(std::sync::atomic::Ordering::SeqCst) != gen;
+    let started = std::time::Instant::now();
+    let outcome = loop {
+        if stale() {
+            return;
+        }
+        match server_manager::wait_ready(
+            &cfg,
+            server_manager::ServerKind::Llm,
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        {
+            server_manager::Readiness::Ready => break Ok(()),
+            server_manager::Readiness::Failed(reason) => {
+                break Err(format!("LLM 模型加载失败:{}", reason))
+            }
+            server_manager::Readiness::TimedOut if started.elapsed() >= LLM_LATE_READY_LIMIT => {
+                break Err(format!(
+                    "LLM 服务加载超过 {} 分钟仍未就绪,已停止",
+                    LLM_LATE_READY_LIMIT.as_secs() / 60
+                ))
+            }
+            server_manager::Readiness::TimedOut => {}
+        }
+    };
+    if stale() {
+        return;
+    }
+    let outcome = match outcome {
+        Ok(()) => stt::SttClient::new(&host).set_llm_enabled(true).await,
+        Err(e) => Err(e),
+    };
+    match outcome {
+        Ok(()) => {
+            let state = app.state::<AppState>();
+            cache_llm_enabled(&app, &state, true);
+            log_info!("[llm] LLM 服务加载完成,后处理已自动开启");
+            let _ = app.emit(
+                "llm-enabled-late",
+                serde_json::json!({ "ok": true, "message": "LLM 服务加载好了,后处理已开启" }),
+            );
+        }
+        Err(e) => {
+            rollback_llm_start(&servers, &cfg).await;
+            log_error!("[llm] {}", e);
+            let _ = app.emit(
+                "llm-enabled-late",
+                serde_json::json!({ "ok": false, "message": e }),
+            );
+        }
+    }
+}
+
 /// 自动启动后等 STT 就绪的上限,只用于开关对账。MLX 首次加载模型实测 10–30 秒,
 /// 给得宽一点:等不到只是跳过对账,不影响任何别的事。
 const STT_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
@@ -666,6 +742,8 @@ async fn set_llm_enabled(
     let local_managed = cfg.mode == config::ServerMode::Local;
     let servers = state.servers.clone();
     let mut notes: Vec<String> = Vec::new();
+    // 每拨一次开关换一代,让还在后台等「晚到的就绪」的上一次操作知道自己作废了。
+    let my_gen = LLM_TOGGLE_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
 
     if enabled {
         // 不支持的平台先拦下来,别去拉起一个注定加载失败的 LLM 进程(F17)。
@@ -699,8 +777,19 @@ async fn set_llm_enabled(
                     return Err(format!("LLM 模型加载失败,后处理未开启:{}", reason));
                 }
                 server_manager::Readiness::TimedOut => {
+                    // 以前到这里就撂下不管:开关拨回「关」,进程接着加载,加载完了也没人
+                    // 去开后处理、也没人停它,几个 G 的模型白占到应用退出。现在后台接着等,
+                    // 好了就替用户把后处理开上,失败或等太久就把进程收回去。
+                    tauri::async_runtime::spawn(finish_llm_enable_late(
+                        app.clone(),
+                        servers.clone(),
+                        cfg.clone(),
+                        host.clone(),
+                        my_gen,
+                    ));
                     return Err(format!(
-                        "LLM 服务还在加载模型(已等 {} 秒),后处理暂未开启。等「服务器」面板显示「运行中」后再打开这个开关即可。",
+                        "{}(已等 {} 秒),加载好后会自动开启后处理。",
+                        LLM_STILL_LOADING,
                         LLM_READY_TIMEOUT.as_secs()
                     ));
                 }

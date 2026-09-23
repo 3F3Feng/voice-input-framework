@@ -1673,7 +1673,9 @@ async function toggleLlm() {
     toast(msg || `LLM ${want ? '已启用' : '已禁用'}`, "ok");
   } catch (e) {
     llmEnabled.value = !want;
-    toast(`${e}`, "err");
+    // 「还在加载」不是失败:后端会在后台接着等,好了自动开(llm-enabled-late)。
+    // 开头与 lib.rs 的 LLM_STILL_LOADING 一致。
+    toast(`${e}`, `${e}`.startsWith("LLM 服务还在加载模型") ? "info" : "err");
   }
   llmToggling.value = false;
   // 后端在返回成功之前已经等到 LLM 服务能应答了,这时候列表一定拉得到。
@@ -2105,6 +2107,17 @@ onMounted(async () => {
     loading.value = true;
     processingMs.value = 0;
     processingTimerInterval = setInterval(() => { processingMs.value += 100; }, 100);
+  });
+  // 打开后处理时 LLM 加载超过 30 秒:后端在后台接着等,这里收结果。
+  listen<{ ok: boolean; message: string }>("llm-enabled-late", async e => {
+    if (e.payload.ok) {
+      llmEnabled.value = true;
+      toast(e.payload.message, "ok");
+      await loadLlmModels();
+    } else {
+      toast(e.payload.message, "err");
+    }
+    if (serverMode.value === "local") await refreshServers();
   });
   // 录音中按了 Esc:这一段不要了。收起录音状态,不进入「识别中」。
   listen("recording-cancelled", () => {
