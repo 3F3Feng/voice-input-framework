@@ -1023,8 +1023,6 @@ function toast(msg: string, type = "info", log = true) {
 // 光听事件也收不到，所以挂载时先补拉 Rust 的缓冲。
 const toGuiLog = (l: RustLogLine): GuiLogEntry =>
   ({ msg: l.text, level: l.level === "ERROR" ? "err" : l.level === "WARN" ? "warn" : "info", seq: l.seq });
-/** 目前见过的最大 Rust 日志序号。用来判断「某个动作之后有没有冒出新的错误」。 */
-const lastRustLogSeq = () => guiLogs.value.reduce((m, l) => Math.max(m, l.seq ?? 0), 0);
 
 async function initGuiLogs() {
   try {
@@ -1169,18 +1167,14 @@ watch(() => perms.value?.input_monitoring, async (next, prev) => {
 });
 
 async function reviveHotkey() {
-  const mark = lastRustLogSeq();
   try {
     // 用已保存的那个快捷键：输入框里可能是录了还没点「应用」的新组合。
     const key = (await getConfig()).hotkey.key || defaultHotkey;
+    // register_hotkey 现在会等监听器报告起没起来：建不成(常见于刚授权、还没重启)
+    // 直接返回原因,不用再去日志里找错误行猜。
     await invoke("register_hotkey", { shortcut: key });
-  } catch (e) { toast(`快捷键重新注册失败: ${e}`, "err"); return; }
-  // 监听器在后台线程里建，建不成只会打一条 [hotkey] 错误日志，命令本身照样返回成功。
-  // 等它一下再看日志里有没有冒出新的错误。
-  await sleep(1500);
-  const failed = guiLogs.value.some(l => (l.seq ?? 0) > mark && l.level === "err" && l.msg.includes("[hotkey]"));
-  if (failed) toast("输入监控已授权，但快捷键监听还是没能建立；请退出并重新打开本应用", "err");
-  else toast("输入监控已授权，快捷键已生效", "ok");
+    toast("输入监控已授权，快捷键已生效", "ok");
+  } catch (e) { toast(`${e}`, "err"); }
 }
 
 // 触发系统授权弹窗，最多等 30 秒（Rust 端轮询，超时返回当前状态）

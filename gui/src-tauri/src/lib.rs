@@ -834,7 +834,26 @@ async fn register_hotkey(
     let keys = hotkey::parse_hotkey_checked(&shortcut, distinguish)?;
     hotkey::start_listener(app.clone(), keys);
     eprintln!("[hotkey] Re-registered: {}", shortcut);
-    Ok(())
+    wait_listener_started().await
+}
+
+/// 等新监听器报告起没起来(见 `hotkey::start_status`)。
+///
+/// 以前注册只管 spawn:macOS 上缺「输入监控」时 CGEventTap 建不起来,快捷键是哑的,
+/// 可 `register_hotkey` 照样说成功。一秒内没报上来就当作成功(不拿「不知道」去吓用户)。
+async fn wait_listener_started() -> Result<(), String> {
+    let started = std::time::Instant::now();
+    loop {
+        match hotkey::start_status() {
+            Some(Err(e)) => return Err(e),
+            // Linux 的 rdev 只能先乐观报成功,真失败会在几毫秒内改口,多看一小会儿。
+            Some(Ok(())) if !cfg!(target_os = "linux") || started.elapsed().as_millis() >= 300 => {
+                return Ok(())
+            }
+            _ if started.elapsed().as_secs() >= 1 => return Ok(()),
+            _ => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+        }
+    }
 }
 
 /// 只校验、不注册。录制一结束前端就拿它问一次,用的是和注册同一个解析器:

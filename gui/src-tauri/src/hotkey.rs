@@ -76,6 +76,30 @@ fn cancel_recording(app: &tauri::AppHandle) {
     let _ = app.emit("recording-cancelled", ());
 }
 
+/// 最近一次启动的监听器到底起没起来:(代数, 结果)。
+///
+/// 监听器跑在后台线程上,`start_listener` 以前只管 spawn、不知道结果:macOS 上没有
+/// 「输入监控」权限时 CGEventTap 建不起来,快捷键就是哑的,而 `register_hotkey` 照样
+/// 返回成功。设置页只好等 1.5 秒去日志里找错误行来猜。
+static START_STATUS: std::sync::Mutex<Option<(u64, Result<(), String>)>> =
+    std::sync::Mutex::new(None);
+
+fn report_start(gen: u64, result: Result<(), String>) {
+    if let Ok(mut st) = START_STATUS.lock() {
+        *st = Some((gen, result));
+    }
+}
+
+/// 当前这一代监听器的启动结果;还没报上来时为 None。
+pub fn start_status() -> Option<Result<(), String>> {
+    let gen = LISTENER_GEN.load(Ordering::SeqCst);
+    START_STATUS.lock().ok().and_then(|st| {
+        st.as_ref()
+            .filter(|(g, _)| *g == gen)
+            .map(|(_, r)| r.clone())
+    })
+}
+
 pub fn set_suspended(suspended: bool) {
     SUSPENDED.store(suspended, Ordering::SeqCst);
 }
@@ -482,6 +506,8 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                 "[hotkey] Starting GetAsyncKeyState poller for {} keys",
                 hotkey_keys.len()
             );
+            // 轮询不需要任何权限,线程起来就算成功。
+            report_start(my_gen, Ok(()));
 
             let recording = Arc::new(AtomicBool::new(false));
 
@@ -855,22 +881,25 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
         .name("hotkey-listener".into())
         .spawn(move || {
             let mut matcher = HotkeyMatcher::new(hotkey_keys.clone());
-            mac_tap::run(move |key, is_press| {
-                // A re-registration spawns a new tap; this (now stale) one must
-                // stop, or both taps fire and recording starts twice.
-                if LISTENER_GEN.load(Ordering::SeqCst) != my_gen {
-                    eprintln!("[hotkey] Tap gen {} superseded, stopping runloop", my_gen);
-                    return mac_tap::TapAction::Stop;
-                }
-                if let Some(cmd) = matcher
-                    .on_change(key, is_press)
-                    .filter(|c| !(suspended() && matches!(c, HotkeyCmd::Press)))
-                {
-                    // 开始 / 结束录音的事件由 worker 发(切换式录音里松开不等于结束)。
-                    let _ = cmd_tx.send(cmd);
-                }
-                mac_tap::TapAction::Continue
-            });
+            mac_tap::run(
+                move |key, is_press| {
+                    // A re-registration spawns a new tap; this (now stale) one must
+                    // stop, or both taps fire and recording starts twice.
+                    if LISTENER_GEN.load(Ordering::SeqCst) != my_gen {
+                        eprintln!("[hotkey] Tap gen {} superseded, stopping runloop", my_gen);
+                        return mac_tap::TapAction::Stop;
+                    }
+                    if let Some(cmd) = matcher
+                        .on_change(key, is_press)
+                        .filter(|c| !(suspended() && matches!(c, HotkeyCmd::Press)))
+                    {
+                        // 开始 / 结束录音的事件由 worker 发(切换式录音里松开不等于结束)。
+                        let _ = cmd_tx.send(cmd);
+                    }
+                    mac_tap::TapAction::Continue
+                },
+                move |r| report_start(my_gen, r),
+            );
         });
 }
 
@@ -1026,7 +1055,7 @@ mod mac_tap {
     /// hit the macOS 15+ TSMGetInputSourceProperty assert crash that rdev
     /// does. Requires Input Monitoring / Accessibility permission;
     /// otherwise CGEventTapCreate fails and we log and return.
-    pub fn run<F>(handler: F)
+    pub fn run<F>(handler: F, on_ready: impl FnOnce(Result<(), String>))
     where
         F: FnMut(HotkeyKey, bool) -> TapAction + 'static,
     {
@@ -1080,18 +1109,30 @@ mod mac_tap {
                         // kCFRunLoopCommonModes is an extern static — reading it is unsafe
                         current.add_source(&source, unsafe { kCFRunLoopCommonModes });
                         eprintln!("[hotkey] CGEventTap listening");
+                        on_ready(Ok(()));
                         CFRunLoop::run_current();
                     }
-                    Err(_) => eprintln!("[hotkey] create_runloop_source failed"),
+                    Err(_) => {
+                        eprintln!("[hotkey] create_runloop_source failed");
+                        on_ready(Err(
+                            "全局按键监听没能启动(create_runloop_source 失败)".into()
+                        ));
+                    }
                 }
             }
             Err(_) => {
                 // 几乎总是因为缺「输入监控」权限,把当前状态一并打出来,
                 // 免得用户只看到一句语焉不详的失败。
+                let perm = crate::permissions::input_monitoring_status();
                 crate::log_error!(
                     "[hotkey] CGEventTapCreate 失败,全局快捷键不可用(输入监控权限={:?})",
-                    crate::permissions::input_monitoring_status()
+                    perm
                 );
+                on_ready(Err(if perm.is_granted() {
+                    "全局按键监听没能启动。刚授予的「输入监控」权限通常要重启本应用才生效。".into()
+                } else {
+                    "全局按键监听没能启动:缺少「输入监控」权限。请在「设置 → 权限」里授权。".into()
+                }));
             }
         }
     }
@@ -1126,6 +1167,9 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                     kind
                 );
             }
+            // rdev::listen 起来之后就一直阻塞,没法在「起来了」那一刻报成功;先乐观地报
+            // 成功,真失败时(实测拿不到显示服务时几毫秒内就返回 Err)再改成失败。
+            report_start(my_gen, Ok(()));
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 rdev::listen(move |event: rdev::Event| {
                     let (key, is_press) = match event.event_type {
@@ -1144,6 +1188,12 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                     }
                 })
             }));
+            if !matches!(result, Ok(Ok(()))) {
+                report_start(
+                    my_gen,
+                    Err("全局按键监听没能启动(Linux 上常见原因:Wayland 会话,或当前用户不在 input 组),详见日志".into()),
+                );
+            }
             match result {
                 Ok(Err(e)) => crate::log_error!(
                     "[hotkey] 全局按键监听启动失败,快捷键不可用: {:?}。\
