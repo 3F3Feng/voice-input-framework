@@ -53,6 +53,12 @@ dependencies = [
     # (老环境是手工装的),换成 uv 建环境后就没了:选 whisper_mlx 会在加载时报
     # `No module named 'mlx_whisper'`。
     "mlx-whisper>=0.4.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # Apple Silicon 上的 torch 以前是被 mlx-whisper 顺带拉进来的隐式依赖,可
+    # services/device.py 的 detect() 每次加载模型(包括纯 MLX 的模型)都要
+    # `import torch`。哪天 mlx-whisper 不再依赖 torch,Mac 上所有模型都加载不了。
+    # 别的平台的 torch 由下面的硬件 extra 指定来源,这里只管 Apple Silicon
+    # (PyPI 上的默认 torch 自带 MPS)。
+    "torch>=2.2.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 # ── 按硬件选 torch 的来源 ──
