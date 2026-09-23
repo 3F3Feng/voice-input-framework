@@ -39,6 +39,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from services.diarize_engine import DIARIZE_ENABLED, DiarizationEngine
+from services import model_catalog
 from services.audio_io import UnsupportedAudio, decode_to_pcm16k
 from services.stt_engine import (
     HealthStatus,
@@ -314,13 +315,13 @@ async def health_check():
 async def list_models():
     """获取可用 STT 模型列表"""
     models = []
-    for name, info in STTEngine.AVAILABLE_MODELS.items():
+    for name in STTEngine.AVAILABLE_MODELS:
         models.append(
             ModelInfo(
                 name=name,
-                description=f"STT model: {info['model_id']}",
                 is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
                 is_default=(name == engine.default_model),
+                **model_catalog.describe(name),
             )
         )
     return models

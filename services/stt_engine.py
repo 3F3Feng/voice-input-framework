@@ -53,6 +53,12 @@ class ModelInfo(BaseModel):
     description: str = ""
     is_loaded: bool = False
     is_default: bool = False
+    #: 以下字段给界面用,见 services/model_catalog.py
+    memory_gb: float | None = None
+    available: bool = True
+    unavailable_reason: str | None = None
+    downloaded: bool | None = None
+    recommended: bool = False
 
 
 class HealthStatus(BaseModel):
