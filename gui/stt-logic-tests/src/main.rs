@@ -70,10 +70,14 @@ fn stream_event_llm_start_json() {
 #[test]
 fn ws_url_derives_from_http() {
     let c = SttClient::new("http://localhost:6544");
-    let ws_url = c.stt_url.replace("http://", "ws://");
-    assert_eq!(ws_url, "ws://localhost:6544");
-    let url = format!("{}/ws/stream", ws_url);
-    assert_eq!(url, "ws://localhost:6544/ws/stream");
+    assert_eq!(stt::ws_base(&c.stt_url), "ws://localhost:6544");
+}
+
+#[test]
+fn ws_url_from_https_is_wss() {
+    // 以前只替换 "http://",https 地址原样交给 tungstenite:能列模型、转写必失败。
+    let c = SttClient::new("https://stt.example.com");
+    assert_eq!(stt::ws_base(&c.stt_url), "wss://stt.example.com");
 }
 
 // ── 错误消息字段解析(服务端发 error_message,旧代码读 message)──
@@ -141,4 +145,14 @@ fn proxy_error_body_is_a_failure_with_a_readable_message() {
         stt::server_message(&data),
         "LLM 模型切换失败:模型 X 加载失败"
     );
+}
+
+#[test]
+fn fastapi_detail_is_a_readable_message() {
+    // FastAPI 的 HTTPException 回 {"detail": ...}。/models/select 的 400/500 就是这种,
+    // 以前读不出来,又不看状态码,切换失败也提示「模型已切换」。
+    let data: serde_json::Value =
+        serde_json::from_str(r#"{"detail":"Unknown model: nope"}"#).unwrap();
+    assert!(stt::switch_failed(false, &data));
+    assert_eq!(stt::server_message(&data), "Unknown model: nope");
 }

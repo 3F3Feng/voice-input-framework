@@ -510,6 +510,18 @@ async def update_prompt(request: Request):
     raise HTTPException(status_code=500, detail="Failed to save prompt")
 
 
+@app.delete("/prompt")
+async def reset_prompt():
+    """恢复默认提示词:删掉用户保存的那份,返回默认内容。"""
+    try:
+        PROMPT_FILE.unlink(missing_ok=True)
+    except Exception as e:
+        logger.error(f"Failed to reset prompt file: {e}")
+        raise HTTPException(status_code=500, detail=f"恢复默认提示词失败:{e}") from e
+    logger.info("Prompt reset to default")
+    return {"prompt": DEFAULT_PROMPT}
+
+
 def main():
     """主函数"""
     from shared.version_check import check_python_version

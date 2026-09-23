@@ -127,7 +127,7 @@
                 {{ m.name }} {{ m.is_loaded ? '✓' : '' }}
               </option>
             </select>
-            <div v-if="sttLoading" class="s-loading">切换中...</div>
+            <div v-if="sttLoading" class="s-loading">{{ sttSwitchNote || '切换中...' }}</div>
           </div>
 
           <div class="s-section">
@@ -162,8 +162,9 @@
             <div class="s-title">提示词</div>
             <textarea class="s-textarea" v-model="promptText" rows="3" placeholder="LLM 后处理提示词..." />
             <div class="s-row" style="margin-top:4px">
-              <button class="s-btn" @click="loadPrompt" :disabled="promptLoading">加载</button>
-              <button class="s-btn" @click="savePrompt" :disabled="promptLoading">保存</button>
+              <button class="s-btn" @click="loadPrompt" :disabled="promptLoading">重新读取</button>
+              <button class="s-btn" @click="savePrompt" :disabled="promptLoading || !promptLoaded">保存</button>
+              <button class="s-btn" @click="resetPrompt" :disabled="promptLoading">恢复默认</button>
               <span v-if="promptStatus" class="s-tip">{{ promptStatus }}</span>
             </div>
           </div>
@@ -498,6 +499,11 @@ const sttLoading = ref(false);
 const llmLoading = ref(false);
 const promptLoading = ref(false);
 const promptStatus = ref("");
+/** 提示词框里的内容是不是从服务端读来的。没读到就不许保存:空框直接保存会
+ *  把服务端那份覆盖掉(以前打开设置时框是空的,要手点「加载」)。 */
+const promptLoaded = ref(false);
+/** 切换 STT 模型时的进度说明(服务端是后台加载,可能要下载几分钟)。 */
+const sttSwitchNote = ref("");
 
 const serverHost = ref("localhost");
 const serverPort = ref(6544);
@@ -1188,12 +1194,41 @@ async function loadLlmModels(): Promise<boolean> {
   } finally { llmModelsLoading.value = false; }
 }
 
+/**
+ * 切换 STT 模型。
+ *
+ * 服务端的 `/models/select` 只是「开始切换」:立即返回,后台加载(首次用某个模型
+ * 还要下载,可能几分钟)。以前这里一返回就弹「模型已切换」,头部也立刻换成新名字,
+ * 而那一刻模型根本还没加载完;加载失败时同样弹「已切换」。现在轮询到真正加载
+ * 完成才说成功,失败时把服务端的原因原样说出来(服务端会自动回退到原来的模型)。
+ */
 async function switchStt() {
-  if (!sttModel.value) return;
+  const name = sttModel.value;
+  if (!name) return;
   sttLoading.value = true;
-  // 失败原因要带上：光说「切换失败」，用户既不知道是模型没下全还是服务没起来。
-  try { await invoke<string>("switch_model", { name: sttModel.value }); toast("模型已切换", "ok"); } catch (e) { toast(`切换失败: ${e}`, "err"); }
+  sttSwitchNote.value = "";
+  const started = Date.now();
+  try {
+    await invoke<string>("switch_model", { name });
+    for (;;) {
+      const st = await invoke<{ is_loaded: boolean; is_loading: boolean; is_current: boolean; error: string | null }>(
+        "get_model_status", { name });
+      if (st.is_loaded) { toast(`已切换到 ${name}`, "ok"); break; }
+      if (st.error) throw `${st.error}(已回到原来的模型)`;
+      if (!st.is_current && !st.is_loading) throw "切换被中断(可能又选了别的模型)";
+      const secs = Math.round((Date.now() - started) / 1000);
+      sttSwitchNote.value = secs < 10
+        ? "正在加载模型…"
+        : `正在加载模型… ${secs} 秒(第一次用这个模型需要下载,可能要几分钟)`;
+      // 等太久就不在这里干等了,服务端会继续加载,头部状态会跟着变。
+      if (Date.now() - started > 15 * 60 * 1000) { toast("模型还在加载,完成后自动生效", "info"); break; }
+      await sleep(1500);
+    }
+  } catch (e) { toast(`切换失败: ${e}`, "err"); }
   sttLoading.value = false;
+  sttSwitchNote.value = "";
+  // 列表里的 ✓ 和下拉框的选中项都以服务端为准刷新一次(失败时会回到原模型)。
+  await loadModels();
 }
 async function switchLlm() {
   if (!llmModel.value) return;
@@ -1310,15 +1345,43 @@ async function applyHotkey() {
 // ── Prompt ──
 async function loadPrompt() {
   promptLoading.value = true;
-  try { promptText.value = await invoke<string>("get_llm_prompt"); promptStatus.value = "已加载"; } catch { promptStatus.value = "加载失败"; }
+  try {
+    promptText.value = await invoke<string>("get_llm_prompt");
+    promptLoaded.value = true;
+    promptStatus.value = "";
+  } catch (e) {
+    promptLoaded.value = false;
+    promptStatus.value = `读取失败:${e}`;
+  }
   promptLoading.value = false;
 }
 async function savePrompt() {
-  if (!promptText.value.trim()) return;
+  if (!promptText.value.trim()) { toast("提示词不能为空;想用默认的请点「恢复默认」", "err"); return; }
   promptLoading.value = true;
-  try { await invoke("save_llm_prompt", { text: promptText.value }); promptStatus.value = "已保存"; toast("提示词已保存", "ok"); } catch { promptStatus.value = "保存失败"; }
+  try {
+    await invoke("save_llm_prompt", { text: promptText.value });
+    promptStatus.value = "已保存";
+    toast("提示词已保存", "ok");
+  } catch (e) {
+    promptStatus.value = "保存失败";
+    toast(`${e}`, "err");
+  }
   promptLoading.value = false;
 }
+async function resetPrompt() {
+  promptLoading.value = true;
+  try {
+    promptText.value = await invoke<string>("reset_llm_prompt");
+    promptLoaded.value = true;
+    promptStatus.value = "已恢复默认";
+    toast("已恢复默认提示词", "ok");
+  } catch (e) { toast(`${e}`, "err"); }
+  promptLoading.value = false;
+}
+// 进「服务」页、且后处理开着时自动读一次提示词,不用再手点「加载」。
+watch([showSettings, tab, llmEnabled], ([open, t, on]) => {
+  if (open && t === "service" && on && !promptLoaded.value && !promptLoading.value) loadPrompt();
+});
 
 // ── Update ──
 async function doCheckUpdate() {
@@ -1380,9 +1443,11 @@ async function doInstallUpdate() {
 }
 
 // ── Result ──
-function copyResult() {
+async function copyResult() {
   if (!result.value) return;
-  navigator.clipboard.writeText(result.value);
+  // 以前不等结果,写剪贴板失败也显示「已复制」。
+  try { await navigator.clipboard.writeText(result.value); }
+  catch (e) { toast(`复制失败: ${e}`, "err"); return; }
   copyFeedback.value = true;
   toast("已复制", "ok");
   setTimeout(() => { copyFeedback.value = false; }, 2000);
@@ -1467,8 +1532,8 @@ onMounted(async () => {
   });
   listen("tray-check-update", () => { showSettings.value = true; doCheckUpdate(); });
 
-  // 后台定时检查更新（启动后延迟30秒，之后每6小时自动检查一次）
-  setTimeout(() => doCheckUpdate(), 30000);
+  // 后台每 6 小时检查一次更新。启动时的那一次在本函数末尾(静默的那次),
+  // 以前这里还有一个 30 秒后的,同一次启动要查两遍。
   setInterval(() => doCheckUpdate(), 6 * 60 * 60 * 1000);
 
   listen("transcribe-progress", (event) => {

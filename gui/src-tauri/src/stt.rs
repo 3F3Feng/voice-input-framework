@@ -4,6 +4,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -22,6 +23,9 @@ struct LlmModelsResponse {
     #[allow(dead_code)]
     enabled: Option<bool>,
 }
+
+/// 没录到任何音频时的错误。前端按这句话认出「没听到声音」,而不是当成故障。
+pub const NO_SPEECH: &str = "没有录到声音";
 
 /// Events emitted during streaming transcription
 #[derive(Debug, Clone, Serialize)]
@@ -49,7 +53,70 @@ pub(crate) fn server_message(data: &Value) -> &str {
     data["error_message"]
         .as_str()
         .or_else(|| data["message"].as_str())
+        // FastAPI 的 HTTPException 回的是 `{"detail": "..."}`。以前不认它,
+        // `/models/select` 的 400 / 500 解出来是空串,调用方又不看状态码,
+        // 于是切换失败也弹「模型已切换」。
+        .or_else(|| data["detail"].as_str())
         .unwrap_or("")
+}
+
+/// 把 STT 服务的 HTTP 地址换成对应的 WebSocket 地址。
+///
+/// 以前只替换 `http://`:远程填 `https://` 时原样交给 tungstenite,scheme 不认,
+/// 于是「能列出模型、一转写就失败」。
+pub(crate) fn ws_base(stt_url: &str) -> String {
+    if let Some(rest) = stt_url.strip_prefix("https://") {
+        format!("wss://{}", rest)
+    } else if let Some(rest) = stt_url.strip_prefix("http://") {
+        format!("ws://{}", rest)
+    } else {
+        stt_url.to_string()
+    }
+}
+
+/// 连接超时。服务不在时本机是立刻被拒;远程地址被丢包时,不设它要等系统的
+/// TCP 超时(几十秒),界面就一直停在「连接中」。
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// 普通查询(模型列表、开关、提示词)的总超时。
+const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
+/// 切换 LLM 模型要等 LLM 服务把模型加载完,STT 那头的转发自己等 30 秒,
+/// 这里比它多留一点,好让服务端写好的失败原因回得来。
+const LLM_SWITCH_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// 带超时的 HTTP 客户端。以前每处都是 `Client::new()` —— 默认**没有任何超时**,
+/// 服务卡住时请求会一直挂着,前端连接循环的「截止时间」形同虚设。
+fn http(timeout: Duration) -> Client {
+    Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(timeout)
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
+/// 请求没发出去 / 没等到回答时,给用户看的那句话。
+fn request_error(what: &str, e: reqwest::Error) -> String {
+    if e.is_timeout() {
+        format!("{}超时:服务没有应答", what)
+    } else if e.is_connect() {
+        format!("{}失败:连不上服务({})", what, e)
+    } else {
+        format!("{}失败:{}", what, e)
+    }
+}
+
+/// 非 2xx 就变成 Err,优先用服务端写好的原因。
+async fn ensure_ok(resp: reqwest::Response, what: &str) -> Result<Value, String> {
+    let status = resp.status();
+    let data: Value = resp.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        let msg = server_message(&data);
+        return Err(if msg.is_empty() {
+            format!("{}失败(HTTP {})", what, status.as_u16())
+        } else {
+            format!("{}失败:{}", what, msg)
+        });
+    }
+    Ok(data)
 }
 
 /// 模型切换是否失败。两种失败都要认:
@@ -85,29 +152,30 @@ impl SttClient {
         language: &str,
         event_tx: Option<mpsc::UnboundedSender<StreamEvent>>,
     ) -> Result<String, String> {
-        let ws_url = self.stt_url.replace("http://", "ws://");
-        let url = format!("{}/ws/stream", ws_url);
+        let url = format!("{}/ws/stream", ws_base(&self.stt_url));
 
-        let (mut ws, _) = connect_async(&url)
+        let (mut ws, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(&url))
             .await
-            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+            .map_err(|_| format!("连接 STT 服务超时({})", self.stt_url))?
+            .map_err(|e| format!("连不上 STT 服务({}):{}", self.stt_url, e))?;
 
-        match ws.next().await {
-            Some(Ok(Message::Text(json))) => {
-                let data: Value =
-                    serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
+        match tokio::time::timeout(QUERY_TIMEOUT, ws.next()).await {
+            Ok(Some(Ok(Message::Text(json)))) => {
+                let data: Value = serde_json::from_str(&json)
+                    .map_err(|e| format!("服务端消息解析失败: {}", e))?;
                 if data["type"] != "ready" {
-                    return Err(format!("Unexpected server message: {}", json));
+                    return Err(format!("服务端返回了意外的消息: {}", json));
                 }
                 eprintln!("[stt] Server ready, model: {}", data["model"]);
             }
-            _ => return Err("Expected text ready message".to_string()),
+            Err(_) => return Err("STT 服务没有应答(等待就绪消息超时)".to_string()),
+            _ => return Err("STT 服务没有发来就绪消息".to_string()),
         }
 
         let lang_msg = serde_json::json!({"type": "config", "language": language});
         SinkExt::send(&mut ws, Message::Text(lang_msg.to_string()))
             .await
-            .map_err(|e| format!("WebSocket send config failed: {}", e))?;
+            .map_err(|e| format!("发送识别配置失败: {}", e))?;
 
         // Spawn task to stream audio chunks
         let (audio_done_tx, audio_done_rx) = tokio::sync::oneshot::channel::<()>();
@@ -142,7 +210,7 @@ impl SttClient {
             let mut ws = ws_sender.lock().await;
             SinkExt::send(&mut *ws, Message::Text(r#"{"type":"end"}"#.into()))
                 .await
-                .map_err(|e| format!("WebSocket send end failed: {}", e))?;
+                .map_err(|e| format!("发送结束信号失败: {}", e))?;
         }
 
         // Receive result(s)
@@ -156,18 +224,18 @@ impl SttClient {
 
             let msg = match msg_result {
                 Ok(Some(Ok(m))) => m,
-                Ok(Some(Err(e))) => return Err(format!("WebSocket read failed: {}", e)),
+                Ok(Some(Err(e))) => return Err(format!("读取识别结果失败: {}", e)),
                 Ok(None) => break,
                 Err(_) => {
                     let _ = stream_task.await;
-                    return Err("Result timeout (5 min)".to_string());
+                    return Err("等待识别结果超时(5 分钟)".to_string());
                 }
             };
 
             match msg {
                 Message::Text(json) => {
-                    let data: Value =
-                        serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
+                    let data: Value = serde_json::from_str(&json)
+                        .map_err(|e| format!("服务端消息解析失败: {}", e))?;
                     let msg_type = data["type"].as_str().unwrap_or("");
                     match msg_type {
                         "stt_result" => {
@@ -215,7 +283,7 @@ impl SttClient {
                         "done" => {
                             let _ = stream_task.await;
                             return if final_text.is_empty() {
-                                Err("No speech detected".to_string())
+                                Err(NO_SPEECH.to_string())
                             } else {
                                 Ok(final_text)
                             };
@@ -224,7 +292,7 @@ impl SttClient {
                             let _ = stream_task.await;
                             let msg = server_message(&data);
                             return Err(if msg.is_empty() {
-                                "Unknown error".to_string()
+                                "未知错误".to_string()
                             } else {
                                 msg.to_string()
                             });
@@ -239,110 +307,28 @@ impl SttClient {
 
         let _ = stream_task.await;
         if final_text.is_empty() {
-            Err("Connection closed without result".to_string())
-        } else {
-            Ok(final_text)
-        }
-    }
-
-    /// Fallback: send entire audio as a single WebSocket message (batch mode).
-    pub async fn transcribe_ws(
-        &self,
-        audio_data: Vec<u8>,
-        language: &str,
-    ) -> Result<String, String> {
-        let ws_url = self.stt_url.replace("http://", "ws://");
-        let url = format!("{}/ws/stream", ws_url);
-        let (mut ws, _) = connect_async(&url)
-            .await
-            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
-
-        match ws.next().await {
-            Some(Ok(Message::Text(json))) => {
-                let data: Value =
-                    serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
-                if data["type"] != "ready" {
-                    return Err(format!("Unexpected server message: {}", json));
-                }
-            }
-            _ => return Err("Expected text ready message".to_string()),
-        }
-
-        let lang_msg = serde_json::json!({"type": "config", "language": language});
-        SinkExt::send(&mut ws, Message::Text(lang_msg.to_string()))
-            .await
-            .map_err(|e| format!("WebSocket send config failed: {}", e))?;
-
-        let pcm_data = if audio_data.len() > 44 && &audio_data[..4] == b"RIFF" {
-            &audio_data[44..]
-        } else {
-            &audio_data[..]
-        };
-        let b64 = base64::engine::general_purpose::STANDARD.encode(pcm_data);
-        let audio_msg = serde_json::json!({"type": "audio", "data": b64});
-        SinkExt::send(&mut ws, Message::Text(audio_msg.to_string()))
-            .await
-            .map_err(|e| format!("WebSocket send audio failed: {}", e))?;
-        SinkExt::send(&mut ws, Message::Text(r#"{"type":"end"}"#.into()))
-            .await
-            .map_err(|e| format!("WebSocket send end failed: {}", e))?;
-
-        let mut final_text = String::new();
-        while let Some(msg) = ws.next().await {
-            let msg = msg.map_err(|e| format!("WebSocket read failed: {}", e))?;
-            match msg {
-                Message::Text(json) => {
-                    let data: Value =
-                        serde_json::from_str(&json).map_err(|e| format!("JSON parse: {}", e))?;
-                    match data["type"].as_str().unwrap_or("") {
-                        "result" | "stt_result" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            if !text.is_empty() {
-                                final_text = text.to_string();
-                            }
-                            if data["type"].as_str().unwrap_or("") == "result" {
-                                return Ok(final_text);
-                            }
-                        }
-                        "done" => {
-                            return if final_text.is_empty() {
-                                Err("No speech detected".to_string())
-                            } else {
-                                Ok(final_text)
-                            }
-                        }
-                        "error" => {
-                            let msg = server_message(&data);
-                            return Err(if msg.is_empty() {
-                                "Unknown error".to_string()
-                            } else {
-                                msg.to_string()
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                Message::Close(_) => break,
-                _ => {}
-            }
-        }
-        if final_text.is_empty() {
-            Err("Connection closed without result".to_string())
+            Err("服务在返回结果前断开了连接".to_string())
         } else {
             Ok(final_text)
         }
     }
 
     // ── HTTP endpoints ──
+    //
+    // 每个请求都要看状态码。以前 `switch_stt_model` / `save_llm_prompt` /
+    // `set_llm_enabled` 只要 HTTP 往返成功就算成功:服务端回 400 / 502,界面照样
+    // 弹「模型已切换」「提示词已保存」。
 
     pub async fn get_stt_models(&self) -> Result<Vec<ModelInfo>, String> {
-        let client = Client::new();
-        let resp = client
+        let resp = http(QUERY_TIMEOUT)
             .get(format!("{}/models", self.stt_url))
             .send()
             .await
-            .map_err(|e| e.to_string())?;
-        let models: Vec<Value> = resp.json().await.map_err(|e| e.to_string())?;
+            .map_err(|e| request_error("获取模型列表", e))?;
+        let data = ensure_ok(resp, "获取模型列表").await?;
+        let models = data
+            .as_array()
+            .ok_or("获取模型列表失败:服务端返回的不是列表")?;
         Ok(models
             .iter()
             .map(|m| ModelInfo {
@@ -353,50 +339,67 @@ impl SttClient {
     }
 
     pub async fn switch_stt_model(&self, name: &str) -> Result<String, String> {
-        let client = Client::new();
         let params = [("model_name", name)];
-        let resp = client
+        let resp = http(QUERY_TIMEOUT)
             .post(format!("{}/models/select", self.stt_url))
             .form(&params)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
-        let data: Value = resp.json().await.map_err(|e| e.to_string())?;
-        Ok(server_message(&data).to_string())
-    }
-
-    pub async fn get_llm_models(&self) -> Result<Vec<ModelInfo>, String> {
-        let client = Client::new();
-        let resp = client
-            .get(format!("{}/llm/models", self.stt_url))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        // 转发失败现在带 5xx + 结构化错误体;直接按 LlmModelsResponse 解只会
-        // 得到一句「missing field `models`」,把服务端写好的原因盖掉。
+            .map_err(|e| request_error("切换模型", e))?;
         let status = resp.status();
-        if !status.is_success() {
-            let data: Value = resp.json().await.unwrap_or(Value::Null);
+        let data: Value = resp.json().await.unwrap_or(Value::Null);
+        if switch_failed(status.is_success(), &data) {
             let msg = server_message(&data);
             return Err(if msg.is_empty() {
-                format!("获取 LLM 模型列表失败(HTTP {})", status.as_u16())
+                format!("切换失败(HTTP {})", status.as_u16())
             } else {
                 msg.to_string()
             });
         }
-        let data: LlmModelsResponse = resp.json().await.map_err(|e| e.to_string())?;
+        Ok(server_message(&data).to_string())
+    }
+
+    /// 查询某个模型的加载状态,切换后前端轮询它,等真正加载完才说「已切换」。
+    pub async fn get_model_status(&self, name: &str) -> Result<Value, String> {
+        let resp = http(QUERY_TIMEOUT)
+            .get(format!("{}/models/status/{}", self.stt_url, name))
+            .send()
+            .await
+            .map_err(|e| request_error("查询模型状态", e))?;
+        ensure_ok(resp, "查询模型状态").await
+    }
+
+    /// STT 服务的 `/health` 原样返回,前端用它区分「可达 / 模型就绪 / 加载中 / 加载失败」。
+    pub async fn get_health(&self) -> Result<Value, String> {
+        let resp = http(Duration::from_secs(5))
+            .get(format!("{}/health", self.stt_url))
+            .send()
+            .await
+            .map_err(|e| request_error("健康检查", e))?;
+        ensure_ok(resp, "健康检查").await
+    }
+
+    pub async fn get_llm_models(&self) -> Result<Vec<ModelInfo>, String> {
+        let resp = http(QUERY_TIMEOUT)
+            .get(format!("{}/llm/models", self.stt_url))
+            .send()
+            .await
+            .map_err(|e| request_error("获取 LLM 模型列表", e))?;
+        // 转发失败现在带 5xx + 结构化错误体;直接按 LlmModelsResponse 解只会
+        // 得到一句「missing field `models`」,把服务端写好的原因盖掉。
+        let data = ensure_ok(resp, "获取 LLM 模型列表").await?;
+        let data: LlmModelsResponse = serde_json::from_value(data).map_err(|e| e.to_string())?;
         Ok(data.models)
     }
 
     pub async fn switch_llm_model(&self, name: &str) -> Result<String, String> {
-        let client = Client::new();
         let body = serde_json::json!({"model_name": name});
-        let resp = client
+        let resp = http(LLM_SWITCH_TIMEOUT)
             .post(format!("{}/llm/models/select", self.stt_url))
             .json(&body)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| request_error("切换 LLM 模型", e))?;
         let status = resp.status();
         let data: Value = resp.json().await.map_err(|e| e.to_string())?;
         // 切换失败必须变成 Err,否则前端照样弹「LLM 已切换」。
@@ -412,51 +415,57 @@ impl SttClient {
     }
 
     pub async fn get_llm_prompt(&self) -> Result<String, String> {
-        let client = Client::new();
-        let resp = client
+        let resp = http(QUERY_TIMEOUT)
             .get(format!("{}/llm/prompt", self.stt_url))
             .send()
             .await
-            .map_err(|e| format!("HTTP error: {}", e))?;
-        let data: Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("JSON error: {}", e))?;
+            .map_err(|e| request_error("读取提示词", e))?;
+        let data = ensure_ok(resp, "读取提示词").await?;
         Ok(data["prompt"].as_str().unwrap_or("").to_string())
     }
 
     pub async fn save_llm_prompt(&self, text: &str) -> Result<(), String> {
-        let client = Client::new();
         let body = serde_json::json!({"prompt": text});
-        client
+        let resp = http(QUERY_TIMEOUT)
             .put(format!("{}/llm/prompt", self.stt_url))
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("HTTP error: {}", e))?;
-        Ok(())
+            .map_err(|e| request_error("保存提示词", e))?;
+        ensure_ok(resp, "保存提示词").await.map(|_| ())
+    }
+
+    /// 恢复默认提示词,返回恢复后的内容。
+    pub async fn reset_llm_prompt(&self) -> Result<String, String> {
+        let resp = http(QUERY_TIMEOUT)
+            .delete(format!("{}/llm/prompt", self.stt_url))
+            .send()
+            .await
+            .map_err(|e| request_error("恢复默认提示词", e))?;
+        let data = ensure_ok(resp, "恢复默认提示词").await?;
+        Ok(data["prompt"].as_str().unwrap_or("").to_string())
     }
 
     pub async fn get_llm_enabled(&self) -> Result<bool, String> {
-        let client = Client::new();
-        let resp = client
+        let resp = http(QUERY_TIMEOUT)
             .get(format!("{}/llm/enabled", self.stt_url))
             .send()
             .await
-            .map_err(|e| e.to_string())?;
-        let data: Value = resp.json().await.map_err(|e| e.to_string())?;
-        Ok(data["enabled"].as_bool().unwrap_or(true))
+            .map_err(|e| request_error("读取后处理开关", e))?;
+        let data = ensure_ok(resp, "读取后处理开关").await?;
+        data["enabled"]
+            .as_bool()
+            .ok_or_else(|| "读取后处理开关失败:服务端没有返回 enabled".to_string())
     }
 
     pub async fn set_llm_enabled(&self, enabled: bool) -> Result<(), String> {
-        let client = Client::new();
         let body = serde_json::json!({"enabled": enabled});
-        client
+        let resp = http(QUERY_TIMEOUT)
             .put(format!("{}/llm/enabled", self.stt_url))
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("HTTP error: {}", e))?;
-        Ok(())
+            .map_err(|e| request_error("设置后处理开关", e))?;
+        ensure_ok(resp, "设置后处理开关").await.map(|_| ())
     }
 }

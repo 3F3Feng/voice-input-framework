@@ -377,6 +377,20 @@ async fn switch_model(state: State<'_, AppState>, name: String) -> Result<String
     stt::SttClient::new(&host).switch_stt_model(&name).await
 }
 
+/// 某个 STT 模型的加载状态。切换是异步的(服务端立即返回、后台加载),
+/// 前端轮询它,等真正加载完才说「已切换」,加载失败时把原因带回来。
+#[tauri::command]
+async fn get_model_status(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    stt::SttClient::new(&host).get_model_status(&name).await
+}
+
 #[tauri::command]
 async fn get_llm_models(state: State<'_, AppState>) -> Result<Vec<stt::ModelInfo>, String> {
     let host = {
@@ -444,16 +458,6 @@ async fn update_config(
     Ok(())
 }
 
-#[tauri::command]
-async fn import_old_config(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<config::VoiceInputConfig, String> {
-    let cfg = config::VoiceInputConfig::load(&app);
-    *state.config.lock().map_err(|e| e.to_string())? = cfg.clone();
-    Ok(cfg)
-}
-
 // ── LLM prompt commands ──
 
 #[tauri::command]
@@ -472,6 +476,15 @@ async fn save_llm_prompt(state: State<'_, AppState>, text: String) -> Result<(),
         c.stt_url.clone()
     };
     stt::SttClient::new(&host).save_llm_prompt(&text).await
+}
+
+#[tauri::command]
+async fn reset_llm_prompt(state: State<'_, AppState>) -> Result<String, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    stt::SttClient::new(&host).reset_llm_prompt().await
 }
 
 /// 读后处理开关。前端每次连上服务都会调一次(`loadModels`)。
@@ -768,15 +781,6 @@ async fn open_permission_settings(permission: permissions::Permission) -> Result
 }
 
 #[tauri::command]
-async fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {
-    hotkey::reset_state();
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
-    Ok(())
-}
-
-#[tauri::command]
 async fn check_update(app: tauri::AppHandle) -> Result<update::UpdateInfo, String> {
     eprintln!("[update] Checking for updates...");
     update::check(&app).await
@@ -786,22 +790,6 @@ async fn check_update(app: tauri::AppHandle) -> Result<update::UpdateInfo, Strin
 async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
     eprintln!("[update] Starting install...");
     update::download_and_install(&app).await
-}
-
-#[tauri::command]
-async fn transcribe_ws(
-    state: State<'_, AppState>,
-    audio_data: Vec<u8>,
-    language: Option<String>,
-) -> Result<String, String> {
-    let host = {
-        let c = state.stt.lock().map_err(|e| e.to_string())?;
-        c.stt_url.clone()
-    };
-    let lang = language.unwrap_or_else(|| "auto".into());
-    stt::SttClient::new(&host)
-        .transcribe_ws(audio_data, &lang)
-        .await
 }
 
 // ── 本地服务器管理 ──
@@ -1119,24 +1107,23 @@ pub fn run() {
             get_audio_devices,
             get_audio_level,
             get_indicator_status,
-            transcribe_ws,
             get_models,
             switch_model,
+            get_model_status,
             get_llm_models,
             get_build_info,
             switch_llm_model,
             get_config,
             update_config,
-            import_old_config,
             get_llm_prompt,
             save_llm_prompt,
+            reset_llm_prompt,
             get_llm_enabled,
             set_llm_enabled,
             auto_input,
             get_permissions,
             request_permission,
             open_permission_settings,
-            minimize_to_tray,
             register_hotkey,
             get_autostart,
             set_autostart,

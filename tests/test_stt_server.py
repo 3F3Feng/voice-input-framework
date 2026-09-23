@@ -145,6 +145,77 @@ class TestSTTEngine:
         engine._loading = True
         assert engine.load_error() is None
 
+    @staticmethod
+    async def _settle(engine, timeout=5.0):
+        """等后台加载 / 回退跑完。"""
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        await asyncio.sleep(0)
+        while loop.time() < deadline:
+            await asyncio.sleep(0.02)
+            if not engine.is_loading() and (engine.is_model_loaded() or engine._load_error):
+                return
+
+    @pytest.mark.asyncio
+    async def test_switch_persists_only_after_load(self, monkeypatch):
+        """模型选择只在加载成功之后才持久化(R5)"""
+        from services.stt_server import STTEngine
+
+        engine = STTEngine(default_model="whisper_tiny")
+        engine._is_loaded = True
+        engine._model = object()
+        monkeypatch.setattr(engine, "_load_model_sync", lambda: setattr(engine, "_model", object()))
+
+        persisted = []
+        result = await engine.switch_model("whisper_base", on_loaded=persisted.append)
+        assert result["is_loading"] is True
+        assert persisted == []  # 还没加载完,不能先记下来
+        await self._settle(engine)
+        assert engine.is_model_loaded()
+        assert persisted == ["whisper_base"]
+
+    @pytest.mark.asyncio
+    async def test_switch_failure_rolls_back_and_keeps_reason(self, monkeypatch):
+        """切到坏模型:回退到原来的模型,不持久化,失败原因能查到(R5)"""
+        from services.stt_server import STTEngine
+
+        engine = STTEngine(default_model="whisper_tiny")
+        engine._is_loaded = True
+        engine._model = object()
+
+        def load():
+            if engine.current_model_name == "whisper_small":
+                raise OSError("download interrupted")
+            engine._model = object()
+
+        monkeypatch.setattr(engine, "_load_model_sync", load)
+        persisted = []
+        await engine.switch_model("whisper_small", on_loaded=persisted.append)
+        await self._settle(engine)
+        # 第一次 settle 可能停在「新模型失败」那一刻,再等回退完成
+        await self._settle(engine)
+
+        assert engine.current_model_name == "whisper_tiny"
+        assert engine.is_model_loaded()
+        assert persisted == []
+        assert "download interrupted" in engine.switch_error("whisper_small")
+
+    @pytest.mark.asyncio
+    async def test_transcribe_error_carries_load_reason(self, monkeypatch):
+        """模型加载失败时,转写报错要带上真正的原因(R11)"""
+        from services.stt_server import STTEngine
+
+        engine = STTEngine(default_model="whisper_tiny")
+
+        def boom():
+            raise ModuleNotFoundError("No module named 'transformers'")
+
+        monkeypatch.setattr(engine, "_load_model_sync", boom)
+        with pytest.raises(RuntimeError, match="transformers"):
+            await engine.transcribe(np.zeros(1600, dtype=np.int16).tobytes())
+
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="MLX model loads successfully by default")
     async def test_transcribe_raises_when_load_fails(self):
@@ -152,7 +223,7 @@ class TestSTTEngine:
         from services.stt_server import STTEngine
 
         engine = STTEngine(default_model="invalid_model_name")
-        with pytest.raises(RuntimeError, match="Failed to load STT model"):
+        with pytest.raises(RuntimeError, match="加载失败"):
             await engine.transcribe(b"fake audio")
 
     @pytest.mark.asyncio

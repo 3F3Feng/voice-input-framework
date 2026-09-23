@@ -449,7 +449,7 @@ async def get_llm_prompt():
             resp = await client.get(f"{LLM_SERVER_URL}/prompt", timeout=5.0)
             if resp.status_code == 200:
                 return resp.json()
-            return _llm_error(f"LLM server returned {resp.status_code}")
+            return _llm_error(f"读取提示词失败:{_upstream_message(resp)}", resp.status_code)
     except Exception as e:
         return _llm_error(str(e))
 
@@ -463,7 +463,20 @@ async def update_llm_prompt(request: Request):
             resp = await client.put(f"{LLM_SERVER_URL}/prompt", json=body, timeout=10.0)
             if resp.status_code == 200:
                 return resp.json()
-            return _llm_error(f"LLM server returned {resp.status_code}")
+            return _llm_error(f"保存提示词失败:{_upstream_message(resp)}", resp.status_code)
+    except Exception as e:
+        return _llm_error(str(e))
+
+
+@app.delete("/llm/prompt")
+async def reset_llm_prompt():
+    """转发:恢复默认 LLM 提示词"""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.delete(f"{LLM_SERVER_URL}/prompt", timeout=10.0)
+            if resp.status_code == 200:
+                return resp.json()
+            return _llm_error(f"恢复默认提示词失败:{_upstream_message(resp)}", resp.status_code)
     except Exception as e:
         return _llm_error(str(e))
 
@@ -471,21 +484,24 @@ async def update_llm_prompt(request: Request):
 @app.post("/models/select")
 async def select_stt_model(model_name: str = Form(...)):
     """切换 STT 模型（立即返回，后台加载）"""
+
+    def persist(name: str) -> None:
+        # 只在真正加载成功之后才记下来。以前在加载之前就写,切到一个坏模型,
+        # 重启服务还会继续加载它,用户只能手动改状态文件。
+        state = load_state()
+        state["stt_model"] = name
+        save_state(state)
+        logger.info(f"STT model saved to state: {name}")
+
     try:
         logger.info(f"Switching STT model to: {model_name}")
-        result = await engine.switch_model(model_name)
-        # 持久化 STT 模型选择
-        state = load_state()
-        state["stt_model"] = model_name
-        save_state(state)
-        logger.info(f"STT model saved to state: {model_name}")
-        return result
+        return await engine.switch_model(model_name, on_loaded=persist)
     except ValueError as e:
         logger.error(f"ValueError switching model: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Unexpected error switching model: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e!s}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e!s}") from e
 
 
 @app.get("/models/status/{model_name}")
@@ -503,6 +519,8 @@ async def get_model_status(model_name: str):
         "is_current": is_current,
         "is_loaded": is_loaded,
         "is_loading": is_loading,
+        # 切换失败的原因(会回退到切换前的模型,所以不能只看 /health 的 error)
+        "error": engine.switch_error(model_name),
         "model_info": engine.AVAILABLE_MODELS.get(model_name, {}),
     }
 

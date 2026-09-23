@@ -12,6 +12,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -87,6 +88,9 @@ class STTEngine:
         self._is_loaded = False
         self._loading = False
         self._load_error: str | None = None
+        #: 切换失败的模型 → 失败原因。切换失败会回退到上一个模型,`_load_error`
+        #: 随之清空,原因就只能记在这里,好让 `/models/status/{name}` 答得出来。
+        self._switch_errors: dict[str, str] = {}
         self._load_lock = asyncio.Lock()
         # 实际选中的推理后端,加载模型时填上。/health 会如实报出来 —— 用户
         # (和我们)得能一眼看出这台机器到底跑在 GPU 上还是 CPU 上。
@@ -212,12 +216,22 @@ class STTEngine:
         # ── 未匹配引擎 ──
         raise ValueError(f"Unknown engine type: {engine_type} for model: {model_id}")
 
-    async def switch_model(self, model_name: str) -> dict:
+    async def switch_model(
+        self,
+        model_name: str,
+        on_loaded: Callable[[str], None] | None = None,
+    ) -> dict:
         """
-        切换到指定的 STT 模型
+        切换到指定的 STT 模型(立即返回,后台加载)
 
         Args:
             model_name: 模型名称 (如 "qwen_asr_mlx_native_small", "whisper_turbo")
+            on_loaded: 新模型**真正加载成功之后**才调用,用来持久化选择。以前选择在
+                加载之前就写进状态文件,切到一个坏模型之后,重启服务还会接着加载它。
+
+        新模型加载失败时回退到切换前的模型(如果它当时是可用的),失败原因记在
+        `switch_error(model_name)` 里。旧模型必须先释放再加载新的 —— 两个都留在
+        内存里,小内存机器上会直接 OOM —— 所以回退意味着把旧模型重新加载一遍。
 
         Returns:
             dict: 包含切换状态的字典
@@ -230,6 +244,8 @@ class STTEngine:
         # 如果已经是当前模型且已加载，直接返回
         if model_name == self.current_model_name and self._is_loaded:
             logger.info(f"Model {model_name} is already loaded")
+            if on_loaded:
+                on_loaded(model_name)
             return {
                 "status": "success",
                 "message": f"Model {model_name} is already loaded",
@@ -239,42 +255,38 @@ class STTEngine:
             }
 
         logger.info(f"Switching from {self.current_model_name} to {model_name}")
+        # 只有切换前那个模型是真能用的,才值得回退过去。
+        previous = self.current_model_name if self._is_loaded else None
 
         # 切换与加载必须互斥:否则卸载旧模型时可能有 load() 正在写 _model/_model_type,
         # 导致状态错乱。(并发的 transcribe() 已在内部取本地引用,不会用到半释放的实例。)
         async with self._load_lock:
-            # 更新模型信息
-            self.current_model_name = model_name
-            self._model_info = self.AVAILABLE_MODELS[model_name]
-
-            # 重置状态
-            self._is_loaded = False
-            self._loading = False
-            self._load_error = None
-
-            # 释放旧模型内存
-            if self._model is not None:
-                import gc
-
-                import torch
-
-                self._model = None
-                self._model_type = None
-                if torch.backends.mps.is_available():
-                    torch.mps.empty_cache()
-                gc.collect()
-                logger.info("Old model memory released")
+            self._reset_to(model_name)
+        self._switch_errors.pop(model_name, None)
 
         # 在后台异步加载新模型
         async def load_in_background():
             try:
                 success = await self.load()
-                if success:
-                    logger.info(f"Model {model_name} loaded successfully")
-                else:
-                    logger.error(f"Failed to load model {model_name}")
-            except Exception as e:
-                logger.error(f"Error loading model {model_name}: {e}")
+            except Exception as e:  # noqa: BLE001 - load() 自己已经兜过,这里只是保险
+                self._load_error = f"{type(e).__name__}: {e}"
+                success = False
+            if success:
+                logger.info(f"Model {model_name} loaded successfully")
+                if on_loaded:
+                    on_loaded(model_name)
+                return
+            reason = self._load_error or "未知原因"
+            self._switch_errors[model_name] = reason
+            logger.error(f"Failed to load model {model_name}: {reason}")
+            # 已经被别的切换取代了(用户又选了另一个),就别再回退。
+            if previous is None or self.current_model_name != model_name:
+                return
+            logger.info(f"Rolling back to previous model {previous}")
+            async with self._load_lock:
+                self._reset_to(previous)
+            if not await self.load():
+                logger.error(f"Rollback to {previous} failed as well: {self._load_error}")
 
         # 启动后台加载任务
         asyncio.create_task(load_in_background())
@@ -287,6 +299,37 @@ class STTEngine:
             "is_loading": True,
             "note": "Model is loading in background",
         }
+
+    def _reset_to(self, model_name: str) -> None:
+        """把当前模型指向 `model_name` 并释放旧模型。调用方须持有 `_load_lock`。"""
+        self.current_model_name = model_name
+        self._model_info = self.AVAILABLE_MODELS[model_name]
+        self._is_loaded = False
+        self._loading = False
+        self._load_error = None
+
+        # 释放旧模型内存
+        if self._model is not None:
+            import gc
+
+            self._model = None
+            self._model_type = None
+            try:
+                import torch
+
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+            except ImportError:
+                # MLX 模型不需要 torch;没装就不必清它的缓存。
+                pass
+            gc.collect()
+            logger.info("Old model memory released")
+
+    def switch_error(self, model_name: str) -> str | None:
+        """这个模型最近一次切换失败的原因;没失败过或正在重试时为 None。"""
+        if model_name == self.current_model_name and self._loading:
+            return None
+        return self._switch_errors.get(model_name)
 
     async def transcribe(
         self,
@@ -304,7 +347,12 @@ class STTEngine:
             if not self._is_loaded:
                 success = await self.load()
                 if not success:
-                    raise RuntimeError("Failed to load STT model")
+                    # 带上真正的原因。以前只剩一句 "Failed to load STT model",
+                    # 用户在界面上看到它,完全不知道该去修什么。
+                    raise RuntimeError(
+                        f"STT 模型 {self.current_model_name} 加载失败:"
+                        f"{self._load_error or '原因未知,见服务日志'}"
+                    )
 
             # 转换音频
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
