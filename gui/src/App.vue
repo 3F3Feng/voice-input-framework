@@ -6,8 +6,8 @@
         <span class="app-icon">🎙️</span>
         <!-- 正在等服务器起来的时候别断言「未连接」：本地模式下服务刚拉起，
              模型要加载十几秒，这段时间说「未连接」看着就像服务坏了。 -->
-        <span :class="['conn-dot', connected ? 'on' : connecting ? 'wait' : 'off']"></span>
-        <span class="conn-text">{{ connected ? currentModelName : connecting ? '连接中…' : '未连接' }}</span>
+        <span :class="['conn-dot', connView.cls]"></span>
+        <span class="conn-text" :title="connView.title">{{ connView.text }}</span>
       </div>
       <div class="header-right">
         <button class="header-btn" @click="showSettings = !showSettings" :class="{ active: showSettings }">
@@ -408,7 +408,7 @@
           @mouseup="stopRecord"
           @mouseleave="stopRecord"
           :class="['record-btn', { active: recording, processing: loading }]"
-          :disabled="!connected || loading"
+          :disabled="!canRecord || loading"
         >
           <div class="record-ring"></div>
           <span class="record-icon">{{ recording ? '⏹' : '🎤' }}</span>
@@ -416,7 +416,10 @@
         <div class="record-status">
           <span v-if="recording" class="status-rec">录音中 {{ timerText }}</span>
           <span v-else-if="loading" class="status-proc">{{ llmProcessing ? 'LLM 处理中' : '识别中' }} {{ processingTimerText }}</span>
-          <span v-else-if="connected" class="status-ready">按住说话 · {{ displayHotkey }}</span>
+          <!-- 模型没就绪时录音按钮是灰的,得说清楚在等什么(R11) -->
+          <span v-else-if="healthState === 'loading'" class="status-proc">模型加载中，稍等再说…</span>
+          <span v-else-if="healthState === 'error'" class="status-off" :title="sttHealth?.error ?? ''">模型加载失败，请在设置里换一个模型或重启服务</span>
+          <span v-else-if="canRecord" class="status-ready">按住说话 · {{ displayHotkey }}</span>
           <span v-else-if="connecting" class="status-proc">正在连接服务器…</span>
           <span v-else class="status-off">未连接服务器</span>
         </div>
@@ -564,6 +567,17 @@ interface PermissionReport {
 const recording = ref(false);
 const connected = ref(false);
 const connecting = ref(false);
+/** Rust 后台心跳看到的 STT 服务状态(`stt-health` 事件)。`null` = 还没拿到。 */
+type SttHealthState = "unknown" | "unreachable" | "loading" | "error" | "ready";
+interface SttHealth {
+  state: SttHealthState;
+  reachable: boolean;
+  status: string | null;
+  current_model: string | null;
+  error: string | null;
+  url: string;
+}
+const sttHealth = ref<SttHealth | null>(null);
 const loading = ref(false);
 const result = ref("");
 const showSettings = ref(false);
@@ -782,6 +796,54 @@ const currentModelName = computed(() => {
   const loaded = sttModels.value.find(m => m.is_loaded);
   return loaded?.name || sttModel.value || "";
 });
+const healthState = computed<SttHealthState>(() => sttHealth.value?.state ?? "unknown");
+/** 能不能开始录音。以前只看 `connected`——能拉到 `/models` 就算连上,模型还在
+ *  加载或已经加载失败时按钮照样亮着(R11)。心跳还没结论(unknown)时不拦,
+ *  和 Rust 那边开始录音前的闸门一致。 */
+const canRecord = computed(() =>
+  connected.value && (healthState.value === "ready" || healthState.value === "unknown"));
+/** 头部那一行:连接中 / 未连接 / 模型加载中 / 模型加载失败(原因)/ 已就绪。 */
+const connView = computed<{ cls: string; text: string; title: string }>(() => {
+  const h = sttHealth.value;
+  const st = healthState.value;
+  // 服务能答话时,模型的状态比「连接中」更有信息量:本地刚拉起的服务正在加载
+  // 模型,说「连接中」看着像连不上。
+  if (st === "loading") {
+    const m = h?.current_model ? ` · ${h.current_model}` : "";
+    return { cls: "wait", text: `模型加载中…${m}`, title: "" };
+  }
+  if (st === "error") {
+    const why = h?.error || "原因未知";
+    return { cls: "off", text: `模型加载失败（${why}）`, title: why };
+  }
+  if (connecting.value) return { cls: "wait", text: "连接中…", title: "" };
+  if (st === "unreachable" || !connected.value) return { cls: "off", text: "未连接", title: h?.url ?? "" };
+  const model = h?.current_model || currentModelName.value;
+  return { cls: "on", text: model ? `已就绪 · ${model}` : "已就绪", title: model };
+});
+
+/**
+ * 心跳报来的新状态(R12)。以前连接状态只在设置面板开着 + 本地模式时才会更新,
+ * 远程模式从不更新:服务挂了头部照样是绿的,要等说完一句话才失败。
+ */
+function applySttHealth(h: SttHealth) {
+  const prev = sttHealth.value?.state ?? "unknown";
+  sttHealth.value = h;
+  if (h.state === "unreachable") {
+    // 之前是连着的才提一句;一直连不上的时候别反复弹。
+    if (connected.value && (prev === "ready" || prev === "loading" || prev === "error")) {
+      toast("与 STT 服务的连接断开了", "err");
+    }
+    connected.value = false;
+    return;
+  }
+  if (h.state === "ready" && prev !== "ready") {
+    // 服务回来了 / 模型加载完了:没连着就连上;已经连着就刷新模型列表,
+    // 让下拉框的 ✓ 和头部的模型名跟上。
+    if (!connected.value) ensureConnected(CONNECT_BUDGET_RUNNING_MS);
+    else loadModels();
+  }
+}
 // 主界面上「按住说话 · …」显示的是**已生效**的快捷键,不是录了还没应用的那个。
 /** 推荐的排最前,本机跑不了的沉底。 */
 const sortedSttModels = computed(() => {
@@ -1001,7 +1063,7 @@ function addToHistory(text: string) {
 /** 按钮录音的上限,和快捷键路径(hotkey.rs 的 MAX_RECORD_SECS)一致。 */
 const BUTTON_RECORD_LIMIT_MS = 5 * 60 * 1000;
 async function startRecord() {
-  if (!connected.value || loading.value) return;
+  if (!canRecord.value || loading.value) return;
   if (recording.value) return;  // state lock: prevent double-trigger
   recording.value = true;       // set state BEFORE await to block bounces
   try {
@@ -1902,9 +1964,9 @@ function clearResult() { result.value = ""; }
 watch(showSettings, open => { if (open) refreshPermissions(); });
 
 // 托盘里的状态行跟着头部走。窗口藏着的时候，托盘是用户唯一能看状态的地方。
+// 托盘状态行和头部说同一件事(含「模型加载中」「模型加载失败」),都来自 connView。
 const trayStatusText = computed(() =>
-  connected.value ? `● 已连接 · ${currentModelName.value || "模型未知"}`
-    : connecting.value ? "○ 连接中…" : "○ 未连接");
+  `${connView.value.cls === "on" ? "●" : "○"} ${connView.value.text}`);
 watch(trayStatusText, text => { invoke("set_tray_status", { text }).catch(() => {}); }, { immediate: true });
 
 // 连接状态跟着观测到的服务健康走,而不是散在各个调用点上手动置 true / false。
@@ -1936,6 +1998,12 @@ onMounted(async () => {
   await refreshDevices();
   await refreshPermissions();
   await refreshServers();
+
+  // 后台心跳(R12):先拉一次当前结论——事件只在状态变化时才发,webview 起来之前
+  // 发过的收不到——再订阅之后的变化。
+  listen<SttHealth>("stt-health", (event) => applySttHealth(event.payload));
+  try { applySttHealth(await invoke<SttHealth>("get_stt_health")); }
+  catch (e) { console.error("get_stt_health error:", e); }
 
   // 启动时这一次连接**不能 await**：下面还要注册快捷键 / 转录的事件监听，
   // 而本地模式下这个循环可能要等几十秒。以前它是一次性的所以看不出来。

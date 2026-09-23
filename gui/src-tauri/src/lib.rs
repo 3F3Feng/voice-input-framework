@@ -1,5 +1,6 @@
 mod audio;
 mod config;
+mod heartbeat;
 mod hotkey;
 mod indicator;
 mod input;
@@ -37,6 +38,8 @@ pub struct AppState {
     pub indicator_status: std::sync::Arc<Mutex<String>>,
     /// 本地 STT / LLM 子进程的管理器。远程模式下它就是个空壳,不做任何事。
     pub servers: std::sync::Arc<Mutex<server_manager::ServerManager>>,
+    /// 后台心跳最近一次看到的 STT 服务状态(见 `heartbeat`)。开始录音前看它。
+    pub stt_health: Mutex<heartbeat::SttHealth>,
 }
 
 #[tauri::command]
@@ -158,6 +161,19 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
     // 录音是麦克风权限真正被需要的时刻,在这里拦截。缺权限时 cpal 照样能开流,
     // 但只会送来静音——与其转录一段空音频,不如直接报错说清楚原因。
     check_microphone_permission()?;
+
+    // 服务连不上 / 模型还在加载 / 加载失败时不开始录音,直接说原因(R13)。
+    // 以前快捷键路径不看这些,说完一整句才报连不上,这段话白说了。
+    {
+        let url = state
+            .stt
+            .lock()
+            .map(|c| c.stt_url.clone())
+            .unwrap_or_default();
+        if let Ok(health) = state.stt_health.lock() {
+            heartbeat::recording_gate(&health, &url)?;
+        }
+    }
 
     let device;
     {
@@ -1083,6 +1099,13 @@ async fn set_local_server_config(
     Ok(server_manager::report(&servers, &cfg).await.local_paths)
 }
 
+/// 心跳最近一次看到的 STT 服务状态。前端启动时先拉一次:`stt-health` 事件只在
+/// 状态变化时才发,webview 起来之前发过的那些它收不到。
+#[tauri::command]
+async fn get_stt_health(state: State<'_, AppState>) -> Result<heartbeat::SttHealth, String> {
+    Ok(state.stt_health.lock().map_err(|e| e.to_string())?.clone())
+}
+
 /// 自动探测仓库 / 解释器路径。探测不到时 `problem` 里是给用户看的原因。
 #[tauri::command]
 async fn detect_local_server() -> Result<server_manager::DetectResult, String> {
@@ -1240,7 +1263,11 @@ pub fn run() {
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
                 servers: std::sync::Arc::new(Mutex::new(manager)),
+                stt_health: Mutex::new(heartbeat::SttHealth::unknown(&stt_url)),
             });
+
+            // 连接状态不再只在设置面板开着时才更新(R12):后台每 5 秒看一次服务。
+            heartbeat::spawn(app.handle().clone());
 
             let build = BuildInfo::current();
             log_info!(
@@ -1402,6 +1429,7 @@ pub fn run() {
             set_tray_status,
             tray_available,
             quit_app,
+            get_stt_health,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
