@@ -38,6 +38,44 @@ static LISTENER_GEN: AtomicU64 = AtomicU64::new(0);
 /// 键的按下 / 抬起对不上),只是不发起录音。
 static SUSPENDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// 切换式录音:按一下开始、再按一下结束(默认是按住说话、松开结束)。
+///
+/// 长段口述一直按着快捷键很累;以前只有 macOS 的 Caps Lock 是切换式的
+/// (系统限制,见 README),别的键都只能按住。
+static TOGGLE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_toggle_mode(toggle: bool) {
+    TOGGLE_MODE.store(toggle, Ordering::SeqCst);
+}
+
+fn toggle_mode() -> bool {
+    TOGGLE_MODE.load(Ordering::SeqCst)
+}
+
+/// 录音中按 Esc:放弃这一段,不转写。以前说错了只能说完再删,或者等它转写完。
+///
+/// 快捷键本身就包含 Esc 时不启用(否则按快捷键的那一下就被当成取消)。
+fn cancels_recording(key: HotkeyKey, keys: &[KeySpec]) -> bool {
+    key == HotkeyKey::Escape
+        && !keys
+            .iter()
+            .any(|spec| spec.alts.contains(&HotkeyKey::Escape))
+}
+
+/// 取消当前录音:丢掉录到的音频、收起胶囊、告诉前端。不转写。
+fn cancel_recording(app: &tauri::AppHandle) {
+    crate::log_info!("[hotkey] 录音已取消(Esc)");
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let state = app.state::<crate::AppState>();
+        let result = state.recorder.lock();
+        if let Ok(mut guard) = result {
+            guard.reset();
+        }
+    }));
+    let _ = crate::indicator::hide(app);
+    let _ = app.emit("recording-cancelled", ());
+}
+
 pub fn set_suspended(suspended: bool) {
     SUSPENDED.store(suspended, Ordering::SeqCst);
 }
@@ -457,6 +495,10 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
             let mut not_down_start: Option<Instant> = None;
             let mut record_start: Option<Instant> = None;
             let mut limit_warned = false;
+            // 切换式录音:开始之后得先松开一次,下一次按下才是「结束」。
+            let mut released_since_start = false;
+            // 快捷键本身含 Esc 时,Esc 不能兼任「取消」。
+            let esc_cancels = cancels_recording(HotkeyKey::Escape, &hotkey_keys);
 
             loop {
                 // Exit if a newer listener generation was registered.
@@ -491,6 +533,7 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                             all_down_start = None;
                             record_start = Some(Instant::now());
                             limit_warned = false;
+                            released_since_start = false;
 
                             let _ = app.emit("hotkey-press", ());
                             eprintln!("[hotkey] Press detected (poll), starting recording");
@@ -520,8 +563,47 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                     }
                 }
 
-                // ── Debounced Release trigger ──
                 if !all_down && recording.load(Ordering::SeqCst) {
+                    released_since_start = true;
+                }
+
+                // ── Esc:放弃这一段,不转写 ──
+                if esc_cancels
+                    && recording.load(Ordering::SeqCst)
+                    && win_key_down(&HotkeyKey::Escape)
+                {
+                    recording.store(false, Ordering::SeqCst);
+                    record_start = None;
+                    cancel_recording(&app);
+                }
+
+                // ── 切换式:松开过之后再按一下 = 结束 ──
+                if toggle_mode()
+                    && all_down
+                    && released_since_start
+                    && recording.load(Ordering::SeqCst)
+                {
+                    if let Some(start) = all_down_start {
+                        if start.elapsed() >= Duration::from_millis(PRESS_DEBOUNCE_MS) {
+                            recording.store(false, Ordering::SeqCst);
+                            all_down_start = None;
+                            record_start = None;
+                            let _ = app.emit("hotkey-release", ());
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                let state = app.state::<AppState>();
+                                crate::stop_recording_internal(&app, &state)
+                            }));
+                            match r {
+                                Err(_) => report_stop_failed(&app, "结束录音时发生内部错误。"),
+                                Ok(Err(e)) => report_stop_failed(&app, &e),
+                                Ok(Ok(_)) => {}
+                            }
+                        }
+                    }
+                }
+
+                // ── Debounced Release trigger(按住模式)──
+                if !all_down && recording.load(Ordering::SeqCst) && !toggle_mode() {
                     if let Some(start) = not_down_start {
                         if start.elapsed() >= Duration::from_millis(RELEASE_DEBOUNCE_MS) {
                             // Keys have been released for debounce duration → stop recording
@@ -588,6 +670,8 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
 enum HotkeyCmd {
     Press,
     Release,
+    /// 录音中按了 Esc,见 [`cancels_recording`]。
+    Cancel,
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -619,6 +703,9 @@ fn spawn_hotkey_worker(
                     if recording.swap(true, Ordering::SeqCst) {
                         continue;
                     }
+                    // 「开始 / 结束录音」事件由 worker 发,不再由监听线程按物理按下 /
+                    // 抬起发:切换式录音里松开按键并不结束录音。
+                    let _ = app.emit("hotkey-press", ());
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let state = app.state::<crate::AppState>();
                         crate::start_recording_internal(&app, &state)
@@ -641,9 +728,17 @@ fn spawn_hotkey_worker(
                     let record_start = std::time::Instant::now();
                     let mut limit_warned = false;
                     let mut timed_out = false;
+                    let mut cancelled = false;
                     'record: loop {
                         match cmd_rx.try_recv() {
-                            Ok(_) => break 'record,
+                            // 按住模式:松开就结束。切换模式:松开不算,再按一下才结束。
+                            Ok(HotkeyCmd::Release) if !toggle_mode() => break 'record,
+                            Ok(HotkeyCmd::Press) if toggle_mode() => break 'record,
+                            Ok(HotkeyCmd::Cancel) => {
+                                cancelled = true;
+                                break 'record;
+                            }
+                            Ok(_) => {}
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => break 'record,
                             Err(std::sync::mpsc::TryRecvError::Empty) => {}
                         }
@@ -661,12 +756,17 @@ fn spawn_hotkey_worker(
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
                     recording.store(false, Ordering::SeqCst);
+                    if cancelled {
+                        cancel_recording(&app);
+                        continue;
+                    }
                     if timed_out {
                         // 手指还按着;之后那个 Release 会落到下面的
                         // `Ok(HotkeyCmd::Release) => continue`,不会再停一次。
                         stop_at_time_limit(&app);
                         continue;
                     }
+                    let _ = app.emit("hotkey-release", ());
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let state = app.state::<crate::AppState>();
                         crate::stop_recording_internal(&app, &state)
@@ -679,7 +779,7 @@ fn spawn_hotkey_worker(
                 }
                 // 落单的 Release(比如上一次 Press 因为权限失败提前收了尾)不该
                 // 让 worker 退出 —— 一退出快捷键就彻底哑了,要等重新注册才复活。
-                Ok(HotkeyCmd::Release) => continue,
+                Ok(HotkeyCmd::Release) | Ok(HotkeyCmd::Cancel) => continue,
                 Err(_) => break,
             }
         });
@@ -709,6 +809,10 @@ impl HotkeyMatcher {
     }
 
     fn on_change(&mut self, key: HotkeyKey, is_press: bool) -> Option<HotkeyCmd> {
+        if is_press && cancels_recording(key, &self.keys) {
+            // worker 没在录音时会忽略它。
+            return Some(HotkeyCmd::Cancel);
+        }
         if is_press {
             if !self.pressed.contains(&key) {
                 self.pressed.push(key);
@@ -751,7 +855,6 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
         .name("hotkey-listener".into())
         .spawn(move || {
             let mut matcher = HotkeyMatcher::new(hotkey_keys.clone());
-            let a = app.clone();
             mac_tap::run(move |key, is_press| {
                 // A re-registration spawns a new tap; this (now stale) one must
                 // stop, or both taps fire and recording starts twice.
@@ -763,15 +866,8 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                     .on_change(key, is_press)
                     .filter(|c| !(suspended() && matches!(c, HotkeyCmd::Press)))
                 {
+                    // 开始 / 结束录音的事件由 worker 发(切换式录音里松开不等于结束)。
                     let _ = cmd_tx.send(cmd);
-                    let _ = a.emit(
-                        if is_press {
-                            "hotkey-press"
-                        } else {
-                            "hotkey-release"
-                        },
-                        (),
-                    );
                 }
                 mac_tap::TapAction::Continue
             });
@@ -1015,7 +1111,6 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
         .name("hotkey-listener".into())
         .spawn(move || {
             let mut matcher = HotkeyMatcher::new(hotkey_keys.clone());
-            let a = app.clone();
 
             // rdev 在 Linux 上走的是 X11。Wayland 会话里拿不到全局按键
             // (Wayland 的设计就是不让普通客户端窥探别的窗口的输入),
@@ -1044,15 +1139,8 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                         .on_change(k, is_press)
                         .filter(|c| !(suspended() && matches!(c, HotkeyCmd::Press)))
                     {
+                        // 开始 / 结束录音的事件由 worker 发(切换式录音里松开不等于结束)。
                         let _ = cmd_tx.send(cmd);
-                        let _ = a.emit(
-                            if is_press {
-                                "hotkey-press"
-                            } else {
-                                "hotkey-release"
-                            },
-                            (),
-                        );
                     }
                 })
             }));
@@ -1229,6 +1317,36 @@ fn hotkey_to_vk(k: &HotkeyKey) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn esc_cancels_unless_it_is_part_of_the_hotkey() {
+        let keys = parse_hotkey("left_ctrl+left_alt", true).unwrap();
+        assert!(cancels_recording(HotkeyKey::Escape, &keys));
+        assert!(!cancels_recording(HotkeyKey::KeyA, &keys));
+        let with_esc = parse_hotkey("ctrl+esc", true).unwrap();
+        assert!(!cancels_recording(HotkeyKey::Escape, &with_esc));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn matcher_reports_esc_as_cancel_without_disturbing_the_combo() {
+        let mut m = HotkeyMatcher::new(parse_hotkey("left_ctrl+left_alt", true).unwrap());
+        assert!(m.on_change(HotkeyKey::ControlLeft, true).is_none());
+        assert!(matches!(
+            m.on_change(HotkeyKey::Alt, true),
+            Some(HotkeyCmd::Press)
+        ));
+        assert!(matches!(
+            m.on_change(HotkeyKey::Escape, true),
+            Some(HotkeyCmd::Cancel)
+        ));
+        // Esc 抬起不影响组合键的状态,松开组合键照常给 Release
+        assert!(m.on_change(HotkeyKey::Escape, false).is_none());
+        assert!(matches!(
+            m.on_change(HotkeyKey::Alt, false),
+            Some(HotkeyCmd::Release)
+        ));
+    }
+
     use super::*;
 
     #[test]

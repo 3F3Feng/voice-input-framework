@@ -845,6 +845,20 @@ fn validate_hotkey(shortcut: String) -> Result<(), String> {
     hotkey::parse_hotkey_checked(&shortcut, true).map(|_| ())
 }
 
+/// 切换「按住说话 / 按一下开始、再按一下结束」,立即生效并存进配置。
+#[tauri::command]
+async fn set_hotkey_toggle(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    toggle: bool,
+) -> Result<(), String> {
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    cfg.hotkey.toggle = toggle;
+    cfg.save(&app)?;
+    hotkey::set_toggle_mode(toggle);
+    Ok(())
+}
+
 /// 设置页开始 / 结束录制新快捷键时调用,录制期间旧快捷键不触发录音。
 #[tauri::command]
 async fn set_hotkey_suspended(suspended: bool) -> Result<(), String> {
@@ -1255,6 +1269,7 @@ pub fn run() {
             let stt_url = cfg.server.effective_stt_url();
             let shortcut = cfg.hotkey.key.clone();
             let distinguish_sides = cfg.hotkey.distinguish_left_right;
+            hotkey::set_toggle_mode(cfg.hotkey.toggle);
             let start_minimized = cfg.ui.start_minimized;
             let local_mode = cfg.server.mode == config::ServerMode::Local;
             let auto_start = local_mode && cfg.server.local.auto_start;
@@ -1429,6 +1444,7 @@ pub fn run() {
             open_permission_settings,
             register_hotkey,
             set_hotkey_suspended,
+            set_hotkey_toggle,
             validate_hotkey,
             get_autostart,
             set_autostart,

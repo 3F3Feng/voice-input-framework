@@ -136,6 +136,9 @@ impl ServerConfig {
 pub struct HotkeyConfig {
     pub key: String,
     pub distinguish_left_right: bool,
+    /// 切换式录音:按一下开始、再按一下结束。默认按住说话。
+    #[serde(default)]
+    pub toggle: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +266,7 @@ impl Default for VoiceInputConfig {
             hotkey: HotkeyConfig {
                 key: "left_ctrl+left_alt".into(),
                 distinguish_left_right: true,
+                toggle: false,
             },
             ui: UiConfig {
                 start_minimized: false,
@@ -461,6 +465,7 @@ impl VoiceInputConfig {
                     .as_ref()
                     .and_then(|h| h.distinguish_left_right)
                     .unwrap_or(true),
+                toggle: false,
             },
             ui: UiConfig {
                 start_minimized: old

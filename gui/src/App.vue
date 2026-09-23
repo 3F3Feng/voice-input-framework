@@ -232,6 +232,14 @@
               关掉之后,录下来的 <code>left_ctrl</code> 左右两个 Ctrl 都能触发。
               不写左右的写法(如 <code>ctrl+alt</code>)本来就两边都认,不受这个开关影响。
             </div>
+            <div class="s-row" style="margin-top:6px">
+              <span class="s-label" style="flex:1">录音方式</span>
+              <select class="s-select" style="width:auto" v-model="hotkeyToggle" @change="onHotkeyToggleChange">
+                <option :value="false">按住说话,松开结束</option>
+                <option :value="true">按一下开始,再按一下结束</option>
+              </select>
+            </div>
+            <div class="s-tip">录音中按 Esc 可放弃这一段(不识别)。</div>
           </div>
 
           <!-- Toggles -->
@@ -419,7 +427,7 @@
           <!-- 模型没就绪时录音按钮是灰的,得说清楚在等什么(R11) -->
           <span v-else-if="healthState === 'loading'" class="status-proc">模型加载中，稍等再说…</span>
           <span v-else-if="healthState === 'error'" class="status-off" :title="sttHealth?.error ?? ''">模型加载失败，请在设置里换一个模型或重启服务</span>
-          <span v-else-if="canRecord" class="status-ready">按住说话 · {{ displayHotkey }}</span>
+          <span v-else-if="canRecord" class="status-ready">{{ hotkeyToggle ? '按一下开始' : '按住说话' }} · {{ displayHotkey }}</span>
           <span v-else-if="connecting" class="status-proc">正在连接服务器…</span>
           <span v-else class="status-off">未连接服务器</span>
         </div>
@@ -539,7 +547,7 @@ interface VoiceInputConfig {
   // mode / local 是后加的：旧 config.json 里没有这两项，Rust 端有 serde 默认值，
   // 读出来一定是 remote + 空 local。
   server: { host: string; port: number; mode: ServerMode; local: LocalServerConfig };
-  hotkey: { key: string; distinguish_left_right: boolean };
+  hotkey: { key: string; distinguish_left_right: boolean; toggle?: boolean };
   // use_floating_indicator / use_tray / opacity 还在 config.json 里（降级兼容，见 config.rs），
   // 但没有任何地方读，这里不再声明；整份对象读出来再原样写回，它们照样保留。
   // output_choice_made 是后加的，老配置里没有。
@@ -1358,6 +1366,7 @@ async function loadConfig() {
     hotkeyStr.value = cfg.hotkey.key;
     savedHotkey.value = cfg.hotkey.key;
     distinguishSides.value = cfg.hotkey.distinguish_left_right ?? true;
+    hotkeyToggle.value = cfg.hotkey.toggle ?? false;
     language.value = cfg.audio.language || "auto";
     savedLanguage = language.value;
     void checkSavedHotkey();
@@ -1709,6 +1718,18 @@ function stopHotkeyListening() {
   }
 }
 
+// ── 录音方式:按住说话 / 按一下开始、再按一下结束 ──
+const hotkeyToggle = ref(false);
+async function onHotkeyToggleChange() {
+  try {
+    await invoke("set_hotkey_toggle", { toggle: hotkeyToggle.value });
+    toast(hotkeyToggle.value ? "改为按一下开始、再按一下结束" : "改为按住说话", "ok");
+  } catch (e) {
+    hotkeyToggle.value = !hotkeyToggle.value;
+    toast(`设置失败: ${e}`, "err");
+  }
+}
+
 // 录制新快捷键期间暂停全局快捷键:否则按下旧组合的那一刻就开始录音了。
 watch(hotkeyRecording, on => {
   invoke("set_hotkey_suspended", { suspended: on }).catch(e => console.error("set_hotkey_suspended:", e));
@@ -2055,6 +2076,14 @@ onMounted(async () => {
     loading.value = true;
     processingMs.value = 0;
     processingTimerInterval = setInterval(() => { processingMs.value += 100; }, 100);
+  });
+  // 录音中按了 Esc:这一段不要了。收起录音状态,不进入「识别中」。
+  listen("recording-cancelled", () => {
+    recording.value = false;
+    loading.value = false;
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
+    toast("已取消这一段录音", "info");
   });
   // 托盘菜单里的「检查更新」「设置」。以前前端听着 tray-check-update，却没有任何地方发它。
   // 检查结果显示在「关于」页，得切过去，不然用户看到的是一个跟更新无关的页面。
