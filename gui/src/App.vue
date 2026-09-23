@@ -1248,8 +1248,10 @@ async function transcribeFile() {
 async function addToHistory(text: string, original: string) {
   if (!text.trim()) return;
   // 「保存识别历史」关着时 Rust 只把它留在内存里,不写盘;这里不用分情况。
-  try { await invoke("history_add", { text, original: original || null }); }
-  catch (e) { toast(`识别历史没存上: ${e}`, "err"); }
+  try {
+    const entry = await invoke<HistoryEntry | null>("history_add", { text, original: original || null });
+    currentHistory = entry ? { id: entry.id, text } : null;
+  } catch (e) { toast(`识别历史没存上: ${e}`, "err"); }
   // 上次留下的搜索词会把刚说的这条过滤掉,关掉结果卡片时列表里找不到它。
   historyQuery.value = "";
   await refreshHistory();
@@ -1306,8 +1308,23 @@ function fmtHistoryTime(ts: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** 结果框里这一条对应的历史条目,以及它存进去时的文字。改过之后复制 / 输入时写回。 */
+let currentHistory: { id: number; text: string } | null = null;
+async function saveEditsToHistory() {
+  if (!currentHistory || resultView.value !== "final") return;
+  const text = result.value;
+  if (!text.trim() || text === currentHistory.text) return;
+  try {
+    await invoke("history_update_text", { id: currentHistory.id, text });
+    currentHistory = { id: currentHistory.id, text };
+    await refreshHistory();
+  } catch (e) { console.error("history_update_text:", e); }
+}
+
 /** 点历史里的一条:放回结果框,可以改、可以对照原文。 */
 function openHistory(item: HistoryEntry) {
+  saveEditsToHistory();  // 换条之前,把正在改的那条先存上
+  currentHistory = { id: item.id, text: item.text };
   result.value = item.text;
   resultOriginal.value = item.original || "";
   resultView.value = "final";
@@ -2360,6 +2377,8 @@ async function doInstallUpdate() {
 /** 这一次转写的 STT 原文(`transcribe-progress` 里的 stt_result),等最终结果来了再用。 */
 let pendingOriginal = "";
 function resetResult() {
+  saveEditsToHistory();
+  currentHistory = null;
   result.value = "";
   resultOriginal.value = "";
   resultView.value = "final";
@@ -2394,10 +2413,11 @@ async function insertText(text: string) {
 }
 async function copyResult() {
   if (!(await copyText(shownResult.value))) return;
+  saveEditsToHistory();
   copyFeedback.value = true;
   setTimeout(() => { copyFeedback.value = false; }, 2000);
 }
-function doAutoInput() { return insertText(shownResult.value); }
+function doAutoInput() { saveEditsToHistory(); return insertText(shownResult.value); }
 function clearResult() { resetResult(); }
 // ── Lifecycle ──
 // 打开设置面板时重新查一次:用户可能刚在系统设置里改过授权

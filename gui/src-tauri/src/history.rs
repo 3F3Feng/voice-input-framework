@@ -282,6 +282,39 @@ pub async fn history_delete(app: tauri::AppHandle, id: i64) -> Result<(), String
     })
 }
 
+/// 把一条的文字换成用户改过的版本(F16 后续)。
+///
+/// 结果框可以改错字再复制 / 输入,可历史里记的一直是改之前的识别结果 —— 回头从历史里
+/// 再拿,错字又回来了。改之前那份放进 `original`(没有的话),「原文」切换照样看得到。
+#[tauri::command]
+pub async fn history_update_text(
+    app: tauri::AppHandle,
+    state: State<'_, crate::AppState>,
+    id: i64,
+    text: String,
+) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    let persist = save_enabled(&state);
+    with_store(&app, |path, entries| {
+        let Some(entry) = entries.iter_mut().find(|e| e.id == id) else {
+            return Ok(());
+        };
+        if entry.text == text {
+            return Ok(());
+        }
+        if entry.original.is_none() {
+            entry.original = Some(std::mem::take(&mut entry.text));
+        }
+        entry.text = text;
+        if persist && !entry.transient {
+            write_to_disk(path, entries)?;
+        }
+        Ok(())
+    })
+}
+
 /// 清空:内存、文件一起清,托盘里的「最近一条」也忘掉——用户点清空,
 /// 就不该还能从托盘里把上一句复制出来。
 #[tauri::command]

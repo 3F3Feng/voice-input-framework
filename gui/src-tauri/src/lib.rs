@@ -1684,6 +1684,7 @@ pub fn run() {
             history::history_list,
             history::history_add,
             history::history_delete,
+            history::history_update_text,
             history::history_clear,
         ])
         .build(tauri::generate_context!())
