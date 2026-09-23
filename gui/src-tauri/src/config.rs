@@ -283,13 +283,11 @@ impl Default for VoiceInputConfig {
     }
 }
 
-/// 用户主目录。Windows 上通常没有 `HOME`,只有 `USERPROFILE`;以前只读 `HOME`,
-/// 退回到 "." 之后老配置找不到、兜底目录也落在了当前工作目录里。
+/// 用户主目录,退回 "." 兜底。判断逻辑(`HOME` → `USERPROFILE`,空串不算)只在
+/// `server_manager::home_dir` 写一份;Windows 上通常没有 `HOME`,以前只读它,
+/// 老配置找不到、兜底目录也落在了当前工作目录里。
 pub fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    crate::server_manager::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// 旧版快捷键录制存坏的写法,能修就返回修好的。
