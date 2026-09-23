@@ -40,3 +40,15 @@ def test_download_state_follows_the_hf_cache(monkeypatch, tmp_path):
     (tmp_path / "models--org--some-model" / "snapshots" / "abc").mkdir(parents=True)
     assert model_catalog.is_downloaded(info) is True
     assert model_catalog.is_downloaded({"model_id": "whisper_cpp_base"}) is None
+
+
+def test_cache_bytes_counts_blobs_including_incomplete(monkeypatch, tmp_path):
+    """下载进度按缓存目录增长算(F4)"""
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
+    blobs = tmp_path / "models--org--m" / "blobs"
+    blobs.mkdir(parents=True)
+    (blobs / "a").write_bytes(b"x" * 100)
+    (blobs / "b.incomplete").write_bytes(b"x" * 50)
+    assert model_catalog.cache_bytes("org/m") == 150
+    assert model_catalog.cache_bytes("org/missing") == 0
+    assert model_catalog.cache_bytes("not-a-hf-id") == 0

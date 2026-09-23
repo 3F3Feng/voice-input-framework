@@ -1347,15 +1347,20 @@ async function switchStt() {
   try {
     await invoke<string>("switch_model", { name });
     for (;;) {
-      const st = await invoke<{ is_loaded: boolean; is_loading: boolean; is_current: boolean; error: string | null }>(
-        "get_model_status", { name });
+      const st = await invoke<{
+        is_loaded: boolean; is_loading: boolean; is_current: boolean; error: string | null;
+        loading?: { downloaded_bytes: number } | null;
+      }>("get_model_status", { name });
       if (st.is_loaded) { toast(`已切换到 ${name}`, "ok"); break; }
       if (st.error) throw `${st.error}(已回到原来的模型)`;
       if (!st.is_current && !st.is_loading) throw "切换被中断(可能又选了别的模型)";
       const secs = Math.round((Date.now() - started) / 1000);
-      sttSwitchNote.value = secs < 10
-        ? "正在加载模型…"
-        : `正在加载模型… ${secs} 秒(第一次用这个模型需要下载,可能要几分钟)`;
+      const mb = Math.round((st.loading?.downloaded_bytes ?? 0) / 1048576);
+      sttSwitchNote.value = mb > 0
+        ? `正在下载模型… 已下载 ${mb} MB(${secs} 秒)`
+        : secs < 10
+          ? "正在加载模型…"
+          : `正在加载模型… ${secs} 秒(第一次用这个模型需要下载,可能要几分钟)`;
       // 等太久就不在这里干等了,服务端会继续加载,头部状态会跟着变。
       if (Date.now() - started > 15 * 60 * 1000) { toast("模型还在加载,完成后自动生效", "info"); break; }
       await sleep(1500);

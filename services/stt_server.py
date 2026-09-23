@@ -308,6 +308,7 @@ async def health_check():
         # 跑在 GPU 上还是 CPU 上、为什么给了这个模型 —— 以前这些全靠猜。
         hardware=engine.backend_info() or {"status": "模型尚未加载"},
         error=load_error,
+        loading=engine.loading_progress(),
     )
 
 
@@ -523,6 +524,7 @@ async def get_model_status(model_name: str):
         "is_loading": is_loading,
         # 切换失败的原因(会回退到切换前的模型,所以不能只看 /health 的 error)
         "error": engine.switch_error(model_name),
+        "loading": engine.loading_progress() if is_loading else None,
         "model_info": engine.AVAILABLE_MODELS.get(model_name, {}),
     }
 

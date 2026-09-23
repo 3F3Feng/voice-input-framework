@@ -79,6 +79,9 @@ class HealthStatus(BaseModel):
     #: 最近一次加载失败的原因(status == "error" 时有值)。没有它,加载失败和
     #: 「还在加载」在外面看起来一模一样,界面会永远停在「正在加载模型」。
     error: str | None = None
+    #: 加载进度(status == "loading" 时有值):加载了多久、这次下载了多少字节。
+    #: 首次使用一个模型要下几百 MB 到几 GB,以前界面只有一句「正在加载模型」。
+    loading: dict[str, Any] | None = None
 
 
 # ============== 静音与幻觉 ==============
@@ -263,6 +266,9 @@ class STTEngine:
         self._is_loaded = False
         self._loading = False
         self._load_error: str | None = None
+        #: 这次加载开始的时刻、开始时缓存里已有的字节数(算「这次下载了多少」用)
+        self._load_started_at: float | None = None
+        self._load_bytes_at_start = 0
         #: 切换失败的模型 → 失败原因。切换失败会回退到上一个模型,`_load_error`
         #: 随之清空,原因就只能记在这里,好让 `/models/status/{name}` 答得出来。
         self._switch_errors: dict[str, str] = {}
@@ -301,6 +307,8 @@ class STTEngine:
 
             self._loading = True
             self._load_error = None
+            self._load_started_at = time.time()
+            self._load_bytes_at_start = self._cache_bytes()
             try:
                 logger.info(f"Loading STT model: {self._model_info['model_id']}")
                 loop = asyncio.get_event_loop()
@@ -604,6 +612,23 @@ class STTEngine:
 
     def is_loading(self) -> bool:
         return self._loading
+
+    def _cache_bytes(self) -> int:
+        from services.model_catalog import cache_bytes
+
+        return cache_bytes(self._model_info.get("model_id", ""))
+
+    def loading_progress(self) -> dict[str, Any] | None:
+        """正在加载时:模型名、已用秒数、这次下载了多少字节;没在加载时为 None。"""
+        if not self._loading or self._load_started_at is None:
+            return None
+        downloaded = max(0, self._cache_bytes() - self._load_bytes_at_start)
+        return {
+            "model": self.current_model_name,
+            "elapsed_s": round(time.time() - self._load_started_at, 1),
+            "downloaded_bytes": downloaded,
+            "phase": "downloading" if downloaded > 0 else "loading",
+        }
 
     def backend_info(self) -> dict | None:
         """选中的推理后端(设备 / 精度 / 说明)。还没加载模型时为 None。"""

@@ -98,3 +98,25 @@ def describe(name: str) -> dict[str, Any]:
         "downloaded": is_downloaded(info),
         "recommended": name == recommended_model(),
     }
+
+
+def cache_bytes(model_id: str) -> int:
+    """这个模型在 HuggingFace 缓存里已经落盘的字节数(含下载中的 .incomplete)。
+
+    用来给「首次加载要下载几百 MB 到几 GB」报进度。不挂 huggingface_hub 的进度
+    回调,是因为几个引擎(mlx-audio / mlx-whisper / transformers)各自调下载,
+    接口和版本都不一样;数缓存目录的增长对谁都成立。
+    """
+    if "/" not in model_id:
+        return 0
+    blobs = _hf_cache_dir() / f"models--{model_id.replace('/', '--')}" / "blobs"
+    total = 0
+    try:
+        for f in blobs.iterdir():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    except OSError:
+        return 0
+    return total

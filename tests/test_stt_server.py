@@ -548,3 +548,34 @@ class TestSilenceAndHallucination:
         t = np.arange(16000) / 16000
         audio = (3000 * np.sin(2 * np.pi * 220 * t)).astype(np.int16).tobytes() + b"\x01"
         assert (await engine.transcribe(audio)).text == "ok"
+
+
+class TestLoadingProgress:
+    """加载期间 /health 报进度(F4)"""
+
+    @pytest.mark.asyncio
+    async def test_progress_reports_download_growth(self, monkeypatch):
+        import asyncio
+
+        from services.stt_server import STTEngine
+
+        engine = STTEngine(default_model="whisper_tiny")
+        sizes = iter([1000, 1000, 5000])
+        monkeypatch.setattr(engine, "_cache_bytes", lambda: next(sizes))
+        release = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def slow_load():
+            asyncio.run_coroutine_threadsafe(release.wait(), loop).result(timeout=5)
+
+        monkeypatch.setattr(engine, "_load_model_sync", slow_load)
+        assert engine.loading_progress() is None
+        task = asyncio.create_task(engine.load())
+        await asyncio.sleep(0.05)
+        first = engine.loading_progress()  # 缓存还没长:在加载
+        assert first["phase"] == "loading" and first["downloaded_bytes"] == 0
+        second = engine.loading_progress()  # 长了 4000 字节:在下载
+        assert second["phase"] == "downloading" and second["downloaded_bytes"] == 4000
+        release.set()
+        assert await task is True
+        assert engine.loading_progress() is None
