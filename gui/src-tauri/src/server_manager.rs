@@ -383,7 +383,7 @@ impl ServerManager {
             cmd.env("VIF_LLM_MODEL", model);
         }
 
-        let mut child = cmd
+        let mut child = no_console(&mut cmd)
             .spawn()
             .map_err(|e| format!("启动 {} 服务失败: {}", kind.label(), e))?;
         let pid = child.id();
@@ -678,6 +678,25 @@ fn pump<R: std::io::Read + Send + 'static>(
 
 // ── 进程探测 / 信号(平台相关)──
 
+/// Windows 上 `CreateProcess` 的 `CREATE_NO_WINDOW`。
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// 让子进程不弹控制台窗口。
+///
+/// 本应用是 GUI 子系统程序,自己没有控制台;从它起一个控制台程序(`python.exe`、
+/// `tasklist`、`taskkill`)时,Windows 会给子进程新开一个黑窗口。服务启动时弹一个
+/// 还算看得见原因,状态轮询每 3 秒经 `pid_alive` 跑一次 `tasklist`,就是每 3 秒
+/// 闪一下黑框。其它平台什么都不做。
+fn no_console(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 #[cfg(unix)]
 fn pid_alive(pid: u32) -> bool {
     // `kill -0` 只做权限与存在性检查,不发信号。
@@ -693,11 +712,33 @@ fn pid_alive(pid: u32) -> bool {
 
 #[cfg(not(unix))]
 fn pid_alive(pid: u32) -> bool {
-    Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {}", pid), "/NH"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
-        .unwrap_or(false)
+    no_console(Command::new("tasklist").args([
+        "/FI",
+        &format!("PID eq {}", pid),
+        "/FO",
+        "CSV",
+        "/NH",
+    ]))
+    .output()
+    .map(|o| tasklist_lists_pid(&String::from_utf8_lossy(&o.stdout), pid))
+    .unwrap_or(false)
+}
+
+/// `tasklist /FO CSV /NH` 的输出里有没有这个 pid。
+///
+/// 以前是对整段输出做 `contains(pid)`:pid 12 会命中 pid 1234 那一行,内存占用
+/// 那一栏(`"12,345 K"`)也能命中——死掉的进程被当成活着,「停止」就会一直等、
+/// 最后对着一个不相干的 pid 发 `/F`。现在只比第二栏(PID)整值相等。没有匹配
+/// 进程时 tasklist 打的是一行「INFO: ...」提示,不带引号,自然不会命中。
+#[cfg_attr(unix, allow(dead_code))]
+fn tasklist_lists_pid(stdout: &str, pid: u32) -> bool {
+    stdout.lines().any(|line| {
+        line.split("\",\"")
+            .nth(1)
+            .map(|field| field.trim_matches('"').trim())
+            .and_then(|field| field.parse::<u32>().ok())
+            == Some(pid)
+    })
 }
 
 /// pid 是否确实在跑指定模块。认领遗孤前的防串号校验。
@@ -835,9 +876,7 @@ fn terminate(pid: u32) {
 
 #[cfg(not(unix))]
 fn terminate(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T"])
-        .status();
+    let _ = no_console(Command::new("taskkill").args(["/PID", &pid.to_string(), "/T"])).status();
 }
 
 #[cfg(unix)]
@@ -850,9 +889,8 @@ fn force_kill(pid: u32) {
 
 #[cfg(not(unix))]
 fn force_kill(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status();
+    let _ =
+        no_console(Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"])).status();
 }
 
 // ── 健康探测 ──
@@ -1696,6 +1734,20 @@ mod tests {
         let text = std::fs::read_to_string(&log_path).unwrap();
         assert!(text.contains("line 1999"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tasklist_pid_match_is_exact() {
+        let out = "\"python.exe\",\"1234\",\"Console\",\"1\",\"12,345 K\"\r\n";
+        assert!(tasklist_lists_pid(out, 1234));
+        // 以前的子串匹配会让这几个都算「活着」。
+        assert!(!tasklist_lists_pid(out, 12));
+        assert!(!tasklist_lists_pid(out, 123));
+        assert!(!tasklist_lists_pid(out, 345));
+        assert!(!tasklist_lists_pid(
+            "INFO: No tasks are running which match the specified criteria.\r\n",
+            1
+        ));
     }
 
     #[test]
