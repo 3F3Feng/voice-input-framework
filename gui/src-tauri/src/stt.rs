@@ -69,6 +69,12 @@ impl LlmStatus {
     }
 }
 
+/// 连不上服务类错误的统一前缀。悬浮胶囊按前缀归类(`indicator::failure_display`),
+/// 以前按「连不上」「超时」这些词去猜,改一句文案就会悄悄归错类。
+pub const ERR_UNREACHABLE: &str = "连不上 STT 服务";
+/// 等识别结果超时类错误的统一前缀。
+pub const ERR_RESULT_TIMEOUT: &str = "等待识别结果超时";
+
 /// 没录到任何音频时的错误。前端按这句话认出「没听到声音」,而不是当成故障。
 pub const NO_SPEECH: &str = "没有录到声音";
 
@@ -261,8 +267,8 @@ impl SttClient {
 
         let (mut ws, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(&url))
             .await
-            .map_err(|_| format!("连接 STT 服务超时({})", self.stt_url))?
-            .map_err(|e| format!("连不上 STT 服务({}):{}", self.stt_url, e))?;
+            .map_err(|_| format!("{}({}):连接超时", ERR_UNREACHABLE, self.stt_url))?
+            .map_err(|e| format!("{}({}):{}", ERR_UNREACHABLE, self.stt_url, e))?;
 
         match tokio::time::timeout(QUERY_TIMEOUT, ws.next()).await {
             Ok(Some(Ok(Message::Text(json)))) => {
@@ -273,8 +279,13 @@ impl SttClient {
                 }
                 eprintln!("[stt] Server ready, model: {}", data["model"]);
             }
-            Err(_) => return Err("STT 服务没有应答(等待就绪消息超时)".to_string()),
-            _ => return Err("STT 服务没有发来就绪消息".to_string()),
+            Err(_) => {
+                return Err(format!(
+                    "{}:服务没有应答(等待就绪消息超时)",
+                    ERR_UNREACHABLE
+                ))
+            }
+            _ => return Err(format!("{}:服务没有发来就绪消息", ERR_UNREACHABLE)),
         }
 
         let lang_msg = serde_json::json!({"type": "config", "language": language});
@@ -340,9 +351,13 @@ impl SttClient {
                 Err(_) => {
                     let _ = stream_task.await;
                     return Err(if saw_keepalive {
-                        format!("识别服务 {} 秒没有动静,可能已经卡住", wait.as_secs())
+                        format!(
+                            "{}:识别服务 {} 秒没有动静,可能已经卡住",
+                            ERR_RESULT_TIMEOUT,
+                            wait.as_secs()
+                        )
                     } else {
-                        "等待识别结果超时(5 分钟)".to_string()
+                        format!("{}(5 分钟)", ERR_RESULT_TIMEOUT)
                     });
                 }
             };

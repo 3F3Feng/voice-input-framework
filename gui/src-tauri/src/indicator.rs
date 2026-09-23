@@ -203,12 +203,10 @@ pub fn show_failure(app: &tauri::AppHandle, err: &str) {
 pub(crate) fn failure_display(err: &str) -> (&'static str, &'static str) {
     if err == crate::stt::NO_SPEECH {
         ("info", "没听到声音")
-    } else if err.contains("连不上")
-        || err.contains("连接 STT 服务超时")
-        || err.contains("STT 服务没有")
-    {
+    } else if err.starts_with(crate::stt::ERR_UNREACHABLE) {
         ("error", "连不上识别服务")
-    } else if err.contains("超时") {
+    } else if err.starts_with(crate::stt::ERR_RESULT_TIMEOUT) || err == "转写超时" {
+        // 「转写超时」是服务端自己的 600 秒上限(stt_server.py 的 E5002)。
         ("error", "识别超时")
     } else {
         ("error", "识别失败")
@@ -257,9 +255,9 @@ mod tests {
     fn connection_failures_say_so() {
         for e in [
             "连不上 STT 服务(http://127.0.0.1:6544):Connection refused",
-            "连接 STT 服务超时(http://10.0.0.1:6544)",
-            "STT 服务没有应答(等待就绪消息超时)",
-            "STT 服务没有发来就绪消息",
+            "连不上 STT 服务(http://10.0.0.1:6544):连接超时",
+            "连不上 STT 服务:服务没有应答(等待就绪消息超时)",
+            "连不上 STT 服务:服务没有发来就绪消息",
         ] {
             assert_eq!(failure_display(e), ("error", "连不上识别服务"), "{e}");
         }
@@ -272,6 +270,15 @@ mod tests {
             ("error", "识别超时")
         );
         assert_eq!(failure_display("转写超时"), ("error", "识别超时"));
+        assert_eq!(
+            failure_display("等待识别结果超时:识别服务 60 秒没有动静,可能已经卡住"),
+            ("error", "识别超时")
+        );
+        // 以前按「超时」这个词归类:服务端回的任何带「超时」的错误都会被说成识别超时。
+        assert_eq!(
+            failure_display("模型加载失败:下载超时"),
+            ("error", "识别失败")
+        );
         assert_eq!(failure_display("CUDA out of memory"), ("error", "识别失败"));
     }
 }
