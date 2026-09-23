@@ -620,13 +620,28 @@ async fn set_llm_enabled(
                 .await
                 .map_err(|e| format!("LLM 服务启动失败,后处理未开启:{}", e))?;
             log_info!("[llm] {}", msg);
-            if !server_manager::wait_ready(&cfg, server_manager::ServerKind::Llm, LLM_READY_TIMEOUT)
-                .await
+            match server_manager::wait_ready(
+                &cfg,
+                server_manager::ServerKind::Llm,
+                LLM_READY_TIMEOUT,
+            )
+            .await
             {
-                return Err(format!(
-                    "LLM 服务还在加载模型(已等 {} 秒),后处理暂未开启。等「服务器」面板显示「运行中」后再打开这个开关即可。",
-                    LLM_READY_TIMEOUT.as_secs()
-                ));
+                server_manager::Readiness::Ready => {}
+                // 模型加载失败(非 Apple 平台没有 mlx_lm、下载断了、内存不够)不会自己
+                // 好起来。以前这里分不出失败和加载中,要白等满 30 秒才说「还在加载」,
+                // 并且留下一个永远加载不完的进程。现在立刻把原因说出来,并把刚拉起的
+                // 进程收回去(照样只收自己拉起的)。
+                server_manager::Readiness::Failed(reason) => {
+                    rollback_llm_start(&servers, &cfg).await;
+                    return Err(format!("LLM 模型加载失败,后处理未开启:{}", reason));
+                }
+                server_manager::Readiness::TimedOut => {
+                    return Err(format!(
+                        "LLM 服务还在加载模型(已等 {} 秒),后处理暂未开启。等「服务器」面板显示「运行中」后再打开这个开关即可。",
+                        LLM_READY_TIMEOUT.as_secs()
+                    ));
+                }
             }
             notes.push("LLM 服务已就绪".into());
         }
@@ -688,12 +703,18 @@ async fn reconcile_llm_after_start(
     cfg: config::ServerConfig,
     started_llm: bool,
 ) {
-    if !server_manager::wait_ready(&cfg, server_manager::ServerKind::Stt, STT_READY_TIMEOUT).await {
-        log_error!(
-            "[llm] STT 服务没能在 {} 秒内就绪,后处理开关的对账跳过",
-            STT_READY_TIMEOUT.as_secs()
-        );
-        return;
+    // 对账只要 STT 的 HTTP 接口能答话:`/llm/enabled` 不依赖 STT 模型。所以模型
+    // 加载失败也照样对账,只有等到超时(服务压根没起来)才跳过。
+    match server_manager::wait_ready(&cfg, server_manager::ServerKind::Stt, STT_READY_TIMEOUT).await
+    {
+        server_manager::Readiness::Ready | server_manager::Readiness::Failed(_) => {}
+        server_manager::Readiness::TimedOut => {
+            log_error!(
+                "[llm] STT 服务没能在 {} 秒内就绪,后处理开关的对账跳过",
+                STT_READY_TIMEOUT.as_secs()
+            );
+            return;
+        }
     }
     let truth = match stt::SttClient::new(&cfg.effective_stt_url())
         .get_llm_enabled()

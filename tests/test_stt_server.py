@@ -453,6 +453,22 @@ class TestLLMProxyError:
         resp = httpx.Response(500, text="boom")
         assert "500" in _upstream_message(resp)
 
+    def test_llm_switch_timeout_says_still_loading(self, monkeypatch):
+        """转发切换超时 ≠ 切换失败:LLM 还在后台加载,完成后会自己生效(R16)"""
+        import httpx
+        from fastapi.testclient import TestClient
+
+        import services.stt_server as srv
+
+        async def slow_post(self, *a, **k):
+            raise httpx.ReadTimeout("timed out")
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", slow_post)
+        monkeypatch.setattr(srv, "save_state", lambda state: pytest.fail("超时不该持久化"))
+        r = TestClient(srv.app).post("/llm/models/select", json={"model_name": "Qwen3.5-4B-MLX"})
+        assert r.status_code == 504
+        assert "还在加载 Qwen3.5-4B-MLX" in r.json()["error_message"]
+
 
 class TestTranscriptionRequest:
     """Test TranscriptionRequest model"""

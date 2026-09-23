@@ -166,6 +166,99 @@ class TestLLMEngine:
         assert result is True
 
 
+class TestLoadFailureAndModelChoice:
+    """R15:加载失败要报出来;R16:选过的模型重启后还在"""
+
+    @pytest.fixture
+    def state_file(self, tmp_path, monkeypatch):
+        import services.llm_server as srv
+
+        path = tmp_path / "llm_state.json"
+        monkeypatch.setattr(srv, "LLM_STATE_FILE", path)
+        return path
+
+    @pytest.mark.asyncio
+    async def test_load_failure_is_reported_not_stuck_loading(self, monkeypatch, state_file):
+        from fastapi.testclient import TestClient
+
+        import services.llm_server as srv
+
+        engine = srv.LLMEngine()
+
+        def boom(model_id):
+            raise ModuleNotFoundError("No module named 'mlx_lm'")
+
+        monkeypatch.setattr(engine, "_load_sync", boom)
+        assert await engine.load() is False
+        assert "mlx_lm" in engine.load_error()
+
+        monkeypatch.setattr(srv, "engine", engine)
+        body = TestClient(srv.app).get("/health").json()
+        assert body["status"] == "error"
+        assert "mlx_lm" in body["error"]
+
+        # 重新加载期间不再报上一次的失败原因
+        engine._loading = True
+        assert engine.load_error() is None
+        # 失败的加载不能被记成用户的选择
+        assert not state_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_non_apple_platform_says_why(self, monkeypatch, state_file):
+        import services.llm_server as srv
+
+        monkeypatch.setattr(srv, "IS_APPLE_SILICON", False)
+        engine = srv.LLMEngine()
+        assert await engine.load() is False
+        assert "Apple Silicon" in engine.load_error()
+
+    @pytest.mark.asyncio
+    async def test_selected_model_survives_restart(self, monkeypatch, state_file):
+        import services.llm_server as srv
+
+        engine = srv.LLMEngine()
+        monkeypatch.setattr(engine, "_load_sync", lambda model_id: None)
+        assert await engine.load("Qwen3.5-2B-OptiQ", remember=True)
+        assert srv.load_llm_state()["llm_model"] == "Qwen3.5-2B-OptiQ"
+
+        # 「重启」:没有环境变量时沿用上次选的;环境变量仍然优先。
+        monkeypatch.delenv("VIF_LLM_MODEL", raising=False)
+        assert srv.resolve_llm_model() == "Qwen3.5-2B-OptiQ"
+        monkeypatch.setenv("VIF_LLM_MODEL", "Qwen3-0.6B")
+        assert srv.resolve_llm_model() == "Qwen3-0.6B"
+
+    def test_unknown_saved_model_falls_back_to_default(self, monkeypatch, state_file):
+        import services.llm_server as srv
+
+        state_file.write_text('{"llm_model": "gone-model"}')
+        monkeypatch.delenv("VIF_LLM_MODEL", raising=False)
+        assert srv.resolve_llm_model() == srv.DEFAULT_LLM_MODEL
+
+    def test_select_endpoint_remembers_only_on_success(self, monkeypatch, state_file):
+        from fastapi.testclient import TestClient
+
+        import services.llm_server as srv
+
+        engine = srv.LLMEngine()
+        monkeypatch.setattr(srv, "engine", engine)
+
+        def load_sync(model_id):
+            if "0.6B" in model_id:
+                raise OSError("download interrupted")
+
+        monkeypatch.setattr(engine, "_load_sync", load_sync)
+        client = TestClient(srv.app)
+
+        r = client.post("/models/select", data={"model_name": "Qwen3-0.6B"})
+        assert r.status_code == 503
+        assert "download interrupted" in r.json()["message"]
+        assert not state_file.exists()
+
+        r = client.post("/models/select", data={"model_name": "Qwen3.5-2B-OptiQ"})
+        assert r.status_code == 200
+        assert srv.load_llm_state()["llm_model"] == "Qwen3.5-2B-OptiQ"
+
+
 class TestPromptTemplates:
     """Test prompt template handling"""
 

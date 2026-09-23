@@ -7,6 +7,7 @@ Port: 6545
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -32,6 +33,7 @@ from shared.constants import (  # noqa: E402
     DEFAULT_CORS_ORIGINS,
     MAX_PROCESS_TEXT_LENGTH,
 )
+from shared.model_registry import IS_APPLE_SILICON  # noqa: E402
 
 # 配置日志
 _log_level = os.getenv("VIF_LOG_LEVEL", "INFO").upper()
@@ -76,6 +78,42 @@ def save_prompt(prompt: str) -> bool:
         return False
 
 
+# ============== 模型选择持久化 ==============
+#
+# 以前 LLM 服务只认 `VIF_LLM_MODEL` 环境变量,而 GUI 拉起它时不传(配置里
+# `local.llm_model` 默认为空)。用户选的模型只记在 STT 服务的 `stt_state.json`
+# 里,LLM 进程根本不读——于是每拨一次后处理开关(停了再起),都回到默认的
+# Qwen3.5-4B-OptiQ。现在 LLM 服务自己记:切换成功才写,启动时没有环境变量就读回来。
+LLM_STATE_FILE = Path.home() / ".config" / "voice-input-framework" / "llm_state.json"
+DEFAULT_LLM_MODEL = "Qwen3.5-4B-OptiQ"
+
+
+def load_llm_state() -> dict:
+    try:
+        if LLM_STATE_FILE.exists():
+            data = json.loads(LLM_STATE_FILE.read_text())
+            if isinstance(data, dict):
+                return data
+    except Exception as e:
+        logger.warning(f"Failed to load LLM state file: {e}")
+    return {}
+
+
+def save_llm_state(state: dict) -> None:
+    try:
+        LLM_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LLM_STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+    except Exception as e:
+        logger.warning(f"Failed to save LLM state file: {e}")
+
+
+def remember_llm_model(name: str) -> None:
+    state = load_llm_state()
+    state["llm_model"] = name
+    save_llm_state(state)
+    logger.info(f"LLM model saved to state: {name}")
+
+
 # ============== Data Models ==============
 
 
@@ -109,6 +147,8 @@ class HealthStatus(BaseModel):
     loaded_models: list[str]
     active_connections: int = 0
     is_processing: bool = False
+    #: 最近一次加载失败的原因(status == "error" 时有值)。
+    error: str | None = None
 
 
 # ============== 输出清洗 ==============
@@ -223,19 +263,30 @@ class LLMEngine:
         self._tokenizer = None
         self._is_loaded = False
         self._loading = False
+        #: 最近一次加载失败的原因。没有它 /health 永远是 loading:模型根本加载
+        #: 不了(非 Apple 平台没有 mlx_lm、下载断了、内存不够)和「还在加载」在
+        #: 外面看起来一模一样,打开后处理开关要白等满 30 秒才报「还在加载」。
+        self._load_error: str | None = None
         self._load_lock = asyncio.Lock()
         self._processing = False
         # 生成在线程池执行,需用线程锁(而非 asyncio.Lock)串行化
         self._process_lock = threading.Lock()
         self.start_time = time.time()
 
-    async def load(self, model_name: str | None = None) -> bool:
-        """加载模型"""
+    async def load(self, model_name: str | None = None, remember: bool = False) -> bool:
+        """加载模型。
+
+        Args:
+            remember: 加载成功后把选择记进 `llm_state.json`,下次启动沿用。只有
+                用户明确切换(`/models/select`)才传 True——启动时按环境变量加载的
+                那一次不该覆盖用户的选择。
+        """
         target_model = model_name or self.default_model
         model_id = self.MODEL_IDS.get(target_model)
 
         if not model_id:
             logger.error(f"Unknown model: {target_model}")
+            self._load_error = f"未知的 LLM 模型:{target_model}"
             return False
 
         async with self._load_lock:
@@ -248,20 +299,23 @@ class LLMEngine:
             # 即便可达也只会自锁(持锁方无法在本协程持锁时清除标志)。
             # `_loading` 本身保留: is_loading() 对外暴露加载状态(/ready 等接口在用)。
             self._loading = True
+            self._load_error = None
             try:
                 # 切换模型前先释放旧模型内存(与 STT 侧一致,否则每次切换都泄漏一份权重)
                 if self._model is not None:
                     self._release_model()
                 logger.info(f"Loading LLM model: {model_id}")
                 loop = asyncio.get_event_loop()
-                success = await loop.run_in_executor(None, self._load_sync, model_id)
-                if success:
-                    self.current_model_name = target_model
-                    self._is_loaded = True
-                    logger.info(f"LLM model loaded successfully: {target_model}")
-                return success
+                await loop.run_in_executor(None, self._load_sync, model_id)
+                self.current_model_name = target_model
+                self._is_loaded = True
+                logger.info(f"LLM model loaded successfully: {target_model}")
+                if remember:
+                    remember_llm_model(target_model)
+                return True
             except Exception as e:
-                logger.error(f"Failed to load LLM model: {e}")
+                logger.error(f"Failed to load LLM model: {e}", exc_info=True)
+                self._load_error = f"{type(e).__name__}: {e}"
                 return False
             finally:
                 self._loading = False
@@ -282,16 +336,18 @@ class LLMEngine:
         gc.collect()
         logger.info("Old LLM model memory released")
 
-    def _load_sync(self, model_id: str) -> bool:
-        """同步加载模型"""
-        try:
-            import mlx_lm
+    def _load_sync(self, model_id: str) -> None:
+        """同步加载模型。失败直接抛出,由 `load` 记下原因。
 
-            self._model, self._tokenizer = mlx_lm.load(model_id)
-            return True
-        except Exception as e:
-            logger.error(f"Load error: {e}")
-            return False
+        以前这里把异常吞掉只返回 False,原因只进了日志,/health 报不出来。
+        """
+        if not IS_APPLE_SILICON:
+            # 不写这句,用户看到的是一句 `No module named 'mlx_lm'`,不知道是
+            # 少装了什么还是这台机器根本不行。
+            raise RuntimeError("LLM 后处理目前只支持 Apple Silicon(依赖 mlx-lm),这台机器上用不了")
+        import mlx_lm
+
+        self._model, self._tokenizer = mlx_lm.load(model_id)
 
     def process(self, text: str) -> ProcessResult:
         """处理文本"""
@@ -433,6 +489,10 @@ class LLMEngine:
     def is_model_loaded(self) -> bool:
         return self._is_loaded
 
+    def load_error(self) -> str | None:
+        """最近一次加载失败的原因;正在加载或已加载成功时为 None。"""
+        return None if (self._is_loaded or self._loading) else self._load_error
+
     def is_processing(self) -> bool:
         return self._processing
 
@@ -443,7 +503,23 @@ class LLMEngine:
 # 默认只绑定回环地址:本服务无鉴权,不应默认暴露到局域网。
 LLM_HOST = os.getenv("VIF_LLM_HOST", DEFAULT_BIND_HOST)
 LLM_PORT = int(os.getenv("VIF_LLM_PORT", "6545"))
-LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
+
+
+def resolve_llm_model() -> str:
+    """启动时加载哪个模型:`VIF_LLM_MODEL` > 上次切换成功的 > 默认。"""
+    explicit = os.getenv("VIF_LLM_MODEL")
+    if explicit:
+        return explicit
+    saved = load_llm_state().get("llm_model")
+    if saved in LLMEngine.MODEL_IDS:
+        logger.info(f"Restoring LLM model from saved state: {saved}")
+        return saved
+    if saved:
+        logger.warning(f"Saved LLM model '{saved}' not available, using default")
+    return DEFAULT_LLM_MODEL
+
+
+LLM_MODEL = resolve_llm_model()
 CORS_ORIGINS = [
     o.strip() for o in os.getenv("VIF_CORS_ORIGINS", "").split(",") if o.strip()
 ] or DEFAULT_CORS_ORIGINS
@@ -483,14 +559,22 @@ app.add_middleware(
 @app.get("/health", response_model=HealthStatus)
 async def health_check():
     """健康检查"""
+    load_error = engine.load_error()
+    if engine.is_model_loaded():
+        status = "ok"
+    elif load_error:
+        status = "error"
+    else:
+        status = "loading"
     return HealthStatus(
-        status="ok" if engine.is_model_loaded() else "loading",
+        status=status,
         version="1.0.0",
         uptime_seconds=time.time() - engine.start_time,
         current_model=engine.current_model_name,
         loaded_models=[engine.current_model_name] if engine.is_model_loaded() else [],
         active_connections=0,
         is_processing=engine.is_processing(),
+        error=load_error,
     )
 
 
@@ -515,7 +599,11 @@ async def select_model(model_name: str = Form(...)):
     """切换模型"""
     try:
         logger.info(f"Switching to model: {model_name}")
-        success = await engine.load(model_name)
+        # 下载一个 4B 模型常常超过 STT 那头转发的 30 秒超时。转发方放弃等待后,
+        # 这里的加载必须照样做完、照样记下选择,否则「最后换成功了却没被记住」。
+        # shield 保证即使这个请求被取消,加载任务本身(连同持久化)也不跟着取消。
+        load_task = asyncio.ensure_future(engine.load(model_name, remember=True))
+        success = await asyncio.shield(load_task)
         body = {
             "status": "success" if success else "failed",
             "current_model": engine.current_model_name,
@@ -526,7 +614,8 @@ async def select_model(model_name: str = Form(...)):
             # 中间的转发层和客户端都只看状态码,一路把失败当成功传到界面上,
             # 用户会收到一条「已切换」的提示,而模型其实没换。
             logger.error(f"Model load failed: {model_name}")
-            body["message"] = f"模型 {model_name} 加载失败"
+            reason = engine.load_error()
+            body["message"] = f"模型 {model_name} 加载失败" + (f":{reason}" if reason else "")
             return JSONResponse(status_code=503, content=body)
         return body
     except Exception as e:
@@ -547,7 +636,8 @@ async def process_text(request: ProcessRequest):
             # 尝试加载
             loaded = await engine.load()
             if not loaded:
-                raise HTTPException(status_code=503, detail="LLM model not loaded")
+                reason = engine.load_error() or "原因未知,见 LLM 服务日志"
+                raise HTTPException(status_code=503, detail=f"LLM 模型没有加载成功:{reason}")
 
         result = await engine.process_async(request.text)
         return result

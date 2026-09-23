@@ -405,6 +405,12 @@ async def select_llm_model(request: Request):
             save_state(state)
             logger.info(f"LLM model saved to state: {model_name}")
             return data
+    except httpx.TimeoutException:
+        # 下载一个 4B 模型常常超过 30 秒。以前这里报成一句泛泛的「切换失败」,
+        # 而 LLM 服务其实还在后台接着加载,最后换成功了——用户却以为没换成。
+        # LLM 服务加载成功后会自己记下选择(llm_state.json),所以直说「还在加载」。
+        logger.warning(f"LLM model switch still loading after timeout: {model_name}")
+        return _llm_error(f"LLM 还在加载 {model_name},完成后自动生效", 504)
     except Exception as e:
         logger.error(f"Failed to select LLM model: {e}")
         return _llm_error(str(e))

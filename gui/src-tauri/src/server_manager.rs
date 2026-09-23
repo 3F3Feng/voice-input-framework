@@ -940,7 +940,9 @@ impl Health {
     }
 }
 
-/// 打一次 `/health`,只有模型就绪(`status == "ok"`)才算数。
+/// 打一次 `/health`,只有模型就绪(`status == "ok"`)才算数。线上代码都改用
+/// `probe_raw` 按「端口有应答」和 `Health::answer` 判断了,这个只剩测试在用。
+#[cfg(test)]
 async fn probe(port: u16) -> Option<Health> {
     probe_raw(port).await.filter(|health| health.status == "ok")
 }
@@ -1393,9 +1395,15 @@ impl LlmShutdownPlan {
 /// 关后处理时该不该动 LLM 服务。
 pub fn plan_llm_shutdown(status: &ServerStatus) -> LlmShutdownPlan {
     // `Starting` 也算在跑:那是自己刚拉起、还在加载模型的进程,不停掉它就等于
-    // 开关关了而内存照占。`Failed` / `Stopped` / `NotConfigured` 都没有活着的
-    // 进程可停。
-    if !matches!(status.state, ServerState::Running | ServerState::Starting) {
+    // 开关关了而内存照占。`Failed` 分两种:进程活着但模型加载失败(`pid` 有值),
+    // 它照样占着端口和内存,得停——打开开关时加载失败要回收的正是它;进程已经
+    // 退出(`pid` 为空)就没什么可停的。`Stopped` / `NotConfigured` 都没有进程。
+    let has_process = match status.state {
+        ServerState::Running | ServerState::Starting => true,
+        ServerState::Failed => status.pid.is_some(),
+        ServerState::Stopped | ServerState::NotConfigured => false,
+    };
+    if !has_process {
         return LlmShutdownPlan::NothingToStop;
     }
     match status.owner {
@@ -1443,23 +1451,40 @@ pub fn plan_llm_reconcile(started_llm: bool, authoritative: bool) -> LlmReconcil
     }
 }
 
-/// 等某个服务的 `/health` 通。超时返回 false(进程可能还活着,只是没加载完)。
+/// `wait_ready` 的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Readiness {
+    /// `/health` 报 `ok`,模型能用了。
+    Ready,
+    /// `/health` 明确说模型加载失败了,带原因。不会自己好起来,不必再等。
+    Failed(String),
+    /// 等到超时还在加载(或者端口一直没应答)。进程可能还活着,只是没加载完。
+    TimedOut,
+}
+
+/// 等某个服务的模型就绪。
 ///
-/// 打开后处理时必须等到这里返回 true 才敢去翻 STT 的标志位:`start` 返回只说明
+/// 打开后处理时必须等到 `Ready` 才敢去翻 STT 的标志位:`start` 返回只说明
 /// spawn 成功,之后还有几秒钟端口是死的,这段时间里 STT 去反代就是撞空。
+///
+/// 以前只返回「通 / 没通」:模型加载失败(比如非 Apple 平台根本没有 mlx_lm)
+/// 和「还在加载」分不开,打开开关要白等满 30 秒,然后说一句「还在加载模型」。
+/// 现在 `/health` 一报 `error` 就立刻返回原因。
 pub async fn wait_ready(
     cfg: &crate::config::ServerConfig,
     kind: ServerKind,
     timeout: Duration,
-) -> bool {
+) -> Readiness {
     let port = port_of(kind, &cfg.local);
     let deadline = Instant::now() + timeout;
     loop {
-        if probe(port).await.is_some() {
-            return true;
+        match probe_raw(port).await.as_ref().map(Health::answer) {
+            Some(Answer::Ready) => return Readiness::Ready,
+            Some(Answer::Failed(reason)) => return Readiness::Failed(reason),
+            _ => {}
         }
         if Instant::now() >= deadline {
-            return false;
+            return Readiness::TimedOut;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
@@ -1823,13 +1848,30 @@ mod tests {
             ServerState::Failed,
             ServerState::NotConfigured,
         ] {
+            let mut st = llm_status(state, ServerOwner::App);
+            // 进程已经退出:状态里没有 pid。
+            st.pid = None;
             assert_eq!(
-                plan_llm_shutdown(&llm_status(state, ServerOwner::App)),
+                plan_llm_shutdown(&st),
                 LlmShutdownPlan::NothingToStop,
                 "{:?}",
                 state
             );
         }
+    }
+
+    /// R15:自己拉起的进程活着、但模型加载失败了——照样占着内存和端口,要停。
+    /// 打开开关时加载失败,回收的就是它;以前 `Failed` 一律当成「没什么可停」。
+    #[test]
+    fn a_live_llm_server_whose_model_failed_is_still_stopped() {
+        let st = llm_status(ServerState::Failed, ServerOwner::App);
+        assert_eq!(plan_llm_shutdown(&st), LlmShutdownPlan::Stop);
+        // 别人的进程照旧不碰。
+        let st = llm_status(ServerState::Failed, ServerOwner::ExternalProject);
+        assert_eq!(
+            plan_llm_shutdown(&st),
+            LlmShutdownPlan::KeepForeign(ServerOwner::ExternalProject)
+        );
     }
 
     /// 缓存和权威对账:一致就什么都不做,不一致一律以权威为准。
@@ -2329,6 +2371,39 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         }
     }
 
+    /// R15:模型加载失败时 `wait_ready` 立刻带着原因返回,不再白等到超时。
+    #[tokio::test]
+    #[ignore = "会真的拉起子进程并绑 7545 端口"]
+    async fn wait_ready_returns_the_load_failure_instead_of_timing_out() {
+        let repo = FakeRepo::create("llmfail");
+        let cfg = repo.config();
+        assert!(probe_raw(TEST_LLM_PORT).await.is_none(), "测试端口不干净");
+
+        let mut failing = Command::new(system_python())
+            .arg("-m")
+            .arg("services.llm_server")
+            .current_dir(&repo.root)
+            .env("VIF_LLM_PORT", TEST_LLM_PORT.to_string())
+            .env("FAKE_HEALTH_STATUS", "error")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let started = Instant::now();
+        let r = wait_ready(&cfg, ServerKind::Llm, Duration::from_secs(30)).await;
+        assert_eq!(r, Readiness::Failed("fake load failure".into()));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "不该等到超时: {:?}",
+            started.elapsed()
+        );
+
+        failing.kill().ok();
+        failing.wait().ok();
+        assert!(wait_answering(TEST_LLM_PORT, false, 10).await);
+    }
+
     /// 负面用例:端口是健康的,但监听它的**不是**本项目的服务。
     ///
     /// 必须保持不可停。这是放宽「只停自己拉起的」之后,防止误杀无关进程的
@@ -2481,8 +2556,9 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
 
         // ── 1. 自己拉起的:等它就绪,然后开关一关就该停掉 ──
         start(&manager, &cfg, ServerKind::Llm).await.unwrap();
-        assert!(
+        assert_eq!(
             wait_ready(&cfg, ServerKind::Llm, Duration::from_secs(15)).await,
+            Readiness::Ready,
             "wait_ready 没等到 LLM 服务就绪"
         );
 
@@ -2509,8 +2585,9 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        assert!(
+        assert_eq!(
             wait_ready(&cfg, ServerKind::Llm, Duration::from_secs(15)).await,
+            Readiness::Ready,
             "外部假服务没起来"
         );
 
