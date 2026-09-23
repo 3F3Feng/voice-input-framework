@@ -329,6 +329,32 @@ M ≈ 2–4 天 / L ≈ 1 周以上)。
   5 秒超时)——每句话多一次往返,LLM 卡住时最多多等 5 秒。
 - **R30** 端口输入没有校验:0、大于 65535、STT 和 LLM 填成同一个端口都能存进去。
 
+#### 第二轮走查 + 实测新增(R31–R40)
+
+这一批大多是在本机对真服务端实测坐实的(`say` 合成的 159 秒中文语音、真模型)。
+
+- **R31** 子进程日志抽水线程遇到一行非 UTF-8 就退出,之后没人读管道,写满约 64 KB
+  后 Python 服务阻塞在 write 上卡死(中文 Windows 上 Python 可能输出 GBK)。
+- **R32** Windows 上拉起 `python.exe`、轮询 `tasklist` 都没加 `CREATE_NO_WINDOW`,
+  会弹黑色控制台窗口。
+- **R33** Windows 上认领遗留进程只看 pid 是否存活,重启后 pid 被复用时会把无关进程
+  认成自己的,退出应用时 `taskkill /T` 连同进程树一起杀掉。
+- **R34** 非 Apple 平台默认的 transformers Whisper:**说话超过 30 秒必然转写失败**
+  (`ValueError: more than 3000 mel input features`)。实测坐实并已修。
+- **R35** LLM 生成上限写死 256 token:159 秒口述(754 字)整理后被截断成 564 字,
+  `success=True`。实测坐实并已修。
+- **R36** 口述「帮我写一首关于春天的诗」,LLM 真写了一首诗,原话没了。实测坐实并已修。
+- **R37** `/transcribe` 把任何上传文件都当 16 kHz PCM:44.1 kHz WAV、m4a 返回 200 + 空文本。
+  实测坐实并已修。
+- **R38** 主窗口「⌨️ 输入」按钮:点按钮时焦点在本应用自己身上,字全敲给了自己。
+- **R39** 自动输入用模拟打字,文本里的换行会变成回车 —— 在聊天软件里等于提前发送。
+  待 F7(粘贴模式)解决。
+- **R40** `whisper_mlx*` 一句都转写不出来:给 `mlx_whisper.transcribe` 传了它不认的
+  `return_timestamps`,每次 `TypeError`。实测坐实并已修。
+
+R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 秒纯静音被 Qwen 识别成
+"The.";一段 2.4 秒推理期间 `/health` 探测超时。两者均已修,修后同样实测验证。
+
 ### 3.2 验证矩阵(故障注入)
 
 每一行都是「做什么 → 应该看到什么」。**加粗**的是 3.1 里的疑似项,要靠这一轮坐实。
@@ -401,3 +427,77 @@ M ≈ 2–4 天 / L ≈ 1 周以上)。
   进度无从汇报,所以 R9 要提到 1.2 里和 F4 一起做。
 - R3、R4、R6、R7 都是改一两处代码就能修好的单点缺陷。如果不想让用户在整个第一阶段里
   继续碰到「假成功」,可以把它们挪进 1.1 一起做。
+
+---
+
+## 5. 进度与后续迭代
+
+> 这一节是给下一轮接着干的人(包括下一次会话)看的。每次合并一批就更新这里。
+
+### 5.1 已完成(`fix/ux` 分支)
+
+| 批次 | 条目 | 说明 |
+|------|------|------|
+| 第一批 | R3 R4 R5 R7 R10 R11 F14 R26 R27 | 假成功、模型切换回退、https→wss、请求超时、提示词管理 |
+| 录音链路(Batch A) | R1 R2 F8 R17 R22 | 长录音不丢尾巴、5 分钟截断转写、胶囊显示失败 / 没听到声音、麦克风回落提示 |
+| 快捷键 / 设置 / 文档(Batch D) | R6 F12 R30 F6 | 按物理键录制、识别语言、端口校验、README 改用 uv |
+| 实测修复 | R9 R25 R34 R35 R36 R37 R38 R40 | 见 3.1 第二轮 |
+| 模型目录 | F5(服务端) | `/models` 带描述 / 可用性 / 是否已下载 / 推荐;**界面侧未做** |
+
+### 5.2 进行中 / 待合并
+
+- **Batch B**(worktree 分支 `worktree-agent-a77e3ef4009d387b9`):已提交 R31 R32 R33 R14 R19 R15 R16;
+  R8 F17 R12/R11/R13 R21 R29 进行中。
+- **Batch C**(worktree 分支 `worktree-agent-aa8a21f335784be4b`):已提交 F19 F10 F9/R20 F3/R28 R18,
+  待最终验证。
+
+合并方式:在对应 worktree 里 `git rebase fix/ux`,然后在主仓库 `git cherry-pick fix/ux..<分支>`,
+每合一批跑一遍全量验证(见 5.4)。
+
+### 5.3 后续迭代(按顺序)
+
+**迭代 1:收尾本批并开 PR**
+1. 合并 B、C;全量验证;推 `fix/ux`,开 PR 跑 CI(CI 有 Python 3.10 矩阵,
+   而 `pyproject` 要求 ≥3.11 —— CI 用 pip 装最小依赖,测试要保持在 3.10 下能跑)。
+2. F5 界面侧:下拉框显示中文描述、「推荐」「需下载 ~X GB」、本机不可用的置灰并写原因
+   (Rust `stt.rs::ModelInfo` 加字段,`get_stt_models` 映射,App.vue 渲染)。
+3. 老配置里被旧录制 bug 存成 `"left_ctrl+ "` 的快捷键:启动时迁移成 `left_ctrl+space`
+   (现在是注册失败、界面提示)。
+
+**迭代 2:核心体验(M2 剩余)**
+1. F7 输出方式:模拟打字 / 粘贴(写剪贴板 → 模拟粘贴 → 还原)/ 只复制;顺带解决 R39。
+2. F11 剩余:切换式录音(按一下开始、再按一下结束)、Esc 取消本次录音;
+   按钮录音也要有 5 分钟上限(Batch A 报告:只有快捷键路径有)。
+3. 录音期间就建 WS、边录边传(Batch A 报告:现在松手后才一次性上传,长录音要等)。
+4. 客户端结果等待超时改为「有进度就续期」:服务端转写期间定时发 keepalive
+   (R9 修完后事件循环空闲,已经能发了),客户端每条消息的超时改成 60 秒。
+
+**迭代 3:首启与模型(M1 剩余)**
+1. F4 下载进度:R9 已修,`/health` 在加载期间能应答了;接 huggingface_hub 的下载进度,
+   报阶段 + 已下载 / 总大小;界面显示进度条。加「模型下载源」(hf-mirror)设置。
+2. F1 首启向导(依赖 F3 已有的默认值与一次性输出方式横幅)。
+3. F2 环境体检 + PowerShell 版建环境脚本;删掉或加警告头 `requirements-stt.txt`。
+
+**迭代 4:质量与个性化(M3)**
+F13 热词 / 词库、F15 结果可编辑 + 原文对照、F16 持久化历史、R24 客户端重采样抗混叠
+(服务端 `services/audio_io.py` 已有带抗混叠的实现可参考)。
+
+**迭代 5:平台(M4)**
+F17 长期(llama.cpp 后端)、F18 Cmd / Fn 等键、F20 远程鉴权、F21 文件转写界面
+(服务端 `/transcribe` 已能解 WAV)、F22 主题 / 英文、F23 更新后自动重启。
+
+### 5.4 每批合并后的验证清单
+
+```bash
+cd gui/src-tauri && cargo fmt --check && cargo clippy --all-targets && cargo test
+cd gui/stt-logic-tests && cargo test
+cd gui && ./node_modules/.bin/vue-tsc --noEmit
+uv run --with pytest --with pytest-asyncio python -m pytest tests -q -m "not integration"
+uvx black --check services shared tests && uvx ruff check services shared tests --select F
+```
+
+真模型实测(本机 Apple Silicon,不动用户的 6544 / 6545 和 `stt_state.json`):
+`VIF_STT_PORT=7644 VIF_LLM_PORT=7645 VIF_LLM_ENABLED=false .venv/bin/python -m services.stt_server`,
+用 `say -v Tingting -f <文本> -o x.aiff && afconvert -f WAVE -d LEI16@16000 -c 1 x.aiff x.wav`
+合成测试语音;**不要调 `/models/select`**(成功时会写用户的状态文件),换模型请直接在
+Python 里实例化 `STTEngine`。
