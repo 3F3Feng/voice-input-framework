@@ -368,7 +368,7 @@ class LLMEngine:
 
         self._model, self._tokenizer = mlx_lm.load(model_id)
 
-    def process(self, text: str) -> ProcessResult:
+    def process(self, text: str, vocabulary_hint: str | None = None) -> ProcessResult:
         """处理文本"""
         if not text.strip():
             # 空文本没有可整理的,别让模型对着空输入自由发挥。
@@ -389,11 +389,11 @@ class LLMEngine:
         with self._process_lock:
             self._processing = True
             try:
-                return self._generate(text)
+                return self._generate(text, vocabulary_hint)
             finally:
                 self._processing = False
 
-    def _generate(self, text: str) -> ProcessResult:
+    def _generate(self, text: str, vocabulary_hint: str | None = None) -> ProcessResult:
         """实际的生成 + 输出清洗(调用方必须已持有 _process_lock)"""
         start_time = time.time()
 
@@ -414,6 +414,9 @@ class LLMEngine:
 
             # 加载提示词
             system_prompt = load_prompt()
+            if vocabulary_hint:
+                # 个人词库(services/vocabulary.py):叫模型别把用户的专有名词「纠正」掉。
+                system_prompt = f"{system_prompt}\n\n{vocabulary_hint}"
             logger.info(f"Using prompt: {system_prompt[:200]}...")
 
             # 构建消息
@@ -497,10 +500,10 @@ class LLMEngine:
                 success=False,
             )
 
-    async def process_async(self, text: str) -> ProcessResult:
+    async def process_async(self, text: str, vocabulary_hint: str | None = None) -> ProcessResult:
         """异步处理文本"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.process, text)
+        return await loop.run_in_executor(None, self.process, text, vocabulary_hint)
 
     def is_loading(self) -> bool:
         return self._loading
@@ -660,7 +663,10 @@ async def process_text(request: ProcessRequest):
                 reason = engine.load_error() or "原因未知,见 LLM 服务日志"
                 raise HTTPException(status_code=503, detail=f"LLM 模型没有加载成功:{reason}")
 
-        result = await engine.process_async(request.text)
+        hint = request.options.get("vocabulary_hint") if request.options else None
+        result = await engine.process_async(
+            request.text, hint if isinstance(hint, str) and hint.strip() else None
+        )
         return result
     except HTTPException:
         raise

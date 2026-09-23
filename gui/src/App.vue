@@ -186,6 +186,17 @@
               <span v-if="promptStatus" class="s-tip">{{ promptStatus }}</span>
             </div>
           </div>
+
+          <!-- 个人词库(F13):人名、产品名总被认错。不依赖 LLM 后处理,关着也生效。 -->
+          <div class="s-section">
+            <div class="s-title">个人词库</div>
+            <textarea class="s-textarea" v-model="vocabText" rows="4" :disabled="!connected"
+              placeholder="一行一条:&#10;石枫            (热词:同音字优先写成它)&#10;陶睿 => Tauri    (替换:识别成左边就改成右边)" />
+            <div class="s-row" style="margin-top:4px">
+              <button class="s-btn" @click="saveVocabulary" :disabled="vocabBusy || !connected">保存</button>
+              <span class="s-tip">{{ vocabSummary }}</span>
+            </div>
+          </div>
           </template>
 
           <!-- 常规 -->
@@ -1933,6 +1944,38 @@ async function resetPrompt() {
   } catch (e) { toast(`${e}`, "err"); }
   promptLoading.value = false;
 }
+// ── 个人词库(F13)──
+// 存在 STT 服务那边(stt_state.json),换一台客户端连同一个服务也能用上。
+const vocabText = ref("");
+const vocabBusy = ref(false);
+const vocabLoaded = ref(false);
+const vocabSummary = ref("");
+function describeVocab(r: { hotwords: number; rules: number }) {
+  return r.hotwords || r.rules ? `${r.hotwords} 个热词 · ${r.rules} 条替换` : "还没有词条";
+}
+async function loadVocabulary() {
+  try {
+    const r = await invoke<{ entries: string[]; hotwords: number; rules: number }>("get_vocabulary");
+    vocabText.value = r.entries.join("\n");
+    vocabSummary.value = describeVocab(r);
+    vocabLoaded.value = true;
+  } catch (e) { vocabSummary.value = `读取失败:${e}`; }
+}
+async function saveVocabulary() {
+  vocabBusy.value = true;
+  try {
+    const entries = vocabText.value.split("\n").map(l => l.trim()).filter(Boolean);
+    const r = await invoke<{ entries: string[]; hotwords: number; rules: number }>("save_vocabulary", { entries });
+    vocabText.value = r.entries.join("\n");
+    vocabSummary.value = describeVocab(r);
+    toast("个人词库已保存,下一句话就生效", "ok");
+  } catch (e) { toast(`${e}`, "err"); }
+  vocabBusy.value = false;
+}
+watch([showSettings, tab, connected], ([open, t, ok]) => {
+  if (open && t === "service" && ok && !vocabLoaded.value) loadVocabulary();
+});
+
 // 进「服务」页、且后处理开着时自动读一次提示词,不用再手点「加载」。
 watch([showSettings, tab, llmEnabled], ([open, t, on]) => {
   if (open && t === "service" && on && !promptLoaded.value && !promptLoading.value) loadPrompt();

@@ -90,7 +90,7 @@ class _FakeQwen:
     def __init__(self):
         self.seen = []
 
-    def transcribe_sync(self, audio_array, language):
+    def transcribe_sync(self, audio_array, language, context=None):
         # STTEngine 在模型线程上调同步接口(R9)
         self.seen.append(language)
         return "ok", ""

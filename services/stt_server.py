@@ -39,7 +39,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from services.diarize_engine import DIARIZE_ENABLED, DiarizationEngine
-from services import model_catalog
+from services import model_catalog, vocabulary
 from services.audio_io import UnsupportedAudio, decode_to_pcm16k
 from services.stt_engine import (
     HealthStatus,
@@ -238,7 +238,9 @@ else:
 LLM_PROCESS_TIMEOUT = 30.0
 
 
-async def call_llm_server(text: str, request_id: str = "") -> tuple[str, float, str | None]:
+async def call_llm_server(
+    text: str, request_id: str = "", vocabulary_hint: str | None = None
+) -> tuple[str, float, str | None]:
     """调用 LLM 服务器进行后处理。
 
     失败时文本退回原文——这一点不变,宁可给原文也不能什么都不给。变的是
@@ -253,7 +255,10 @@ async def call_llm_server(text: str, request_id: str = "") -> tuple[str, float, 
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{LLM_SERVER_URL}/process",
-                json={"text": text, "options": {}},
+                json={
+                    "text": text,
+                    "options": {"vocabulary_hint": vocabulary_hint} if vocabulary_hint else {},
+                },
                 headers={"X-Request-ID": request_id},
                 timeout=LLM_PROCESS_TIMEOUT,
             )
@@ -581,6 +586,45 @@ async def update_llm_prompt(request: Request):
         return _llm_error(str(e))
 
 
+# ============== 个人词库 ==============
+#: 当前词库(services/vocabulary.py 解析后的)。原始的若干行存在 stt_state.json 里。
+VOCABULARY = vocabulary.parse(load_state().get("vocabulary", []))
+
+
+@app.get("/vocabulary")
+async def get_vocabulary():
+    """个人词库:原始的若干行,以及解析出的热词 / 替换规则数(给界面显示)。"""
+    entries = load_state().get("vocabulary", [])
+    return {
+        "entries": entries,
+        "hotwords": len(VOCABULARY.hotwords),
+        "rules": len(VOCABULARY.rules),
+    }
+
+
+@app.put("/vocabulary")
+async def set_vocabulary(request: Request):
+    """保存个人词库。一行一条:`石枫` 是热词,`陶睿 => Tauri` 是替换规则。"""
+    global VOCABULARY
+    body = await request.json()
+    entries = body.get("entries", [])
+    if not isinstance(entries, list) or not all(isinstance(e, str) for e in entries):
+        raise HTTPException(status_code=400, detail="entries 必须是字符串列表")
+    entries = [e.strip() for e in entries if e.strip()][: vocabulary.MAX_ENTRIES]
+    VOCABULARY = vocabulary.parse(entries)
+    state = load_state()
+    state["vocabulary"] = entries
+    save_state(state)
+    logger.info(
+        f"Vocabulary saved: {len(VOCABULARY.hotwords)} hotwords, {len(VOCABULARY.rules)} rules"
+    )
+    return {
+        "entries": entries,
+        "hotwords": len(VOCABULARY.hotwords),
+        "rules": len(VOCABULARY.rules),
+    }
+
+
 @app.delete("/llm/prompt")
 async def reset_llm_prompt():
     """转发:恢复默认 LLM 提示词"""
@@ -684,7 +728,9 @@ async def transcribe(
         result = await engine.transcribe(
             audio_content,
             language=language,
+            context=vocabulary.context_text(VOCABULARY),
         )
+        result.text = vocabulary.apply_rules(result.text, VOCABULARY)
         return result
     except HTTPException:
         raise
@@ -855,12 +901,18 @@ async def websocket_stream(websocket: WebSocket):
         try:
             result = await asyncio.wait_for(
                 _with_keepalive(
-                    engine.transcribe(bytes(all_audio), language=language),
+                    engine.transcribe(
+                        bytes(all_audio),
+                        language=language,
+                        context=vocabulary.context_text(VOCABULARY),
+                    ),
                     "stt",
                     _safe_send,
                 ),
                 timeout=600.0,
             )
+            # 个人词库的替换规则:识别完就换,LLM 拿到的已经是改好的写法。
+            result.text = vocabulary.apply_rules(result.text, VOCABULARY)
 
             # 发送 STT 结果
             await _safe_send(
@@ -883,7 +935,9 @@ async def websocket_stream(websocket: WebSocket):
                     }
                 )
                 processed_text, llm_latency, llm_error = await _with_keepalive(
-                    call_llm_server(result.text), "llm", _safe_send
+                    call_llm_server(result.text, vocabulary_hint=vocabulary.llm_hint(VOCABULARY)),
+                    "llm",
+                    _safe_send,
                 )
             else:
                 processed_text = result.text

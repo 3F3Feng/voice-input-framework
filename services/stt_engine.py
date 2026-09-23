@@ -145,11 +145,16 @@ def is_hallucination(text: str) -> bool:
     return normalized in _HALLUCINATIONS
 
 
-def _infer_sync(model, model_type, audio_array, sample_rate: int, lang: str | None):
-    """在模型线程上跑一次推理,返回 (文本, 识别出的语言)。"""
+def _infer_sync(
+    model, model_type, audio_array, sample_rate: int, lang: str | None, context: str | None = None
+):
+    """在模型线程上跑一次推理,返回 (文本, 识别出的语言)。
+
+    `context` 是个人词库的热词(services/vocabulary.py),能接的引擎当上下文传进去。
+    """
     # ── MLX 原生引擎 (mlx-audio) ──
     if model_type == "qwen_asr_mlx_native":
-        return model.transcribe_sync(audio_array, lang or "auto")
+        return model.transcribe_sync(audio_array, lang or "auto", context=context)
 
     # ── Whisper MLX 引擎 ──
     if model_type == "whisper_mlx":
@@ -163,6 +168,7 @@ def _infer_sync(model, model_type, audio_array, sample_rate: int, lang: str | No
             audio_array,
             path_or_hf_repo=model["model_id"],
             language=lang,
+            initial_prompt=context,
         )
         return result.get("text", "").strip(), result.get("language", lang or "en")
 
@@ -524,6 +530,7 @@ class STTEngine:
         self,
         audio_data: bytes,
         language: str = "auto",
+        context: str | None = None,
     ) -> TranscriptionResult:
         """转写音频"""
         import numpy as np
@@ -589,6 +596,7 @@ class STTEngine:
                     audio_array,
                     sample_rate,
                     lang,
+                    context,
                 )
                 detected_lang = detected_lang or lang or language
             text = text.strip()

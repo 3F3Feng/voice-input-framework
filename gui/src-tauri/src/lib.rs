@@ -536,6 +536,27 @@ async fn save_llm_prompt(state: State<'_, AppState>, text: String) -> Result<(),
 }
 
 #[tauri::command]
+async fn get_vocabulary(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    stt::SttClient::new(&host).get_vocabulary().await
+}
+
+#[tauri::command]
+async fn save_vocabulary(
+    state: State<'_, AppState>,
+    entries: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    stt::SttClient::new(&host).save_vocabulary(&entries).await
+}
+
+#[tauri::command]
 async fn reset_llm_prompt(state: State<'_, AppState>) -> Result<String, String> {
     let host = {
         let c = state.stt.lock().map_err(|e| e.to_string())?;
@@ -1556,6 +1577,8 @@ pub fn run() {
             get_llm_prompt,
             save_llm_prompt,
             reset_llm_prompt,
+            get_vocabulary,
+            save_vocabulary,
             get_llm_enabled,
             get_llm_status,
             set_llm_enabled,

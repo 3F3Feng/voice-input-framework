@@ -114,7 +114,9 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
             is_final=True,
         )
 
-    def transcribe_sync(self, audio_array: np.ndarray, language: str = "auto") -> tuple[str, str]:
+    def transcribe_sync(
+        self, audio_array: np.ndarray, language: str = "auto", context: str | None = None
+    ) -> tuple[str, str]:
         """同步转写,返回 (文本, 识别出的语言)。
 
         必须在加载模型的同一个线程上调用(MLX Metal stream 是线程局部的);
@@ -127,6 +129,8 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
             temperature=0.2,
             no_repeat_ngram_size=3,
             max_tokens=9999,
+            # Qwen3-ASR 把 system prompt 当作上下文:给了热词会在同音字之间偏向它们。
+            system_prompt=context or None,
         )
         text = result.text
         # MLX 返回的 language 可能是 ['English'] (list)，标准化为字符串

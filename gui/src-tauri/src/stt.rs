@@ -560,6 +560,26 @@ impl SttClient {
         ensure_ok(resp, "保存提示词").await.map(|_| ())
     }
 
+    /// 个人词库(服务端 services/vocabulary.py):原始的若干行。
+    pub async fn get_vocabulary(&self) -> Result<Value, String> {
+        let resp = http(QUERY_TIMEOUT)
+            .get(format!("{}/vocabulary", self.stt_url))
+            .send()
+            .await
+            .map_err(|e| request_error("读取个人词库", e))?;
+        ensure_ok(resp, "读取个人词库").await
+    }
+
+    pub async fn save_vocabulary(&self, entries: &[String]) -> Result<Value, String> {
+        let resp = http(QUERY_TIMEOUT)
+            .put(format!("{}/vocabulary", self.stt_url))
+            .json(&serde_json::json!({ "entries": entries }))
+            .send()
+            .await
+            .map_err(|e| request_error("保存个人词库", e))?;
+        ensure_ok(resp, "保存个人词库").await
+    }
+
     /// 恢复默认提示词,返回恢复后的内容。
     pub async fn reset_llm_prompt(&self) -> Result<String, String> {
         let resp = http(QUERY_TIMEOUT)
