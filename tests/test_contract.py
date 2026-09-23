@@ -114,10 +114,11 @@ class TestTranscribeContract:
             "/transcribe",
             files={"file": ("t.wav", b"RIFF" + b"\x00" * 100, "audio/wav")},
         )
-        # 环境相关:无模型 → 500;有模型 → 可能 200(引擎容忍)或 400/422(校验拒绝)
+        # 截断的 WAV 头现在在解码这一步就被拒(415,有意变更 R37:以前任何文件都
+        # 被当成 16 kHz PCM,解不了的格式返回 200 + 空文本);其余情况仍环境相关。
         # 契约重点是响应为 JSON 且不崩溃
-        assert r.status_code in (200, 400, 422, 500)
-        if r.status_code in (400, 422, 500):
+        assert r.status_code in (200, 400, 415, 422, 500)
+        if r.status_code in (400, 415, 422, 500):
             assert isinstance(r.json(), dict)
 
 

@@ -39,6 +39,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from services.diarize_engine import DIARIZE_ENABLED, DiarizationEngine
+from services.audio_io import UnsupportedAudio, decode_to_pcm16k
 from services.stt_engine import (
     HealthStatus,
     ModelInfo,
@@ -563,7 +564,10 @@ async def transcribe(
     """转写音频文件"""
     req_id = request_id_ctx.get()
     try:
-        audio_content = await _read_capped(file)
+        try:
+            audio_content = decode_to_pcm16k(await _read_capped(file))
+        except UnsupportedAudio as e:
+            raise HTTPException(status_code=415, detail=str(e)) from e
         result = await engine.transcribe(
             audio_content,
             language=language,
