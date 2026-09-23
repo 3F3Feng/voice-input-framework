@@ -55,7 +55,7 @@
               <div class="s-row" style="margin-top:8px">
                 <input class="s-input" v-model="serverHost" placeholder="localhost 或 http://1.2.3.4:6544"
                   @keyup.enter="updateServer" @change="onServerSettingChange" />
-                <input class="s-input s-port" v-model.number="serverPort" type="number"
+                <input class="s-input s-port" v-model.number="serverPort" type="number" min="1" max="65535"
                   @keyup.enter="updateServer" @change="onServerSettingChange" />
                 <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
               </div>
@@ -98,8 +98,10 @@
               </div>
               <div class="s-row" style="margin-top:4px">
                 <span class="s-tip" style="margin:0">端口</span>
-                <input class="s-input s-port" v-model.number="sttPort" type="number" title="STT 端口" @change="saveLocal" />
-                <input class="s-input s-port" v-model.number="llmPort" type="number" title="LLM 端口" @change="saveLocal" />
+                <input class="s-input s-port" v-model.number="sttPort" type="number" min="1024" max="65535"
+                  title="STT 端口" @change="saveLocal" />
+                <input class="s-input s-port" v-model.number="llmPort" type="number" min="1024" max="65535"
+                  title="LLM 端口" @change="saveLocal" />
                 <label class="toggle"><input type="checkbox" v-model="localAutoStart" @change="saveLocal" /><span class="slider"></span></label>
                 <span class="s-label">随应用启动</span>
               </div>
@@ -1040,8 +1042,35 @@ async function restartSrv(kind: ServerKind) {
   await connectAfterServerAction(kind);
 }
 
+/**
+ * 端口输入的合法性。返回中文原因,合法时返回 null。
+ *
+ * 以前 0、70000、空着都能存进去:空的被 `|| 6544` 悄悄换成默认值,0 和越界的
+ * 原样交给子进程,服务起不来,日志里只有一句 uvicorn 的英文报错。
+ * `min` 是下限:本地服务用 1024 起步(更小的是系统保留端口,普通用户绑不上);
+ * 远程服务可能就在 80 / 443 上,只要求是个合法端口。
+ */
+function portError(value: unknown, label: string, min = 1): string | null {
+  if (typeof value !== "number" || !Number.isInteger(value)) return `${label}端口要填一个整数`;
+  if (value < min || value > 65535) return `${label}端口要在 ${min}–65535 之间(现在是 ${value})`;
+  return null;
+}
+/** 上一次成功保存的本地端口。输入非法时退回它们,别让界面和配置对不上。 */
+let savedLocalPorts = { stt: 6544, llm: 6545 };
+
 /** 保存本地模式的路径 / 端口 / 自启设置，并回显路径是否可用。 */
 async function saveLocal() {
+  // 端口不对就不存端口(退回上次的值),路径和开关照常保存 —— 这个函数也挂在
+  // 路径框和「随应用启动」上,不能因为端口错了把它们也一起拦下。
+  const portProblem =
+    portError(sttPort.value, "STT ", 1024) ??
+    portError(llmPort.value, "LLM ", 1024) ??
+    (sttPort.value === llmPort.value ? "STT 和 LLM 不能用同一个端口" : null);
+  if (portProblem) {
+    toast(`${portProblem},已恢复为原来的端口`, "err");
+    sttPort.value = savedLocalPorts.stt;
+    llmPort.value = savedLocalPorts.llm;
+  }
   // `set_local_server_config` 是整段替换 `cfg.server.local`，不是打补丁。所以凡是
   // 这个界面上没有对应输入框的字段，都得先读回来带上——以前这里把 stt_model /
   // llm_model 硬写成 null，用户手改 config.json 固定的模型，会在下一次改端口、
@@ -1063,6 +1092,7 @@ async function saveLocal() {
   };
   try {
     const report = await invoke<LocalPathReport>("set_local_server_config", { local });
+    savedLocalPorts = { stt: local.stt_port, llm: local.llm_port };
     if (report.problem) toast(report.problem, "err");
   } catch (e) { toast(`保存失败: ${e}`, "err"); }
   await refreshServers();
@@ -1109,6 +1139,7 @@ async function loadConfig() {
       pythonPath.value = local.python_path ?? "";
       sttPort.value = local.stt_port ?? 6544;
       llmPort.value = local.llm_port ?? 6545;
+      savedLocalPorts = { stt: sttPort.value, llm: llmPort.value };
       localAutoStart.value = local.auto_start ?? false;
     }
   } catch {}
@@ -1117,6 +1148,8 @@ async function loadAutostart() {
   try { autoStart.value = await invoke<boolean>("get_autostart"); } catch {}
 }
 function onServerSettingChange() {
+  const bad = portError(serverPort.value, "");
+  if (bad) { toast(bad, "err"); return; }
   saveConfigPatch(cfg => { cfg.server.host = serverHost.value.trim() || "localhost"; cfg.server.port = serverPort.value; });
 }
 async function toggleAutoStart() {
@@ -1222,6 +1255,8 @@ async function connectLoop() {
 
 /** 远程模式下手动「连接」。行为保持不变:存下输入框里的地址,只试一次。 */
 async function updateServer() {
+  const bad = portError(serverPort.value, "");
+  if (bad) { toast(bad, "err"); return; }
   const host = serverHost.value.trim() || "localhost";
   const port = serverPort.value || 6544;
   try {
