@@ -409,6 +409,10 @@
       <div v-if="missingPermLabels.length" class="perm-banner" @click="showSettings = true">
         ⚠️ {{ missingPermLabels.join('、') }}未授权，相关功能不可用 · 点击前往授权
       </div>
+      <!-- 快捷键监听器没起来(缺权限 / Wayland / 刚授权没重启):按了没反应之前就说清楚。 -->
+      <div v-else-if="hotkeyProblem" class="perm-banner" @click="showSettings = true; tab = 'general'">
+        ⚠️ 全局快捷键不可用:{{ hotkeyProblem }}
+      </div>
 
       <!-- 首次使用问一次输出方式。「自动输入」默认关，新用户说完话目标窗口里什么都
            没出现，只会以为坏了；可默认打开又会在没授权辅助功能时直接报错。所以问。 -->
@@ -1173,6 +1177,7 @@ async function reviveHotkey() {
     // register_hotkey 现在会等监听器报告起没起来：建不成(常见于刚授权、还没重启)
     // 直接返回原因,不用再去日志里找错误行猜。
     await invoke("register_hotkey", { shortcut: key });
+    hotkeyProblem.value = "";
     toast("输入监控已授权，快捷键已生效", "ok");
   } catch (e) { toast(`${e}`, "err"); }
 }
@@ -1431,6 +1436,7 @@ async function toggleDistinguishSides() {
     // 注册已生效的那个。以前用的是输入框里的 hotkeyStr:录了新快捷键还没点
     // 「应用」时拨这个开关,新快捷键就被悄悄注册上了,配置里却还是旧的。
     await invoke("register_hotkey", { shortcut: savedHotkey.value || defaultHotkey });
+    hotkeyProblem.value = "";
     toast(distinguishSides.value ? "已改为区分左右" : "已改为左右通用", "ok");
   } catch (e) { toast(`快捷键重新注册失败: ${e}`, "err"); }
 }
@@ -1851,6 +1857,7 @@ async function applyHotkey() {
   const shortcut = hotkeyStr.value;
   try {
     await invoke("register_hotkey", { shortcut });
+    hotkeyProblem.value = "";
   } catch (e) {
     // 后端给的是中文原因(哪个键、为什么不行)。以前这里只有一句「更新失败」。
     setHotkeyMsg(`${e}`);
@@ -2038,7 +2045,13 @@ watch(sttState, (next, prev) => {
   }
 });
 
+/** 全局快捷键监听器起不来的原因;正常时为空。 */
+const hotkeyProblem = ref("");
+
 onMounted(async () => {
+  invoke("get_hotkey_status")
+    .then(() => { hotkeyProblem.value = ""; })
+    .catch(e => { hotkeyProblem.value = `${e}`; });
   // 最先做：后面每一步的 toast 都要排在启动日志后面，而不是被补拉的缓冲插到前头。
   await initGuiLogs();
   try { trayOk.value = await invoke<boolean>("tray_available"); } catch {}

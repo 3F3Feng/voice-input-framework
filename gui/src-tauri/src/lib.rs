@@ -856,6 +856,13 @@ async fn wait_listener_started() -> Result<(), String> {
     }
 }
 
+/// 启动时建的那个快捷键监听器起没起来。前端启动后问一次,起不来就在主界面上说,
+/// 而不是让用户按了快捷键没反应才去日志里找原因。
+#[tauri::command]
+async fn get_hotkey_status() -> Result<(), String> {
+    wait_listener_started().await
+}
+
 /// 只校验、不注册。录制一结束前端就拿它问一次,用的是和注册同一个解析器:
 /// 录得下来却注册不了的组合当场就能说出原因,而不是等用户点了「应用」才失败。
 #[tauri::command]
@@ -1468,6 +1475,7 @@ pub fn run() {
             request_permission,
             open_permission_settings,
             register_hotkey,
+            get_hotkey_status,
             set_hotkey_suspended,
             set_hotkey_toggle,
             validate_hotkey,
