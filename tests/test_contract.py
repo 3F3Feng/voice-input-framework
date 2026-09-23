@@ -168,6 +168,10 @@ class TestWebSocketContract:
             while True:
                 msg = json.loads(ws.receive_text())
                 seen.append(msg["type"])
+                if msg["type"] == "result":
+                    # R8:后处理没做成时的原因;没开或成功时为 null,但字段一定在
+                    assert "llm_error" in msg
+                    assert msg["llm_error"] is None or isinstance(msg["llm_error"], str)
                 if msg["type"] in ("done", "error"):
                     break
             # 已知消息类型集合(无模型:error;有模型:stt_result/result)

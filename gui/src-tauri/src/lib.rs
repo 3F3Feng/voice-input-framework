@@ -321,6 +321,15 @@ async fn run_transcription(
                         *status = "LLM 处理中...".to_string();
                     }
                 }
+                // 后处理没做成、退回了原文:结果照常输出,但要让用户知道这次没经过
+                // LLM。以前服务端静默吞掉,用户只会觉得「后处理怎么没效果」。
+                stt::StreamEvent::FinalResult {
+                    llm_error: Some(reason),
+                    ..
+                } => {
+                    log_error!("[transcribe] LLM 后处理失败,已使用原文: {}", reason);
+                    let _ = app_fwd.emit("transcribe-warning", reason.clone());
+                }
                 _ => {}
             }
             let _ = app_fwd.emit("transcribe-progress", &event);

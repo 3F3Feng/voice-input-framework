@@ -94,9 +94,25 @@ pub enum StreamEvent {
     FinalResult {
         text: String,
         llm_latency_ms: Option<f64>,
+        /// LLM 后处理开着却没做成时的原因(此时 `text` 是原文)。见 `llm_error_of`。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        llm_error: Option<String>,
     },
     #[serde(rename = "error")]
     Error { message: String },
+}
+
+/// `result` 消息里的 `llm_error`:LLM 后处理失败、退回了原文时的原因。
+///
+/// 以前服务端在 LLM 失败时静默返回原文,用户看到一段没加标点、满是填充词的
+/// 文字,还以为后处理就这水平。老服务端没有这个字段、成功时它是 null,两种都
+/// 当成「没有问题」。
+pub fn llm_error_of(data: &Value) -> Option<String> {
+    data["llm_error"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Extract a human-readable message from a server payload.
@@ -313,6 +329,7 @@ impl SttClient {
                                 let _ = tx.send(StreamEvent::FinalResult {
                                     text: final_text.clone(),
                                     llm_latency_ms: llm_ms,
+                                    llm_error: llm_error_of(&data),
                                 });
                             }
                             let _ = stream_task.await;

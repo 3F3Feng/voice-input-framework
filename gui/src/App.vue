@@ -1537,7 +1537,14 @@ async function switchStt() {
 async function switchLlm() {
   if (!llmModel.value) return;
   llmLoading.value = true;
-  try { await invoke<string>("switch_llm_model", { name: llmModel.value }); toast("LLM 已切换", "ok"); } catch (e) { toast(`LLM 切换失败: ${e}`, "err"); }
+  try { await invoke<string>("switch_llm_model", { name: llmModel.value }); toast("LLM 已切换", "ok"); }
+  catch (e) {
+    // 下载大模型常常超过转发的超时,服务端会说「还在加载,完成后自动生效」——
+    // 那不是失败,别用红字吓人(R16)。
+    const msg = `${e}`;
+    if (msg.includes("还在加载")) toast(msg, "info");
+    else toast(`LLM 切换失败: ${msg}`, "err");
+  }
   llmLoading.value = false;
 }
 /**
@@ -2009,6 +2016,11 @@ onMounted(async () => {
   // 录满 5 分钟自动停止。以前这些要么静默，要么只打到终端。
   // Rust 的 emit_app_warning 已经 log_error! 过一次，日志页经 gui-log 就能看到，toast 不再重复记。
   listen<string>("app-warning", (event) => toast(event.payload, "info", false));
+
+  // LLM 后处理没做成、退回了原文(R8)。结果照常出来,但得说一声这次没经过 LLM,
+  // 不然用户只会觉得「后处理怎么没效果」。
+  listen<string>("transcribe-warning", (event) =>
+    toast(`LLM 后处理没做成，已使用原文：${event.payload}`, "err"));
 
   // Auto-check for updates (silent)
   try {

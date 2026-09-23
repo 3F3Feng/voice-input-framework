@@ -453,6 +453,80 @@ class TestLLMProxyError:
         resp = httpx.Response(500, text="boom")
         assert "500" in _upstream_message(resp)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "outcome, want",
+        [
+            ("connect", "连不上 LLM 服务"),
+            ("timeout", "没有应答"),
+            ((503, {"detail": "LLM 模型没有加载成功:OOM"}), "OOM"),
+            (
+                (200, {"text": "原文", "success": False, "error": "LLM 输出达到长度上限"}),
+                "长度上限",
+            ),
+            ((200, {"text": "整理后。", "success": True, "llm_latency_ms": 12}), None),
+        ],
+    )
+    async def test_llm_failure_is_reported_not_swallowed(self, monkeypatch, outcome, want):
+        """LLM 后处理失败时退回原文,但要把原因带回来(R8)"""
+        import httpx
+
+        import services.stt_server as srv
+
+        async def fake_post(self, *a, **k):
+            if outcome == "connect":
+                raise httpx.ConnectError("refused")
+            if outcome == "timeout":
+                raise httpx.ReadTimeout("slow")
+            status, body = outcome
+            return httpx.Response(status, json=body)
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+        text, _latency, err = await srv.call_llm_server("原文")
+        if want is None:
+            assert err is None and text == "整理后。"
+        else:
+            assert want in err
+            assert text == "原文"
+
+    def test_ws_result_carries_llm_error(self, monkeypatch):
+        """WS 的 result 消息带 llm_error,客户端才知道这次没经过后处理(R8)"""
+        import base64
+        import json
+
+        from fastapi.testclient import TestClient
+
+        import services.stt_server as srv
+        from services.stt_server import STTEngine, TranscriptionResult
+
+        engine = STTEngine()
+
+        async def fake_transcribe(audio, language="auto"):
+            return TranscriptionResult(text="嗯那个明天开会", language="zh")
+
+        async def fake_llm(text, request_id=""):
+            return text, 0, "连不上 LLM 服务(可能没有启动)"
+
+        monkeypatch.setattr(engine, "transcribe", fake_transcribe)
+        monkeypatch.setattr(srv, "engine", engine)
+        monkeypatch.setattr(srv, "call_llm_server", fake_llm)
+
+        for enabled, want in [(True, "连不上 LLM 服务(可能没有启动)"), (False, None)]:
+            monkeypatch.setattr(srv, "LLM_ENABLED", enabled)
+            with TestClient(srv.app).websocket_connect("/ws/stream") as ws:
+                assert json.loads(ws.receive_text())["type"] == "ready"
+                audio = base64.b64encode(b"\x01\x00" * 1600).decode()
+                ws.send_text(json.dumps({"type": "audio", "data": audio}))
+                ws.send_text(json.dumps({"type": "end"}))
+                while True:
+                    msg = json.loads(ws.receive_text())
+                    if msg["type"] == "result":
+                        break
+                    assert msg["type"] in ("stt_result", "llm_start"), msg
+            assert msg["text"] == "嗯那个明天开会"
+            assert "llm_error" in msg
+            assert msg["llm_error"] == want
+
     def test_llm_switch_timeout_says_still_loading(self, monkeypatch):
         """转发切换超时 ≠ 切换失败:LLM 还在后台加载,完成后会自己生效(R16)"""
         import httpx

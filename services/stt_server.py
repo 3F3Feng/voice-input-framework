@@ -202,11 +202,19 @@ else:
 
 
 # ============== LLM Client ==============
-async def call_llm_server(text: str, request_id: str = "") -> tuple[str, float]:
-    """调用 LLM 服务器进行后处理
+LLM_PROCESS_TIMEOUT = 30.0
+
+
+async def call_llm_server(text: str, request_id: str = "") -> tuple[str, float, str | None]:
+    """调用 LLM 服务器进行后处理。
+
+    失败时文本退回原文——这一点不变,宁可给原文也不能什么都不给。变的是
+    **失败要说出来**:以前这里静默返回原文,客户端无从知道「这次没有经过后处理」,
+    用户看到一段没加标点、满是「那个」的文字,还以为 LLM 就这水平。
 
     Returns:
-        tuple: (processed_text, latency_ms)
+        tuple: (processed_text, latency_ms, llm_error)。llm_error 为 None 表示
+        后处理成功;否则是一句给用户看的原因,此时 processed_text 就是原文。
     """
     try:
         async with httpx.AsyncClient() as client:
@@ -214,17 +222,33 @@ async def call_llm_server(text: str, request_id: str = "") -> tuple[str, float]:
                 f"{LLM_SERVER_URL}/process",
                 json={"text": text, "options": {}},
                 headers={"X-Request-ID": request_id},
-                timeout=30.0,
+                timeout=LLM_PROCESS_TIMEOUT,
             )
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("text", text), data.get("llm_latency_ms", 0)
-            else:
-                logger.warning(f"LLM server returned {response.status_code}")
-                return text, 0
+    except httpx.TimeoutException:
+        logger.error("LLM server timed out")
+        return text, 0, f"LLM 服务 {int(LLM_PROCESS_TIMEOUT)} 秒没有应答"
+    except httpx.ConnectError as e:
+        logger.error(f"Failed to connect to LLM server: {e}")
+        return text, 0, "连不上 LLM 服务(可能没有启动)"
     except Exception as e:
         logger.error(f"Failed to call LLM server: {e}")
-        return text, 0
+        return text, 0, f"调用 LLM 服务失败:{e}"
+
+    if response.status_code != 200:
+        logger.warning(f"LLM server returned {response.status_code}")
+        return text, 0, _upstream_message(response)
+    try:
+        data = response.json()
+    except ValueError:
+        return text, 0, "LLM 服务返回了无法解析的内容"
+    latency = data.get("llm_latency_ms", 0) or 0
+    # LLM 服务自己判定结果不能用(截断、答非所问、空结果、模型出错)时回
+    # 200 + success=False + error,text 就是原文。
+    if data.get("success") is False:
+        reason = data.get("error") or "LLM 没能处理这段文字"
+        logger.warning(f"LLM post-processing rejected: {reason}")
+        return data.get("text") or text, latency, reason
+    return data.get("text", text), latency, None
 
 
 # ============== Diarization Engine ==============
@@ -761,10 +785,11 @@ async def websocket_stream(websocket: WebSocket):
                         "text": result.text[:50],
                     }
                 )
-                processed_text, llm_latency = await call_llm_server(result.text)
+                processed_text, llm_latency, llm_error = await call_llm_server(result.text)
             else:
                 processed_text = result.text
                 llm_latency = 0
+                llm_error = None
 
             await _safe_send(
                 {
@@ -775,6 +800,9 @@ async def websocket_stream(websocket: WebSocket):
                     "is_final": True,
                     "stt_latency_ms": result.stt_latency_ms,
                     "llm_latency_ms": llm_latency,
+                    # 后处理开着却没做成时的原因(此时 text 是原文);没开或成功为 null。
+                    # 老客户端不认这个字段,忽略即可,协议向后兼容。
+                    "llm_error": llm_error,
                     "model": result.model,
                 }
             )

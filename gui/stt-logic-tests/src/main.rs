@@ -46,9 +46,40 @@ fn stream_event_stt_result_json() {
 
 #[test]
 fn stream_event_final_result_json() {
-    let ev = StreamEvent::FinalResult { text: "hi".into(), llm_latency_ms: Some(12.5) };
+    let ev = StreamEvent::FinalResult { text: "hi".into(), llm_latency_ms: Some(12.5), llm_error: None };
     let json = serde_json::to_string(&ev).unwrap();
     assert_eq!(json, r#"{"type":"result","text":"hi","llm_latency_ms":12.5}"#);
+}
+
+#[test]
+fn stream_event_final_result_carries_llm_error() {
+    let ev = StreamEvent::FinalResult {
+        text: "原文".into(),
+        llm_latency_ms: Some(0.0),
+        llm_error: Some("连不上 LLM 服务".into()),
+    };
+    let json = serde_json::to_string(&ev).unwrap();
+    assert!(json.contains(r#""llm_error":"连不上 LLM 服务""#), "{}", json);
+}
+
+// ── result 消息里的 llm_error(R8)──
+
+#[test]
+fn llm_error_is_read_from_the_result_message() {
+    let v = serde_json::json!({"type": "result", "text": "原文", "llm_error": "LLM 服务 30 秒没有应答"});
+    assert_eq!(stt::llm_error_of(&v).as_deref(), Some("LLM 服务 30 秒没有应答"));
+}
+
+#[test]
+fn llm_error_is_none_for_old_servers_and_success() {
+    // 老服务端没有这个字段;成功时它是 null;空串也不算原因。
+    for v in [
+        serde_json::json!({"type": "result", "text": "x"}),
+        serde_json::json!({"type": "result", "text": "x", "llm_error": null}),
+        serde_json::json!({"type": "result", "text": "x", "llm_error": "  "}),
+    ] {
+        assert_eq!(stt::llm_error_of(&v), None, "{}", v);
+    }
 }
 
 #[test]
