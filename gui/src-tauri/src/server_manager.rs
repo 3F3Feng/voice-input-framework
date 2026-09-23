@@ -287,6 +287,7 @@ impl ServerManager {
     ///
     /// 只认领「pid 还活着 **且** 命令行确实是对应模块」的进程——pid 会被系统
     /// 复用,只比对 pid 就可能把无辜进程当成自己的,进而在「停止」时杀错。
+    /// 看不到命令行的平台(Windows)干脆不认领,见 `pid_runs_module`。
     pub fn reclaim_orphans(&mut self) -> Vec<String> {
         let path = self.pid_file();
         let Ok(data) = std::fs::read_to_string(&path) else {
@@ -751,10 +752,19 @@ fn pid_runs_module(pid: u32, module: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Windows 上一律返回 false,也就是**不认领遗孤**。
+///
+/// 以前这里退化成「进程还在就认领」:`tasklist` 拿不到命令行,只能比 pid。可是
+/// 重启过电脑之后,记账文件里那个 pid 早就被别的程序用上了——认领回来,应用
+/// 退出时 `shutdown_all` 会对它 `taskkill /T`,把一整棵毫不相干的进程树杀掉,
+/// 「停止」按钮同理。
+///
+/// 不认领的代价很小:遗孤如果真还在跑,端口是通的,`start` / `status` 会把它当成
+/// 外部进程采纳(只连接,不碰)。宁可让用户回任务管理器里结束它,也不能凭一个
+/// 可能已经被复用的 pid 去杀进程。等哪天接上 `Win32_Process.CommandLine` 再放开。
 #[cfg(not(unix))]
-fn pid_runs_module(pid: u32, _module: &str) -> bool {
-    // Windows 上 tasklist 拿不到完整命令行,退化成「进程还在就认领」。
-    pid_alive(pid)
+fn pid_runs_module(_pid: u32, _module: &str) -> bool {
+    false
 }
 
 // ── 端口上监听的到底是谁 ──
@@ -1506,6 +1516,32 @@ mod tests {
     fn dead_pid_is_not_claimed() {
         // 0 在 macOS/Linux 上不是普通进程的 pid,`ps -p 0` 不会给出我们的模块名。
         assert!(!pid_runs_module(0, "services.stt_server"));
+    }
+
+    /// 记账文件里的 pid 活着,但已经不是我们的服务了(重启后被复用)——绝不能认领。
+    /// 这里拿测试进程自己的 pid 冒充:它活着,命令行里却没有服务模块名。
+    #[test]
+    fn a_live_but_reused_pid_is_not_reclaimed() {
+        let dir = std::env::temp_dir().join(format!("vif-reclaim-{}", std::process::id()));
+        let mut m = ServerManager::new(dir.clone());
+        let me = std::process::id();
+        std::fs::write(
+            m.pid_file(),
+            format!(
+                r#"{{"stt": {{"pid": {me}, "port": 6544}}, "llm": {{"pid": {me}, "port": 6545}}}}"#
+            ),
+        )
+        .unwrap();
+        assert!(m.reclaim_orphans().is_empty());
+        assert!(m.snapshot(ServerKind::Stt).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Windows 上看不到命令行,任何 pid 都不认领(以前是「活着就认领」)。
+    #[cfg(not(unix))]
+    #[test]
+    fn windows_never_reclaims_by_pid_alone() {
+        assert!(!pid_runs_module(std::process::id(), ""));
     }
 
     /// 三档归属里,只有前两档允许从界面动它。第三档是「认不出身份」的兜底,
