@@ -66,6 +66,12 @@ pub struct LocalServerConfig {
     /// 不该在用户没要求的情况下悄悄占掉。
     #[serde(default)]
     pub auto_start: bool,
+    /// 模型下载源(HuggingFace 镜像),以 `HF_ENDPOINT` 传给子进程。留空用官方源。
+    ///
+    /// 界面主要是中文用户,而 huggingface.co 在大陆常常连不上:首次加载模型要下几百
+    /// MB 到几 GB,连不上就只能看着「正在加载模型」直到超时失败。
+    #[serde(default)]
+    pub hf_endpoint: Option<String>,
 }
 
 fn default_stt_port() -> u16 {
@@ -86,6 +92,7 @@ impl Default for LocalServerConfig {
             stt_model: None,
             llm_model: None,
             auto_start: false,
+            hf_endpoint: None,
         }
     }
 }

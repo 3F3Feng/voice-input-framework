@@ -383,6 +383,9 @@ impl ServerManager {
         if let Some(model) = opts.llm_model.as_deref().filter(|s| !s.trim().is_empty()) {
             cmd.env("VIF_LLM_MODEL", model);
         }
+        if let Some(endpoint) = opts.hf_endpoint.as_deref() {
+            cmd.env("HF_ENDPOINT", endpoint);
+        }
 
         let mut child = no_console(&mut cmd)
             .spawn()
@@ -551,6 +554,7 @@ struct SpawnOptions {
     llm_port: u16,
     stt_model: Option<String>,
     llm_model: Option<String>,
+    hf_endpoint: Option<String>,
 }
 
 impl SpawnOptions {
@@ -573,6 +577,11 @@ impl SpawnOptions {
             llm_port: local.llm_port,
             stt_model: local.stt_model.clone(),
             llm_model: local.llm_model.clone(),
+            hf_endpoint: local
+                .hf_endpoint
+                .clone()
+                .map(|e| e.trim().trim_end_matches('/').to_string())
+                .filter(|e| !e.is_empty()),
         })
     }
 }

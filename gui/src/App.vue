@@ -105,6 +105,15 @@
                 <label class="toggle"><input type="checkbox" v-model="localAutoStart" @change="saveLocal" /><span class="slider"></span></label>
                 <span class="s-label">随应用启动</span>
               </div>
+              <!-- huggingface.co 在大陆常常连不上,首次下载模型会一直卡在「正在加载」。 -->
+              <div class="s-row" style="margin-top:4px">
+                <span class="s-tip" style="margin:0;flex:1">模型下载源</span>
+                <select class="s-select" style="width:auto" v-model="hfEndpoint" @change="onHfEndpointChange">
+                  <option value="">HuggingFace 官方</option>
+                  <option value="https://hf-mirror.com">hf-mirror.com(国内镜像)</option>
+                </select>
+              </div>
+              <div v-if="hfEndpoint" class="s-tip">只在国内网络下选它:境外访问这个镜像会被转回 huggingface.co,反而下载失败。</div>
 
               <div v-if="pathProblem" class="s-tip srv-problem">⚠ {{ pathProblem }}</div>
 
@@ -545,6 +554,7 @@ interface LocalServerConfig {
   stt_model: string | null;
   llm_model: string | null;
   auto_start: boolean;
+  hf_endpoint?: string | null;
 }
 interface VoiceInputConfig {
   // mode / local 是后加的：旧 config.json 里没有这两项，Rust 端有 serde 默认值，
@@ -1334,6 +1344,7 @@ async function saveLocal() {
     stt_model: keep.stt_model,
     llm_model: keep.llm_model,
     auto_start: localAutoStart.value,
+    hf_endpoint: hfEndpoint.value || null,
   };
   try {
     const report = await invoke<LocalPathReport>("set_local_server_config", { local });
@@ -1341,6 +1352,13 @@ async function saveLocal() {
     if (report.problem) toast(report.problem, "err");
   } catch (e) { toast(`保存失败: ${e}`, "err"); }
   await refreshServers();
+}
+
+/** 模型下载源(HF_ENDPOINT)。留空 = 官方源。只在服务启动时生效。 */
+const hfEndpoint = ref("");
+async function onHfEndpointChange() {
+  await saveLocal();
+  toast("下载源已保存;重启 STT 服务后生效(只影响之后新下载的模型)", "info");
 }
 
 /** 自动探测仓库 / 解释器。探测不到时把原因说出来，而不是静默无反应。 */
@@ -1389,6 +1407,7 @@ async function loadConfig() {
       llmPort.value = local.llm_port ?? 6545;
       savedLocalPorts = { stt: sttPort.value, llm: llmPort.value };
       localAutoStart.value = local.auto_start ?? false;
+      hfEndpoint.value = local.hf_endpoint ?? "";
     }
   } catch {}
 }
