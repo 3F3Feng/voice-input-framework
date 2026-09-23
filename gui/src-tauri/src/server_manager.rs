@@ -912,6 +912,31 @@ struct Health {
     /// `status == "error"` 时服务端给出的加载失败原因。
     #[serde(default)]
     error: Option<String>,
+    /// 加载进度(STT 服务端 `/health.loading`,见 services/stt_engine.py)。
+    #[serde(default)]
+    loading: Option<LoadingProgress>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LoadingProgress {
+    #[serde(default)]
+    elapsed_s: f64,
+    #[serde(default)]
+    downloaded_bytes: u64,
+}
+
+/// 「启动中」那一行怎么说。首次用一个模型要下几百 MB 到几 GB,以前全程只有一句
+/// 「正在加载模型...」,看不出是在下载、卡住了还是坏了。
+fn loading_text(progress: Option<&LoadingProgress>) -> String {
+    match progress {
+        Some(p) if p.downloaded_bytes >= 1024 * 1024 => format!(
+            "正在下载模型… 已下载 {} MB({:.0} 秒)",
+            p.downloaded_bytes / (1024 * 1024),
+            p.elapsed_s
+        ),
+        Some(p) if p.elapsed_s >= 1.0 => format!("正在加载模型…({:.0} 秒)", p.elapsed_s),
+        _ => "正在加载模型...".to_string(),
+    }
 }
 
 /// 端口上那个服务说它的模型怎么样了。
@@ -1016,6 +1041,7 @@ pub async fn status(
         Some(Answer::Failed(reason)) => Some(reason.clone()),
         _ => None,
     };
+    let loading = loading_text(raw.as_ref().and_then(|h| h.loading.as_ref()));
     let health = raw.filter(|h| h.status == "ok");
 
     let snapshot = manager.lock().ok().and_then(|mut m| m.snapshot(kind));
@@ -1093,7 +1119,7 @@ pub async fn status(
             can_stop: ServerOwner::App.can_manage(),
             pid: Some(snap.pid),
             current_model: None,
-            detail: Some("已启动,正在加载模型...".into()),
+            detail: Some(format!("已启动,{}", loading)),
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
         },
@@ -1107,6 +1133,7 @@ pub async fn status(
             pending.unwrap_or(Answer::Loading),
             identify_external(kind, &cfg.local),
             other,
+            &loading,
         ),
         // 进程没了且端口也不通 = 起失败了,把退出原因和日志尾巴一起给出去。
         (None, Some(snap)) => ServerStatus {
@@ -1164,6 +1191,7 @@ fn external_pending_status(
     answer: Answer,
     external_pid: Option<u32>,
     stale: Option<SlotSnapshot>,
+    loading: &str,
 ) -> ServerStatus {
     let (owner, pid, owner_note) = match external_pid {
         Some(pid) => (
@@ -1179,7 +1207,7 @@ fn external_pending_status(
     };
     let (state, what) = match answer {
         Answer::Failed(reason) => (ServerState::Failed, format!("模型加载失败:{}", reason)),
-        _ => (ServerState::Starting, "正在加载模型...".to_string()),
+        _ => (ServerState::Starting, loading.to_string()),
     };
     ServerStatus {
         kind,
@@ -1960,6 +1988,7 @@ mod tests {
             status: status.into(),
             current_model: Some("m".into()),
             error: error.map(Into::into),
+            loading: None,
         }
     }
 
@@ -2010,7 +2039,14 @@ mod tests {
     /// R14:外部服务在加载 → 启动中;加载失败 → 失败并带原因。以前两者都报「未运行」。
     #[test]
     fn an_external_server_that_is_not_ready_is_not_reported_as_stopped() {
-        let st = external_pending_status(ServerKind::Stt, 6544, Answer::Loading, Some(7), None);
+        let st = external_pending_status(
+            ServerKind::Stt,
+            6544,
+            Answer::Loading,
+            Some(7),
+            None,
+            "正在加载模型...",
+        );
         assert_eq!(st.state, ServerState::Starting);
         assert_eq!(st.owner, ServerOwner::ExternalProject);
         assert!(st.can_stop);
@@ -2022,6 +2058,7 @@ mod tests {
             Answer::Failed("OOM".into()),
             None,
             None,
+            "正在加载模型...",
         );
         assert_eq!(st.state, ServerState::Failed);
         assert_eq!(st.owner, ServerOwner::ExternalUnknown);
@@ -2717,5 +2754,30 @@ mod real_servers {
             );
             assert!(!st.can_stop);
         }
+    }
+}
+
+#[cfg(test)]
+mod loading_text_tests {
+    use super::*;
+
+    #[test]
+    fn download_progress_is_shown_in_mb() {
+        let p = LoadingProgress {
+            elapsed_s: 42.0,
+            downloaded_bytes: 300 * 1024 * 1024,
+        };
+        assert_eq!(loading_text(Some(&p)), "正在下载模型… 已下载 300 MB(42 秒)");
+    }
+
+    #[test]
+    fn loading_without_download_shows_elapsed_time() {
+        let p = LoadingProgress {
+            elapsed_s: 7.4,
+            downloaded_bytes: 0,
+        };
+        assert_eq!(loading_text(Some(&p)), "正在加载模型…(7 秒)");
+        // 老服务端没有 loading 字段:保持原来的说法
+        assert_eq!(loading_text(None), "正在加载模型...");
     }
 }
