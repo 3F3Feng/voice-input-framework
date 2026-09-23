@@ -1020,6 +1020,13 @@ async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例必须第一个注册(插件文档的要求:它得赶在别的插件做任何初始化之前
+        // 把第二个进程拦下)。双开的后果是两套全局快捷键监听,按一次录两遍、
+        // 输入两遍;第二个实例现在只负责把第一个的窗口叫出来,然后自己退出。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            log_info!("[app] 应用被再次启动,已把现有窗口调出来(第二个实例直接退出)");
+            show_main_window(app);
+        }))
         // 更新器插件以前只在 Cargo.toml 里挂着,从没注册过:update.rs 自己用
         // reqwest 下载再启动安装器,`latest.json` 里的签名一眼都没看。注册它之后
         // 端点和公钥统一由 tauri.conf.json 的 plugins.updater 提供,签名验不过
@@ -1279,8 +1286,13 @@ pub fn run() {
         // `reclaim_orphans` 兜底:核对 pid 与命令行后认领回来,用户仍然能从
         // UI 里停掉;万一认领不成(比如 pid 已被复用),`start` 的健康探测
         // 也会把它当成外部进程直接采纳,绝不会重复拉起。
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
+        .run(|app_handle, event| match event {
+            // macOS:本应用是没有 Dock 图标的 accessory 应用。窗口藏着时从启动台 /
+            // Finder 再点一次,系统不会起第二个进程,而是给正在跑的这个发「reopen」;
+            // 以前没人接,用户看到的是点了没反应。
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => show_main_window(app_handle),
+            tauri::RunEvent::Exit => {
                 // 先把 Arc 克隆出来:`State` 借的是 `app_handle`,而 guard 的
                 // 析构要排在 `state` 之后,直接锁会活不过这个块。
                 // 先把 Arc 克隆出来(`State` 借的是 `app_handle`),再把锁的结果
@@ -1292,5 +1304,6 @@ pub fn run() {
                     manager.shutdown_all();
                 }
             }
+            _ => {}
         });
 }
