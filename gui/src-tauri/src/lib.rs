@@ -4,6 +4,7 @@ mod env_check;
 mod heartbeat;
 mod history;
 mod hotkey;
+mod i18n;
 mod indicator;
 mod input;
 mod log;
@@ -1373,6 +1374,16 @@ async fn set_tray_status(app: tauri::AppHandle, text: String) -> Result<(), Stri
     Ok(())
 }
 
+/// 前端解析出实际界面语言(`zh` / `en`,「跟随系统」在前端解析)后调用:
+/// 之后 Rust 发出的提示用这个语言,托盘菜单换文案,悬浮胶囊跟着换。
+#[tauri::command]
+async fn set_ui_language(app: tauri::AppHandle, lang: String) -> Result<(), String> {
+    i18n::set_resolved(&lang);
+    tray::relabel(&app);
+    let _ = app.emit("ui-language", &lang);
+    Ok(())
+}
+
 /// 托盘有没有建成。建不成时前端要告诉用户:关窗只是最小化,退出在「关于」里。
 #[tauri::command]
 async fn tray_available() -> Result<bool, String> {
@@ -1459,6 +1470,7 @@ pub fn run() {
             // 必须在 `load` 之前问:找不到配置时 `load` 会立刻写一份默认的出来。
             let fresh_install = config::VoiceInputConfig::is_fresh_install(app.handle());
             let mut cfg = config::VoiceInputConfig::load(app.handle());
+            i18n::init_from_pref(&cfg.ui.language);
 
             // 首次运行:猜一次仓库 / 解释器位置并存进配置。猜不到就留空——
             // UI 会明确说「没探测到,请手动填」,而不是在启动时静默失败。
@@ -1690,6 +1702,7 @@ pub fn run() {
             log::open_log_dir,
             get_diagnostics,
             set_tray_status,
+            set_ui_language,
             tray_available,
             quit_app,
             get_stt_health,

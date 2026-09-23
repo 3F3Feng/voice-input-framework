@@ -4,6 +4,12 @@
 #[path = "../../src-tauri/src/stt.rs"]
 mod stt;
 
+// stt.rs 里的文案用 `crate::i18n::t` / `crate::tr!` 挑语言。
+#[path = "../../src-tauri/src/i18n.rs"]
+#[macro_use]
+#[allow(dead_code)]
+mod i18n;
+
 use stt::{SttClient, StreamEvent};
 
 // ── SttClient::new URL 构造(纯逻辑)──

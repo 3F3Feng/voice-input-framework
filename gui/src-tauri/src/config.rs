@@ -197,6 +197,9 @@ pub struct UiConfig {
     /// 好好的)就不打扰。条件的完整说明在 `App.vue` 的 `decideOnboarding`。
     #[serde(default)]
     pub onboarding_done: bool,
+    /// 界面语言:`auto`(跟随系统)、`zh`、`en`。老配置没有这个字段,读出来是 `auto`。
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 /// 把识别结果送进目标窗口的方式。
@@ -216,6 +219,10 @@ pub enum InputMethod {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_language() -> String {
+    "auto".to_string()
 }
 
 fn default_opacity() -> f64 {
@@ -311,6 +318,7 @@ impl Default for VoiceInputConfig {
                 input_method: InputMethod::default(),
                 save_history: true,
                 onboarding_done: false,
+                language: default_language(),
             },
             audio: AudioConfig {
                 device: None,
@@ -521,6 +529,7 @@ impl VoiceInputConfig {
                 input_method: InputMethod::default(),
                 save_history: true,
                 onboarding_done: false,
+                language: default_language(),
             },
             audio: AudioConfig {
                 device: old.audio.as_ref().and_then(|a| {

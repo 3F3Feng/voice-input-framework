@@ -331,6 +331,14 @@
                   : '识别结果只放进剪贴板,不碰当前窗口,自己按粘贴。不需要「辅助功能」权限。' }}
             </div>
             <div class="s-row" style="margin-top:6px">
+              <span class="s-label" style="flex:1">界面语言 / Language</span>
+              <select class="s-select" style="width:auto" v-model="uiLanguage" @change="onUiLanguageChange">
+                <option value="auto">{{ t('跟随系统', 'System default') }}</option>
+                <option value="zh">中文</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+            <div class="s-row" style="margin-top:6px">
               <label class="toggle"><input type="checkbox" v-model="autoStart" @change="toggleAutoStart" /><span class="slider"></span></label>
               <span class="s-label">开机自启动</span>
             </div>
@@ -616,6 +624,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Onboarding from "./Onboarding.vue";
+import { t, applyLanguagePref } from "./i18n";
 
 // ── Types ──
 interface ModelInfo {
@@ -684,7 +693,7 @@ interface VoiceInputConfig {
   // output_choice_made 是后加的，老配置里没有。
   // save_history 是后加的(F16),老配置里没有,Rust 端默认 true。
   // onboarding_done 是后加的(F1),老配置里没有。
-  ui: { start_minimized: boolean; auto_input?: boolean; output_choice_made?: boolean; input_method?: InputMethod; save_history?: boolean; onboarding_done?: boolean };
+  ui: { start_minimized: boolean; auto_input?: boolean; output_choice_made?: boolean; input_method?: InputMethod; save_history?: boolean; onboarding_done?: boolean; language?: string };
   audio: { device: string | null; language: string };
   llm: { enabled: boolean };
   _version: string;
@@ -787,6 +796,8 @@ const promptText = ref("");
 const autoInputEnabled = ref(false);
 const autoStart = ref(false);
 const startMinimized = ref(false);
+// 界面语言偏好:auto(跟随系统)/ zh / en。实际用哪种由 i18n.ts 解析。
+const uiLanguage = ref("auto");
 
 const elapsedMs = ref(0);
 const processingMs = ref(0);
@@ -1690,6 +1701,8 @@ async function loadConfig() {
     savedLanguage = language.value;
     void checkSavedHotkey();
     startMinimized.value = cfg.ui.start_minimized;
+    uiLanguage.value = cfg.ui.language ?? "auto";
+    applyLanguagePref(uiLanguage.value);
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     outputChoiceMade.value = cfg.ui.output_choice_made ?? false;
     onboardingDone.value = cfg.ui.onboarding_done ?? false;
@@ -1721,6 +1734,10 @@ function onServerSettingChange() {
 }
 async function toggleAutoStart() {
   try { await invoke("set_autostart", { enabled: autoStart.value }); } catch { autoStart.value = !autoStart.value; }
+}
+function onUiLanguageChange() {
+  applyLanguagePref(uiLanguage.value);
+  saveConfigPatch(cfg => { cfg.ui.language = uiLanguage.value; });
 }
 function toggleStartMinimized() { saveConfigPatch(cfg => { cfg.ui.start_minimized = startMinimized.value; }); }
 /**
