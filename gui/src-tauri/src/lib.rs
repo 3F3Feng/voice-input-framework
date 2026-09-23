@@ -1163,9 +1163,11 @@ pub fn run() {
             let auto_start = local_mode && cfg.server.local.auto_start;
 
             // 子进程日志和 pid 记账放在应用数据目录里,和 config.json 同级。
+            // 兜底路径的主目录也要认 Windows 的 USERPROFILE,以前只读 HOME。
             let data_dir = app.path().app_data_dir().unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                std::path::PathBuf::from(home).join(".config/voice-input")
+                server_manager::home_dir()
+                    .unwrap_or_else(|| ".".into())
+                    .join(".config/voice-input")
             });
             let mut manager = server_manager::ServerManager::new(data_dir);
             // 上次会话如果是被强杀的,子进程还活着;校验后认领回来,

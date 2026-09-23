@@ -1487,13 +1487,33 @@ fn find_python(repo: &Path) -> Option<String> {
     None
 }
 
+/// 用户主目录。
+///
+/// 以前只读 `HOME`:Windows 上通常没有这个变量(那边叫 `USERPROFILE`),于是
+/// `~/voice-input-framework` 这些常见位置一个都没去找,自动探测基本必然失败。
+pub fn home_dir() -> Option<PathBuf> {
+    home_from(
+        std::env::var("HOME").ok(),
+        std::env::var("USERPROFILE").ok(),
+    )
+}
+
+/// `home_dir` 的纯逻辑部分:`HOME` 优先,空的不算(Git Bash 之类有时会把它设成空串)。
+fn home_from(home: Option<String>, user_profile: Option<String>) -> Option<PathBuf> {
+    [home, user_profile]
+        .into_iter()
+        .flatten()
+        .find(|p| !p.trim().is_empty())
+        .map(PathBuf::from)
+}
+
 /// 首次运行时自动探测仓库位置。
 ///
 /// 应用装在 `/Applications`,仓库在用户目录某处,两者没有固定关系,所以只能
 /// 猜常见位置 + 从当前工作目录向上找(开发时从 `gui/src-tauri` 里跑)。
 /// 猜不到就返回 `None`,由 UI 明确告诉用户「没探测到,请手动填」。
 pub fn detect_repo() -> Option<String> {
-    let home = std::env::var("HOME").ok().map(PathBuf::from);
+    let home = home_dir();
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if let Some(home) = &home {
@@ -1965,6 +1985,24 @@ mod tests {
         assert_eq!(st.owner, ServerOwner::ExternalUnknown);
         assert!(!st.can_stop, "认不出身份的照样不能停");
         assert!(st.detail.unwrap().contains("OOM"));
+    }
+
+    /// R19:Windows 上通常只有 USERPROFILE。
+    #[test]
+    fn home_falls_back_to_userprofile() {
+        assert_eq!(
+            home_from(None, Some(r"C:\Users\me".into())),
+            Some(PathBuf::from(r"C:\Users\me"))
+        );
+        assert_eq!(
+            home_from(Some(String::new()), Some("/u".into())),
+            Some(PathBuf::from("/u"))
+        );
+        assert_eq!(
+            home_from(Some("/home/me".into()), Some("/u".into())),
+            Some(PathBuf::from("/home/me"))
+        );
+        assert_eq!(home_from(None, None), None);
     }
 
     #[test]
