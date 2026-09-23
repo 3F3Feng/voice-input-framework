@@ -189,6 +189,14 @@ pub struct UiConfig {
     /// 是常用需求;关掉是隐私选项,关了之后新结果只留在本次会话的内存里。
     #[serde(default = "default_true")]
     pub save_history: bool,
+    /// 首次启动向导(F1)走完 / 跳过了没有。
+    ///
+    /// 默认 false,老配置里也没有这个字段、读出来同样是 false —— 光看它分不出
+    /// 「新用户」和「升级上来的老用户」。所以它只是必要条件:前端还要再看一眼
+    /// 是不是全新安装、或者眼下连不上一个能用的服务,两者都不是(老用户、服务
+    /// 好好的)就不打扰。条件的完整说明在 `App.vue` 的 `decideOnboarding`。
+    #[serde(default)]
+    pub onboarding_done: bool,
 }
 
 /// 把识别结果送进目标窗口的方式。
@@ -302,6 +310,7 @@ impl Default for VoiceInputConfig {
                 output_choice_made: false,
                 input_method: InputMethod::default(),
                 save_history: true,
+                onboarding_done: false,
             },
             audio: AudioConfig {
                 device: None,
@@ -511,6 +520,7 @@ impl VoiceInputConfig {
                 output_choice_made: false,
                 input_method: InputMethod::default(),
                 save_history: true,
+                onboarding_done: false,
             },
             audio: AudioConfig {
                 device: old.audio.as_ref().and_then(|a| {
@@ -746,6 +756,33 @@ mod tests {
         let cfg: VoiceInputConfig = serde_json::from_str(json).unwrap();
         assert!(cfg.ui.use_tray);
         assert!((cfg.ui.opacity - 0.8).abs() < f64::EPSILON);
+    }
+
+    /// 老配置没有 `onboarding_done`:读出来是「没走过向导」,和新装的默认值一致。
+    /// 光凭这一项不会给老用户弹向导(前端还要求全新安装或连不上服务)。
+    #[test]
+    fn onboarding_flag_defaults_to_not_done() {
+        let cfg: VoiceInputConfig = serde_json::from_str(LEGACY_CONFIG).unwrap();
+        assert!(!cfg.ui.onboarding_done);
+        assert!(!VoiceInputConfig::default().ui.onboarding_done);
+    }
+
+    /// 走完向导存下去的 `true` 必须读得回来,否则每次启动都会再弹一次。
+    #[test]
+    fn onboarding_flag_round_trips() {
+        let json = r#"{
+          "server": { "host": "127.0.0.1", "port": 6544 },
+          "hotkey": { "key": "left_ctrl+left_alt", "distinguish_left_right": true },
+          "ui": { "start_minimized": false, "auto_input": true, "onboarding_done": true },
+          "audio": { "device": null, "language": "auto" },
+          "llm": { "enabled": true },
+          "_version": "2.0"
+        }"#;
+        let cfg: VoiceInputConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.ui.onboarding_done);
+        let back: VoiceInputConfig =
+            serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert!(back.ui.onboarding_done);
     }
 
     #[test]

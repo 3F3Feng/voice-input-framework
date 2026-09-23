@@ -52,6 +52,10 @@ pub struct AppState {
     pub servers: std::sync::Arc<Mutex<server_manager::ServerManager>>,
     /// 后台心跳最近一次看到的 STT 服务状态(见 `heartbeat`)。开始录音前看它。
     pub stt_health: Mutex<heartbeat::SttHealth>,
+    /// 这次启动是不是全新安装(见 `VoiceInputConfig::is_fresh_install`)。只能在
+    /// `setup` 里 `load` 之前问一次——`load` 会立刻写出一份默认配置,之后再问
+    /// 永远是 false——所以记在这里给前端的首启向导用。
+    pub fresh_install: bool,
 }
 
 #[tauri::command]
@@ -1331,6 +1335,13 @@ async fn set_local_server_config(
     Ok(server_manager::report(&servers, &cfg).await.local_paths)
 }
 
+/// 这次启动是不是全新安装。首启向导(F1)要它区分「新用户」和「升级上来、
+/// 配置里还没有 `onboarding_done` 的老用户」。
+#[tauri::command]
+async fn is_fresh_install(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.fresh_install)
+}
+
 /// 心跳最近一次看到的 STT 服务状态。前端启动时先拉一次:`stt-health` 事件只在
 /// 状态变化时才发,webview 起来之前发过的那些它收不到。
 #[tauri::command]
@@ -1506,6 +1517,7 @@ pub fn run() {
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
                 servers: std::sync::Arc::new(Mutex::new(manager)),
                 stt_health: Mutex::new(heartbeat::SttHealth::unknown(&stt_url)),
+                fresh_install,
             });
 
             // 连接状态不再只在设置面板开着时才更新(R12):后台每 5 秒看一次服务。
@@ -1681,6 +1693,7 @@ pub fn run() {
             tray_available,
             quit_app,
             get_stt_health,
+            is_fresh_install,
             history::history_list,
             history::history_add,
             history::history_delete,

@@ -597,6 +597,9 @@
       </div>
     </div>
 
+    <!-- 首次启动向导(F1):盖住整个窗口。什么时候出现见 decideOnboarding。 -->
+    <Onboarding v-if="showOnboarding" :hotkey-label="displayHotkey" @done="onOnboardingDone" />
+
     <!-- Footer -->
     <footer class="footer">
       <span v-if="build.version" class="footer-text" :title="`build ${build.build_id} · ${build.built_at}`">v{{ build.version }} · {{ buildShort }}</span>
@@ -608,6 +611,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import Onboarding from "./Onboarding.vue";
 
 // ── Types ──
 interface ModelInfo {
@@ -675,7 +679,8 @@ interface VoiceInputConfig {
   // 但没有任何地方读，这里不再声明；整份对象读出来再原样写回，它们照样保留。
   // output_choice_made 是后加的，老配置里没有。
   // save_history 是后加的(F16),老配置里没有,Rust 端默认 true。
-  ui: { start_minimized: boolean; auto_input?: boolean; output_choice_made?: boolean; input_method?: InputMethod; save_history?: boolean };
+  // onboarding_done 是后加的(F1),老配置里没有。
+  ui: { start_minimized: boolean; auto_input?: boolean; output_choice_made?: boolean; input_method?: InputMethod; save_history?: boolean; onboarding_done?: boolean };
   audio: { device: string | null; language: string };
   llm: { enabled: boolean };
   _version: string;
@@ -874,6 +879,9 @@ const guiLogFile = ref<string | null>(null);
 const trayOk = ref(true);
 /** 用户选过输出方式没有。读到配置之前当作选过，免得横幅在启动时闪一下。 */
 const outputChoiceMade = ref(true);
+/** 首启向导走过(或跳过)没有。读到配置之前同样当作走过。 */
+const onboardingDone = ref(true);
+const showOnboarding = ref(false);
 
 // ── 设置面板的标签页 ──
 // 以前是十个 s-section 在一个 400×500 的窗口里一路往下堆，找一个开关要滚三屏。
@@ -1672,6 +1680,7 @@ async function loadConfig() {
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     outputChoiceMade.value = cfg.ui.output_choice_made ?? false;
+    onboardingDone.value = cfg.ui.onboarding_done ?? false;
     inputMethod.value = cfg.ui.input_method ?? "paste";
     saveHistory.value = cfg.ui.save_history ?? true;
     selectedDevice.value = cfg.audio.device;
@@ -1734,7 +1743,49 @@ function onAutoInputToggle() {
 
 // ── 输出方式（首次使用问一次） ──
 // 已经开着自动输入的老用户显然选过了，不给他们看。
-const showOutputChoice = computed(() => !outputChoiceMade.value && !autoInputEnabled.value);
+// 向导里有这一问;走过(或跳过)向导的人不再用横幅问第二遍。
+const showOutputChoice = computed(() =>
+  !outputChoiceMade.value && !autoInputEnabled.value && !onboardingDone.value);
+
+// ── 首启向导(F1)──
+/**
+ * 要不要弹首启向导。`onboarding_done` 是必要条件,但它不够:老配置里没有这个字段,
+ * 读出来也是 false,光看它会给每个升级上来的老用户弹一次向导。所以再加一条:
+ *
+ * - 全新安装:一定弹。出厂默认值(lib.rs)可能已经切到本地并在拉起服务,但权限、
+ *   输出方式、快捷键这些新用户还一样都不知道。
+ * - 不是全新安装:等启动时那一轮连接有了结论,连上了一个能用的服务(或者模型正在
+ *   加载,也算能用)就不打扰——这是装好了在用的老用户;连不上 / 模型加载失败才弹,
+ *   这时他本来就得去设置里折腾,向导正好带他走一遍。
+ *
+ * 只在启动时判断一次:用着用着服务断了,不该突然冒出一个「欢迎使用」。
+ */
+async function decideOnboarding(bootConnect: Promise<void>) {
+  if (onboardingDone.value) return;
+  let fresh = false;
+  try { fresh = await invoke<boolean>("is_fresh_install"); }
+  catch (e) { console.error("is_fresh_install failed:", e); }
+  if (!fresh) {
+    await bootConnect;
+    if (canRecord.value || healthState.value === "loading") return;
+  }
+  if (!onboardingDone.value) showOnboarding.value = true;
+}
+
+/** 向导结束(走完或跳过):它改过的配置、模式、权限都重新读一遍,再按新目标连一次。 */
+async function onOnboardingDone() {
+  showOnboarding.value = false;
+  await loadConfig();
+  // 向导不管有没有存上 onboarding_done,这次都算走过了,别再弹横幅。
+  onboardingDone.value = true;
+  await refreshPermissions();
+  await refreshServers();
+  invoke("get_hotkey_status")
+    .then(() => { hotkeyProblem.value = ""; })
+    .catch(e => { hotkeyProblem.value = `${e}`; });
+  connectDeadline = 0;
+  ensureConnected(connectBudget());
+}
 async function chooseOutput(auto: boolean) {
   const ok = await saveConfigPatch(cfg => { cfg.ui.auto_input = auto; cfg.ui.output_choice_made = true; });
   if (!ok) return;
@@ -1817,7 +1868,8 @@ async function connectLoop() {
       // 预算用完才认输。中途每次失败都不吭声:服务还在加载模型是预期内的,
       // 每 2 秒弹一次红字只会把日志面板刷满。
       if (Date.now() >= connectDeadline) {
-        toast(failure ? `连接失败: ${failure}` : "服务器无响应", "err");
+        // 向导开着时它自己会说服务的状态;新用户还没配服务,这里再弹红字只会吓人。
+        if (!showOnboarding.value) toast(failure ? `连接失败: ${failure}` : "服务器无响应", "err");
         return;
       }
       await sleep(CONNECT_RETRY_MS);
@@ -2480,7 +2532,8 @@ onMounted(async () => {
   const bootBudget = serverMode.value === "local" && localAutoStart.value
     ? CONNECT_BUDGET_STARTING_MS
     : connectBudget();
-  ensureConnected(bootBudget);
+  const bootConnect = ensureConnected(bootBudget);
+  void decideOnboarding(bootConnect);
 
   // 设置面板开着 + 本地模式时才轮询状态：「启动中 → 运行中」要肉眼可见，
   // 但面板关着时没人看，没必要每 3 秒打一次 /health。
