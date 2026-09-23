@@ -322,6 +322,61 @@ fn report_stop_failed(app: &tauri::AppHandle, err: &str) {
     let _ = app.emit("transcribe-error", err.to_string());
 }
 
+// ── 录音时长上限 ──
+//
+// 以前到了上限就 `reset()` 掉整段录音,只留一句「这段音频未转录」:口述了
+// 5 分钟,一个字都没拿到,而且之前没有任何提醒。现在提前 30 秒在胶囊上倒计时,
+// 到点照常停止并转写已经录到的部分。
+
+/// 单次录音的时长上限。
+const MAX_RECORD_SECS: u64 = 300; // 5 minutes
+/// 离上限还剩这么多秒时在胶囊上提醒一次。
+const WARN_BEFORE_SECS: u64 = 30;
+
+/// 录音进行中每一轮轮询该做什么。
+#[derive(Debug, PartialEq, Eq)]
+enum LimitStep {
+    Continue,
+    /// 快到上限了,提醒一次(之后 `warned` 为 true,不再重复)。
+    Warn,
+    /// 到上限了,停止并转写。
+    Stop,
+}
+
+fn record_limit_step(elapsed: std::time::Duration, warned: bool) -> LimitStep {
+    let secs = elapsed.as_secs();
+    if secs >= MAX_RECORD_SECS {
+        LimitStep::Stop
+    } else if !warned && secs >= MAX_RECORD_SECS - WARN_BEFORE_SECS {
+        LimitStep::Warn
+    } else {
+        LimitStep::Continue
+    }
+}
+
+/// 录满上限:截断并照常转写。
+///
+/// 这时用户手指还按着,监听线程不会发 `hotkey-release`,所以这里先补一个,
+/// 让前端离开「录音中」进入「识别中」;等手指真正松开时那一次 release,
+/// 前端「不在录音状态就忽略」,平台层也不会再拿它去停一次录音。
+fn stop_at_time_limit(app: &tauri::AppHandle) {
+    crate::log_info!(
+        "[hotkey] 录音达到 {} 秒上限,自动停止并转写",
+        MAX_RECORD_SECS
+    );
+    let _ = app.emit("hotkey-release", ());
+    crate::emit_app_warning(app, "录音已满 5 分钟,已自动停止并开始识别。");
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let state = app.state::<crate::AppState>();
+        crate::stop_recording_internal(app, &state)
+    }));
+    match r {
+        Err(_) => report_stop_failed(app, "结束录音时发生内部错误。"),
+        Ok(Err(e)) => report_stop_failed(app, &e),
+        Ok(Ok(_)) => {}
+    }
+}
+
 // ── Windows implementation: pure GetAsyncKeyState polling ──
 
 #[cfg(target_os = "windows")]
@@ -347,13 +402,12 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
             const PRESS_DEBOUNCE_MS: u64 = 50;
             // Debounce: require keys to be released for this duration before firing Release.
             const RELEASE_DEBOUNCE_MS: u64 = 30;
-            // Safety timeout: force-stop recording if running longer than this.
-            const MAX_RECORD_SECS: u64 = 300; // 5 minutes
 
             let mut prev_all_down = false;
             let mut all_down_start: Option<Instant> = None;
             let mut not_down_start: Option<Instant> = None;
             let mut record_start: Option<Instant> = None;
+            let mut limit_warned = false;
 
             loop {
                 // Exit if a newer listener generation was registered.
@@ -387,6 +441,7 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                             recording.store(true, Ordering::SeqCst);
                             all_down_start = None;
                             record_start = Some(Instant::now());
+                            limit_warned = false;
 
                             let _ = app.emit("hotkey-press", ());
                             eprintln!("[hotkey] Press detected (poll), starting recording");
@@ -441,33 +496,23 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                     }
                 }
 
-                // ── Safety timeout: force-stop if stuck recording ──
+                // ── 时长上限:提前提醒,到点截断并转写 ──
                 if recording.load(Ordering::SeqCst) {
                     if let Some(start) = record_start {
-                        if start.elapsed() >= Duration::from_secs(MAX_RECORD_SECS) {
-                            eprintln!(
-                                "[hotkey] Safety timeout: force-stopping recording after {}s",
-                                MAX_RECORD_SECS
-                            );
-                            recording.store(false, Ordering::SeqCst);
-                            record_start = None;
-
-                            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                // Reset the recorder directly (cleaner than partial stop)
-                                // Bind in separate lets to ensure proper drop order
-                                let state = app.state::<AppState>();
-                                let result = state.recorder.lock();
-                                if let Ok(mut guard) = result {
-                                    guard.reset();
-                                }
-                            }));
-                            // 录音机复位了,可前端还停在「录音中」:没有 hotkey-release
-                            // 就没人去清 recording / 计时器,界面会一直转,连录音按钮
-                            // 都被 startRecord 的状态锁卡死,直到重启应用。
-                            report_recording_aborted(
-                                &app,
-                                "录音超过 5 分钟,已自动停止(这段音频未转录)。",
-                            );
+                        match record_limit_step(start.elapsed(), limit_warned) {
+                            LimitStep::Continue => {}
+                            LimitStep::Warn => {
+                                limit_warned = true;
+                                crate::indicator::show_warning(&app, WARN_BEFORE_SECS);
+                            }
+                            LimitStep::Stop => {
+                                // 先清状态再停:键还按着,下一轮不能被当成
+                                // 「还在录音、等松手」。上升沿已经过去了,
+                                // 所以也不会立刻开始新的一段。
+                                recording.store(false, Ordering::SeqCst);
+                                record_start = None;
+                                stop_at_time_limit(&app);
+                            }
                         }
                     }
                 }
@@ -504,10 +549,6 @@ fn spawn_hotkey_worker(
 ) {
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
-
-    // Safety timeout: force-stop recording if running longer than this
-    // (mirrors the Windows poller, which already had one).
-    const MAX_RECORD_SECS: u64 = 300; // 5 minutes
 
     let recording = Arc::new(AtomicBool::new(false));
     let _ = std::thread::Builder::new()
@@ -549,6 +590,7 @@ fn spawn_hotkey_worker(
                         Ok(Ok(())) => {}
                     }
                     let record_start = std::time::Instant::now();
+                    let mut limit_warned = false;
                     let mut timed_out = false;
                     'record: loop {
                         match cmd_rx.try_recv() {
@@ -556,35 +598,24 @@ fn spawn_hotkey_worker(
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => break 'record,
                             Err(std::sync::mpsc::TryRecvError::Empty) => {}
                         }
-                        if record_start.elapsed() >= std::time::Duration::from_secs(MAX_RECORD_SECS)
-                        {
-                            eprintln!(
-                                "[hotkey] Safety timeout: force-stopping recording after {}s",
-                                MAX_RECORD_SECS
-                            );
-                            timed_out = true;
-                            break 'record;
+                        match record_limit_step(record_start.elapsed(), limit_warned) {
+                            LimitStep::Continue => {}
+                            LimitStep::Warn => {
+                                limit_warned = true;
+                                crate::indicator::show_warning(&app, WARN_BEFORE_SECS);
+                            }
+                            LimitStep::Stop => {
+                                timed_out = true;
+                                break 'record;
+                            }
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
                     recording.store(false, Ordering::SeqCst);
                     if timed_out {
-                        // Drop the buffer instead of transcribing 5 min of audio.
-                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            // Bind in separate lets to ensure proper drop order
-                            let state = app.state::<crate::AppState>();
-                            let result = state.recorder.lock();
-                            if let Ok(mut guard) = result {
-                                guard.reset();
-                            }
-                        }));
-                        // 录音机复位了,可前端还停在「录音中」:没有 hotkey-release
-                        // 就没人去清 recording / 计时器,界面会一直转,连录音按钮
-                        // 都被 startRecord 的状态锁卡死,直到重启应用。
-                        report_recording_aborted(
-                            &app,
-                            "录音超过 5 分钟,已自动停止(这段音频未转录)。",
-                        );
+                        // 手指还按着;之后那个 Release 会落到下面的
+                        // `Ok(HotkeyCmd::Release) => continue`,不会再停一次。
+                        stop_at_time_limit(&app);
                         continue;
                     }
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1144,6 +1175,22 @@ fn hotkey_to_vk(k: &HotkeyKey) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_limit_warns_once_then_stops() {
+        use std::time::Duration;
+        let at = Duration::from_secs;
+        assert_eq!(record_limit_step(at(0), false), LimitStep::Continue);
+        assert_eq!(record_limit_step(at(269), false), LimitStep::Continue);
+        // 4:30 提醒一次
+        assert_eq!(record_limit_step(at(270), false), LimitStep::Warn);
+        assert_eq!(record_limit_step(at(270), true), LimitStep::Continue);
+        assert_eq!(record_limit_step(at(299), true), LimitStep::Continue);
+        // 到上限停止并转写;没提醒过(比如轮询卡住跳过了 4:30)也要停
+        assert_eq!(record_limit_step(at(300), true), LimitStep::Stop);
+        assert_eq!(record_limit_step(at(300), false), LimitStep::Stop);
+        assert_eq!(record_limit_step(at(10_000), false), LimitStep::Stop);
+    }
 
     /// 把解析结果摊平成「每一项的候选键」,方便断言。
     fn alts(s: &str, distinguish: bool) -> Option<Vec<Vec<HotkeyKey>>> {

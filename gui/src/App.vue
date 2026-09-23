@@ -1558,12 +1558,21 @@ onMounted(async () => {
     }
   });
 
+  // 与 stt.rs 的 `NO_SPEECH` 逐字一致。录到的是静音 / 什么都没识别出来时后端发的就是它：
+  // 这不是故障，不该弹红色的「失败」。以前空结果走的是 transcribe-done("")，
+  // 这里直接跳过，用户说完话什么反馈都没有。
+  const NO_SPEECH = "没有录到声音";
   listen<string>("transcribe-error", (event) => {
     loading.value = false;
     llmProcessing.value = false;
     if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
-    toast(`失败: ${event.payload}`, "err");
+    if (event.payload === NO_SPEECH) toast("没听到声音，请靠近麦克风再说一次", "info");
+    else toast(`失败: ${event.payload}`, "err");
   });
+
+  // 录音相关的提醒：配置的麦克风不在、改用了默认麦克风；录音中麦克风断开；
+  // 录满 5 分钟自动停止。以前这些要么静默，要么只打到终端。
+  listen<string>("app-warning", (event) => toast(event.payload, "info"));
 
   // Auto-check for updates (silent)
   try {

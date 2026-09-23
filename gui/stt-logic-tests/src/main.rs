@@ -156,3 +156,49 @@ fn fastapi_detail_is_a_readable_message() {
     assert!(stt::switch_failed(false, &data));
     assert_eq!(stt::server_message(&data), "Unknown model: nope");
 }
+
+// ── 空结果 = 没听到声音(F8)──
+
+#[test]
+fn empty_or_blank_text_is_no_speech() {
+    // 录了一段静音:服务端回 `result` 带空串。以前这被当成成功,
+    // 胶囊亮绿灯,然后什么都没发生。
+    for t in ["", " ", "\n\t  "] {
+        assert_eq!(
+            stt::require_speech(t.to_string()),
+            Err(stt::NO_SPEECH.to_string())
+        );
+    }
+    assert_eq!(
+        stt::require_speech(" 你好 ".to_string()),
+        Ok(" 你好 ".to_string())
+    );
+}
+
+// ── 分块合并(R1:长录音松手后要一次性发出几万块)──
+
+#[test]
+fn coalesce_merges_queued_chunks_in_order_up_to_the_cap() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    for i in 0..10u8 {
+        tx.send(vec![i; 4]).unwrap();
+    }
+    drop(tx);
+    let first = rx.try_recv().unwrap();
+    // 上限 12 字节:第一块 4 + 再拼两块 = 12,到上限就停
+    let frame = stt::coalesce_chunks(first, &mut rx, 12);
+    assert_eq!(frame, [vec![0u8; 4], vec![1; 4], vec![2; 4]].concat());
+    // 剩下的不丢,按顺序拼完
+    let mut rest = Vec::new();
+    while let Ok(c) = rx.try_recv() {
+        rest.push(stt::coalesce_chunks(c, &mut rx, 1 << 20));
+    }
+    let expected: Vec<u8> = (3..10u8).flat_map(|i| vec![i; 4]).collect();
+    assert_eq!(rest, vec![expected]);
+}
+
+#[test]
+fn coalesce_with_empty_queue_returns_first_chunk() {
+    let (_tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    assert_eq!(stt::coalesce_chunks(vec![1, 2], &mut rx, 64), vec![1, 2]);
+}

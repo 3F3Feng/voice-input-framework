@@ -27,6 +27,41 @@ struct LlmModelsResponse {
 /// 没录到任何音频时的错误。前端按这句话认出「没听到声音」,而不是当成故障。
 pub const NO_SPEECH: &str = "没有录到声音";
 
+/// 服务端给出的最终文本 → 转写结果。空的、只有空白的都算「没听到声音」。
+///
+/// 以前只有 `done` 分支会这么判,`result` 分支拿到空串照样 `Ok("")`:
+/// 录了一段静音,胶囊亮绿灯、显示耗时,像是成功了,然后什么都没发生。
+pub fn require_speech(text: String) -> Result<String, String> {
+    if text.trim().is_empty() {
+        Err(NO_SPEECH.to_string())
+    } else {
+        Ok(text)
+    }
+}
+
+/// 一条 WS 音频消息最多攒这么多字节(16 kHz i16 单声道约 2 秒)。
+pub const MAX_AUDIO_FRAME_BYTES: usize = 64 * 1024;
+
+/// 把通道里已经排着的分块拼到 `first` 后面,凑成一条消息,直到 `max_bytes`。
+///
+/// 录音期间分块只进不出(松手才开始消费),采集回调每次只给几百字节,
+/// 5 分钟的录音能攒下两三万块。一块一条 WS 消息的话,松手后光是逐条
+/// base64 + 加锁发送就要好一会儿。每块都是完整的 i16 采样,直接拼接是安全的。
+pub fn coalesce_chunks(
+    first: Vec<u8>,
+    rx: &mut mpsc::UnboundedReceiver<Vec<u8>>,
+    max_bytes: usize,
+) -> Vec<u8> {
+    let mut buf = first;
+    while buf.len() < max_bytes {
+        match rx.try_recv() {
+            Ok(chunk) => buf.extend_from_slice(&chunk),
+            Err(_) => break,
+        }
+    }
+    buf
+}
+
 /// Events emitted during streaming transcription
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
@@ -148,7 +183,7 @@ impl SttClient {
 
     pub async fn transcribe_stream(
         &self,
-        mut chunk_rx: mpsc::Receiver<Vec<u8>>,
+        mut chunk_rx: mpsc::UnboundedReceiver<Vec<u8>>,
         language: &str,
         event_tx: Option<mpsc::UnboundedSender<StreamEvent>>,
     ) -> Result<String, String> {
@@ -185,7 +220,8 @@ impl SttClient {
         let stream_task = tokio::spawn(async move {
             let mut chunk_count: u64 = 0;
             let mut byte_count: u64 = 0;
-            while let Some(chunk) = chunk_rx.recv().await {
+            while let Some(first) = chunk_rx.recv().await {
+                let chunk = coalesce_chunks(first, &mut chunk_rx, MAX_AUDIO_FRAME_BYTES);
                 chunk_count += 1;
                 byte_count += chunk.len() as u64;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&chunk);
@@ -198,7 +234,7 @@ impl SttClient {
                 }
             }
             eprintln!(
-                "[stt] Streaming complete: {} chunks, {} bytes",
+                "[stt] Streaming complete: {} frames, {} bytes",
                 chunk_count, byte_count
             );
             let _ = audio_done_tx.send(());
@@ -262,7 +298,7 @@ impl SttClient {
                                 });
                             }
                             let _ = stream_task.await;
-                            return Ok(final_text);
+                            return require_speech(final_text);
                         }
                         "llm_start" => {
                             let text = data["text"].as_str().unwrap_or("");
@@ -282,11 +318,7 @@ impl SttClient {
                         }
                         "done" => {
                             let _ = stream_task.await;
-                            return if final_text.is_empty() {
-                                Err(NO_SPEECH.to_string())
-                            } else {
-                                Ok(final_text)
-                            };
+                            return require_speech(final_text);
                         }
                         "error" => {
                             let _ = stream_task.await;

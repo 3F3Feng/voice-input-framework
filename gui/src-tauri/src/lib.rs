@@ -142,6 +142,16 @@ fn check_microphone_permission() -> Result<(), String> {
     }
 }
 
+/// 录音相关、不打断流程但必须让用户知道的事(麦克风回落、录音中断开、
+/// 录满 5 分钟自动停止):记进日志,再发给前端弹 toast。
+///
+/// 这些以前要么只 `eprintln`,要么干脆不说 —— 打包后的应用没有终端,
+/// 等于没人看得见。
+pub(crate) fn emit_app_warning(app: &tauri::AppHandle, msg: &str) {
+    log_error!("[warning] {}", msg);
+    let _ = app.emit("app-warning", msg.to_string());
+}
+
 /// Start recording: acquire device, create stream, begin capture, show indicator.
 /// Extracted so both Tauri commands and the hotkey thread can call the same logic.
 pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
@@ -165,9 +175,15 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
         if recorder.is_recording() {
             return Err("正在录音中,请先结束当前录音。".to_string());
         }
-        recorder.create_stream_channel(4096);
-        match recorder.start(device) {
-            Ok(()) => {
+        recorder.create_stream_channel();
+        let warn_app = app.clone();
+        let on_warning: audio::WarningSink =
+            std::sync::Arc::new(move |msg: String| emit_app_warning(&warn_app, &msg));
+        match recorder.start(device, on_warning) {
+            Ok(note) => {
+                if let Some(note) = note {
+                    emit_app_warning(app, &note);
+                }
                 let _ = indicator::show(app);
                 Ok(())
             }
@@ -240,11 +256,10 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
                 );
                 // Show processing time on indicator for 500ms before hiding
                 indicator::show_result(&app_handle, elapsed_ms);
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 if let Ok(mut status) = indicator_status.lock() {
                     *status = String::new();
                 }
-                let _ = indicator::hide(&app_handle);
+                indicator::hide_later(&app_handle, std::time::Duration::from_millis(500)).await;
                 let _ = app_handle.emit("transcribe-done", text);
             }
             Err(e) => {
@@ -252,8 +267,12 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
                 if let Ok(mut status) = indicator_status.lock() {
                     *status = String::new();
                 }
-                let _ = indicator::hide(&app_handle);
+                // 胶囊先停在失败状态(红点 + 一句原因;静音是灰点「没听到声音」)
+                // 再关。以前这里立刻关掉,原因只进主窗口 —— 窗口藏着时用户什么
+                // 都看不到。toast 立刻发,不必等胶囊。
+                indicator::show_failure(&app_handle, &e);
                 let _ = app_handle.emit("transcribe-error", e);
+                indicator::hide_later(&app_handle, indicator::FAILURE_LINGER).await;
             }
         }
     });
@@ -279,7 +298,7 @@ async fn run_transcription(
     indicator_status: &std::sync::Arc<Mutex<String>>,
     host: &str,
     language: &str,
-    chunk_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
+    chunk_rx: Option<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
     fallback_samples: Vec<f32>,
     src_rate: u32,
 ) -> Result<String, String> {
@@ -315,17 +334,19 @@ async fn run_transcription(
             "[transcribe] Using fallback batch mode ({} samples)",
             fallback_samples.len()
         );
-        let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-        if wav.is_empty() {
-            return Err("No audio captured".to_string());
+        // 以前判的是 `wav.is_empty()`,可 WAV 至少有 44 字节的头,永远不空,
+        // 一个采样都没有也会被送去转写。
+        if fallback_samples.is_empty() {
+            return Err(stt::NO_SPEECH.to_string());
         }
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" {
             wav[44..].to_vec()
         } else {
             wav
         };
-        let _ = tx.send(pcm).await;
+        let _ = tx.send(pcm);
         drop(tx);
         client.transcribe_stream(rx, language, Some(event_tx)).await
     };
