@@ -1,0 +1,2 @@
+/* 中文系统看到的麦克风授权说明。见 ../../Info.plist。 */
+"NSMicrophoneUsageDescription" = "Voice Input 需要使用麦克风录制你的语音,并将其转写为文字。录音只在你按住快捷键期间进行,音频仅发送到你自己配置的语音识别服务。";
