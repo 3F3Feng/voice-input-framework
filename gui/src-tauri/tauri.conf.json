@@ -44,6 +44,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "languages": ["English", "SimpChinese"]
+      }
+    },
     "macOS": {
       "entitlements": "Entitlements.plist",
       "files": {
