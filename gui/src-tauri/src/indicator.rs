@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{window::Color, Emitter, Manager, WebviewWindowBuilder};
 
+use crate::i18n::t;
+
 pub const INDICATOR_LABEL: &str = "indicator";
 
 /// 失败 / 没听到声音时胶囊停留多久再关。太短看不清,太长挡着下一次录音。
@@ -48,6 +50,13 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
     // 那一刻,`focusable(false)`(Windows 上是 WS_EX_NOACTIVATE)管之后。
     .focused(false)
     .focusable(false)
+    // 页面是独立的纯 HTML,用不了前端的 i18n:创建时把当前界面语言塞给它,
+    // 之后切换语言靠它自己监听 `ui-language` 事件。
+    .initialization_script(if crate::i18n::is_en() {
+        "window.__VIF_LANG = 'en';"
+    } else {
+        "window.__VIF_LANG = 'zh';"
+    })
     .title("");
 
     // 全平台使用透明窗口,让 indicator.html 里的圆角胶囊直接呈现。
@@ -57,10 +66,13 @@ pub fn show(app: &tauri::AppHandle) -> Result<(), String> {
     // 屏幕外面(物理像素当逻辑像素用),而 macOS 对完全离屏的窗口会推迟
     // WebView 渲染。定位修复后页面渲染正常,不透明窗口反而会在圆角胶囊
     // 外面露出一圈黑色方块(窗口 210x44 比 200px 的胶囊大一圈)。
-    let window = builder
-        .transparent(true)
-        .build()
-        .map_err(|e| format!("录音提示胶囊创建失败:{}", e))?;
+    let window = builder.transparent(true).build().map_err(|e| {
+        crate::tr!(
+            "录音提示胶囊创建失败:{}",
+            "Couldn't create the recording indicator: {}",
+            e
+        )
+    })?;
 
     let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
 
@@ -202,14 +214,14 @@ pub fn show_failure(app: &tauri::AppHandle, err: &str) {
 /// 样式:`"info"` 是灰点(不算故障),`"error"` 是红点。
 pub(crate) fn failure_display(err: &str) -> (&'static str, &'static str) {
     if err == crate::stt::NO_SPEECH {
-        ("info", "没听到声音")
+        ("info", t("没听到声音", "Didn't catch anything"))
     } else if err.starts_with(crate::stt::ERR_UNREACHABLE) {
-        ("error", "连不上识别服务")
+        ("error", t("连不上识别服务", "Can't reach STT"))
     } else if err.starts_with(crate::stt::ERR_RESULT_TIMEOUT) || err == "转写超时" {
         // 「转写超时」是服务端自己的 600 秒上限(stt_server.py 的 E5002)。
-        ("error", "识别超时")
+        ("error", t("识别超时", "STT timed out"))
     } else {
-        ("error", "识别失败")
+        ("error", t("识别失败", "Transcription failed"))
     }
 }
 

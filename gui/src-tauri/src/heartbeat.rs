@@ -18,6 +18,8 @@ use serde::Serialize;
 use serde_json::Value;
 use std::time::Duration;
 
+use crate::i18n::t;
+
 /// 心跳间隔。本地回环一次 `/health` 几毫秒,5 秒一次谈不上负担;再长,服务挂了
 /// 之后头部要很久才变。
 pub const INTERVAL: Duration = Duration::from_secs(5);
@@ -100,9 +102,9 @@ impl SttHealth {
             state,
             reachable: true,
             error: match state {
-                SttHealthState::Error => {
-                    Some(error.unwrap_or_else(|| "原因未知,见服务日志".to_string()))
-                }
+                SttHealthState::Error => Some(error.unwrap_or_else(|| {
+                    t("原因未知,见服务日志", "Unknown reason; see the service log").to_string()
+                })),
                 _ => None,
             },
             status,
@@ -178,12 +180,21 @@ pub fn recording_gate(health: &SttHealth, current_url: &str) -> Result<(), Strin
     match health.state {
         SttHealthState::Unknown | SttHealthState::Ready => Ok(()),
         SttHealthState::Unreachable => {
-            Err("未连接 STT 服务,这句话不会被识别。请先在设置里启动或连接服务。".to_string())
+            Err(t(
+                "未连接 STT 服务,这句话不会被识别。请先在设置里启动或连接服务。",
+                "Not connected to the STT service, so this wouldn't be transcribed. Start or connect the service in Settings first.",
+            )
+            .to_string())
         }
-        SttHealthState::Loading => Err("模型还在加载,请稍等片刻再说。".to_string()),
-        SttHealthState::Error => Err(format!(
+        SttHealthState::Loading => Err(t(
+            "模型还在加载,请稍等片刻再说。",
+            "The model is still loading. Please wait a moment before speaking.",
+        )
+        .to_string()),
+        SttHealthState::Error => Err(crate::tr!(
             "模型加载失败:{}。请在设置里换一个模型或重启服务。",
-            health.error.as_deref().unwrap_or("原因未知")
+            "The model failed to load: {}. Pick another model or restart the service in Settings.",
+            health.error.as_deref().unwrap_or(t("原因未知", "unknown reason"))
         )),
     }
 }

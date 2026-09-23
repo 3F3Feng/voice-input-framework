@@ -16,6 +16,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{Emitter, Manager};
 
+use crate::i18n::t;
+use crate::tr;
+
 // Windows branch (raw Win32 polling) uses these bare names; other
 // platforms reference them fully-qualified.
 #[cfg(target_os = "windows")]
@@ -266,12 +269,13 @@ pub fn parse_hotkey(s: &str, distinguish_sides: bool) -> Option<Vec<KeySpec>> {
 /// 不知道发生了什么。少了一段就说明录错了,宁可当场报错。
 pub fn parse_hotkey_checked(s: &str, distinguish_sides: bool) -> Result<Vec<KeySpec>, String> {
     if s.trim().is_empty() {
-        return Err("快捷键为空".to_string());
+        return Err(t("快捷键为空", "The hotkey is empty").to_string());
     }
     let tokens: Vec<&str> = s.split('+').map(str::trim).collect();
     if tokens.iter().any(|t| t.is_empty()) {
-        return Err(format!(
+        return Err(tr!(
             "快捷键「{}」里有空的一段(多了「+」或少了一个键),请重新录制",
+            "The hotkey \"{}\" has an empty part (an extra \"+\" or a missing key). Please record it again",
             s
         ));
     }
@@ -279,8 +283,14 @@ pub fn parse_hotkey_checked(s: &str, distinguish_sides: bool) -> Result<Vec<KeyS
         .iter()
         .map(|t| {
             let sided = is_sided_token(t);
-            let key = parse_key(t)
-                .ok_or_else(|| format!("快捷键「{}」无效:{}", s, unsupported_reason(t)))?;
+            let key = parse_key(t).ok_or_else(|| {
+                tr!(
+                    "快捷键「{}」无效:{}",
+                    "The hotkey \"{}\" isn't valid: {}",
+                    s,
+                    unsupported_reason(t)
+                )
+            })?;
             // 没写边 → 永远两边都认;写了边 → 看开关。
             if !sided || !distinguish_sides {
                 if let Some(pair) = both_sides(key) {
@@ -303,17 +313,25 @@ fn unsupported_reason(token: &str) -> String {
         .or_else(|| t.strip_prefix("right_"))
         .unwrap_or(&t);
     match t {
-        "cmd" | "command" | "meta" | "super" | "win" | "windows" | "os" => {
-            "Cmd / Win 键的写法是 left_cmd / right_cmd / cmd".to_string()
-        }
+        "cmd" | "command" | "meta" | "super" | "win" | "windows" | "os" => crate::i18n::t(
+            "Cmd / Win 键的写法是 left_cmd / right_cmd / cmd",
+            "write the Cmd / Win key as left_cmd / right_cmd / cmd",
+        )
+        .to_string(),
         "up" | "down" | "left" | "right" | "arrowup" | "arrowdown" | "arrowleft" | "arrowright" => {
-            "暂不支持方向键".to_string()
+            crate::i18n::t("暂不支持方向键", "arrow keys aren't supported yet").to_string()
         }
-        "fn" | "globe" => "Fn 键只在 macOS 上能用".to_string(),
+        "fn" | "globe" => {
+            crate::i18n::t("Fn 键只在 macOS 上能用", "the Fn key only works on macOS").to_string()
+        }
         _ if t.starts_with('f') && t.len() > 1 && t[1..].bytes().all(|b| b.is_ascii_digit()) => {
-            "功能键只支持 F1–F20(Linux 上只到 F12)".to_string()
+            crate::i18n::t(
+                "功能键只支持 F1–F20(Linux 上只到 F12)",
+                "only F1–F20 are supported (F1–F12 on Linux)",
+            )
+            .to_string()
         }
-        _ => format!("不认识的键「{}」", token),
+        _ => tr!("不认识的键「{}」", "unknown key \"{}\"", token),
     }
 }
 
@@ -548,13 +566,25 @@ fn stop_at_time_limit(app: &tauri::AppHandle) {
         MAX_RECORD_SECS
     );
     let _ = app.emit("hotkey-release", ());
-    crate::emit_app_warning(app, "录音已满 5 分钟,已自动停止并开始识别。");
+    crate::emit_app_warning(
+        app,
+        t(
+            "录音已满 5 分钟,已自动停止并开始识别。",
+            "Recording hit the 5-minute limit, so it stopped and is being transcribed.",
+        ),
+    );
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let state = app.state::<crate::AppState>();
         crate::stop_recording_internal(app, &state)
     }));
     match r {
-        Err(_) => report_stop_failed(app, "结束录音时发生内部错误。"),
+        Err(_) => report_stop_failed(
+            app,
+            t(
+                "结束录音时发生内部错误。",
+                "Internal error while stopping the recording.",
+            ),
+        ),
         Ok(Err(e)) => report_stop_failed(app, &e),
         Ok(Ok(_)) => {}
     }
@@ -645,7 +675,13 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                                     eprintln!("[hotkey] start_recording_internal panic");
                                     recording.store(false, Ordering::SeqCst);
                                     record_start = None;
-                                    report_recording_aborted(&app, "录音启动时发生内部错误。");
+                                    report_recording_aborted(
+                                        &app,
+                                        t(
+                                            "录音启动时发生内部错误。",
+                                            "Internal error while starting the recording.",
+                                        ),
+                                    );
                                 }
                                 Ok(Err(e)) => {
                                     // 权限被拒、设备打不开之类:必须说出来。
@@ -692,7 +728,13 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                                 crate::stop_recording_internal(&app, &state)
                             }));
                             match r {
-                                Err(_) => report_stop_failed(&app, "结束录音时发生内部错误。"),
+                                Err(_) => report_stop_failed(
+                                    &app,
+                                    t(
+                                        "结束录音时发生内部错误。",
+                                        "Internal error while stopping the recording.",
+                                    ),
+                                ),
                                 Ok(Err(e)) => report_stop_failed(&app, &e),
                                 Ok(Ok(_)) => {}
                             }
@@ -717,7 +759,13 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
                                 crate::stop_recording_internal(&app, &state)
                             }));
                             match r {
-                                Err(_) => report_stop_failed(&app, "结束录音时发生内部错误。"),
+                                Err(_) => report_stop_failed(
+                                    &app,
+                                    t(
+                                        "结束录音时发生内部错误。",
+                                        "Internal error while stopping the recording.",
+                                    ),
+                                ),
                                 Ok(Err(e)) => report_stop_failed(&app, &e),
                                 Ok(Ok(_)) => {}
                             }
@@ -812,7 +860,13 @@ fn spawn_hotkey_worker(
                         Err(_) => {
                             eprintln!("[hotkey] start_recording panic");
                             recording.store(false, Ordering::SeqCst);
-                            report_recording_aborted(&app, "录音启动时发生内部错误。");
+                            report_recording_aborted(
+                                &app,
+                                t(
+                                    "录音启动时发生内部错误。",
+                                    "Internal error while starting the recording.",
+                                ),
+                            );
                             continue;
                         }
                         Ok(Err(e)) => {
@@ -870,7 +924,13 @@ fn spawn_hotkey_worker(
                         crate::stop_recording_internal(&app, &state)
                     }));
                     match r {
-                        Err(_) => report_stop_failed(&app, "结束录音时发生内部错误。"),
+                        Err(_) => report_stop_failed(
+                            &app,
+                            t(
+                                "结束录音时发生内部错误。",
+                                "Internal error while stopping the recording.",
+                            ),
+                        ),
                         Ok(Err(e)) => report_stop_failed(&app, &e),
                         Ok(Ok(_)) => {}
                     }
@@ -1221,9 +1281,11 @@ mod mac_tap {
                     }
                     Err(_) => {
                         eprintln!("[hotkey] create_runloop_source failed");
-                        on_ready(Err(
-                            "全局按键监听没能启动(create_runloop_source 失败)".into()
-                        ));
+                        on_ready(Err(t(
+                            "全局按键监听没能启动(create_runloop_source 失败)",
+                            "The global key listener couldn't start (create_runloop_source failed)",
+                        )
+                        .into()));
                     }
                 }
             }
@@ -1236,9 +1298,17 @@ mod mac_tap {
                     perm
                 );
                 on_ready(Err(if perm.is_granted() {
-                    "全局按键监听没能启动。刚授予的「输入监控」权限通常要重启本应用才生效。".into()
+                    t(
+                        "全局按键监听没能启动。刚授予的「输入监控」权限通常要重启本应用才生效。",
+                        "The global key listener couldn't start. A newly granted Input Monitoring permission usually needs an app restart to take effect.",
+                    )
+                    .into()
                 } else {
-                    "全局按键监听没能启动:缺少「输入监控」权限。请在「设置 → 权限」里授权。".into()
+                    t(
+                        "全局按键监听没能启动:缺少「输入监控」权限。请在「设置 → 权限」里授权。",
+                        "The global key listener couldn't start: Input Monitoring permission is missing. Grant it in Settings → Permissions.",
+                    )
+                    .into()
                 }));
             }
         }
@@ -1298,7 +1368,11 @@ pub fn start_listener(app: tauri::AppHandle, hotkey_keys: Vec<KeySpec>) {
             if !matches!(result, Ok(Ok(()))) {
                 report_start(
                     my_gen,
-                    Err("全局按键监听没能启动(Linux 上常见原因:Wayland 会话,或当前用户不在 input 组),详见日志".into()),
+                    Err(t(
+                        "全局按键监听没能启动(Linux 上常见原因:Wayland 会话,或当前用户不在 input 组),详见日志",
+                        "The global key listener couldn't start (on Linux this is usually a Wayland session, or your user isn't in the input group). See the log for details",
+                    )
+                    .into()),
                 );
             }
             match result {

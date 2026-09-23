@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+use crate::i18n::t;
+use crate::tr;
+
 /// Audio device info for the frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioDeviceInfo {
@@ -121,18 +124,33 @@ impl AudioRecorder {
         on_warning: WarningSink,
     ) -> Result<Option<String>, String> {
         if self.is_recording.load(Ordering::SeqCst) {
-            return Err("正在录音中,请先结束当前录音。".to_string());
+            return Err(t(
+                "正在录音中,请先结束当前录音。",
+                "Already recording. Finish the current recording first.",
+            )
+            .to_string());
         }
 
         let host = cpal::default_host();
         let (device, note) = self
             .select_device(&host, device_name.as_deref())
-            .ok_or_else(|| "找不到可用的麦克风,请检查麦克风是否已连接。".to_string())?;
+            .ok_or_else(|| {
+                t(
+                    "找不到可用的麦克风,请检查麦克风是否已连接。",
+                    "No microphone found. Check that one is connected.",
+                )
+                .to_string()
+            })?;
 
         let device_name_str = device.name().unwrap_or_else(|_| "unknown".into());
-        let config = device
-            .default_input_config()
-            .map_err(|e| format!("读取麦克风「{}」的参数失败:{}", device_name_str, e))?;
+        let config = device.default_input_config().map_err(|e| {
+            tr!(
+                "读取麦克风「{}」的参数失败:{}",
+                "Couldn't read the settings of microphone \"{}\": {}",
+                device_name_str,
+                e
+            )
+        })?;
 
         let sample_format = config.sample_format();
         let sample_rate = config.sample_rate().0;
@@ -405,13 +423,31 @@ impl AudioRecorder {
                     None,
                 )
             }
-            other => return Err(format!("不支持这个麦克风的采样格式:{:?}", other)),
+            other => {
+                return Err(tr!(
+                    "不支持这个麦克风的采样格式:{:?}",
+                    "This microphone's sample format isn't supported: {:?}",
+                    other
+                ))
+            }
         }
-        .map_err(|e| format!("打开麦克风「{}」失败:{}", device_name_str, e))?;
+        .map_err(|e| {
+            tr!(
+                "打开麦克风「{}」失败:{}",
+                "Couldn't open microphone \"{}\": {}",
+                device_name_str,
+                e
+            )
+        })?;
 
-        stream
-            .play()
-            .map_err(|e| format!("麦克风「{}」启动录音失败:{}", device_name_str, e))?;
+        stream.play().map_err(|e| {
+            tr!(
+                "麦克风「{}」启动录音失败:{}",
+                "Microphone \"{}\" couldn't start recording: {}",
+                device_name_str,
+                e
+            )
+        })?;
 
         self.input_sample_rate = sample_rate;
         // push_samples() always resamples to 16 kHz before buffering.
@@ -508,11 +544,17 @@ impl AudioRecorder {
 /// 配置的麦克风不在、回落到默认设备时给用户的提示。
 fn fallback_note(wanted: &str, fallback: Option<&str>) -> String {
     match fallback {
-        Some(f) => format!(
+        Some(f) => tr!(
             "找不到麦克风「{}」,本次改用系统默认麦克风「{}」。",
-            wanted, f
+            "Microphone \"{}\" not found. Using the system default \"{}\" this time.",
+            wanted,
+            f
         ),
-        None => format!("找不到麦克风「{}」,本次改用系统默认麦克风。", wanted),
+        None => tr!(
+            "找不到麦克风「{}」,本次改用系统默认麦克风。",
+            "Microphone \"{}\" not found. Using the system default microphone this time.",
+            wanted
+        ),
     }
 }
 
@@ -520,9 +562,17 @@ fn fallback_note(wanted: &str, fallback: Option<&str>) -> String {
 fn stream_error_message(err: &cpal::StreamError) -> String {
     match err {
         cpal::StreamError::DeviceNotAvailable => {
-            "麦克风在录音中断开了,这次录音可能不完整。请检查设备后重新录音。".to_string()
+            t(
+                "麦克风在录音中断开了,这次录音可能不完整。请检查设备后重新录音。",
+                "The microphone disconnected while recording, so this recording may be incomplete. Check the device and record again.",
+            )
+            .to_string()
         }
-        other => format!("麦克风出错,这次录音可能不完整:{}", other),
+        other => tr!(
+            "麦克风出错,这次录音可能不完整:{}",
+            "Microphone error; this recording may be incomplete: {}",
+            other
+        ),
     }
 }
 

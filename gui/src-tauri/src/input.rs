@@ -3,6 +3,9 @@
 
 use enigo::{Direction, Enigo, Key, Keyboard};
 
+use crate::i18n::t;
+use crate::tr;
+
 /// Type text into the currently focused window.
 pub fn type_text(text: &str) -> Result<(), String> {
     if text.is_empty() {
@@ -14,14 +17,19 @@ pub fn type_text(text: &str) -> Result<(), String> {
     // 这里提前拦截,把静默失败变成明确的错误。
     check_accessibility_permission()?;
 
-    let mut enigo =
-        Enigo::new(&Default::default()).map_err(|e| format!("创建键盘模拟器失败: {}", e))?;
+    let mut enigo = Enigo::new(&Default::default()).map_err(|e| {
+        tr!(
+            "创建键盘模拟器失败: {}",
+            "Couldn't create the keyboard simulator: {}",
+            e
+        )
+    })?;
 
     // Type the text character by character using enigo's text() method.
     // This simulates real keyboard input to the active window.
     enigo
         .text(text)
-        .map_err(|e| format!("模拟输入失败: {}", e))?;
+        .map_err(|e| tr!("模拟输入失败: {}", "Simulated typing failed: {}", e))?;
 
     Ok(())
 }
@@ -31,20 +39,25 @@ pub fn type_text(text: &str) -> Result<(), String> {
 /// 剪贴板由调用方先写好、事后还原(见 `lib.rs` 的 `deliver_text`)。
 pub fn press_paste() -> Result<(), String> {
     check_accessibility_permission()?;
-    let mut enigo =
-        Enigo::new(&Default::default()).map_err(|e| format!("创建键盘模拟器失败: {}", e))?;
+    let mut enigo = Enigo::new(&Default::default()).map_err(|e| {
+        tr!(
+            "创建键盘模拟器失败: {}",
+            "Couldn't create the keyboard simulator: {}",
+            e
+        )
+    })?;
     #[cfg(target_os = "macos")]
     let modifier = Key::Meta;
     #[cfg(not(target_os = "macos"))]
     let modifier = Key::Control;
     enigo
         .key(modifier, Direction::Press)
-        .map_err(|e| format!("模拟粘贴失败: {}", e))?;
+        .map_err(|e| tr!("模拟粘贴失败: {}", "Simulated paste failed: {}", e))?;
     let clicked = enigo.key(Key::Unicode('v'), Direction::Click);
     // 无论点 V 成没成,修饰键都得松开,否则用户的 Cmd / Ctrl 会一直「按着」。
     let released = enigo.key(modifier, Direction::Release);
-    clicked.map_err(|e| format!("模拟粘贴失败: {}", e))?;
-    released.map_err(|e| format!("模拟粘贴失败: {}", e))?;
+    clicked.map_err(|e| tr!("模拟粘贴失败: {}", "Simulated paste failed: {}", e))?;
+    released.map_err(|e| tr!("模拟粘贴失败: {}", "Simulated paste failed: {}", e))?;
     Ok(())
 }
 
@@ -61,8 +74,9 @@ fn check_accessibility_permission() -> Result<(), String> {
     static PROMPTED: std::sync::Once = std::sync::Once::new();
     PROMPTED.call_once(crate::permissions::request_accessibility);
 
-    Err(
-        "未获得「辅助功能」权限,无法把文字输入到其他窗口。请到「系统设置 → 隐私与安全性 → 辅助功能」中勾选 Voice Input(改动后可能需要重启本应用)。"
-            .to_string(),
+    Err(t(
+        "未获得「辅助功能」权限,无法把文字输入到其他窗口。请到「系统设置 → 隐私与安全性 → 辅助功能」中勾选 Voice Input(改动后可能需要重启本应用)。",
+        "No Accessibility permission, so text can't be typed into other windows. Turn on Voice Input in System Settings → Privacy & Security → Accessibility (you may need to restart the app afterwards).",
     )
+    .to_string())
 }

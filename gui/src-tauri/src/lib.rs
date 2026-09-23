@@ -18,6 +18,8 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
+use i18n::t;
+
 #[macro_export]
 macro_rules! log_info {
     ($($arg:tt)*) => {{
@@ -155,15 +157,22 @@ fn check_microphone_permission() -> Result<(), String> {
         PermissionStatus::Granted => Ok(()),
         PermissionStatus::NotDetermined => {
             permissions::request_microphone();
-            Err("正在申请麦克风权限,请在系统弹窗中点击「允许」,然后重新录音。".to_string())
+            Err(t(
+                "正在申请麦克风权限,请在系统弹窗中点击「允许」,然后重新录音。",
+                "Requesting microphone permission. Click \"Allow\" in the system prompt, then record again.",
+            )
+            .to_string())
         }
-        PermissionStatus::Denied => Err(
-            "未获得麦克风权限。请到「系统设置 → 隐私与安全性 → 麦克风」中勾选 Voice Input。"
-                .to_string(),
-        ),
-        PermissionStatus::Restricted => {
-            Err("麦克风权限被系统策略限制(如屏幕使用时间 / MDM),无法录音。".to_string())
-        }
+        PermissionStatus::Denied => Err(t(
+            "未获得麦克风权限。请到「系统设置 → 隐私与安全性 → 麦克风」中勾选 Voice Input。",
+            "No microphone permission. Turn on Voice Input in System Settings → Privacy & Security → Microphone.",
+        )
+        .to_string()),
+        PermissionStatus::Restricted => Err(t(
+            "麦克风权限被系统策略限制(如屏幕使用时间 / MDM),无法录音。",
+            "Microphone access is restricted by system policy (e.g. Screen Time / MDM), so recording isn't possible.",
+        )
+        .to_string()),
     }
 }
 
@@ -211,7 +220,11 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
         // 真实场景:快捷键正按着录音,用户又去设置面板点了一下「录音」,
         // 松手时只剩一句 "No audio captured"。
         if recorder.is_recording() {
-            return Err("正在录音中,请先结束当前录音。".to_string());
+            return Err(t(
+                "正在录音中,请先结束当前录音。",
+                "Already recording. Finish the current recording first.",
+            )
+            .to_string());
         }
         recorder.create_stream_channel();
         let warn_app = app.clone();
@@ -248,7 +261,7 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
 
     {
         let mut status = state.indicator_status.lock().map_err(|e| e.to_string())?;
-        *status = "识别中...".to_string();
+        *status = t("识别中...", "Transcribing…").to_string();
     }
 
     log_info!(
@@ -356,7 +369,7 @@ async fn run_transcription(
             match &event {
                 stt::StreamEvent::LlmStart { .. } | stt::StreamEvent::LlmProgress { .. } => {
                     if let Ok(mut status) = indicator_status_fwd.lock() {
-                        *status = "LLM 处理中...".to_string();
+                        *status = t("LLM 处理中...", "Post-processing…").to_string();
                     }
                 }
                 // 后处理没做成、退回了原文:结果照常输出,但要让用户知道这次没经过
@@ -562,31 +575,40 @@ async fn pick_and_transcribe_file(
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .set_title("选择要转写的音频")
-        .add_filter("WAV 音频", &["wav", "wave"])
-        .add_filter("所有文件", &["*"])
+        .set_title(t("选择要转写的音频", "Choose audio to transcribe"))
+        .add_filter(t("WAV 音频", "WAV audio"), &["wav", "wave"])
+        .add_filter(t("所有文件", "All files"), &["*"])
         .pick_file(move |picked| {
             let _ = tx.send(picked);
         });
     let Some(picked) = rx.await.map_err(|e| e.to_string())? else {
         return Ok(None);
     };
-    let path = picked
-        .into_path()
-        .map_err(|e| format!("读不到选中的文件: {}", e))?;
+    let path = picked.into_path().map_err(|e| {
+        tr!(
+            "读不到选中的文件: {}",
+            "Can't read the selected file: {}",
+            e
+        )
+    })?;
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "audio.wav".into());
-    let meta = std::fs::metadata(&path).map_err(|e| format!("读不到 {}: {}", file_name, e))?;
+    let meta = std::fs::metadata(&path)
+        .map_err(|e| tr!("读不到 {}: {}", "Can't read {}: {}", file_name, e))?;
     // 和服务端的上传上限一致(shared/constants.py 的 MAX_UPLOAD_SIZE),免得传半天才被拒。
     const MAX_UPLOAD: u64 = 100 * 1024 * 1024;
     if meta.len() > MAX_UPLOAD {
-        return Err(format!("{} 超过 100 MB,请先切成小段再转写", file_name));
+        return Err(tr!(
+            "{} 超过 100 MB,请先切成小段再转写",
+            "{} is over 100 MB. Split it into shorter pieces first.",
+            file_name
+        ));
     }
     let bytes = tokio::fs::read(&path)
         .await
-        .map_err(|e| format!("读不到 {}: {}", file_name, e))?;
+        .map_err(|e| tr!("读不到 {}: {}", "Can't read {}: {}", file_name, e))?;
     let (host, language) = {
         let c = state.stt.lock().map_err(|e| e.to_string())?;
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
@@ -678,7 +700,13 @@ const LLM_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 const LLM_LATE_READY_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// 「还在加载」这类返回的固定开头,前端据此显示成提示而不是错误。
-pub(crate) const LLM_STILL_LOADING: &str = "LLM 服务还在加载模型";
+/// 前端按两种语言的开头都认(App.vue 的 `toggleLlm`)。
+pub(crate) fn llm_still_loading() -> &'static str {
+    t(
+        "LLM 服务还在加载模型",
+        "LLM service is still loading the model",
+    )
+}
 
 /// 后处理开关的操作代数,见 `set_llm_enabled`。
 static LLM_TOGGLE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -710,11 +738,16 @@ async fn finish_llm_enable_late(
         {
             server_manager::Readiness::Ready => break Ok(()),
             server_manager::Readiness::Failed(reason) => {
-                break Err(format!("LLM 模型加载失败:{}", reason))
+                break Err(tr!(
+                    "LLM 模型加载失败:{}",
+                    "LLM model failed to load: {}",
+                    reason
+                ))
             }
             server_manager::Readiness::TimedOut if started.elapsed() >= LLM_LATE_READY_LIMIT => {
-                break Err(format!(
+                break Err(tr!(
                     "LLM 服务加载超过 {} 分钟仍未就绪,已停止",
+                    "LLM service still wasn't ready after {} minutes, so it was stopped",
                     LLM_LATE_READY_LIMIT.as_secs() / 60
                 ))
             }
@@ -735,7 +768,13 @@ async fn finish_llm_enable_late(
             log_info!("[llm] LLM 服务加载完成,后处理已自动开启");
             let _ = app.emit(
                 "llm-enabled-late",
-                serde_json::json!({ "ok": true, "message": "LLM 服务加载好了,后处理已开启" }),
+                serde_json::json!({
+                    "ok": true,
+                    "message": t(
+                        "LLM 服务加载好了,后处理已开启",
+                        "LLM service is ready. LLM post-processing is on."
+                    )
+                }),
             );
         }
         Err(e) => {
@@ -834,15 +873,25 @@ async fn set_llm_enabled(
         // 问不到(老服务端 / 暂时不通)就照旧往下走,由后面的步骤报错。
         if let Ok(st) = stt::SttClient::new(&host).get_llm_status().await {
             if !st.supported {
-                return Err(st
-                    .reason
-                    .unwrap_or_else(|| "这台机器不支持 LLM 后处理".to_string()));
+                return Err(st.reason.unwrap_or_else(|| {
+                    t(
+                        "这台机器不支持 LLM 后处理",
+                        "LLM post-processing isn't supported on this machine",
+                    )
+                    .to_string()
+                }));
             }
         }
         if local_managed {
             let msg = server_manager::start(&servers, &cfg, server_manager::ServerKind::Llm)
                 .await
-                .map_err(|e| format!("LLM 服务启动失败,后处理未开启:{}", e))?;
+                .map_err(|e| {
+                    tr!(
+                        "LLM 服务启动失败,后处理未开启:{}",
+                        "LLM service failed to start, so LLM post-processing is off: {}",
+                        e
+                    )
+                })?;
             log_info!("[llm] {}", msg);
             match server_manager::wait_ready(
                 &cfg,
@@ -858,7 +907,11 @@ async fn set_llm_enabled(
                 // 进程收回去(照样只收自己拉起的)。
                 server_manager::Readiness::Failed(reason) => {
                     rollback_llm_start(&servers, &cfg).await;
-                    return Err(format!("LLM 模型加载失败,后处理未开启:{}", reason));
+                    return Err(tr!(
+                        "LLM 模型加载失败,后处理未开启:{}",
+                        "LLM model failed to load, so LLM post-processing is off: {}",
+                        reason
+                    ));
                 }
                 server_manager::Readiness::TimedOut => {
                     // 以前到这里就撂下不管:开关拨回「关」,进程接着加载,加载完了也没人
@@ -871,14 +924,15 @@ async fn set_llm_enabled(
                         host.clone(),
                         my_gen,
                     ));
-                    return Err(format!(
+                    return Err(tr!(
                         "{}(已等 {} 秒),加载好后会自动开启后处理。",
-                        LLM_STILL_LOADING,
+                        "{} (waited {}s). LLM post-processing will turn on by itself once it's ready.",
+                        llm_still_loading(),
                         LLM_READY_TIMEOUT.as_secs()
                     ));
                 }
             }
-            notes.push("LLM 服务已就绪".into());
+            notes.push(t("LLM 服务已就绪", "LLM service is ready").into());
         }
         if let Err(e) = stt::SttClient::new(&host).set_llm_enabled(true).await {
             // 服务已经起来了、模型也加载完了,偏偏最后这一步没成。直接返回错误
@@ -893,10 +947,10 @@ async fn set_llm_enabled(
             }
             return Err(e);
         }
-        notes.push("LLM 后处理已启用".into());
+        notes.push(t("LLM 后处理已启用", "LLM post-processing is on").into());
     } else {
         stt::SttClient::new(&host).set_llm_enabled(false).await?;
-        notes.push("LLM 后处理已禁用".into());
+        notes.push(t("LLM 后处理已禁用", "LLM post-processing is off").into());
         if local_managed {
             let status =
                 server_manager::status(&servers, &cfg, server_manager::ServerKind::Llm).await;
@@ -909,7 +963,11 @@ async fn set_llm_enabled(
                         }
                         // 停不掉不该把「后处理已关」这件已经做成的事翻回去:标志位
                         // 关了,后处理就是关的,只是内存还占着。如实说出来即可。
-                        Err(e) => notes.push(format!("LLM 服务没能停掉:{}", e)),
+                        Err(e) => notes.push(tr!(
+                            "LLM 服务没能停掉:{}",
+                            "Couldn't stop the LLM service: {}",
+                            e
+                        )),
                     }
                 }
                 plan => {
@@ -923,7 +981,7 @@ async fn set_llm_enabled(
     }
 
     cache_llm_enabled(&app, &state, enabled);
-    Ok(notes.join("；"))
+    Ok(notes.join(t("；", "; ")))
 }
 
 /// STT 起来之后,拿服务端的权威标志和启动时用的本地缓存对一次账。
@@ -1160,13 +1218,13 @@ async fn deliver_text(app: &tauri::AppHandle, text: &str) -> Result<(), String> 
         return app
             .clipboard()
             .write_text(text.to_string())
-            .map_err(|e| format!("写剪贴板失败: {}", e));
+            .map_err(|e| tr!("写剪贴板失败: {}", "Couldn't write to the clipboard: {}", e));
     }
 
     let previous = app.clipboard().read_text().ok();
     app.clipboard()
         .write_text(text.to_string())
-        .map_err(|e| format!("写剪贴板失败: {}", e))?;
+        .map_err(|e| tr!("写剪贴板失败: {}", "Couldn't write to the clipboard: {}", e))?;
     // 剪贴板变更在有的平台上是异步生效的,紧接着粘贴可能贴出旧内容。
     tokio::time::sleep(std::time::Duration::from_millis(60)).await;
     let pasted = input::press_paste();
@@ -1410,8 +1468,9 @@ async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     let snap = log::snapshot();
     let skip = snap.lines.len().saturating_sub(200);
     let tail: Vec<&str> = snap.lines[skip..].iter().map(|l| l.text.as_str()).collect();
-    Ok(format!(
+    Ok(tr!(
         "Voice Input v{} · build {} · {}\n系统: {} {}\n连接: {:?} {}\n托盘: {}\n日志文件: {}\n\n── 最近 {} 行客户端日志 ──\n{}\n",
+        "Voice Input v{} · build {} · {}\nSystem: {} {}\nConnection: {:?} {}\nTray: {}\nLog file: {}\n\n── Last {} lines of client log ──\n{}\n",
         build.version,
         build.build_id,
         build.built_at,
@@ -1419,8 +1478,12 @@ async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
         std::env::consts::ARCH,
         mode,
         stt_url,
-        if tray::available() { "正常" } else { "不可用" },
-        snap.file.as_deref().unwrap_or("(未创建)"),
+        if tray::available() {
+            t("正常", "OK")
+        } else {
+            t("不可用", "unavailable")
+        },
+        snap.file.as_deref().unwrap_or(t("(未创建)", "(not created)")),
         tail.len(),
         tail.join("\n")
     ))

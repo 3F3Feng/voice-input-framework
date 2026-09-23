@@ -202,7 +202,13 @@ pub async fn open_log_dir() -> Result<(), String> {
             .as_ref()
             .and_then(|s| s.path.parent().map(Path::to_path_buf))
     }
-    .ok_or_else(|| "日志目录不可用(日志文件没能创建)".to_string())?;
+    .ok_or_else(|| {
+        crate::i18n::t(
+            "日志目录不可用(日志文件没能创建)",
+            "Log folder unavailable (the log file couldn't be created)",
+        )
+        .to_string()
+    })?;
 
     #[cfg(target_os = "macos")]
     let opener = "open";
@@ -215,7 +221,7 @@ pub async fn open_log_dir() -> Result<(), String> {
         .arg(&dir)
         .spawn()
         .map(|_| ())
-        .map_err(|e| format!("打不开 {}: {}", dir.display(), e))
+        .map_err(|e| crate::tr!("打不开 {}: {}", "Can't open {}: {}", dir.display(), e))
 }
 
 #[cfg(test)]

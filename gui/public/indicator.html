@@ -39,6 +39,20 @@ const labelEl = document.getElementById('label');
 const invoke = window.__TAURI__?.core?.invoke;
 const listen = window.__TAURI__?.event?.listen;
 
+// 界面语言。这个页面是独立的纯 HTML,用不了 src/i18n.ts:初始语言由 indicator.rs
+// 建窗口时注入(window.__VIF_LANG),之后跟着 ui-language 事件换。
+// 胶囊上的大部分文字(识别中 / 失败原因)由 Rust 按当前语言发过来,这里只管自己的几句。
+let lang = window.__VIF_LANG === 'en' ? 'en' : 'zh';
+function t(zh, en) { return lang === 'en' ? en : zh; }
+if (listen) {
+  listen('ui-language', (event) => {
+    lang = event.payload === 'en' ? 'en' : 'zh';
+    document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+    if (limitDeadline != null && labelEl) labelEl.textContent = t('还剩 ', '');
+  });
+}
+document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+
 // 诊断信号:页面加载成功后改窗口标题(主进程 1s 后读标题判断加载状态)
 try { window.__TAURI__?.window?.getCurrentWindow()?.setTitle('indicator-loaded'); } catch (_) {}
 
@@ -64,7 +78,7 @@ if (listen) {
     const secs = event.payload && event.payload.remaining_secs;
     if (mode !== 'recording' || secs == null) return;
     limitDeadline = Date.now() + secs * 1000;
-    if (labelEl) { labelEl.textContent = '还剩 '; labelEl.classList.add('warn'); }
+    if (labelEl) { labelEl.textContent = t('还剩 ', ''); labelEl.classList.add('warn'); }
     if (timerEl) timerEl.classList.add('warn');
   });
 
@@ -73,7 +87,7 @@ if (listen) {
     const data = event.payload || {};
     mode = 'failed';
     limitDeadline = null;
-    if (labelEl) { labelEl.textContent = data.message || '识别失败'; labelEl.classList.remove('warn'); }
+    if (labelEl) { labelEl.textContent = data.message || t('识别失败', 'Transcription failed'); labelEl.classList.remove('warn'); }
     if (timerEl) { timerEl.textContent = ''; timerEl.classList.remove('warn'); }
     if (levelBar) levelBar.style.display = 'none';
     if (dotEl) {
@@ -102,7 +116,7 @@ setInterval(() => {
   if (mode === 'recording') {
     if (limitDeadline != null) {
       const left = Math.max(0, Math.ceil((limitDeadline - Date.now()) / 1000));
-      if (timerEl) timerEl.textContent = left + ' 秒';
+      if (timerEl) timerEl.textContent = t(left + ' 秒', left + 's left');
     } else {
       const elapsed = ((Date.now() - start) / 1000).toFixed(1);
       if (timerEl) timerEl.textContent = elapsed + 's';

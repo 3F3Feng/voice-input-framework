@@ -4,56 +4,64 @@
        逻辑全在本组件里(直接 invoke),App.vue 只管显示 / 收尾,不往这边灌状态。 -->
   <div class="ob">
     <header class="ob-head">
-      <div class="ob-dots" :title="`第 ${stepIndex + 1} 步,共 ${steps.length} 步`">
+      <div class="ob-dots" :title="t(`第 ${stepIndex + 1} 步,共 ${steps.length} 步`, `Step ${stepIndex + 1} of ${steps.length}`)">
         <span v-for="(s, i) in steps" :key="s" :class="['ob-dot', { on: i === stepIndex, past: i < stepIndex }]"></span>
       </div>
       <!-- 从设置里重新打开时叫「关闭」:用户是回来改东西的,不是在「跳过」什么。 -->
-      <button v-if="step !== 'finish'" class="ob-skip" @click="finish" :disabled="finishing">{{ manual ? '关闭' : '跳过' }}</button>
+      <button v-if="step !== 'finish'" class="ob-skip" @click="finish" :disabled="finishing">{{ manual ? t('关闭', 'Close') : t('跳过', 'Skip') }}</button>
     </header>
 
     <div class="ob-body">
       <!-- ① 欢迎 + 选模式 -->
       <template v-if="step === 'welcome'">
+        <!-- 第一次打开就能换界面语言,不用先摸到设置里去。存的是同一个 ui.language。 -->
+        <div class="ob-lang">
+          <select class="s-select" v-model="uiLanguage" @change="onUiLanguageChange" :title="t('界面语言', 'Language')">
+            <option value="auto">{{ t('跟随系统', 'System default') }}</option>
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
         <div class="ob-hero">🎙️</div>
-        <h2 class="ob-title">欢迎使用语音输入</h2>
-        <p class="ob-lead">按下快捷键说话,文字出现在光标处。先花一两分钟把它配好。</p>
-        <div class="ob-q">语音识别在哪儿跑?</div>
+        <h2 class="ob-title">{{ t('欢迎使用语音输入', 'Welcome to Voice Input') }}</h2>
+        <p class="ob-lead">{{ t('按下快捷键说话,文字出现在光标处。先花一两分钟把它配好。', 'Press the hotkey and speak; the text appears at your cursor. Take a minute or two to set it up.') }}</p>
+        <div class="ob-q">{{ t('语音识别在哪儿跑?', 'Where should speech recognition run?') }}</div>
         <button :class="['ob-choice', { sel: mode === 'local' }]" @click="chooseMode('local')" :disabled="modeBusy">
-          <span class="ob-choice-title">在本机跑模型(推荐)</span>
-          <span class="ob-choice-desc">本机有这个项目的仓库和 Python 环境时选它,由本应用负责启动服务。</span>
+          <span class="ob-choice-title">{{ t('在本机跑模型(推荐)', 'Run models on this computer (recommended)') }}</span>
+          <span class="ob-choice-desc">{{ t('本机有这个项目的仓库和 Python 环境时选它,由本应用负责启动服务。', 'Choose this if the project repo and its Python environment are on this computer. The app starts the service for you.') }}</span>
         </button>
         <button :class="['ob-choice', { sel: mode === 'remote' }]" @click="chooseMode('remote')" :disabled="modeBusy">
-          <span class="ob-choice-title">连接已有的服务器</span>
-          <span class="ob-choice-desc">服务已经在另一台电脑(或你自己的终端)里跑着,只需要填地址。</span>
+          <span class="ob-choice-title">{{ t('连接已有的服务器', 'Connect to an existing server') }}</span>
+          <span class="ob-choice-desc">{{ t('服务已经在另一台电脑(或你自己的终端)里跑着,只需要填地址。', 'The service is already running on another computer (or in your own terminal). Just enter its address.') }}</span>
         </button>
         <div v-if="modeError" class="s-tip s-err">{{ modeError }}</div>
       </template>
 
       <!-- ② 本机:路径 → 体检 → 启动 -->
       <template v-else-if="step === 'server' && mode === 'local'">
-        <h2 class="ob-title">准备本机服务</h2>
-        <div class="ob-label">项目仓库</div>
+        <h2 class="ob-title">{{ t('准备本机服务', 'Set up the local service') }}</h2>
+        <div class="ob-label">{{ t('项目仓库', 'Project repo') }}</div>
         <div class="s-row">
-          <input class="s-input" v-model="repoPath" placeholder="含 services/stt_server.py 的目录" @change="saveLocal" />
-          <button class="s-btn" @click="detectPaths" :disabled="detecting">{{ detecting ? '…' : '自动探测' }}</button>
+          <input class="s-input" v-model="repoPath" :placeholder="t('含 services/stt_server.py 的目录', 'Folder containing services/stt_server.py')" @change="saveLocal" />
+          <button class="s-btn" @click="detectPaths" :disabled="detecting">{{ detecting ? '…' : t('自动探测', 'Detect') }}</button>
         </div>
-        <div class="ob-label">Python 解释器</div>
+        <div class="ob-label">{{ t('Python 解释器', 'Python interpreter') }}</div>
         <div class="s-row">
-          <input class="s-input" v-model="pythonPath" placeholder="如 仓库/.venv/bin/python" @change="saveLocal" />
+          <input class="s-input" v-model="pythonPath" :placeholder="t('如 仓库/.venv/bin/python', 'e.g. repo/.venv/bin/python')" @change="saveLocal" />
         </div>
         <div v-if="pathProblem" class="s-tip srv-problem">⚠ {{ pathProblem }}</div>
 
         <div class="ob-block">
           <div class="perm-head">
-            <span class="s-label">环境检查</span>
-            <span v-if="envChecking" class="perm-state warn">检查中…</span>
-            <span v-else-if="envReport" :class="['perm-state', envReport.ok ? 'ok' : 'bad']">{{ envReport.ok ? '通过' : '有问题' }}</span>
+            <span class="s-label">{{ t('环境检查', 'Environment check') }}</span>
+            <span v-if="envChecking" class="perm-state warn">{{ t('检查中…', 'Checking…') }}</span>
+            <span v-else-if="envReport" :class="['perm-state', envReport.ok ? 'ok' : 'bad']">{{ envReport.ok ? t('通过', 'Passed') : t('有问题', 'Problems found') }}</span>
             <span class="ob-spacer"></span>
             <button class="s-btn" @click="runEnvCheck" :disabled="envChecking || !!pathProblem">
-              {{ envReport || envError ? '重新检查' : '检查' }}
+              {{ envReport || envError ? t('重新检查', 'Check again') : t('检查', 'Check') }}
             </button>
           </div>
-          <div v-if="envChecking" class="s-tip">要试着 import torch 等依赖,第一次可能要十几秒。</div>
+          <div v-if="envChecking" class="s-tip">{{ t('要试着 import torch 等依赖,第一次可能要十几秒。', 'This tries importing torch and other dependencies; the first run can take 10–20 seconds.') }}</div>
           <div v-else-if="envError" class="s-tip s-err">{{ envError }}</div>
           <template v-else-if="envReport">
             <!-- 只列有问题的几项:全列出来 400×500 的窗口放不下,通过的也没什么好看。 -->
@@ -62,24 +70,24 @@
               <span v-if="it.fix" class="srv-problem"> → {{ it.fix }}</span>
             </div>
             <template v-if="!envReport.ok">
-              <div class="s-tip">在终端里运行这条命令建好环境,再点「重新检查」:</div>
+              <div class="s-tip">{{ t('在终端里运行这条命令建好环境,再点「重新检查」:', 'Run this command in a terminal to set up the environment, then click "Check again":') }}</div>
               <div class="s-row" style="margin-top:4px">
                 <code class="env-cmd">{{ envReport.setup_command }}</code>
-                <button class="s-btn" @click="copySetup">{{ copied ? '已复制' : '复制' }}</button>
+                <button class="s-btn" @click="copySetup">{{ copied ? t('已复制', 'Copied') : t('复制', 'Copy') }}</button>
               </div>
             </template>
-            <div v-else-if="!envIssues.length" class="s-tip">Python 环境和依赖都没问题。</div>
+            <div v-else-if="!envIssues.length" class="s-tip">{{ t('Python 环境和依赖都没问题。', 'The Python environment and dependencies look good.') }}</div>
           </template>
-          <div v-else-if="pathProblem" class="s-tip">先把上面的路径填对。</div>
+          <div v-else-if="pathProblem" class="s-tip">{{ t('先把上面的路径填对。', 'Fix the paths above first.') }}</div>
         </div>
 
         <div class="ob-block">
           <div class="perm-head">
-            <span class="s-label">STT 服务</span>
+            <span class="s-label">{{ t('STT 服务', 'STT service') }}</span>
             <span :class="['perm-state', sttChip.cls]">{{ sttChip.text }}</span>
             <span class="ob-spacer"></span>
             <button v-if="canStart" class="s-btn ob-primary" @click="startService" :disabled="startBusy">
-              {{ startBusy ? '启动中…' : '启动服务' }}
+              {{ startBusy ? t('启动中…', 'Starting…') : t('启动服务', 'Start service') }}
             </button>
           </div>
           <!-- detail 里带着 /health.loading 的下载进度(「已下载 300 MB(42 秒)」),照原样显示。 -->
@@ -87,19 +95,19 @@
           <div v-if="startMsg" :class="['s-tip', startErr ? 's-err' : '']">{{ startMsg }}</div>
           <div v-if="llmNote" class="s-tip">{{ llmNote }}</div>
           <div v-if="sttState === 'starting'" class="s-tip">
-            第一次要下载模型(几百 MB 到几 GB),可以先去下一步,模型会在后台接着加载。
+            {{ t('第一次要下载模型(几百 MB 到几 GB),可以先去下一步,模型会在后台接着加载。', 'The first run downloads the model (hundreds of MB to a few GB). You can go on to the next step; it keeps loading in the background.') }}
           </div>
           <div class="s-row" style="margin-top:6px">
             <label class="toggle"><input type="checkbox" v-model="autoStart" @change="autoStartTouched = true; saveLocal()" /><span class="slider"></span></label>
-            <span class="s-label">以后随应用自动启动服务</span>
+            <span class="s-label">{{ t('以后随应用自动启动服务', 'Start the service with the app from now on') }}</span>
           </div>
           <!-- huggingface.co 在大陆常连不上:第一次下载模型会一直卡在「正在加载」。
                只在服务启动时生效,所以放在「启动服务」旁边。 -->
           <div class="s-row" style="margin-top:6px">
-            <span class="s-tip" style="margin:0;flex:1">模型下载源</span>
+            <span class="s-tip" style="margin:0;flex:1">{{ t('模型下载源', 'Model download source') }}</span>
             <select class="s-select" style="width:auto" v-model="hfEndpoint" @change="saveLocal">
-              <option value="">HuggingFace 官方</option>
-              <option value="https://hf-mirror.com">hf-mirror.com(国内镜像)</option>
+              <option value="">{{ t('HuggingFace 官方', 'HuggingFace (official)') }}</option>
+              <option value="https://hf-mirror.com">{{ t('hf-mirror.com(国内镜像)', 'hf-mirror.com (mirror in China)') }}</option>
             </select>
           </div>
         </div>
@@ -107,27 +115,27 @@
 
       <!-- ② 远程:地址 → 连接 -->
       <template v-else-if="step === 'server'">
-        <h2 class="ob-title">连接服务器</h2>
-        <p class="ob-lead">填 STT 服务的地址。可以是主机名,也可以是完整 URL(如 http://192.168.1.9:6544)。</p>
+        <h2 class="ob-title">{{ t('连接服务器', 'Connect to a server') }}</h2>
+        <p class="ob-lead">{{ t('填 STT 服务的地址。可以是主机名,也可以是完整 URL(如 http://192.168.1.9:6544)。', 'Enter the STT service address: a host name or a full URL (e.g. http://192.168.1.9:6544).') }}</p>
         <div class="s-row">
-          <input class="s-input" v-model="remoteHost" placeholder="localhost 或 http://1.2.3.4:6544" @keyup.enter="connectRemote" />
+          <input class="s-input" v-model="remoteHost" :placeholder="t('localhost 或 http://1.2.3.4:6544', 'localhost or http://1.2.3.4:6544')" @keyup.enter="connectRemote" />
           <input class="s-input s-port" v-model.number="remotePort" type="number" min="1" max="65535" @keyup.enter="connectRemote" />
-          <button class="s-btn" @click="connectRemote" :disabled="remoteBusy">{{ remoteBusy ? '…' : '连接' }}</button>
+          <button class="s-btn" @click="connectRemote" :disabled="remoteBusy">{{ remoteBusy ? '…' : t('连接', 'Connect') }}</button>
         </div>
         <!-- 服务端设了 VIF_API_TOKEN 才需要(F20);空着 = 不带令牌。和设置页那一格存的是同一个值。 -->
         <div class="s-row" style="margin-top:4px">
           <input class="s-input" v-model="remoteToken" type="password" autocomplete="off"
-            placeholder="访问令牌(可选,服务端设了 VIF_API_TOKEN 才需要)" @keyup.enter="connectRemote" />
+            :placeholder="t('访问令牌(可选,服务端设了 VIF_API_TOKEN 才需要)', 'Access token (optional; only needed if the server sets VIF_API_TOKEN)')" @keyup.enter="connectRemote" />
         </div>
         <div v-if="remoteMsg" :class="['s-tip', remoteOk ? 'ob-good' : 's-err']">{{ remoteMsg }}</div>
         <div v-if="remoteOk && healthLine" class="s-tip">{{ healthLine }}</div>
-        <div class="s-tip" style="margin-top:8px">本应用只连接,不管对端的进程;服务要在那边自己启动。</div>
+        <div class="s-tip" style="margin-top:8px">{{ t('本应用只连接,不管对端的进程;服务要在那边自己启动。', "This app only connects; it doesn't manage the remote process. Start the service on that machine yourself.") }}</div>
       </template>
 
       <!-- ③ 权限(仅 macOS) -->
       <template v-else-if="step === 'perm'">
-        <h2 class="ob-title">系统权限</h2>
-        <p class="ob-lead">macOS 要你逐项点头。每一项都只做下面写的那件事。</p>
+        <h2 class="ob-title">{{ t('系统权限', 'System permissions') }}</h2>
+        <p class="ob-lead">{{ t('macOS 要你逐项点头。每一项都只做下面写的那件事。', 'macOS asks you to approve each one. Each is used only for what it says below.') }}</p>
         <div v-for="row in permRows" :key="row.key" class="perm-row">
           <div class="perm-info">
             <div class="perm-head">
@@ -138,62 +146,66 @@
           </div>
           <div class="perm-actions">
             <button v-if="row.canRequest" class="s-btn" @click="requestPerm(row.key)" :disabled="permBusy === row.key">
-              {{ permBusy === row.key ? '…' : '授权' }}
+              {{ permBusy === row.key ? '…' : t('授权', 'Grant') }}
             </button>
-            <button v-if="row.status !== 'granted'" class="s-btn" @click="openPermSettings(row.key)">打开设置</button>
+            <button v-if="row.status !== 'granted'" class="s-btn" @click="openPermSettings(row.key)">{{ t('打开设置', 'Open Settings') }}</button>
           </div>
         </div>
         <div v-if="permMsg" class="s-tip srv-problem">{{ permMsg }}</div>
-        <div class="s-tip" style="margin-top:6px">已拒绝的项系统不会再弹窗,要在「系统设置 → 隐私与安全性」里手动勾上;回到这里会自动刷新。</div>
+        <div class="s-tip" style="margin-top:6px">{{ t('已拒绝的项系统不会再弹窗,要在「系统设置 → 隐私与安全性」里手动勾上;回到这里会自动刷新。', "macOS won't ask again for denied items; turn them on in System Settings → Privacy & Security. This page refreshes when you come back.") }}</div>
       </template>
 
       <!-- ④ 输出方式 + 快捷键 + 试一下 -->
       <template v-else-if="step === 'output'">
-        <h2 class="ob-title">说完之后</h2>
+        <h2 class="ob-title">{{ t('说完之后', 'After you speak') }}</h2>
         <div class="s-row mode-switch">
-          <button :class="['s-btn', 'mode-btn', { active: autoInput }]" @click="setAutoInput(true)">自动输入到光标处</button>
-          <button :class="['s-btn', 'mode-btn', { active: !autoInput }]" @click="setAutoInput(false)">只显示在窗口里</button>
+          <button :class="['s-btn', 'mode-btn', { active: autoInput }]" @click="setAutoInput(true)">{{ t('自动输入到光标处', 'Type at the cursor') }}</button>
+          <button :class="['s-btn', 'mode-btn', { active: !autoInput }]" @click="setAutoInput(false)">{{ t('只显示在窗口里', 'Only show in the window') }}</button>
         </div>
         <div v-if="autoInput" class="s-row" style="margin-top:6px">
-          <span class="s-label" style="flex:1">输入方式</span>
+          <span class="s-label" style="flex:1">{{ t('输入方式', 'Input method') }}</span>
           <select class="s-select" style="width:auto" v-model="inputMethod" @change="saveOutput">
-            <option value="paste">粘贴(推荐)</option>
-            <option value="type">模拟打字</option>
-            <option value="copy">只复制到剪贴板</option>
+            <option value="paste">{{ t('粘贴(推荐)', 'Paste (recommended)') }}</option>
+            <option value="type">{{ t('模拟打字', 'Simulate typing') }}</option>
+            <option value="copy">{{ t('只复制到剪贴板', 'Copy to clipboard only') }}</option>
           </select>
         </div>
         <div class="s-tip">{{ outputTip }}</div>
         <div v-if="outputMsg" class="s-tip s-err">{{ outputMsg }}</div>
-        <div v-if="needsAccessibility" class="s-tip srv-problem">⚠ 还没授权「辅助功能」,自动输入会失败;可以回上一步授权,或改成「只复制到剪贴板」。</div>
+        <div v-if="needsAccessibility" class="s-tip srv-problem">⚠ {{ t('还没授权「辅助功能」,自动输入会失败;可以回上一步授权,或改成「只复制到剪贴板」。', 'Accessibility permission isn\'t granted yet, so auto-input will fail. Go back a step to grant it, or switch to "Copy to clipboard only".') }}</div>
 
         <div class="ob-block">
           <div class="perm-head">
-            <span class="s-label">快捷键</span>
+            <span class="s-label">{{ t('快捷键', 'Hotkey') }}</span>
             <span class="ob-key">{{ hotkeyLabel }}</span>
-            <span class="s-tip" style="margin:0">{{ toggleMode ? '按一下开始,再按一下结束' : '按住说话,松开结束' }}</span>
+            <span class="s-tip" style="margin:0">{{ toggleMode ? t('按一下开始,再按一下结束', 'Press to start, press again to stop') : t('按住说话,松开结束', 'Hold to talk, release to stop') }}</span>
           </div>
-          <div class="s-tip">以后可以在 ⚙ 设置 → 常规 里换。</div>
+          <div class="s-tip">{{ t('以后可以在 ⚙ 设置 → 常规 里换。', 'You can change it later in ⚙ Settings → General.') }}</div>
         </div>
 
         <div class="ob-try">
-          <div class="ob-try-title">试一下</div>
+          <div class="ob-try-title">{{ t('试一下', 'Try it') }}</div>
           <div v-if="tryBlocker" class="s-tip srv-problem">{{ tryBlocker }}</div>
-          <div v-else-if="tryState === 'recording'" class="ob-try-status ob-rec">● 录音中… {{ toggleMode ? '说完再按一下' : '说完松开' }}</div>
-          <div v-else-if="tryState === 'processing'" class="ob-try-status ob-wait">识别中…</div>
+          <div v-else-if="tryState === 'recording'" class="ob-try-status ob-rec">● {{ t('录音中…', 'Recording…') }} {{ toggleMode ? t('说完再按一下', 'press again when done') : t('说完松开', 'release when done') }}</div>
+          <div v-else-if="tryState === 'processing'" class="ob-try-status ob-wait">{{ t('识别中…', 'Transcribing…') }}</div>
           <div v-else class="ob-try-status">
-            {{ toggleMode ? `按一下 ${hotkeyLabel},说一句话,再按一下` : `按住 ${hotkeyLabel} 说一句话` }}
+            {{ toggleMode
+              ? t(`按一下 ${hotkeyLabel},说一句话,再按一下`, `Press ${hotkeyLabel}, say something, then press it again`)
+              : t(`按住 ${hotkeyLabel} 说一句话`, `Hold ${hotkeyLabel} and say something`) }}
           </div>
-          <div v-if="tryState === 'done'" class="ob-try-result">{{ tryText || '(没识别出内容)' }}</div>
+          <div v-if="tryState === 'done'" class="ob-try-result">{{ tryText || t('(没识别出内容)', '(Nothing recognized)') }}</div>
           <div v-if="tryState === 'error'" class="s-tip s-err">{{ tryError }}</div>
           <div v-if="tryState === 'done' && autoInput" class="s-tip">
-            这次结果留在这里;平时在别的窗口里说完,{{ inputMethod === 'copy' ? '文字会放进剪贴板' : '文字会直接出现在光标处' }}。
+            {{ inputMethod === 'copy'
+              ? t('这次结果留在这里;平时在别的窗口里说完,文字会放进剪贴板。', 'This time the result stays here. Normally, when you speak in another window, the text goes to the clipboard.')
+              : t('这次结果留在这里;平时在别的窗口里说完,文字会直接出现在光标处。', 'This time the result stays here. Normally, when you speak in another window, the text appears right at the cursor.') }}
           </div>
-          <div v-if="hotkeyProblem" class="s-tip srv-problem">⚠ 快捷键现在不可用:{{ hotkeyProblem }}</div>
+          <div v-if="hotkeyProblem" class="s-tip srv-problem">⚠ {{ t('快捷键现在不可用:', "The hotkey isn't working right now: ") }}{{ hotkeyProblem }}</div>
           <!-- 快捷键没起来(比如刚授权「输入监控」、要重启才生效)时也得能试:
                按住这个按钮录音,走的是和主界面录音按钮同一条路。 -->
           <button class="s-btn ob-hold" @mousedown="holdStart" @mouseup="holdStop" @mouseleave="holdStop"
             :disabled="tryState === 'processing' || (tryState === 'recording' && !holding)">
-            {{ holding ? '松开结束' : '或者按住这里说' }}
+            {{ holding ? t('松开结束', 'Release to stop') : t('或者按住这里说', 'Or hold here to talk') }}
           </button>
         </div>
       </template>
@@ -201,24 +213,24 @@
       <!-- ⑤ 完成 -->
       <template v-else>
         <div class="ob-hero">✅</div>
-        <h2 class="ob-title">都好了</h2>
+        <h2 class="ob-title">{{ t('都好了', "You're all set") }}</h2>
         <div class="ob-summary">
-          <div><span class="s-tip">服务</span><span>{{ summaryServer }}</span></div>
-          <div><span class="s-tip">说完后</span><span>{{ autoInput ? { paste: '粘贴到光标处', type: '模拟打字输入', copy: '放进剪贴板' }[inputMethod] : '只显示在窗口里' }}</span></div>
-          <div><span class="s-tip">快捷键</span><span class="ob-key">{{ hotkeyLabel }}</span></div>
+          <div><span class="s-tip">{{ t('服务', 'Service') }}</span><span>{{ summaryServer }}</span></div>
+          <div><span class="s-tip">{{ t('说完后', 'After you speak') }}</span><span>{{ autoInput ? { paste: t('粘贴到光标处', 'Paste at the cursor'), type: t('模拟打字输入', 'Simulated typing'), copy: t('放进剪贴板', 'Copy to clipboard') }[inputMethod] : t('只显示在窗口里', 'Only show in the window') }}</span></div>
+          <div><span class="s-tip">{{ t('快捷键', 'Hotkey') }}</span><span class="ob-key">{{ hotkeyLabel }}</span></div>
         </div>
-        <p class="ob-lead">平时窗口可以关掉,快捷键在后台一直能用;托盘里能重新打开它。</p>
+        <p class="ob-lead">{{ t('平时窗口可以关掉,快捷键在后台一直能用;托盘里能重新打开它。', 'You can close this window; the hotkey keeps working in the background. Reopen it from the tray.') }}</p>
       </template>
     </div>
 
     <!-- 每一步都能退回上一步,包括最后的「完成」;第一步也给「下一步」,
          重新打开向导时不必为了往下走而重选一遍模式(沿用当前模式)。 -->
     <footer class="ob-foot">
-      <button v-if="stepIndex > 0" class="s-btn" @click="go(-1)">上一步</button>
+      <button v-if="stepIndex > 0" class="s-btn" @click="go(-1)">{{ t('上一步', 'Back') }}</button>
       <span class="ob-spacer"></span>
-      <span v-if="step === 'server' && !serverReady" class="s-tip ob-foot-tip">没就绪也可以先往下走</span>
-      <button v-if="step === 'finish'" class="s-btn ob-primary" @click="finish" :disabled="finishing">开始使用</button>
-      <button v-else class="s-btn ob-primary" @click="go(1)">下一步</button>
+      <span v-if="step === 'server' && !serverReady" class="s-tip ob-foot-tip">{{ t('没就绪也可以先往下走', "You can continue even if it isn't ready") }}</span>
+      <button v-if="step === 'finish'" class="s-btn ob-primary" @click="finish" :disabled="finishing">{{ t('开始使用', 'Get started') }}</button>
+      <button v-else class="s-btn ob-primary" @click="go(1)">{{ t('下一步', 'Next') }}</button>
     </footer>
   </div>
 </template>
@@ -227,6 +239,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { t, applyLanguagePref } from "./i18n";
 
 // 主界面算好的、给人看的快捷键(⌃⌥ / Ctrl+Alt)。只要这一个 prop:格式化规则
 // 留在 App.vue 一处,别在这里再抄一份。
@@ -244,7 +257,7 @@ interface LocalCfg {
 interface Cfg {
   server: { host: string; port: number; mode: ServerMode; local: LocalCfg; token?: string | null };
   hotkey: { key: string; toggle?: boolean };
-  ui: { auto_input?: boolean; input_method?: InputMethod; output_choice_made?: boolean; onboarding_done?: boolean };
+  ui: { auto_input?: boolean; input_method?: InputMethod; output_choice_made?: boolean; onboarding_done?: boolean; language?: string };
   [k: string]: unknown;
 }
 type ServerState = "not_configured" | "stopped" | "starting" | "running" | "failed";
@@ -280,6 +293,15 @@ function go(delta: number) {
   if (next) step.value = next;
 }
 
+// ── ① 界面语言 ──
+// 和设置页那一格存的是同一个 `ui.language`,切换立刻生效(托盘、胶囊一起换)。
+const uiLanguage = ref("auto");
+async function onUiLanguageChange() {
+  applyLanguagePref(uiLanguage.value);
+  try { await patchConfig(c => { c.ui.language = uiLanguage.value; }); }
+  catch (e) { console.error("ui.language 没存上:", e); }
+}
+
 // ── ① 模式 ──
 const mode = ref<ServerMode>("local");
 const modeBusy = ref(false);
@@ -293,7 +315,7 @@ async function chooseMode(m: ServerMode) {
     await invoke("set_server_mode", { mode: m });
     mode.value = m;
     step.value = "server";
-  } catch (e) { modeError.value = `切换失败:${e}`; }
+  } catch (e) { modeError.value = t(`切换失败:${e}`, `Couldn't switch: ${e}`); }
   modeBusy.value = false;
 }
 
@@ -345,7 +367,7 @@ async function detectPaths() {
     await saveLocal();
     // 路径本身没问题时 pathProblem 是空的;探测的说明(比如「没有 .venv」)更具体,用它。
     if (d.problem && (!d.repo_path || pathProblem.value)) pathProblem.value = d.problem;
-  } catch (e) { pathProblem.value = `探测失败:${e}`; }
+  } catch (e) { pathProblem.value = t(`探测失败:${e}`, `Detection failed: ${e}`); }
   detecting.value = false;
 }
 
@@ -370,14 +392,14 @@ async function saveLocal() {
     if (changedPaths) { envReport.value = null; envError.value = ""; }
     await refreshReport();
     if (!r.problem && !envReport.value && !envChecking.value) void runEnvCheck();
-  } catch (e) { pathProblem.value = `保存失败:${e}`; }
+  } catch (e) { pathProblem.value = t(`保存失败:${e}`, `Couldn't save: ${e}`); }
 }
 
 async function runEnvCheck() {
   envChecking.value = true;
   envError.value = "";
   try { envReport.value = await invoke<EnvReport>("check_environment"); }
-  catch (e) { envReport.value = null; envError.value = `检查失败:${e}`; }
+  catch (e) { envReport.value = null; envError.value = t(`检查失败:${e}`, `Check failed: ${e}`); }
   envChecking.value = false;
 }
 const envIssues = computed(() => envReport.value?.items.filter(i => i.status !== "ok") ?? []);
@@ -387,7 +409,7 @@ async function copySetup() {
     await navigator.clipboard.writeText(envReport.value.setup_command);
     copied.value = true;
     setTimeout(() => { copied.value = false; }, 2000);
-  } catch (e) { envError.value = `复制失败:${e}`; }
+  } catch (e) { envError.value = t(`复制失败:${e}`, `Couldn't copy: ${e}`); }
 }
 
 async function refreshReport() {
@@ -398,11 +420,11 @@ const sttState = computed<ServerState | null>(() => report.value?.stt.state ?? n
 const sttDetail = computed(() => report.value?.stt.detail ?? "");
 const sttChip = computed(() => {
   const s = sttState.value;
-  if (s === "running") return { cls: "ok", text: "运行中" };
-  if (s === "starting") return { cls: "warn", text: "启动中" };
-  if (s === "failed") return { cls: "bad", text: "失败" };
-  if (s === "not_configured") return { cls: "", text: "未配置" };
-  return { cls: "", text: s ? "未运行" : "…" };
+  if (s === "running") return { cls: "ok", text: t("运行中", "Running") };
+  if (s === "starting") return { cls: "warn", text: t("启动中", "Starting") };
+  if (s === "failed") return { cls: "bad", text: t("失败", "Failed") };
+  if (s === "not_configured") return { cls: "", text: t("未配置", "Not configured") };
+  return { cls: "", text: s ? t("未运行", "Stopped") : "…" };
 });
 /** 体检通过才给「启动服务」:环境是坏的,起了也只会在日志里报一串 ImportError。 */
 const canStart = computed(() =>
@@ -419,7 +441,7 @@ async function startService() {
     startMsg.value = await invoke<string>("start_server", { kind: "stt" });
     startedByWizard = true;
     llmHandled = false;
-  } catch (e) { startMsg.value = `启动失败:${e}`; startErr.value = true; }
+  } catch (e) { startMsg.value = t(`启动失败:${e}`, `Couldn't start: ${e}`); startErr.value = true; }
   startBusy.value = false;
   await refreshReport();
 }
@@ -439,10 +461,14 @@ async function maybeStartLlm() {
     const st = await invoke<{ enabled: boolean; supported: boolean }>("get_llm_status");
     const llm = report.value?.llm.state;
     if (!st.enabled || !st.supported || llm === "running" || llm === "starting") return;
-    llmNote.value = "LLM 后处理是开着的,正在一起启动它…";
+    llmNote.value = t("LLM 后处理是开着的,正在一起启动它…", "LLM post-processing is on, so starting its service too…");
     await invoke<string>("start_server", { kind: "llm" });
-    llmNote.value = "LLM 后处理服务已启动(加载模型要几秒)。";
-  } catch (e) { llmNote.value = `LLM 后处理服务没起来:${e}(不影响识别,可以在设置里关掉后处理)`; }
+    llmNote.value = t("LLM 后处理服务已启动(加载模型要几秒)。", "LLM post-processing service started (loading the model takes a few seconds).");
+  } catch (e) {
+    llmNote.value = t(
+      `LLM 后处理服务没起来:${e}(不影响识别,可以在设置里关掉后处理)`,
+      `The LLM post-processing service didn't start: ${e} (transcription still works; you can turn LLM post-processing off in Settings)`);
+  }
 }
 watch(sttState, s => {
   if (s !== "running") return;
@@ -476,14 +502,14 @@ async function enterRemote() {
   // 已经连着一个好的服务(老用户服务刚好断过一下又回来了)就直接说,不逼他再点一次。
   if (!remoteOk.value && health.value?.state === "ready") {
     remoteOk.value = true;
-    remoteMsg.value = "已连上";
+    remoteMsg.value = t("已连上", "Connected");
   }
 }
 async function connectRemote() {
   const port = remotePort.value;
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     remoteOk.value = false;
-    remoteMsg.value = "端口要在 1–65535 之间";
+    remoteMsg.value = t("端口要在 1–65535 之间", "Port must be between 1 and 65535");
     return;
   }
   remoteBusy.value = true;
@@ -495,10 +521,10 @@ async function connectRemote() {
     // 能拉到模型列表才算连上,和主界面的判断一致。
     const models = await invoke<unknown[]>("get_models");
     remoteOk.value = true;
-    remoteMsg.value = `已连上 ${url}(${models.length} 个模型可用)`;
+    remoteMsg.value = t(`已连上 ${url}(${models.length} 个模型可用)`, `Connected to ${url} (${models.length} models available)`);
   } catch (e) {
     remoteOk.value = false;
-    remoteMsg.value = `连不上:${e}`;
+    remoteMsg.value = t(`连不上:${e}`, `Can't connect: ${e}`);
   }
   remoteBusy.value = false;
 }
@@ -508,32 +534,34 @@ const health = ref<SttHealth | null>(null);
 const healthLine = computed(() => {
   const h = health.value;
   if (!h) return "";
-  if (h.state === "ready") return `模型已就绪${h.current_model ? ` · ${h.current_model}` : ""}`;
-  if (h.state === "loading") return "服务连上了,模型还在加载…";
-  if (h.state === "error") return `模型加载失败:${h.error ?? "原因未知"}`;
+  const model = h.current_model ? ` · ${h.current_model}` : "";
+  if (h.state === "ready") return t(`模型已就绪${model}`, `Model ready${model}`);
+  if (h.state === "loading") return t("服务连上了,模型还在加载…", "Connected. The model is still loading…");
+  if (h.state === "error") return t(`模型加载失败:${h.error ?? "原因未知"}`, `Model failed to load: ${h.error ?? "unknown reason"}`);
   return "";
 });
 const serverReady = computed(() =>
   mode.value === "local" ? sttState.value === "running" : remoteOk.value && health.value?.state !== "error");
 const summaryServer = computed(() => {
   const h = health.value?.state;
-  const where = mode.value === "local" ? "本机" : "远程服务器";
-  if (h === "ready") return `${where} · 已就绪`;
-  if (h === "loading") return `${where} · 模型加载中`;
-  if (h === "error") return `${where} · 模型加载失败`;
-  return `${where} · 还没连上`;
+  const where = mode.value === "local" ? t("本机", "This computer") : t("远程服务器", "Remote server");
+  if (h === "ready") return `${where} · ${t("已就绪", "ready")}`;
+  if (h === "loading") return `${where} · ${t("模型加载中", "model loading")}`;
+  if (h === "error") return `${where} · ${t("模型加载失败", "model failed to load")}`;
+  return `${where} · ${t("还没连上", "not connected yet")}`;
 });
 
 // ── ③ 权限 ──
 const perms = ref<PermReport | null>(null);
 const permBusy = ref<PermKey | "">("");
 const permMsg = ref("");
-const PERM_META: { key: PermKey; label: string; why: string }[] = [
-  { key: "microphone", label: "麦克风", why: "录下你说的话。没有它录到的全是静音。" },
-  { key: "input_monitoring", label: "输入监控", why: "在任何应用里都能用快捷键开始 / 结束录音。" },
-  { key: "accessibility", label: "辅助功能", why: "把识别结果粘贴或打字到光标处。只复制到剪贴板的话用不着。" },
+// 函数而不是常量:文案要跟着界面语言变(permRows 是 computed,会重新算)。
+const permMeta = (): { key: PermKey; label: string; why: string }[] => [
+  { key: "microphone", label: t("麦克风", "Microphone"), why: t("录下你说的话。没有它录到的全是静音。", "Records what you say. Without it, recordings are silent.") },
+  { key: "input_monitoring", label: t("输入监控", "Input Monitoring"), why: t("在任何应用里都能用快捷键开始 / 结束录音。", "Lets the hotkey start / stop recording in any app.") },
+  { key: "accessibility", label: t("辅助功能", "Accessibility"), why: t("把识别结果粘贴或打字到光标处。只复制到剪贴板的话用不着。", "Pastes or types the result at your cursor. Not needed if you only copy to the clipboard.") },
 ];
-const permRows = computed(() => PERM_META.map(m => {
+const permRows = computed(() => permMeta().map(m => {
   const status: PermStatus = perms.value ? perms.value[m.key] : "granted";
   // 与 App.vue 同一条规则:麦克风 / 输入监控只有「未询问」时系统才弹窗;辅助功能
   // 分不出「未询问」,没授权就一直给「授权」(它会把本应用加进系统设置的列表)。
@@ -541,7 +569,10 @@ const permRows = computed(() => PERM_META.map(m => {
   return { ...m, status, canRequest };
 }));
 function permText(s: PermStatus) {
-  return { granted: "已授权", denied: "已拒绝", not_determined: "未询问", restricted: "受限" }[s] || s;
+  return {
+    granted: t("已授权", "Granted"), denied: t("已拒绝", "Denied"),
+    not_determined: t("未询问", "Not asked"), restricted: t("受限", "Restricted"),
+  }[s] || s;
 }
 function permClass(s: PermStatus) { return s === "granted" ? "ok" : s === "not_determined" ? "warn" : "bad"; }
 
@@ -562,7 +593,7 @@ async function reviveHotkey() {
     permMsg.value = "";
   } catch (e) {
     hotkeyProblem.value = `${e}`;
-    permMsg.value = `输入监控已授权,但快捷键还没生效:${e}`;
+    permMsg.value = t(`输入监控已授权,但快捷键还没生效:${e}`, `Input Monitoring is granted, but the hotkey isn't working yet: ${e}`);
   }
 }
 async function requestPerm(key: PermKey) {
@@ -570,14 +601,14 @@ async function requestPerm(key: PermKey) {
   permMsg.value = "";
   try {
     const next = await invoke<PermStatus>("request_permission", { permission: key });
-    if (next !== "granted") permMsg.value = "还没授权。系统没弹窗的话,点「打开设置」手动勾上。";
-  } catch (e) { permMsg.value = `申请失败:${e}`; }
+    if (next !== "granted") permMsg.value = t("还没授权。系统没弹窗的话,点「打开设置」手动勾上。", "Not granted yet. If no system prompt appeared, click \"Open Settings\" and turn it on there.");
+  } catch (e) { permMsg.value = t(`申请失败:${e}`, `Request failed: ${e}`); }
   permBusy.value = "";
   await refreshPerms();
 }
 async function openPermSettings(key: PermKey) {
   try { await invoke("open_permission_settings", { permission: key }); }
-  catch (e) { permMsg.value = `打开系统设置失败:${e}`; }
+  catch (e) { permMsg.value = t(`打开系统设置失败:${e}`, `Couldn't open System Settings: ${e}`); }
 }
 // 从系统设置勾完回来,窗口会重新拿到焦点:顺手刷新,不用再找「刷新」按钮。
 function onFocus() { if (step.value === "perm" || step.value === "output") void refreshPerms(); }
@@ -587,12 +618,12 @@ const autoInput = ref(true);
 const inputMethod = ref<InputMethod>("paste");
 const toggleMode = ref(false);
 const outputTip = computed(() => !autoInput.value
-  ? "结果只显示在本应用窗口里,自己点「复制」或「输入」。"
+  ? t("结果只显示在本应用窗口里,自己点「复制」或「输入」。", "Results only show in this app's window; click \"Copy\" or \"Type\" yourself.")
   : inputMethod.value === "paste"
-    ? "借剪贴板一次性贴进去,贴完把原来的剪贴板内容还回去。长文本快,不受输入法影响。"
+    ? t("借剪贴板一次性贴进去,贴完把原来的剪贴板内容还回去。长文本快,不受输入法影响。", "Pastes via the clipboard in one go, then restores what was there. Fast for long text and unaffected by input methods.")
     : inputMethod.value === "type"
-      ? "逐字模拟键盘。换行会变成回车——在聊天软件里等于直接发送。"
-      : "只放进剪贴板,不碰当前窗口,自己按粘贴。");
+      ? t("逐字模拟键盘。换行会变成回车——在聊天软件里等于直接发送。", "Simulates typing character by character. Line breaks become Enter, which sends the message in chat apps.")
+      : t("只放进剪贴板,不碰当前窗口,自己按粘贴。", "Only copies to the clipboard without touching the current window; paste it yourself."));
 const needsAccessibility = computed(() =>
   autoInput.value && inputMethod.value !== "copy" && !!perms.value?.is_macos && perms.value.accessibility !== "granted");
 const outputMsg = ref("");
@@ -624,7 +655,7 @@ async function saveOutput() {
       c.ui.output_choice_made = true;
     });
     outputMsg.value = "";
-  } catch (e) { outputMsg.value = `保存失败:${e}`; }
+  } catch (e) { outputMsg.value = t(`保存失败:${e}`, `Couldn't save: ${e}`); }
 }
 
 const hotkeyProblem = ref("");
@@ -642,9 +673,11 @@ const holding = ref(false);
 const tryBlocker = computed(() => {
   if (tryState.value === "recording" || tryState.value === "processing") return "";
   const h = health.value?.state;
-  if (h === "loading") return "模型还在加载,好了就能试(这里会自动更新)。";
-  if (h === "error") return `模型加载失败:${health.value?.error ?? "原因未知"}。回上一步看看,或者在设置里换个模型。`;
-  if (h === "unreachable") return "还没连上服务,回上一步把服务启动 / 连上再来试。";
+  if (h === "loading") return t("模型还在加载,好了就能试(这里会自动更新)。", "The model is still loading. You can try once it's ready (this updates automatically).");
+  if (h === "error") return t(
+    `模型加载失败:${health.value?.error ?? "原因未知"}。回上一步看看,或者在设置里换个模型。`,
+    `The model failed to load: ${health.value?.error ?? "unknown reason"}. Go back a step, or pick another model in Settings.`);
+  if (h === "unreachable") return t("还没连上服务,回上一步把服务启动 / 连上再来试。", "Not connected to the service yet. Go back a step to start / connect it, then try again.");
   return "";
 });
 
@@ -682,7 +715,11 @@ watch(step, async s => {
 });
 
 onMounted(async () => {
-  try { mode.value = (await getConfig()).server.mode ?? "local"; } catch {}
+  try {
+    const c = await getConfig();
+    mode.value = c.server.mode ?? "local";
+    uiLanguage.value = c.ui.language ?? "auto";
+  } catch {}
   await refreshPerms();
   try { health.value = await invoke<SttHealth>("get_stt_health"); } catch {}
   await on<SttHealth>("stt-health", h => { health.value = h; });
@@ -707,7 +744,9 @@ onMounted(async () => {
     if (step.value !== "output") return;
     holding.value = false;
     tryState.value = "error";
-    tryError.value = msg === NO_SPEECH ? "没听到声音,靠近麦克风再说一次。" : msg;
+    tryError.value = msg === NO_SPEECH
+      ? t("没听到声音,靠近麦克风再说一次。", "Didn't catch anything. Move closer to the microphone and try again.")
+      : msg;
   });
   window.addEventListener("focus", onFocus);
 });
@@ -744,6 +783,8 @@ async function finish() {
 .ob-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .ob-foot-tip { margin: 0; }
 .ob-spacer { flex: 1; }
+.ob-lang { display: flex; justify-content: flex-end; margin-bottom: -18px; }
+.ob-lang .s-select { width: auto; font-size: 0.68rem; padding: 2px 4px; }
 .ob-hero { font-size: 2.2rem; text-align: center; margin: 4px 0 6px; }
 .ob-title { font-size: 1rem; font-weight: 600; margin-bottom: 6px; color: var(--text); }
 .ob-hero + .ob-title { text-align: center; }

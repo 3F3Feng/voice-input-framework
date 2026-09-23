@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 
+use crate::tr;
+
 /// Tauri Voice Input configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceInputConfig {
@@ -467,19 +469,30 @@ impl VoiceInputConfig {
     pub fn save(&self, app: &tauri::AppHandle) -> Result<(), String> {
         let path = Self::config_path(app);
         if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
+            fs::create_dir_all(dir).map_err(|e| {
+                tr!(
+                    "创建配置目录失败: {}",
+                    "Couldn't create the config folder: {}",
+                    e
+                )
+            })?;
         }
-        let json =
-            serde_json::to_string_pretty(self).map_err(|e| format!("序列化配置失败: {}", e))?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| tr!("序列化配置失败: {}", "Couldn't serialize the config: {}", e))?;
         // 先写临时文件再 rename 覆盖,而不是直接 `fs::write`。`fs::write` 是
         // 「先截断、再写」:写到一半断电或被强杀,留下的就是一个半截的 config.json,
         // 下次启动解析不了 —— 全部设置作废。rename 在同一个目录内是原子的,
         // 要么是完整的旧文件,要么是完整的新文件,不存在中间态。
         let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, json).map_err(|e| format!("写入配置失败: {}", e))?;
+        fs::write(&tmp, json)
+            .map_err(|e| tr!("写入配置失败: {}", "Couldn't write the config: {}", e))?;
         fs::rename(&tmp, &path).map_err(|e| {
             let _ = fs::remove_file(&tmp);
-            format!("替换配置文件失败: {}", e)
+            tr!(
+                "替换配置文件失败: {}",
+                "Couldn't replace the config file: {}",
+                e
+            )
         })?;
         Ok(())
     }

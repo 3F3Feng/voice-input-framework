@@ -22,6 +22,9 @@ use serde::Serialize;
 use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
 
+use crate::i18n::t;
+use crate::tr;
+
 /// 更新检查结果。字段保持原样——前端 `App.vue` 按这个形状读。
 #[derive(Serialize, Clone)]
 pub struct UpdateInfo {
@@ -36,7 +39,9 @@ pub struct UpdateInfo {
 pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
     let current = app.package_info().version.to_string();
 
-    let updater = app.updater().map_err(|e| format!("更新器不可用: {}", e))?;
+    let updater = app
+        .updater()
+        .map_err(|e| tr!("更新器不可用: {}", "Updater unavailable: {}", e))?;
 
     match updater.check().await {
         Ok(Some(update)) => {
@@ -51,7 +56,7 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
                 body: update
                     .body
                     .clone()
-                    .unwrap_or_else(|| format!("版本 {}", update.version)),
+                    .unwrap_or_else(|| tr!("版本 {}", "Version {}", update.version)),
                 // 清单里没有体积,下载时才知道。留 0,前端本来也没用它。
                 download_size: 0,
             })
@@ -66,7 +71,7 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
                 download_size: 0,
             })
         }
-        Err(e) => Err(format!("检查更新失败: {}", e)),
+        Err(e) => Err(tr!("检查更新失败: {}", "Couldn't check for updates: {}", e)),
     }
 }
 
@@ -78,16 +83,21 @@ pub static RESTARTING_FOR_UPDATE: std::sync::atomic::AtomicBool =
 ///
 /// 签名验不过时插件会在这里返回错误,**不会**装上去——这正是要它的原因。
 pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, String> {
-    let updater = app.updater().map_err(|e| format!("更新器不可用: {}", e))?;
+    let updater = app
+        .updater()
+        .map_err(|e| tr!("更新器不可用: {}", "Updater unavailable: {}", e))?;
 
     let update = match updater.check().await {
         Ok(Some(u)) => u,
-        Ok(None) => return Ok("已是最新版本".to_string()),
-        Err(e) => return Err(format!("检查更新失败: {}", e)),
+        Ok(None) => return Ok(t("已是最新版本", "You're up to date").to_string()),
+        Err(e) => return Err(tr!("检查更新失败: {}", "Couldn't check for updates: {}", e)),
     };
 
     let version = update.version.clone();
-    let _ = app.emit("update-progress", "正在下载更新...");
+    let _ = app.emit(
+        "update-progress",
+        t("正在下载更新...", "Downloading update…"),
+    );
 
     // 进度回调只用来喂界面。两处要当心:
     //
@@ -106,11 +116,11 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
                 let (tick, msg) = match total {
                     Some(total) if total > 0 => {
                         let pct = downloaded * 100 / total;
-                        (pct, format!("下载中 {}%", pct))
+                        (pct, tr!("下载中 {}%", "Downloading {}%", pct))
                     }
                     _ => {
                         let mb = downloaded / (1024 * 1024);
-                        (mb, format!("下载中 {} MB", mb))
+                        (mb, tr!("下载中 {} MB", "Downloading {} MB", mb))
                     }
                 };
                 if tick != last_tick {
@@ -121,7 +131,7 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
             || {},
         )
         .await
-        .map_err(|e| format!("更新失败: {}", e))?;
+        .map_err(|e| tr!("更新失败: {}", "Update failed: {}", e))?;
 
     // 以前装完直接 exit(0),用户看到的是「应用自己关了」,还得自己再去打开。现在
     // 直接重启进新版本。
@@ -132,7 +142,10 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
     // (Windows 上 NSIS 安装器会自己结束并重新拉起应用,走不到这里。)
     RESTARTING_FOR_UPDATE.store(true, std::sync::atomic::Ordering::SeqCst);
     eprintln!("[update] {} 已安装,重启应用", version);
-    let _ = app.emit("update-progress", "安装完成，正在重启…");
+    let _ = app.emit(
+        "update-progress",
+        t("安装完成，正在重启…", "Installed. Restarting…"),
+    );
     tokio::time::sleep(std::time::Duration::from_millis(600)).await;
     app.restart()
 }

@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
+use crate::tr;
+
 /// 最多保留多少条。一条几百字节,500 条也就一两百 KB,每次整份重写不成问题;
 /// 再多的话列表渲染和整份重写都开始有感觉,而几个月前的一句话也没人会翻。
 pub const HISTORY_CAP: usize = 500;
@@ -114,7 +116,13 @@ pub fn serialize(entries: &[HistoryEntry]) -> Result<String, String> {
         version: FORMAT_VERSION,
         entries: entries.iter().filter(|e| !e.transient).cloned().collect(),
     };
-    serde_json::to_string(&file).map_err(|e| format!("序列化识别历史失败: {}", e))
+    serde_json::to_string(&file).map_err(|e| {
+        tr!(
+            "序列化识别历史失败: {}",
+            "Couldn't serialize the history: {}",
+            e
+        )
+    })
 }
 
 /// 读文件内容。空白文字、空文本的条目丢掉,超上限的截掉(手改过文件也不至于炸)。
@@ -169,14 +177,25 @@ fn load_from_disk(path: &Path) -> Vec<HistoryEntry> {
 /// 留下半截文件,下次启动整份历史都读不出来。
 fn write_to_disk(path: &Path, entries: &[HistoryEntry]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
+        fs::create_dir_all(dir).map_err(|e| {
+            tr!(
+                "创建数据目录失败: {}",
+                "Couldn't create the data folder: {}",
+                e
+            )
+        })?;
     }
     let json = serialize(entries)?;
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, json).map_err(|e| format!("写入识别历史失败: {}", e))?;
+    fs::write(&tmp, json)
+        .map_err(|e| tr!("写入识别历史失败: {}", "Couldn't write the history: {}", e))?;
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
-        format!("替换识别历史文件失败: {}", e)
+        tr!(
+            "替换识别历史文件失败: {}",
+            "Couldn't replace the history file: {}",
+            e
+        )
     })
 }
 
@@ -324,7 +343,11 @@ pub async fn history_clear(app: tauri::AppHandle) -> Result<(), String> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!("删除识别历史文件失败: {}", e)),
+            Err(e) => Err(tr!(
+                "删除识别历史文件失败: {}",
+                "Couldn't delete the history file: {}",
+                e
+            )),
         }
     })?;
     crate::tray::forget_result(&app);
