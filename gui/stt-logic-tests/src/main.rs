@@ -202,3 +202,26 @@ fn coalesce_with_empty_queue_returns_first_chunk() {
     let (_tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     assert_eq!(stt::coalesce_chunks(vec![1, 2], &mut rx, 64), vec![1, 2]);
 }
+
+#[test]
+fn model_info_from_old_server_defaults_to_available() {
+    // 老服务端的 /models 只有 name / is_loaded:必须照样解出来,且默认可选。
+    let m: stt::ModelInfo =
+        serde_json::from_str(r#"{"name":"whisper_base","is_loaded":false}"#).unwrap();
+    assert!(m.available);
+    assert!(!m.recommended);
+    assert!(m.description.is_empty());
+}
+
+#[test]
+fn model_info_carries_catalog_fields() {
+    let m: stt::ModelInfo = serde_json::from_str(
+        r#"{"name":"whisper_mlx","is_loaded":false,"description":"MLX Whisper Large V3",
+            "memory_gb":3.0,"available":false,"unavailable_reason":"需要 Apple Silicon 的 Mac",
+            "downloaded":false,"recommended":false}"#,
+    )
+    .unwrap();
+    assert!(!m.available);
+    assert_eq!(m.unavailable_reason.as_deref(), Some("需要 Apple Silicon 的 Mac"));
+    assert_eq!(m.memory_gb, Some(3.0));
+}

@@ -13,6 +13,24 @@ use tokio_tungstenite::tungstenite::Message;
 pub struct ModelInfo {
     pub name: String,
     pub is_loaded: bool,
+    // 以下给界面用(见 services/model_catalog.py)。老服务端没有这些字段,
+    // 一律带默认值:描述空着就退回显示名字,可用性默认为「可用」。
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub memory_gb: Option<f64>,
+    #[serde(default = "default_true")]
+    pub available: bool,
+    #[serde(default)]
+    pub unavailable_reason: Option<String>,
+    #[serde(default)]
+    pub downloaded: Option<bool>,
+    #[serde(default)]
+    pub recommended: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -363,10 +381,7 @@ impl SttClient {
             .ok_or("获取模型列表失败:服务端返回的不是列表")?;
         Ok(models
             .iter()
-            .map(|m| ModelInfo {
-                name: m["name"].as_str().unwrap_or("").to_string(),
-                is_loaded: m["is_loaded"].as_bool().unwrap_or(false),
-            })
+            .filter_map(|m| serde_json::from_value::<ModelInfo>(m.clone()).ok())
             .collect())
     }
 

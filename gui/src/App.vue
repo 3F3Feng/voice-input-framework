@@ -125,8 +125,10 @@
           <div class="s-section">
             <div class="s-title">STT 模型</div>
             <select class="s-select" v-model="sttModel" @change="switchStt">
-              <option v-for="m in sttModels" :key="m.name" :value="m.name">
-                {{ m.name }} {{ m.is_loaded ? '✓' : '' }}
+              <!-- 以前只显示内部名(qwen_asr_mlx_native_small),本机跑不了的模型也照样能选。 -->
+              <option v-for="m in sortedSttModels" :key="m.name" :value="m.name"
+                :disabled="!m.available && !m.is_loaded" :title="m.name">
+                {{ sttModelLabel(m) }}
               </option>
             </select>
             <div v-if="sttLoading" class="s-loading">{{ sttSwitchNote || '切换中...' }}</div>
@@ -431,7 +433,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 // ── Types ──
-interface ModelInfo { name: string; is_loaded: boolean; }
+interface ModelInfo {
+  name: string;
+  is_loaded: boolean;
+  // STT 模型才有下面这些(服务端 services/model_catalog.py);老服务端没有时 Rust 给默认值。
+  description?: string;
+  memory_gb?: number | null;
+  available?: boolean;
+  unavailable_reason?: string | null;
+  downloaded?: boolean | null;
+  recommended?: boolean;
+}
 // 服务器：本地管理 / 远程连接
 type ServerMode = "local" | "remote";
 type ServerKind = "stt" | "llm";
@@ -709,6 +721,21 @@ const currentModelName = computed(() => {
   return loaded?.name || sttModel.value || "";
 });
 // 主界面上「按住说话 · …」显示的是**已生效**的快捷键,不是录了还没应用的那个。
+/** 推荐的排最前,本机跑不了的沉底。 */
+const sortedSttModels = computed(() => {
+  const rank = (m: ModelInfo) => (m.recommended ? 0 : m.available === false ? 2 : 1);
+  return [...sttModels.value].sort((a, b) => rank(a) - rank(b));
+});
+/** 下拉框里的一行:说人话的描述 + 状态。内部名放在悬停提示里。 */
+function sttModelLabel(m: ModelInfo): string {
+  const tags: string[] = [];
+  if (m.is_loaded) tags.push("✓ 使用中");
+  if (m.recommended) tags.push("推荐");
+  if (m.available === false) tags.push(`不可用:${m.unavailable_reason || "本机不支持"}`);
+  else if (m.downloaded === false) tags.push(m.memory_gb ? `需下载 ~${m.memory_gb} GB` : "需下载");
+  const name = m.description || m.name;
+  return tags.length ? `${name}(${tags.join(" · ")})` : name;
+}
 const displayHotkey = computed(() => formatHotkey(savedHotkey.value || defaultHotkey));
 const hotkeyFieldText = computed(() =>
   hotkeyRecording.value ? hotkeyPreview.value : (hotkeyStr.value ? formatHotkey(hotkeyStr.value) : "")
