@@ -23,6 +23,7 @@ if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
 from shared.constants import AUDIO_SAMPLE_RATE
+from shared.i18n import bi, en_of, exc_bilingual
 from shared.model_registry import IS_APPLE_SILICON, MODELS_CONFIG, get_default_model
 
 logger = logging.getLogger("stt-server")
@@ -330,7 +331,7 @@ class STTEngine:
                 return True
             except Exception as e:
                 logger.error(f"Failed to load STT model: {e}", exc_info=True)
-                self._load_error = f"{type(e).__name__}: {e}"
+                self._load_error = exc_bilingual(e)
                 self.failed_requests += 1
                 return False
             finally:
@@ -464,14 +465,14 @@ class STTEngine:
             try:
                 success = await self.load()
             except Exception as e:  # noqa: BLE001 - load() 自己已经兜过,这里只是保险
-                self._load_error = f"{type(e).__name__}: {e}"
+                self._load_error = exc_bilingual(e)
                 success = False
             if success:
                 logger.info(f"Model {model_name} loaded successfully")
                 if on_loaded:
                     on_loaded(model_name)
                 return
-            reason = self._load_error or "未知原因"
+            reason = self._load_error or bi("未知原因", "unknown reason")
             self._switch_errors[model_name] = reason
             logger.error(f"Failed to load model {model_name}: {reason}")
             # 已经被别的切换取代了(用户又选了另一个),就别再回退。
@@ -545,9 +546,14 @@ class STTEngine:
                 if not success:
                     # 带上真正的原因。以前只剩一句 "Failed to load STT model",
                     # 用户在界面上看到它,完全不知道该去修什么。
+                    reason = self._load_error or bi(
+                        "原因未知,见服务日志", "unknown reason, see the service log"
+                    )
                     raise RuntimeError(
-                        f"STT 模型 {self.current_model_name} 加载失败:"
-                        f"{self._load_error or '原因未知,见服务日志'}"
+                        bi(
+                            f"STT 模型 {self.current_model_name} 加载失败:{reason}",
+                            f"Failed to load STT model {self.current_model_name}: {en_of(reason)}",
+                        )
                     )
 
             # 转换音频。奇数长度的字节流(半个采样)会让 frombuffer 直接抛
@@ -638,9 +644,9 @@ class STTEngine:
             "phase": "downloading" if downloaded > 0 else "loading",
         }
 
-    def backend_info(self) -> dict | None:
+    def backend_info(self, lang: str = "zh") -> dict | None:
         """选中的推理后端(设备 / 精度 / 说明)。还没加载模型时为 None。"""
-        return self._backend.as_dict() if self._backend else None
+        return self._backend.as_dict(lang) if self._backend else None
 
     def is_model_loaded(self) -> bool:
         return self._is_loaded

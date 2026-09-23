@@ -20,6 +20,8 @@ import wave
 
 import numpy as np
 
+from shared.i18n import bi
+
 TARGET_RATE = 16000
 
 # 常见压缩格式的文件头,用来给出「不支持这种格式」而不是「解码失败」。
@@ -31,7 +33,7 @@ _KNOWN_UNSUPPORTED = {
 
 
 class UnsupportedAudio(ValueError):
-    """上传的不是能解的音频格式。消息可直接给用户看。"""
+    """上传的不是能解的音频格式。消息可直接给用户看(中英两份,见 shared/i18n.py)。"""
 
 
 def _sniff_unsupported(data: bytes) -> str | None:
@@ -62,7 +64,9 @@ def _pcm_to_float(frames: bytes, sample_width: int) -> np.ndarray:
         return ints.astype(np.float32) / float(1 << 23)
     if sample_width == 4:
         return np.frombuffer(frames, dtype="<i4").astype(np.float32) / float(1 << 31)
-    raise UnsupportedAudio(f"不支持 {sample_width * 8} 位的 WAV")
+    raise UnsupportedAudio(
+        bi(f"不支持 {sample_width * 8} 位的 WAV", f"{sample_width * 8}-bit WAV is not supported")
+    )
 
 
 def resample(audio: np.ndarray, src_rate: int, dst_rate: int = TARGET_RATE) -> np.ndarray:
@@ -88,7 +92,12 @@ def decode_to_pcm16k(data: bytes) -> bytes:
     if data[:4] != b"RIFF":
         fmt = _sniff_unsupported(data)
         if fmt:
-            raise UnsupportedAudio(f"暂不支持 {fmt} 格式,请先转成 WAV 再上传")
+            raise UnsupportedAudio(
+                bi(
+                    f"暂不支持 {fmt} 格式,请先转成 WAV 再上传",
+                    f"{fmt} is not supported yet; convert it to WAV before uploading",
+                )
+            )
         # 裸 PCM:和以前的行为一致。奇数长度丢掉最后半个采样。
         return data[: len(data) - len(data) % 2]
 
@@ -100,7 +109,12 @@ def decode_to_pcm16k(data: bytes) -> bytes:
             frames = w.readframes(w.getnframes())
     except (wave.Error, EOFError) as e:
         # 常见原因是 IEEE float WAV(格式码 3),标准库 wave 不认
-        raise UnsupportedAudio(f"无法解析这个 WAV 文件({e}),请转成 16 位 PCM WAV") from e
+        raise UnsupportedAudio(
+            bi(
+                f"无法解析这个 WAV 文件({e}),请转成 16 位 PCM WAV",
+                f"Could not parse this WAV file ({e}); convert it to 16-bit PCM WAV",
+            )
+        ) from e
 
     audio = _pcm_to_float(frames, width)
     if channels > 1:

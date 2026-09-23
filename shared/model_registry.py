@@ -13,6 +13,8 @@ from typing import Any
 IS_APPLE_SILICON = platform.machine() == "arm64" and platform.system() == "Darwin"
 
 # 模型配置：名称 → 元数据
+# `description` 是界面上的说明;含中文的那些另有 `description_en`,
+# 界面语言是英文时用它(见 services/model_catalog.py 的 describe)。
 # engine_type 必须与 services/stt_server.py 和 server/models/base.py 中的加载代码匹配
 MODELS_CONFIG: dict[str, dict[str, Any]] = {
     # ── MLX 原生模型 (mlx-audio，Apple Silicon 优化，推荐) ──
@@ -21,6 +23,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "engine": "qwen_asr_mlx_native",
         "memory_gb": 1.0,
         "description": "Qwen3-ASR-1.7B MLX 8bit (MLX原生，推荐)",
+        "description_en": "Qwen3-ASR-1.7B MLX 8bit (native MLX, recommended)",
         "requires_apple_silicon": True,
     },
     "qwen_asr_mlx_native_small": {
@@ -28,6 +31,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "engine": "qwen_asr_mlx_native",
         "memory_gb": 0.5,
         "description": "Qwen3-ASR-0.6B MLX 4bit (MLX原生，更快)",
+        "description_en": "Qwen3-ASR-0.6B MLX 4bit (native MLX, faster)",
         "requires_apple_silicon": True,
     },
     # ── MLX Whisper 模型 (Apple Silicon) ──
@@ -43,6 +47,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "engine": "whisper_mlx",
         "memory_gb": 2.0,
         "description": "MLX Whisper Large V3 Turbo (快速+准确，Apple Silicon)",
+        "description_en": "MLX Whisper Large V3 Turbo (fast + accurate, Apple Silicon)",
         "requires_apple_silicon": True,
     },
     "whisper_mlx_medium": {
@@ -57,6 +62,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "engine": "whisper_mlx",
         "memory_gb": 0.5,
         "description": "MLX Whisper Small (最快，Apple Silicon)",
+        "description_en": "MLX Whisper Small (fastest, Apple Silicon)",
         "requires_apple_silicon": True,
     },
     # ── Whisper.cpp 模型 (C++ 实现) ──
@@ -86,30 +92,35 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "engine": "whisper_turbo",
         "memory_gb": 0.3,
         "description": "Whisper Tiny (transformers, 最快, 精度一般, 适合低配 / 纯 CPU)",
+        "description_en": "Whisper Tiny (transformers, fastest, modest accuracy, for low-end / CPU-only machines)",
     },
     "whisper_base": {
         "model_id": "openai/whisper-base",
         "engine": "whisper_turbo",
         "memory_gb": 0.5,
         "description": "Whisper Base (transformers, 纯 CPU 上的推荐起点)",
+        "description_en": "Whisper Base (transformers, recommended starting point on CPU only)",
     },
     "whisper_small": {
         "model_id": "openai/whisper-small",
         "engine": "whisper_turbo",
         "memory_gb": 1.0,
         "description": "Whisper Small (transformers, 速度与精度折中)",
+        "description_en": "Whisper Small (transformers, balance of speed and accuracy)",
     },
     "whisper_medium": {
         "model_id": "openai/whisper-medium",
         "engine": "whisper_turbo",
         "memory_gb": 2.5,
         "description": "Whisper Medium (transformers, 有独显时适用)",
+        "description_en": "Whisper Medium (transformers, for machines with a discrete GPU)",
     },
     "whisper_turbo": {
         "model_id": "openai/whisper-large-v3-turbo",
         "engine": "whisper_turbo",
         "memory_gb": 3,
         "description": "Whisper Large V3 Turbo (transformers, 精度最好, 建议配 GPU)",
+        "description_en": "Whisper Large V3 Turbo (transformers, best accuracy, GPU recommended)",
     },
 }
 

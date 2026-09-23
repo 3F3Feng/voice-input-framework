@@ -31,6 +31,8 @@ import logging
 import os
 from dataclasses import dataclass
 
+from shared.i18n import bi, en_of, localize
+
 logger = logging.getLogger("device")
 
 
@@ -56,12 +58,13 @@ class Backend:
             "float32": torch.float32,
         }[self.dtype_name]
 
-    def as_dict(self) -> dict:
+    def as_dict(self, lang: str = "zh") -> dict:
+        """`lang` 是界面语言(见 shared/i18n.py),只影响 `detail` 这句说明。"""
         return {
             "backend": self.name,
             "device": self.torch_device,
             "dtype": self.dtype_name,
-            "detail": self.detail,
+            "detail": localize(lang, self.detail),
         }
 
 
@@ -96,14 +99,19 @@ def detect(torch=None) -> Backend:
             backend.name,
             backend.torch_device,
             forced_dtype,
-            f"{backend.detail}(精度被 VIF_DTYPE 指定为 {forced_dtype})",
+            bi(
+                f"{backend.detail}(精度被 VIF_DTYPE 指定为 {forced_dtype})",
+                f"{en_of(backend.detail)} (precision forced to {forced_dtype} by VIF_DTYPE)",
+            ),
         )
     return backend
 
 
 def _forced(torch, device: str) -> Backend:
     dtype = "float16" if device in ("cuda", "mps", "xpu") else "float32"
-    return Backend(device, device, dtype, f"由 VIF_DEVICE 指定为 {device}")
+    return Backend(
+        device, device, dtype, bi(f"由 VIF_DEVICE 指定为 {device}", f"{device}, set by VIF_DEVICE")
+    )
 
 
 def _detect_auto(torch) -> Backend:
@@ -145,7 +153,7 @@ def _detect_auto(torch) -> Backend:
     # ── CPU ──
     dtype = "bfloat16" if _cpu_supports_bf16(torch) else "float32"
     threads = getattr(torch, "get_num_threads", lambda: 0)()
-    return Backend("cpu", "cpu", dtype, f"CPU（{threads} 线程）")
+    return Backend("cpu", "cpu", dtype, bi(f"CPU（{threads} 线程）", f"CPU ({threads} threads)"))
 
 
 def _gpu_name(torch) -> str:

@@ -17,6 +17,8 @@ import logging
 import os
 import sys
 
+from shared.i18n import bi
+
 logger = logging.getLogger(__name__)
 
 MLX = "mlx"
@@ -78,9 +80,11 @@ def choose_backend(
     if requested == MLX:
         if apple_silicon:
             return MLX, None
-        return MLX, (
+        return MLX, bi(
             f"{BACKEND_ENV}=mlx 只能在 Apple Silicon 的 Mac 上用;"
-            f"去掉这个设置就会改用 llama.cpp 后端"
+            f"去掉这个设置就会改用 llama.cpp 后端",
+            f"{BACKEND_ENV}=mlx only works on Apple Silicon Macs; "
+            f"remove this setting to use the llama.cpp backend",
         )
     if requested == LLAMACPP:
         if has("llama_cpp"):
@@ -89,7 +93,11 @@ def choose_backend(
         how = "uv sync --extra llm-cpp" if apple_silicon else setup_hint(platform)
         return (
             LLAMACPP,
-            f"{BACKEND_ENV}=llamacpp,但环境里没装 llama-cpp-python。请运行 {how} 安装后重启服务",
+            bi(
+                f"{BACKEND_ENV}=llamacpp,但环境里没装 llama-cpp-python。请运行 {how} 安装后重启服务",
+                f"{BACKEND_ENV}=llamacpp, but llama-cpp-python is not installed. "
+                f"Run {how} to install it, then restart the service",
+            ),
         )
 
     if apple_silicon:
@@ -102,7 +110,9 @@ def choose_backend(
         return MLX, None
     if has("llama_cpp"):
         return LLAMACPP, None
-    return LLAMACPP, (
+    return LLAMACPP, bi(
         f"这台机器上的 LLM 后处理要用 llama.cpp,环境里还没装。"
-        f"请运行 {setup_hint(platform)} 安装后重启服务"
+        f"请运行 {setup_hint(platform)} 安装后重启服务",
+        f"LLM post-processing on this machine needs llama.cpp, which is not installed yet. "
+        f"Run {setup_hint(platform)} to install it, then restart the service",
     )

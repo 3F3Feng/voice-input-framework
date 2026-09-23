@@ -49,3 +49,12 @@ def outgoing_headers() -> dict[str, str]:
 UNAUTHORIZED_MESSAGE = (
     "访问令牌缺失或不对(服务端设置了 VIF_API_TOKEN),请在客户端的远程连接里填上令牌"
 )
+UNAUTHORIZED_MESSAGE_EN = (
+    "Missing or invalid access token (VIF_API_TOKEN is set on the server). "
+    "Enter the token in the client's remote connection settings."
+)
+
+
+def unauthorized_message(lang: str) -> str:
+    """401 给用户看的那句话,按界面语言(见 shared/i18n.py)。"""
+    return UNAUTHORIZED_MESSAGE_EN if lang == "en" else UNAUTHORIZED_MESSAGE

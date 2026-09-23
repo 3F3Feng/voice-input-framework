@@ -501,7 +501,7 @@ class TestLLMProxyError:
         async def fake_transcribe(audio, language="auto", context=None):
             return TranscriptionResult(text="嗯那个明天开会", language="zh")
 
-        async def fake_llm(text, request_id="", vocabulary_hint=None):
+        async def fake_llm(text, request_id="", vocabulary_hint=None, lang="zh"):
             return text, 0, "连不上 LLM 服务(可能没有启动)"
 
         monkeypatch.setattr(engine, "transcribe", fake_transcribe)

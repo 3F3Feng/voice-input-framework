@@ -28,7 +28,8 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
-from shared import auth, llm_backend  # noqa: E402
+from shared import auth, i18n, llm_backend  # noqa: E402
+from shared.i18n import bi, en_of  # noqa: E402
 from shared.constants import (  # noqa: E402
     DEFAULT_BIND_HOST,
     DEFAULT_CORS_ORIGINS,
@@ -215,19 +216,28 @@ def reject_reason(original: str, cleaned: str, hit_token_limit: bool) -> str | N
     宁可退回没整理的原文,也不能把一段被截断的、或者答非所问的文字敲进用户的文档。
     """
     if hit_token_limit:
-        return "LLM 输出达到长度上限,可能被截断"
+        return bi(
+            "LLM 输出达到长度上限,可能被截断",
+            "LLM output hit the length limit and may be truncated",
+        )
     if not cleaned:
-        return "LLM 返回了空结果"
+        return bi("LLM 返回了空结果", "LLM returned an empty result")
     n = len(original.strip())
     # 整理(去填充词、加标点)不会让文字变长太多;长出一大截基本是在回答或续写。
     if len(cleaned) > n * 1.5 + 10:
-        return "LLM 输出比原文长很多,像是在回答而不是整理"
+        return bi(
+            "LLM 输出比原文长很多,像是在回答而不是整理",
+            "LLM output is much longer than the original; it looks like an answer, not a cleanup",
+        )
     # 反过来短得离谱,多半是只截了一句或者丢了大段内容。只看长文本:短句里
     # 口头改口(「三点不对是两点半」)和填充词本来就能删掉一大半,实测
     # 「嗯那个就是说我们明天下午三点不对是两点半开会」→「明天下午两点半开会」
     # 是正确结果,不能当成丢内容。
     if n >= 80 and len(cleaned) < n * 0.3:
-        return "LLM 输出比原文短太多,可能丢了内容"
+        return bi(
+            "LLM 输出比原文短太多,可能丢了内容",
+            "LLM output is much shorter than the original; content may have been lost",
+        )
     return None
 
 
@@ -474,7 +484,12 @@ class LlamaCppBackend:
         prompt_tokens = len(model.tokenize(prompt.encode("utf-8"), add_bos=False, special=True))
         max_tokens = min(budget, self.N_CTX - prompt_tokens)
         if max_tokens <= 0:
-            raise ValueError(f"原文太长,超出了 LLM 的上下文窗口({self.N_CTX} token)")
+            raise ValueError(
+                bi(
+                    f"原文太长,超出了 LLM 的上下文窗口({self.N_CTX} token)",
+                    f"The text is too long for the LLM context window ({self.N_CTX} tokens)",
+                )
+            )
         out = model.create_completion(
             prompt=prompt,
             max_tokens=max_tokens,
@@ -538,9 +553,15 @@ class LLMEngine:
 
         if not model_id:
             logger.error(f"Unknown model: {target_model}")
-            self._load_error = f"未知的 LLM 模型:{target_model}"
+            zh = f"未知的 LLM 模型:{target_model}"
+            en = f"Unknown LLM model: {target_model}"
             if target_model in _other_backend_models(self.backend):
-                self._load_error += f"(那是另一个推理后端的模型,当前后端是 {self.backend.name})"
+                zh += f"(那是另一个推理后端的模型,当前后端是 {self.backend.name})"
+                en += (
+                    f" (it belongs to another inference backend; "
+                    f"the current backend is {self.backend.name})"
+                )
+            self._load_error = bi(zh, en)
             return False
 
         async with self._load_lock:
@@ -572,7 +593,7 @@ class LLMEngine:
                 return True
             except Exception as e:
                 logger.error(f"Failed to load LLM model: {e}", exc_info=True)
-                self._load_error = f"{type(e).__name__}: {e}"
+                self._load_error = i18n.exc_bilingual(e)
                 if previous and previous != target_model:
                     await self._rollback_to(previous)
                 return False
@@ -587,11 +608,18 @@ class LLMEngine:
             await loop.run_in_executor(None, self._load_sync, self.MODEL_IDS[previous])
         except Exception as e:  # noqa: BLE001 - 回退失败只能如实说出来
             logger.error(f"Rollback to {previous} failed as well: {e}")
-            self._load_error = f"{self._load_error};回退到 {previous} 也失败了:{e}"
+            err = self._load_error
+            self._load_error = bi(
+                f"{err};回退到 {previous} 也失败了:{e}",
+                f"{en_of(err)}; rolling back to {previous} failed too: {e}",
+            )
             return
         self.current_model_name = previous
         self._is_loaded = True
-        self._load_error = f"{self._load_error}(已回到 {previous})"
+        err = self._load_error
+        self._load_error = bi(
+            f"{err}(已回到 {previous})", f"{en_of(err)} (switched back to {previous})"
+        )
 
     def _release_model(self):
         """释放当前已加载的模型内存"""
@@ -615,8 +643,10 @@ class LLMEngine:
             raise RuntimeError(self.backend.unavailable)
         self._model, self._tokenizer = self.backend.load(model_id)
 
-    def process(self, text: str, vocabulary_hint: str | None = None) -> ProcessResult:
-        """处理文本"""
+    def process(
+        self, text: str, vocabulary_hint: str | None = None, lang: str = i18n.ZH
+    ) -> ProcessResult:
+        """处理文本。`lang` 是界面语言,只影响 `error` 那句原因(见 shared/i18n.py)。"""
         if not text.strip():
             # 空文本没有可整理的,别让模型对着空输入自由发挥。
             return ProcessResult(
@@ -636,11 +666,13 @@ class LLMEngine:
         with self._process_lock:
             self._processing = True
             try:
-                return self._generate(text, vocabulary_hint)
+                return self._generate(text, vocabulary_hint, lang)
             finally:
                 self._processing = False
 
-    def _generate(self, text: str, vocabulary_hint: str | None = None) -> ProcessResult:
+    def _generate(
+        self, text: str, vocabulary_hint: str | None = None, lang: str = i18n.ZH
+    ) -> ProcessResult:
         """实际的生成 + 输出清洗(调用方必须已持有 _process_lock)"""
         start_time = time.time()
 
@@ -685,7 +717,7 @@ class LLMEngine:
                     llm_latency_ms=latency,
                     model=self.current_model_name,
                     success=False,
-                    error=reason,
+                    error=i18n.localize(lang, reason),
                 )
 
             return ProcessResult(
@@ -704,13 +736,19 @@ class LLMEngine:
                 llm_latency_ms=-1,
                 model=self.current_model_name,
                 success=False,
-                error=f"LLM 处理出错:{e}",
+                error=i18n.t(
+                    lang,
+                    f"LLM 处理出错:{i18n.exc_text(lang, e)}",
+                    f"LLM processing error: {i18n.exc_text(lang, e)}",
+                ),
             )
 
-    async def process_async(self, text: str, vocabulary_hint: str | None = None) -> ProcessResult:
+    async def process_async(
+        self, text: str, vocabulary_hint: str | None = None, lang: str = i18n.ZH
+    ) -> ProcessResult:
         """异步处理文本"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.process, text, vocabulary_hint)
+        return await loop.run_in_executor(None, self.process, text, vocabulary_hint, lang)
 
     def is_loading(self) -> bool:
         return self._loading
@@ -808,15 +846,18 @@ async def api_token_middleware(request: Request, call_next):
     ):
         return JSONResponse(
             status_code=401,
-            content={"error_code": "UNAUTHORIZED", "error_message": auth.UNAUTHORIZED_MESSAGE},
+            content={
+                "error_code": "UNAUTHORIZED",
+                "error_message": auth.unauthorized_message(i18n.lang_of(request)),
+            },
         )
     return await call_next(request)
 
 
 @app.get("/health", response_model=HealthStatus)
-async def health_check():
+async def health_check(request: Request):
     """健康检查"""
-    load_error = engine.load_error()
+    load_error = i18n.localize(i18n.lang_of(request), engine.load_error())
     if engine.is_model_loaded():
         status = "ok"
     elif load_error:
@@ -853,8 +894,9 @@ async def list_models():
 
 
 @app.post("/models/select")
-async def select_model(model_name: str = Form(...)):
+async def select_model(request: Request, model_name: str = Form(...)):
     """切换模型"""
+    lang = i18n.lang_of(request)
     try:
         logger.info(f"Switching to model: {model_name}")
         # 下载一个 4B 模型常常超过 STT 那头转发的 30 秒超时。转发方放弃等待后,
@@ -875,7 +917,11 @@ async def select_model(model_name: str = Form(...)):
             # 不用 load_error():失败后回退到了原模型时它是 None(服务是好的),
             # 可这次切换失败的原因还得告诉用户。
             reason = engine._load_error
-            body["message"] = f"模型 {model_name} 加载失败" + (f":{reason}" if reason else "")
+            body["message"] = i18n.t(
+                lang,
+                f"模型 {model_name} 加载失败" + (f":{reason}" if reason else ""),
+                f"Failed to load model {model_name}" + (f": {en_of(reason)}" if reason else ""),
+            )
             return JSONResponse(status_code=503, content=body)
         return body
     except Exception as e:
@@ -884,8 +930,9 @@ async def select_model(model_name: str = Form(...)):
 
 
 @app.post("/process", response_model=ProcessResult)
-async def process_text(request: ProcessRequest):
+async def process_text(request: ProcessRequest, http_request: Request):
     """处理文本"""
+    lang = i18n.lang_of(http_request)
     try:
         if len(request.text) > MAX_PROCESS_TEXT_LENGTH:
             raise HTTPException(
@@ -896,12 +943,21 @@ async def process_text(request: ProcessRequest):
             # 尝试加载
             loaded = await engine.load()
             if not loaded:
-                reason = engine.load_error() or "原因未知,见 LLM 服务日志"
-                raise HTTPException(status_code=503, detail=f"LLM 模型没有加载成功:{reason}")
+                reason = i18n.localize(lang, engine.load_error()) or i18n.t(
+                    lang, "原因未知,见 LLM 服务日志", "unknown reason, see the LLM service log"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail=i18n.t(
+                        lang,
+                        f"LLM 模型没有加载成功:{reason}",
+                        f"The LLM model failed to load: {reason}",
+                    ),
+                )
 
         hint = request.options.get("vocabulary_hint") if request.options else None
         result = await engine.process_async(
-            request.text, hint if isinstance(hint, str) and hint.strip() else None
+            request.text, hint if isinstance(hint, str) and hint.strip() else None, lang
         )
         return result
     except HTTPException:
@@ -932,13 +988,18 @@ async def update_prompt(request: Request):
 
 
 @app.delete("/prompt")
-async def reset_prompt():
+async def reset_prompt(request: Request):
     """恢复默认提示词:删掉用户保存的那份,返回默认内容。"""
     try:
         PROMPT_FILE.unlink(missing_ok=True)
     except Exception as e:
         logger.error(f"Failed to reset prompt file: {e}")
-        raise HTTPException(status_code=500, detail=f"恢复默认提示词失败:{e}") from e
+        detail = i18n.t(
+            i18n.lang_of(request),
+            f"恢复默认提示词失败:{e}",
+            f"Failed to restore the default prompt: {e}",
+        )
+        raise HTTPException(status_code=500, detail=detail) from e
     logger.info("Prompt reset to default")
     return {"prompt": DEFAULT_PROMPT}
 

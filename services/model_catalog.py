@@ -17,6 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from shared.i18n import EN, bi, localize
 from shared.model_registry import IS_APPLE_SILICON, MODELS_CONFIG
 
 logger = logging.getLogger("stt-server")
@@ -40,20 +41,32 @@ def _has_package(name: str) -> bool:
 
 
 def unavailable_reason(info: dict[str, Any]) -> str | None:
-    """这个模型在本机为什么用不了;能用时返回 None。"""
+    """这个模型在本机为什么用不了;能用时返回 None。
+
+    返回 :class:`shared.i18n.Bilingual`(当 str 用就是中文),由 `describe` 按界面语言挑。
+    """
     if info.get("requires_apple_silicon") and not IS_APPLE_SILICON:
-        return "需要 Apple Silicon 的 Mac"
+        return bi("需要 Apple Silicon 的 Mac", "Requires an Apple Silicon Mac")
     engine = info.get("engine", "")
     if engine == "whisper_cpp":
         cli = Path.home() / "whisper.cpp" / "build" / "bin" / "whisper-cli"
         if not cli.exists():
-            return "需要先自行编译 whisper.cpp(~/whisper.cpp)并下载模型"
+            return bi(
+                "需要先自行编译 whisper.cpp(~/whisper.cpp)并下载模型",
+                "Build whisper.cpp yourself first (~/whisper.cpp) and download the model",
+            )
         return None
     package = _ENGINE_PACKAGES.get(engine)
     if package and not _has_package(package):
-        return f"环境里缺少 {package},请用 {SETUP_COMMAND} 重建环境"
+        return bi(
+            f"环境里缺少 {package},请用 {SETUP_COMMAND} 重建环境",
+            f"{package} is missing from the environment; rebuild it with {SETUP_COMMAND}",
+        )
     if engine == "whisper_turbo" and not _has_package("torch"):
-        return f"环境里缺少 torch,请用 {SETUP_COMMAND} 重建环境"
+        return bi(
+            f"环境里缺少 torch,请用 {SETUP_COMMAND} 重建环境",
+            f"torch is missing from the environment; rebuild it with {SETUP_COMMAND}",
+        )
     return None
 
 
@@ -90,15 +103,21 @@ def recommended_model() -> str | None:
         return None
 
 
-def describe(name: str) -> dict[str, Any]:
-    """一个模型给界面看的全部信息(不含「当前是否已加载」这类运行时状态)。"""
+def describe(name: str, lang: str = "zh") -> dict[str, Any]:
+    """一个模型给界面看的全部信息(不含「当前是否已加载」这类运行时状态)。
+
+    `lang` 是界面语言(见 shared/i18n.py):英文时用注册表里的 `description_en`。
+    """
     info = MODELS_CONFIG[name]
     reason = unavailable_reason(info)
+    description = info.get("description", name)
+    if lang == EN:
+        description = info.get("description_en", description)
     return {
-        "description": info.get("description", name),
+        "description": description,
         "memory_gb": info.get("memory_gb"),
         "available": reason is None,
-        "unavailable_reason": reason,
+        "unavailable_reason": localize(lang, reason),
         "downloaded": is_downloaded(info),
         "recommended": name == recommended_model(),
     }
