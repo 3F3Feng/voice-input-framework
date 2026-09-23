@@ -698,7 +698,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// `tasklist`、`taskkill`)时,Windows 会给子进程新开一个黑窗口。服务启动时弹一个
 /// 还算看得见原因,状态轮询每 3 秒经 `pid_alive` 跑一次 `tasklist`,就是每 3 秒
 /// 闪一下黑框。其它平台什么都不做。
-fn no_console(cmd: &mut Command) -> &mut Command {
+pub(crate) fn no_console(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -1530,7 +1530,7 @@ pub async fn wait_ready(
 // ── 路径自动探测 ──
 
 /// 检查一个目录是不是 voice-input-framework 仓库根。
-fn is_repo_root(path: &Path) -> bool {
+pub(crate) fn is_repo_root(path: &Path) -> bool {
     path.join("services/stt_server.py").exists() && path.join("services/llm_server.py").exists()
 }
 

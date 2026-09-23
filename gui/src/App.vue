@@ -117,6 +117,34 @@
 
               <div v-if="pathProblem" class="s-tip srv-problem">⚠ {{ pathProblem }}</div>
 
+              <!-- 环境体检(F2):上面只查了「解释器文件在不在」。版本不对、依赖没装全、
+                   torch 缺失这些,以前要等服务起不来、翻日志才知道。 -->
+              <div class="s-row" style="margin-top:6px">
+                <span class="s-tip" style="margin:0;flex:1">服务起不来、或刚建完环境时，先体检一下 Python 环境。</span>
+                <button class="s-btn" @click="runEnvCheck" :disabled="envChecking">{{ envChecking ? '检查中…' : '环境体检' }}</button>
+              </div>
+              <div v-if="envError" class="s-tip s-err">{{ envError }}</div>
+              <div v-if="envReport" class="env-report">
+                <div v-for="it in envReport.items" :key="it.id" class="env-item">
+                  <div class="perm-head">
+                    <span class="s-label">{{ it.label }}</span>
+                    <span :class="['perm-state', ENV_CHIP[it.status].cls]">{{ ENV_CHIP[it.status].text }}</span>
+                  </div>
+                  <div class="s-tip env-detail">{{ it.detail }}</div>
+                  <div v-if="it.fix" class="s-tip srv-problem">→ {{ it.fix }}</div>
+                </div>
+                <!-- 只给出命令、不在界面里直接跑:建环境要下几个 GB、可能要装 uv,
+                     放在用户自己的终端里跑,出了问题看得见、也能随时中断。 -->
+                <template v-if="!envReport.ok">
+                  <div class="s-tip" style="margin-top:6px">在终端里运行这条命令重建环境，然后再体检一次：</div>
+                  <div class="s-row" style="margin-top:4px">
+                    <code class="env-cmd">{{ envReport.setup_command }}</code>
+                    <button class="s-btn" @click="copyEnvCommand">复制命令</button>
+                  </div>
+                </template>
+                <div v-else class="s-tip" style="margin-top:6px">环境没有问题。{{ envReport.items.some(i => i.status === 'warn') ? '标黄的几项不影响运行，按提示处理即可。' : '' }}</div>
+              </div>
+
               <!-- 子进程输出搬到「日志」标签页去了：两个日志框并排摆在设置里，
                    谁也分不清哪个是客户端自己的、哪个是 Python 服务打出来的。 -->
               <div class="s-row" style="margin-top:6px">
@@ -1548,6 +1576,35 @@ async function onHfEndpointChange() {
   toast("下载源已保存;重启 STT 服务后生效(只影响之后新下载的模型)", "info");
 }
 
+// ── 环境体检(F2)──
+// 结构与 Rust `env_check::EnvReport` 一一对应。
+type EnvStatus = "ok" | "warn" | "fail";
+interface EnvCheckItem { id: string; label: string; status: EnvStatus; detail: string; fix: string | null }
+interface EnvReport { items: EnvCheckItem[]; ok: boolean; setup_command: string }
+const ENV_CHIP: Record<EnvStatus, { cls: string; text: string }> = {
+  ok: { cls: "ok", text: "正常" },
+  warn: { cls: "warn", text: "注意" },
+  fail: { cls: "bad", text: "有问题" },
+};
+const envReport = ref<EnvReport | null>(null);
+const envChecking = ref(false);
+const envError = ref("");
+/** 要 import torch 等一串包,冷启动要几秒到十几秒,按钮期间锁住。 */
+async function runEnvCheck() {
+  envChecking.value = true;
+  envError.value = "";
+  try { envReport.value = await invoke<EnvReport>("check_environment"); }
+  catch (e) { envReport.value = null; envError.value = `体检失败: ${e}`; }
+  envChecking.value = false;
+}
+async function copyEnvCommand() {
+  if (!envReport.value) return;
+  try { await navigator.clipboard.writeText(envReport.value.setup_command); toast("命令已复制，粘贴到终端里运行", "ok"); }
+  catch (e) { toast(`复制失败: ${e}`, "err"); }
+}
+// 路径一改,旧报告说的就是另一套环境了,留着只会误导。
+watch([repoPath, pythonPath], () => { envReport.value = null; envError.value = ""; });
+
 /** 自动探测仓库 / 解释器。探测不到时把原因说出来，而不是静默无反应。 */
 async function detectPaths() {
   detecting.value = true;
@@ -2635,6 +2692,11 @@ html, body, #app { height: 100%; }
 .mode-btn:last-child { border-radius: 0 6px 6px 0; border-left: none; }
 .mode-btn.active { background: rgba(96, 165, 250, 0.15); color: var(--blue); border-color: rgba(96, 165, 250, 0.4); }
 .srv-problem { color: var(--yellow); }
+.env-report { margin-top: 6px; }
+.env-item { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.env-item:last-of-type { border-bottom: none; }
+.env-detail { margin-top: 2px; word-break: break-all; }
+.env-cmd { flex: 1; min-width: 0; font-size: 0.65rem; padding: 4px 6px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border); overflow-x: auto; white-space: nowrap; user-select: text; -webkit-user-select: text; }
 
 /* Update */
 .update-info { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }

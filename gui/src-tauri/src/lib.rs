@@ -1,5 +1,6 @@
 mod audio;
 mod config;
+mod env_check;
 mod heartbeat;
 mod history;
 mod hotkey;
@@ -1337,6 +1338,14 @@ async fn detect_local_server() -> Result<server_manager::DetectResult, String> {
     Ok(server_manager::detect())
 }
 
+/// 环境体检(F2):按当前配置的仓库 / 解释器查依赖、版本、加速后端和 uv。
+/// 路径输入框改完即保存(`set_local_server_config`),所以读配置就是界面上看到的值。
+#[tauri::command]
+async fn check_environment(state: State<'_, AppState>) -> Result<env_check::EnvReport, String> {
+    let local = server_config_snapshot(&state)?.local;
+    Ok(env_check::check(&local).await)
+}
+
 // ── 应用外壳:托盘、诊断、退出 ──
 
 /// 前端按连接状态更新托盘里的状态行(已连接 · 模型 / 连接中 / 未连接)。
@@ -1657,6 +1666,7 @@ pub fn run() {
             set_server_mode,
             set_local_server_config,
             detect_local_server,
+            check_environment,
             log::get_gui_logs,
             log::open_log_dir,
             get_diagnostics,
