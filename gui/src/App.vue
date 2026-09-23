@@ -1454,7 +1454,9 @@ async function copyResult() {
 }
 async function doAutoInput() {
   if (!result.value) return;
-  try { await invoke("auto_input", { text: result.value }); toast("已输入", "ok"); }
+  // 点这个按钮时焦点在本应用自己的窗口上:让后端先把前台交还给上一个应用再敲字,
+  // 不然字全敲给了自己。
+  try { await invoke("auto_input", { text: result.value, handBackFocus: true }); toast("已输入", "ok"); }
   catch (e) {
     // 缺「辅助功能」权限时 Rust 端会返回可读原因,原样展示,不要吞掉
     toast(`${e}`, "err");
@@ -1553,7 +1555,13 @@ onMounted(async () => {
       // 自动输入失败(最常见是缺「辅助功能」权限)必须让用户看见:
       // 以前这里 catch 成空函数,转录一切正常但目标窗口什么都没出现。
       if (autoInputEnabled.value) {
-        invoke("auto_input", { text }).catch(e => { toast(`${e}`, "err"); refreshPermissions(); });
+        // 主窗口正在前台时,焦点就在本应用自己身上,自动输入只会敲给自己。
+        // 不输,提示用户用「输入」按钮(它会先把前台交还给上一个应用)。
+        if (document.hasFocus()) {
+          toast("主窗口在前台,结果没有自动输入;点「⌨️ 输入」发送到上一个窗口", "info");
+        } else {
+          invoke("auto_input", { text }).catch(e => { toast(`${e}`, "err"); refreshPermissions(); });
+        }
       }
     }
   });

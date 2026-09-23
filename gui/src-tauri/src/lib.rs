@@ -770,8 +770,54 @@ async fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), Strin
 
 // ── Diarize commands ──
 
+/// 把文字输入到「用户正在用的那个窗口」。
+///
+/// 主窗口上的「⌨️ 输入」按钮以前直接调 `type_text`:可用户点按钮的那一下,
+/// 焦点就在本应用自己的窗口上,字全敲给了自己(一个没有输入框的界面),
+/// 目标应用里什么都没出现。`hand_back_focus` 为 true 时先把主窗口藏起来、
+/// 把前台还给上一个应用,等焦点落稳再输入。
 #[tauri::command]
-async fn auto_input(text: String) -> Result<(), String> {
+async fn auto_input(
+    app: tauri::AppHandle,
+    text: String,
+    hand_back_focus: Option<bool>,
+) -> Result<(), String> {
+    if hand_back_focus.unwrap_or(false) {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.hide();
+        }
+        // macOS:只藏窗口不够,本应用仍是前台应用;`hide:` 会让系统把前台
+        // 交还给上一个应用。AppKit 只能在主线程调用。
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.run_on_main_thread(|| unsafe {
+                use objc2::runtime::AnyObject;
+                use objc2::{class, msg_send};
+                let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+                if !ns_app.is_null() {
+                    let nil: *mut AnyObject = std::ptr::null_mut();
+                    let _: () = msg_send![ns_app, hide: nil];
+                }
+            });
+        }
+        // 前台切换是异步的,马上敲字会落进半路上的窗口。
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        let result = input::type_text(&text);
+        // `hide:` 之后整个应用处于「隐藏」状态,之后悬浮胶囊 orderFront 也出不来。
+        // 输完就解除隐藏,但不抢前台(主窗口本身已经藏起来了)。
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.run_on_main_thread(|| unsafe {
+                use objc2::runtime::AnyObject;
+                use objc2::{class, msg_send};
+                let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+                if !ns_app.is_null() {
+                    let _: () = msg_send![ns_app, unhideWithoutActivation];
+                }
+            });
+        }
+        return result;
+    }
     input::type_text(&text)
 }
 
