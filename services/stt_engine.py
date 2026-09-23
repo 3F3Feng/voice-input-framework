@@ -74,6 +74,67 @@ class HealthStatus(BaseModel):
     error: str | None = None
 
 
+# ============== 静音与幻觉 ==============
+#
+# 语音模型对「没有人说话」的输入不会老实地返回空串。实测:3 秒纯静音送进
+# Qwen3-ASR-0.6B 得到 "The.",10 秒正弦波送进 whisper-tiny 得到
+# "Thank you so much for watching." —— 这些字会被原样敲进用户的文档。
+#
+# 两道闸:先按能量判静音,静音就不跑模型;跑完再挡一小撮公认的幻觉句
+# (整句完全匹配才挡,真说出来的话不会被误伤)。
+
+#: 均方根低于它、并且峰值也低于下面那个,才算静音。两个条件都要满足:只看均方根
+#: 会把「轻声说了一两个字、其余全是停顿」也判成静音。
+SILENCE_RMS_DBFS = -55.0
+SILENCE_PEAK_DBFS = -35.0
+
+_HALLUCINATIONS = {
+    "the",
+    "you",
+    "bye",
+    "thankyou",
+    "thanks",
+    "thankyouforwatching",
+    "thanksforwatching",
+    "thankyousomuchforwatching",
+    "pleasesubscribe",
+    "谢谢观看",
+    "谢谢大家观看",
+    "谢谢收看",
+    "感谢观看",
+    "请不吝点赞订阅转发打赏支持明镜与点点栏目",
+    "字幕由amaraorg社区提供",
+    "字幕byamaraorg社区",
+}
+
+
+def is_silent(audio) -> bool:
+    """整段音频是不是静音(float32,范围 -1..1)。"""
+    import numpy as np
+
+    if audio.size == 0:
+        return True
+    rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64))))
+    peak = float(np.max(np.abs(audio)))
+
+    def dbfs(x: float) -> float:
+        return 20 * np.log10(max(x, 1e-10))
+
+    return dbfs(rms) < SILENCE_RMS_DBFS and dbfs(peak) < SILENCE_PEAK_DBFS
+
+
+def is_hallucination(text: str) -> bool:
+    """整句是不是公认的静音幻觉。只做整句匹配,忽略大小写、空白和标点。"""
+    import unicodedata
+
+    normalized = "".join(
+        ch
+        for ch in text.lower()
+        if not ch.isspace() and not unicodedata.category(ch).startswith("P")
+    )
+    return normalized in _HALLUCINATIONS
+
+
 # ============== STT Engine ==============
 class STTEngine:
     """STT 引擎管理器"""
@@ -354,10 +415,21 @@ class STTEngine:
                         f"{self._load_error or '原因未知,见服务日志'}"
                     )
 
-            # 转换音频
-            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            # 转换音频。奇数长度的字节流(半个采样)会让 frombuffer 直接抛
+            # ValueError,丢掉最后那一个字节即可。
+            usable = len(audio_data) - len(audio_data) % 2
+            audio_array = np.frombuffer(audio_data[:usable], dtype=np.int16)
             audio_array = audio_array.astype(np.float32) / 32768.0
             sample_rate = AUDIO_SAMPLE_RATE
+
+            if is_silent(audio_array):
+                logger.info("Audio is silent, skipping model")
+                return TranscriptionResult(
+                    text="",
+                    language=language,
+                    stt_latency_ms=(time.time() - start_time) * 1000,
+                    model=self.current_model_name,
+                )
 
             # 执行转写
             lang = None if language == "auto" else language
@@ -433,6 +505,9 @@ class STTEngine:
                         text = results[0].text
                         detected_lang = results[0].language
             text = text.strip()
+            if is_hallucination(text):
+                logger.info(f"Dropping hallucinated transcript: {text!r}")
+                text = ""
 
             latency = (time.time() - start_time) * 1000
             return TranscriptionResult(

@@ -14,6 +14,12 @@ if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
 
+def _tone() -> bytes:
+    """一秒 220 Hz 正弦(int16 PCM)。全零会被静音闸门挡下、根本不跑模型。"""
+    t = np.arange(16000) / 16000
+    return (3000 * np.sin(2 * np.pi * 220 * t)).astype(np.int16).tobytes()
+
+
 class TestTranscriptionResult:
     """Test TranscriptionResult model"""
 
@@ -244,7 +250,7 @@ class TestSTTEngine:
         fake_mlx_whisper.transcribe = lambda *a, **k: {"text": "hello", "language": "en"}
         monkeypatch.setitem(sys.modules, "mlx_whisper", fake_mlx_whisper)
 
-        audio = np.zeros(16000, dtype=np.int16).tobytes()
+        audio = _tone()
         result = await engine.transcribe(audio)
         assert isinstance(result, TranscriptionResult)
         assert result.text == "hello"
@@ -264,7 +270,7 @@ class TestSTTEngine:
 
         engine._model = FakeWhisperCpp()
 
-        audio = np.zeros(16000, dtype=np.int16).tobytes()
+        audio = _tone()
         result = await engine.transcribe(audio)
         assert isinstance(result, TranscriptionResult)
         assert result.text == "cpp result"
@@ -287,7 +293,7 @@ class TestSTTEngine:
 
         engine._model = FakeTurbo()
 
-        audio = np.zeros(16000, dtype=np.int16).tobytes()
+        audio = _tone()
         result = await engine.transcribe(audio)
         assert isinstance(result, TranscriptionResult)
         assert result.text == "turbo result"
@@ -313,7 +319,7 @@ class TestSTTEngine:
 
         engine._model = FakeQwen()
 
-        audio = np.zeros(16000, dtype=np.int16).tobytes()
+        audio = _tone()
         result = await engine.transcribe(audio)
         assert isinstance(result, TranscriptionResult)
         assert result.text == "qwen result"
@@ -472,3 +478,64 @@ class TestSTTEngineIntegration:
         result = await engine.load()
         assert result is True
         assert engine._is_loaded
+
+
+class TestSilenceAndHallucination:
+    """静音不跑模型、公认的幻觉句被挡掉(R25,实测 Qwen 把 3 秒静音识别成 "The.")"""
+
+    def test_silence_is_detected(self):
+        from services.stt_engine import is_silent
+
+        assert is_silent(np.zeros(16000, dtype=np.float32))
+        # 安静房间的底噪(约 -66 dBFS)
+        assert is_silent((np.random.randn(16000) * 0.0005).astype(np.float32))
+
+    def test_speech_level_audio_is_not_silent(self):
+        from services.stt_engine import is_silent
+
+        t = np.arange(16000) / 16000
+        assert not is_silent((0.1 * np.sin(2 * np.pi * 220 * t)).astype(np.float32))
+        # 一秒里只有 0.1 秒轻声说话,其余是停顿:峰值够高,不能判成静音
+        quiet = np.zeros(16000, dtype=np.float32)
+        quiet[:1600] = 0.05 * np.sin(2 * np.pi * 200 * t[:1600])
+        assert not is_silent(quiet)
+
+    def test_known_hallucinations_are_caught(self):
+        from services.stt_engine import is_hallucination
+
+        for text in ["The.", "Thank you so much for watching.", " 谢谢观看! ", "you"]:
+            assert is_hallucination(text), text
+
+    def test_real_sentences_are_kept(self):
+        from services.stt_engine import is_hallucination
+
+        for text in ["The meeting is at three.", "谢谢观看这个演示的各位同事", "明天见"]:
+            assert not is_hallucination(text), text
+
+    @pytest.mark.asyncio
+    async def test_silent_audio_skips_the_model(self):
+        from services.stt_server import STTEngine
+
+        engine = STTEngine()
+        engine._is_loaded = True
+        engine._model_type = "whisper_turbo"
+
+        class MustNotRun:
+            def __call__(self, *a, **k):
+                raise AssertionError("静音不该跑模型")
+
+        engine._model = MustNotRun()
+        result = await engine.transcribe(np.zeros(16000 * 3, dtype=np.int16).tobytes())
+        assert result.text == ""
+
+    @pytest.mark.asyncio
+    async def test_odd_length_audio_does_not_crash(self):
+        from services.stt_server import STTEngine
+
+        engine = STTEngine()
+        engine._is_loaded = True
+        engine._model_type = "whisper_turbo"
+        engine._model = lambda *a, **k: {"text": "ok"}
+        t = np.arange(16000) / 16000
+        audio = (3000 * np.sin(2 * np.pi * 220 * t)).astype(np.int16).tobytes() + b"\x01"
+        assert (await engine.transcribe(audio)).text == "ok"
