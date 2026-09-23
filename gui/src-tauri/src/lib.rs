@@ -1650,6 +1650,13 @@ pub fn run() {
             // 以前没人接,用户看到的是点了没反应。
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => show_main_window(app_handle),
+            // 装完更新重启时不停本地服务:新进程会按 pid 记账认领回来(见 update.rs),
+            // 省得把几个 G 的模型重新加载一遍。只在 unix 上这么做 —— Windows 不认领
+            // 遗留进程(R33),留下来就成了管不着的外部进程;而且 Windows 的更新由
+            // NSIS 安装器负责重启,本来也走不到这里。
+            tauri::RunEvent::Exit
+                if cfg!(unix)
+                    && update::RESTARTING_FOR_UPDATE.load(std::sync::atomic::Ordering::SeqCst) => {}
             tauri::RunEvent::Exit => {
                 // 先把 Arc 克隆出来:`State` 借的是 `app_handle`,而 guard 的
                 // 析构要排在 `state` 之后,直接锁会活不过这个块。

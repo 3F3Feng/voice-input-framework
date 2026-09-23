@@ -70,6 +70,10 @@ pub async fn check(app: &tauri::AppHandle) -> Result<UpdateInfo, String> {
     }
 }
 
+/// 装完更新、正在重启进新版本。见 `download_and_install` 末尾。
+pub static RESTARTING_FOR_UPDATE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// 下载并安装。装完退出应用,由用户重新打开。
 ///
 /// 签名验不过时插件会在这里返回错误,**不会**装上去——这正是要它的原因。
@@ -119,8 +123,16 @@ pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, Stri
         .await
         .map_err(|e| format!("更新失败: {}", e))?;
 
-    eprintln!("[update] {} 已安装,退出应用", version);
-    let _ = app.emit("update-progress", "安装完成，应用即将关闭");
-    app.exit(0);
-    Ok(format!("已更新到 {}，请重新打开应用", version))
+    // 以前装完直接 exit(0),用户看到的是「应用自己关了」,还得自己再去打开。现在
+    // 直接重启进新版本。
+    //
+    // 从非主线程调 `restart()` 时 Tauri 会先走一遍 `RunEvent::Exit`,而那里会停掉
+    // 本地的 STT / LLM 服务;打上这个标记,退出处理就跳过停服务,新进程启动时按 pid
+    // 记账把它们认领回来(`reclaim_orphans`),不用把几个 G 的模型重新加载一遍。
+    // (Windows 上 NSIS 安装器会自己结束并重新拉起应用,走不到这里。)
+    RESTARTING_FOR_UPDATE.store(true, std::sync::atomic::Ordering::SeqCst);
+    eprintln!("[update] {} 已安装,重启应用", version);
+    let _ = app.emit("update-progress", "安装完成，正在重启…");
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    app.restart()
 }

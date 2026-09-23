@@ -2089,7 +2089,7 @@ async function doInstallUpdate() {
     ]) as string;
     updateStatus.value = msg;
     updateStatusType.value = "ok";
-    toast("更新已安装，重启后生效", "ok");
+    toast("更新已安装，正在重启…", "ok");
   } catch (e) { updateStatus.value = `安装失败: ${e}`; }
   finally {
     un();
