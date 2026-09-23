@@ -101,14 +101,11 @@ fn err_result_timeout() -> &'static str {
 }
 
 /// 是不是「连不上 STT 服务」类错误(中英文前缀都认)。
-// `indicator::failure_display` 改用这两个判断之前,主程序里还没有调用方。
-#[allow(dead_code)]
 pub fn is_unreachable(err: &str) -> bool {
     err.starts_with(ERR_UNREACHABLE) || err.starts_with(ERR_UNREACHABLE_EN)
 }
 
 /// 是不是「等待识别结果超时」类错误(中英文前缀都认)。
-#[allow(dead_code)]
 pub fn is_result_timeout(err: &str) -> bool {
     err.starts_with(ERR_RESULT_TIMEOUT) || err.starts_with(ERR_RESULT_TIMEOUT_EN)
 }

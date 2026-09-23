@@ -215,10 +215,14 @@ pub fn show_failure(app: &tauri::AppHandle, err: &str) {
 pub(crate) fn failure_display(err: &str) -> (&'static str, &'static str) {
     if err == crate::stt::NO_SPEECH {
         ("info", t("没听到声音", "Didn't catch anything"))
-    } else if err.starts_with(crate::stt::ERR_UNREACHABLE) {
+    } else if crate::stt::is_unreachable(err) {
         ("error", t("连不上识别服务", "Can't reach STT"))
-    } else if err.starts_with(crate::stt::ERR_RESULT_TIMEOUT) || err == "转写超时" {
-        // 「转写超时」是服务端自己的 600 秒上限(stt_server.py 的 E5002)。
+    } else if crate::stt::is_result_timeout(err)
+        || err == "转写超时"
+        || err == "Transcription timed out"
+    {
+        // 「转写超时」是服务端自己的 600 秒上限(stt_server.py 的 E5002),
+        // 服务端按界面语言回中文或英文。
         ("error", t("识别超时", "STT timed out"))
     } else {
         ("error", t("识别失败", "Transcription failed"))
@@ -282,6 +286,19 @@ mod tests {
             ("error", "识别超时")
         );
         assert_eq!(failure_display("转写超时"), ("error", "识别超时"));
+        // 界面是英文时服务端和客户端给的是英文错误,归类不能跟着失效。
+        assert_eq!(
+            failure_display("Transcription timed out"),
+            ("error", "识别超时")
+        );
+        assert_eq!(
+            failure_display("Can't reach the STT service (http://127.0.0.1:6544): refused"),
+            ("error", "连不上识别服务")
+        );
+        assert_eq!(
+            failure_display("Timed out waiting for the transcription result (5 min)"),
+            ("error", "识别超时")
+        );
         assert_eq!(
             failure_display("等待识别结果超时:识别服务 60 秒没有动静,可能已经卡住"),
             ("error", "识别超时")

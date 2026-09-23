@@ -2045,7 +2045,8 @@ async function switchLlm() {
     // 下载大模型常常超过转发的超时,服务端会说「还在加载,完成后自动生效」——
     // 那不是失败,别用红字吓人(R16)。
     const msg = `${e}`;
-    if (msg.includes("还在加载")) toast(msg, "info");
+    // 服务端按界面语言回话,两种说法都得认。
+    if (msg.includes("还在加载") || msg.includes("still loading")) toast(msg, "info");
     else toast(t(`LLM 切换失败: ${msg}`, `LLM switch failed: ${msg}`), "err");
   }
   llmLoading.value = false;
@@ -2071,7 +2072,9 @@ async function toggleLlm() {
     llmEnabled.value = !want;
     // 「还在加载」不是失败:后端会在后台接着等,好了自动开(llm-enabled-late)。
     // 开头与 lib.rs 的 LLM_STILL_LOADING 一致。
-    toast(`${e}`, `${e}`.startsWith("LLM 服务还在加载模型") ? "info" : "err");
+    // lib.rs 的 llm_still_loading():两种语言的开头都认。
+    const still = `${e}`.startsWith("LLM 服务还在加载模型") || `${e}`.startsWith("LLM service is still loading the model");
+    toast(`${e}`, still ? "info" : "err");
   }
   llmToggling.value = false;
   // 后端在返回成功之前已经等到 LLM 服务能应答了,这时候列表一定拉得到。
