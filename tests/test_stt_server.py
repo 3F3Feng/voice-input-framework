@@ -41,15 +41,12 @@ class TestSTTEngine:
         """Test engine initialization"""
         from services.stt_server import STTEngine
 
-        engine = STTEngine()
-        import platform
+        from shared.model_registry import get_default_model
 
-        expected = (
-            "qwen_asr_mlx_native_small"
-            if (platform.machine() == "arm64" and platform.system() == "Darwin")
-            else "whisper_turbo"
-        )
-        assert engine.default_model == expected
+        engine = STTEngine()
+        # 以默认值的唯一来源为准。这里以前写死了非 Apple 平台是 whisper_turbo,
+        # 73e141d 把兜底改成 whisper_base 之后只有非 Mac 的 CI 会挂。
+        assert engine.default_model == get_default_model()
         assert not engine._is_loaded
         assert not engine._loading
 
