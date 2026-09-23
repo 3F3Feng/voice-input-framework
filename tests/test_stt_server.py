@@ -278,8 +278,11 @@ class TestSTTEngine:
         engine._is_loaded = True
         engine._model_type = "whisper_turbo"
 
+        seen = {}
+
         class FakeTurbo:
-            def __call__(self, audio, generate_kwargs=None):
+            def __call__(self, audio, return_timestamps=False, generate_kwargs=None):
+                seen["return_timestamps"] = return_timestamps
                 return {"text": "turbo result"}
 
         engine._model = FakeTurbo()
@@ -288,6 +291,8 @@ class TestSTTEngine:
         result = await engine.transcribe(audio)
         assert isinstance(result, TranscriptionResult)
         assert result.text == "turbo result"
+        # 超过 30 秒的音频必须开时间戳,否则 transformers 直接报错(R34)
+        assert seen["return_timestamps"] is True
 
     @pytest.mark.asyncio
     async def test_transcribe_qwen_transformers_returns_result(self):

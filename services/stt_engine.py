@@ -410,8 +410,14 @@ class STTEngine:
 
                 # ── Whisper Turbo (transformers) ──
                 elif model_type == "whisper_turbo":
+                    # return_timestamps=True 不能省:音频超过 30 秒(3000 帧 mel)时
+                    # transformers 会自动走长音频逐段生成,而那条路要求模型预测时间戳,
+                    # 不开就直接抛 ValueError。以前 Windows / Linux 上(默认就是这个
+                    # 引擎)说话超过 30 秒必然转写失败。实测 transformers 5.17 +
+                    # whisper-tiny:35 秒音频不带它报错,带上正常出结果。
                     result = model(
                         audio_array,
+                        return_timestamps=True,
                         generate_kwargs={"language": lang},
                     )
                     text = result.get("text", "").strip()
