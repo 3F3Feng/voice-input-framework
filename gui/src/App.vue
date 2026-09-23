@@ -19,7 +19,7 @@
     <!-- Toast -->
     <div class="toast-container">
       <transition-group name="toast">
-        <div v-for="t in toasts" :key="t.id" :class="['toast', t.type]">{{ t.msg }}</div>
+        <div v-for="ts in toasts" :key="ts.id" :class="['toast', ts.type]">{{ ts.msg }}</div>
       </transition-group>
     </div>
 
@@ -27,48 +27,48 @@
     <transition name="slide">
       <div v-if="showSettings" class="settings-panel">
         <nav class="tabs">
-          <button v-for="t in visibleTabs" :key="t.id"
-            :class="['tab', { active: tab === t.id }]" @click="tab = t.id">{{ t.label }}</button>
+          <button v-for="tb in visibleTabs" :key="tb.id"
+            :class="['tab', { active: tab === tb.id }]" @click="tab = tb.id">{{ tb.label }}</button>
         </nav>
         <div class="settings-scroll">
           <!-- 服务 -->
           <template v-if="tab === 'service'">
           <div class="s-row wizard-entry">
-            <span class="s-tip" style="margin:0;flex:1">不想一项项手动配?向导会带你走一遍:服务、权限、输出方式、试说一句。</span>
-            <button class="s-btn" @click="openWizard">打开设置向导</button>
+            <span class="s-tip" style="margin:0;flex:1">{{ t('不想一项项手动配?向导会带你走一遍:服务、权限、输出方式、试说一句。', 'Rather not set things up one by one? The wizard walks you through the service, permissions, output method and a test phrase.') }}</span>
+            <button class="s-btn" @click="openWizard">{{ t('打开设置向导', 'Open setup wizard') }}</button>
           </div>
           <!-- 服务器 -->
           <div class="s-section">
             <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
-              <span>服务器</span>
+              <span>{{ t('服务器', 'Server') }}</span>
               <button class="s-btn" @click="refreshServers" :disabled="serversLoading">
-                {{ serversLoading ? '...' : '刷新' }}
+                {{ serversLoading ? '...' : t('刷新', 'Refresh') }}
               </button>
             </div>
 
             <!-- 本地管理 / 远程连接 -->
             <div class="s-row mode-switch">
               <button :class="['s-btn', 'mode-btn', { active: serverMode === 'local' }]"
-                @click="switchMode('local')" :disabled="modeBusy">本地管理</button>
+                @click="switchMode('local')" :disabled="modeBusy">{{ t('本地管理', 'Run locally') }}</button>
               <button :class="['s-btn', 'mode-btn', { active: serverMode === 'remote' }]"
-                @click="switchMode('remote')" :disabled="modeBusy">远程连接</button>
+                @click="switchMode('remote')" :disabled="modeBusy">{{ t('远程连接', 'Remote server') }}</button>
             </div>
 
             <!-- 远程:只连接，不管理进程 -->
             <template v-if="serverMode === 'remote'">
               <div class="s-row" style="margin-top:8px">
-                <input class="s-input" v-model="serverHost" placeholder="localhost 或 http://1.2.3.4:6544"
+                <input class="s-input" v-model="serverHost" :placeholder="t('localhost 或 http://1.2.3.4:6544', 'localhost or http://1.2.3.4:6544')"
                   @keyup.enter="updateServer" @change="onServerSettingChange" />
                 <input class="s-input s-port" v-model.number="serverPort" type="number" min="1" max="65535"
                   @keyup.enter="updateServer" @change="onServerSettingChange" />
-                <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
+                <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : t('连接', 'Connect') }}</button>
               </div>
               <!-- 服务端设了 VIF_API_TOKEN 时才需要(F20)。空着 = 不带令牌。 -->
               <div class="s-row" style="margin-top:4px">
                 <input class="s-input" v-model="serverToken" type="password" autocomplete="off"
-                  placeholder="访问令牌(服务端设了 VIF_API_TOKEN 才需要)" @keyup.enter="updateServer" />
+                  :placeholder="t('访问令牌(服务端设了 VIF_API_TOKEN 才需要)', 'Access token (only if the server sets VIF_API_TOKEN)')" @keyup.enter="updateServer" />
               </div>
-              <div class="s-tip">只连接，不管理进程。服务需要在对端自行启动。主机可填裸主机名，也可填完整 URL。</div>
+              <div class="s-tip">{{ t('只连接，不管理进程。服务需要在对端自行启动。主机可填裸主机名，也可填完整 URL。', 'Connects only; does not manage processes. Start the service on the other machine yourself. Host can be a bare hostname or a full URL.') }}</div>
             </template>
 
             <!-- 本地：两个服务的状态与启停 -->
@@ -84,53 +84,53 @@
                 </div>
                 <div class="perm-actions">
                   <button v-if="!row.isUp" class="s-btn" @click="startSrv(row.kind)" :disabled="srvBusy === row.kind">
-                    {{ srvBusy === row.kind ? '...' : '启动' }}
+                    {{ srvBusy === row.kind ? '...' : t('启动', 'Start') }}
                   </button>
                   <button v-else class="s-btn" @click="stopSrv(row.kind)"
                     :disabled="srvBusy === row.kind || !row.canStop"
                     :title="row.stopHint">
-                    {{ srvBusy === row.kind ? '...' : '停止' }}
+                    {{ srvBusy === row.kind ? '...' : t('停止', 'Stop') }}
                   </button>
                   <button class="s-btn" @click="restartSrv(row.kind)" :disabled="srvBusy === row.kind || !row.canRestart">
-                    重启
+                    {{ t('重启', 'Restart') }}
                   </button>
                 </div>
               </div>
 
               <!-- 路径（应用装在 /Applications，仓库在别处，只能配置） -->
               <div class="s-row" style="margin-top:8px">
-                <input class="s-input" v-model="repoPath" placeholder="仓库路径（含 services/stt_server.py）" @change="saveLocal" />
-                <button class="s-btn" @click="detectPaths" :disabled="detecting">{{ detecting ? '...' : '自动探测' }}</button>
+                <input class="s-input" v-model="repoPath" :placeholder="t('仓库路径（含 services/stt_server.py）', 'Repo path (contains services/stt_server.py)')" @change="saveLocal" />
+                <button class="s-btn" @click="detectPaths" :disabled="detecting">{{ detecting ? '...' : t('自动探测', 'Detect') }}</button>
               </div>
               <div class="s-row" style="margin-top:4px">
-                <input class="s-input" v-model="pythonPath" placeholder="Python 解释器（如 .venv/bin/python）" @change="saveLocal" />
+                <input class="s-input" v-model="pythonPath" :placeholder="t('Python 解释器（如 .venv/bin/python）', 'Python interpreter (e.g. .venv/bin/python)')" @change="saveLocal" />
               </div>
               <div class="s-row" style="margin-top:4px">
-                <span class="s-tip" style="margin:0">端口</span>
+                <span class="s-tip" style="margin:0">{{ t('端口', 'Ports') }}</span>
                 <input class="s-input s-port" v-model.number="sttPort" type="number" min="1024" max="65535"
-                  title="STT 端口" @change="saveLocal" />
+                  :title="t('STT 端口', 'STT port')" @change="saveLocal" />
                 <input class="s-input s-port" v-model.number="llmPort" type="number" min="1024" max="65535"
-                  title="LLM 端口" @change="saveLocal" />
+                  :title="t('LLM 端口', 'LLM port')" @change="saveLocal" />
                 <label class="toggle"><input type="checkbox" v-model="localAutoStart" @change="saveLocal" /><span class="slider"></span></label>
-                <span class="s-label">随应用启动</span>
+                <span class="s-label">{{ t('随应用启动', 'Start with app') }}</span>
               </div>
               <!-- huggingface.co 在大陆常常连不上,首次下载模型会一直卡在「正在加载」。 -->
               <div class="s-row" style="margin-top:4px">
-                <span class="s-tip" style="margin:0;flex:1">模型下载源</span>
+                <span class="s-tip" style="margin:0;flex:1">{{ t('模型下载源', 'Model download source') }}</span>
                 <select class="s-select" style="width:auto" v-model="hfEndpoint" @change="onHfEndpointChange">
-                  <option value="">HuggingFace 官方</option>
-                  <option value="https://hf-mirror.com">hf-mirror.com(国内镜像)</option>
+                  <option value="">{{ t('HuggingFace 官方', 'HuggingFace (official)') }}</option>
+                  <option value="https://hf-mirror.com">{{ t('hf-mirror.com(国内镜像)', 'hf-mirror.com (mirror in China)') }}</option>
                 </select>
               </div>
-              <div v-if="hfEndpoint" class="s-tip">只在国内网络下选它:境外访问这个镜像会被转回 huggingface.co,反而下载失败。</div>
+              <div v-if="hfEndpoint" class="s-tip">{{ t('只在国内网络下选它:境外访问这个镜像会被转回 huggingface.co,反而下载失败。', 'Only pick this on a network inside mainland China: from elsewhere the mirror redirects back to huggingface.co and downloads fail.') }}</div>
 
               <div v-if="pathProblem" class="s-tip srv-problem">⚠ {{ pathProblem }}</div>
 
               <!-- 环境体检(F2):上面只查了「解释器文件在不在」。版本不对、依赖没装全、
                    torch 缺失这些,以前要等服务起不来、翻日志才知道。 -->
               <div class="s-row" style="margin-top:6px">
-                <span class="s-tip" style="margin:0;flex:1">服务起不来、或刚建完环境时，先体检一下 Python 环境。</span>
-                <button class="s-btn" @click="runEnvCheck" :disabled="envChecking">{{ envChecking ? '检查中…' : '环境体检' }}</button>
+                <span class="s-tip" style="margin:0;flex:1">{{ t('服务起不来、或刚建完环境时，先体检一下 Python 环境。', 'If a service will not start, or you just set up the environment, check the Python environment first.') }}</span>
+                <button class="s-btn" @click="runEnvCheck" :disabled="envChecking">{{ envChecking ? t('检查中…', 'Checking…') : t('环境体检', 'Check environment') }}</button>
               </div>
               <div v-if="envError" class="s-tip s-err">{{ envError }}</div>
               <div v-if="envReport" class="env-report">
@@ -145,31 +145,31 @@
                 <!-- 只给出命令、不在界面里直接跑:建环境要下几个 GB、可能要装 uv,
                      放在用户自己的终端里跑,出了问题看得见、也能随时中断。 -->
                 <template v-if="!envReport.ok">
-                  <div class="s-tip" style="margin-top:6px">在终端里运行这条命令重建环境，然后再体检一次：</div>
+                  <div class="s-tip" style="margin-top:6px">{{ t('在终端里运行这条命令重建环境，然后再体检一次：', 'Run this command in a terminal to rebuild the environment, then check again:') }}</div>
                   <div class="s-row" style="margin-top:4px">
                     <code class="env-cmd">{{ envReport.setup_command }}</code>
-                    <button class="s-btn" @click="copyEnvCommand">复制命令</button>
+                    <button class="s-btn" @click="copyEnvCommand">{{ t('复制命令', 'Copy command') }}</button>
                   </div>
                 </template>
-                <div v-else class="s-tip" style="margin-top:6px">环境没有问题。{{ envReport.items.some(i => i.status === 'warn') ? '标黄的几项不影响运行，按提示处理即可。' : '' }}</div>
+                <div v-else class="s-tip" style="margin-top:6px">{{ t('环境没有问题。', 'The environment looks good.') }}{{ envReport.items.some(i => i.status === 'warn') ? t('标黄的几项不影响运行，按提示处理即可。', " Items in yellow don't stop it from running; follow their hints when convenient.") : '' }}</div>
               </div>
 
               <!-- 子进程输出搬到「日志」标签页去了：两个日志框并排摆在设置里，
                    谁也分不清哪个是客户端自己的、哪个是 Python 服务打出来的。 -->
               <div class="s-row" style="margin-top:6px">
-                <span class="s-tip" style="margin:0;flex:1">服务起不来时，输出在「日志」里按 STT / LLM 分开看。</span>
-                <button class="s-btn" @click="openLog('stt')">查看日志</button>
+                <span class="s-tip" style="margin:0;flex:1">{{ t('服务起不来时，输出在「日志」里按 STT / LLM 分开看。', 'If a service will not start, see its output under Logs (STT and LLM separately).') }}</span>
+                <button class="s-btn" @click="openLog('stt')">{{ t('查看日志', 'View logs') }}</button>
               </div>
               <details class="s-help">
-                <summary>进程归属是怎么判断的？</summary>
-                <div class="s-tip">端口上已经有服务就直接连接，不会重复启动。你自己在终端里跑的服务，只要工作目录就是上面这个仓库，会标成「外部（本项目）」，照样可以从这里停止和重启；认不出来源的进程标成「外部（未识别）」，本应用只连接、绝不停它。</div>
+                <summary>{{ t('进程归属是怎么判断的？', 'How is process ownership determined?') }}</summary>
+                <div class="s-tip">{{ t('端口上已经有服务就直接连接，不会重复启动。你自己在终端里跑的服务，只要工作目录就是上面这个仓库，会标成「外部（本项目）」，照样可以从这里停止和重启；认不出来源的进程标成「外部（未识别）」，本应用只连接、绝不停它。', 'If a service is already on the port, the app connects to it instead of starting another. A service you run in your own terminal is marked “External (this project)” when its working directory is the repo above, and can still be stopped and restarted from here. A process of unknown origin is marked “External (unknown)”: the app only connects to it and never stops it.') }}</div>
               </details>
             </template>
           </div>
 
           <!-- Models -->
           <div class="s-section">
-            <div class="s-title">STT 模型</div>
+            <div class="s-title">{{ t('STT 模型', 'STT model') }}</div>
             <select class="s-select" v-model="sttModel" @change="switchStt">
               <!-- 以前只显示内部名(qwen_asr_mlx_native_small),本机跑不了的模型也照样能选。 -->
               <option v-for="m in sortedSttModels" :key="m.name" :value="m.name"
@@ -177,24 +177,24 @@
                 {{ sttModelLabel(m) }}
               </option>
             </select>
-            <div v-if="sttLoading" class="s-loading">{{ sttSwitchNote || '切换中...' }}</div>
+            <div v-if="sttLoading" class="s-loading">{{ sttSwitchNote || t('切换中...', 'Switching...') }}</div>
           </div>
 
           <div class="s-section">
-            <div class="s-title">LLM 后处理</div>
+            <div class="s-title">{{ t('LLM 后处理', 'LLM post-processing') }}</div>
             <div class="s-row">
               <label class="toggle"><input type="checkbox" v-model="llmEnabled" @change="toggleLlm" :disabled="llmToggling || !llmSupported" /><span class="slider"></span></label>
-              <span class="s-label" :class="{ 'llm-busy': llmToggling }">{{ llmSupported ? llmToggleText : '不可用' }}</span>
+              <span class="s-label" :class="{ 'llm-busy': llmToggling }">{{ llmSupported ? llmToggleText : t('不可用', 'Unavailable') }}</span>
             </div>
             <!-- 跑不了 LLM 后处理的机器(非 Apple 平台又没装 llama.cpp)把开关置灰,并照搬服务端给的原因(里面有安装命令)。
                  以前照样能拨,拨了要等满 30 秒才说「还在加载模型」(F17)。 -->
             <div v-if="!llmSupported" class="s-tip" style="margin-top:4px">
-              {{ llmUnsupportedReason || '这台机器不支持 LLM 后处理' }}
+              {{ llmUnsupportedReason || t('这台机器不支持 LLM 后处理', "This machine doesn't support LLM post-processing") }}
             </div>
             <!-- 本地管理模式下这个开关不只是个标志位:LLM 服务跟着它起停。
                  加载模型要几秒,开关这几秒是锁着的——得让用户知道那不是卡死。 -->
             <div v-else-if="serverMode === 'local'" class="s-tip" style="margin-top:4px">
-              LLM 服务跟着这个开关走：打开时启动（加载模型要几秒），关闭时停止，不用一直占着内存。只停本应用启动的那个；你自己在终端里跑的服务会保留。
+              {{ t('LLM 服务跟着这个开关走：打开时启动（加载模型要几秒），关闭时停止，不用一直占着内存。只停本应用启动的那个；你自己在终端里跑的服务会保留。', "The LLM service follows this switch: turning it on starts the service (loading the model takes a few seconds), turning it off stops it so it doesn't sit in memory. Only the one this app started is stopped; a service you run in your own terminal is left alone.") }}
             </div>
             <div v-if="llmEnabled" style="margin-top: 8px;">
               <select v-if="llmModels.length" class="s-select" v-model="llmModel" @change="switchLlm">
@@ -205,23 +205,23 @@
               <!-- 空下拉框什么也不说明。拿不到列表基本只有一个原因:LLM 服务
                    还没起来(或刚起来还在加载),所以直说,并给一个重试按钮。 -->
               <div v-else class="s-tip">
-                取不到 LLM 模型列表——LLM 服务可能还没就绪。
+                {{ t('取不到 LLM 模型列表——LLM 服务可能还没就绪。', "Couldn't get the LLM model list — the LLM service may not be ready yet.") }}
                 <button class="s-btn" style="margin-left:6px" @click="loadLlmModels"
-                  :disabled="llmModelsLoading">{{ llmModelsLoading ? '...' : '重试' }}</button>
+                  :disabled="llmModelsLoading">{{ llmModelsLoading ? '...' : t('重试', 'Retry') }}</button>
               </div>
             </div>
           </div>
 
           <!-- LLM Prompt -->
           <div v-if="llmEnabled" class="s-section">
-            <div class="s-title">提示词</div>
-            <textarea class="s-textarea" v-model="promptText" rows="3" placeholder="LLM 后处理提示词..." />
+            <div class="s-title">{{ t('提示词', 'Prompt') }}</div>
+            <textarea class="s-textarea" v-model="promptText" rows="3" :placeholder="t('LLM 后处理提示词...', 'LLM post-processing prompt...')" />
             <div class="s-row" style="margin-top:4px">
-              <button class="s-btn" @click="loadPrompt" :disabled="promptLoading">重新读取</button>
-              <button class="s-btn" @click="savePrompt" :disabled="promptLoading || !promptLoaded">保存</button>
-              <button class="s-btn" @click="resetPrompt" :disabled="promptLoading">恢复默认</button>
+              <button class="s-btn" @click="loadPrompt" :disabled="promptLoading">{{ t('重新读取', 'Reload') }}</button>
+              <button class="s-btn" @click="savePrompt" :disabled="promptLoading || !promptLoaded">{{ t('保存', 'Save') }}</button>
+              <button class="s-btn" @click="resetPrompt" :disabled="promptLoading">{{ t('恢复默认', 'Reset to default') }}</button>
               <select class="s-select" style="width:auto" v-model="promptPreset" @change="applyPromptPreset">
-                <option value="">套用预设…</option>
+                <option value="">{{ t('套用预设…', 'Apply preset…') }}</option>
                 <option v-for="p in PROMPT_PRESETS" :key="p.id" :value="p.id">{{ p.label }}</option>
               </select>
             </div>
@@ -231,11 +231,11 @@
 
           <!-- 个人词库(F13):人名、产品名总被认错。不依赖 LLM 后处理,关着也生效。 -->
           <div class="s-section">
-            <div class="s-title">个人词库</div>
+            <div class="s-title">{{ t('个人词库', 'Personal vocabulary') }}</div>
             <textarea class="s-textarea" v-model="vocabText" rows="4" :disabled="!connected"
-              placeholder="一行一条:&#10;石枫            (热词:同音字优先写成它)&#10;陶睿 => Tauri    (替换:识别成左边就改成右边)" />
+              :placeholder="t('一行一条:\n石枫            (热词:同音字优先写成它)\n陶睿 => Tauri    (替换:识别成左边就改成右边)', 'One entry per line:\nKubernetes        (hotword: preferred when it sounds alike)\ntaury => Tauri    (replacement: left becomes right)')" />
             <div class="s-row" style="margin-top:4px">
-              <button class="s-btn" @click="saveVocabulary" :disabled="vocabBusy || !connected">保存</button>
+              <button class="s-btn" @click="saveVocabulary" :disabled="vocabBusy || !connected">{{ t('保存', 'Save') }}</button>
               <span class="s-tip">{{ vocabSummary }}</span>
             </div>
           </div>
@@ -245,90 +245,91 @@
           <template v-else-if="tab === 'general'">
           <!-- Audio -->
           <div class="s-section">
-            <div class="s-title">麦克风</div>
+            <div class="s-title">{{ t('麦克风', 'Microphone') }}</div>
             <div class="s-row">
               <select class="s-select" v-model="selectedDevice" @change="onDeviceChange" style="flex:1">
-                <option :value="null">默认设备</option>
+                <option :value="null">{{ t('默认设备', 'Default device') }}</option>
                 <option v-for="d in audioDevices" :key="d.name" :value="d.name">
-                  {{ d.default ? `${d.name}（系统默认）` : d.name }}
+                  {{ d.default ? t(`${d.name}（系统默认）`, `${d.name} (system default)`) : d.name }}
                 </option>
               </select>
-              <button class="s-btn" @click="refreshDevices" title="刷新">🔄</button>
+              <button class="s-btn" @click="refreshDevices" :title="t('刷新', 'Refresh')">🔄</button>
             </div>
           </div>
 
           <!-- 识别语言:配置里一直有 audio.language,每次转写也会发给服务端,
                但界面上没有入口,只能手改 config.json。 -->
           <div class="s-section">
-            <div class="s-title">识别语言</div>
+            <div class="s-title">{{ t('识别语言', 'Speech language') }}</div>
             <select class="s-select" v-model="language" @change="onLanguageChange">
               <option v-for="o in languageOptions" :key="o.code" :value="o.code">{{ o.label }}</option>
             </select>
             <div class="s-tip">
-              明确只说一种语言时指定它,能少一些误判;中英混说选「自动」。
-              粤语需要 Qwen3-ASR 或 Whisper large-v3 系列,较小的 Whisper 模型会按中文识别。
+              {{ t('明确只说一种语言时指定它,能少一些误判;中英混说选「自动」。', 'If you only speak one language, pick it to cut down on misrecognition; for mixed Chinese and English choose Auto.') }}
+              {{ t('粤语需要 Qwen3-ASR 或 Whisper large-v3 系列,较小的 Whisper 模型会按中文识别。', 'Cantonese needs Qwen3-ASR or a Whisper large-v3 model; smaller Whisper models transcribe it as Mandarin.') }}
             </div>
           </div>
 
           <!-- Hotkey -->
           <div class="s-section">
-            <div class="s-title">快捷键</div>
+            <div class="s-title">{{ t('快捷键', 'Hotkey') }}</div>
             <div class="s-row">
               <!-- 显示成人能读的形式(macOS 上 ⌃⌥⇧,其它平台 Ctrl+Alt),配置里存的串不变;
                    悬停能看到原串,排查问题时对得上 config.json。 -->
               <input class="s-input hotkey-field" :value="hotkeyFieldText" readonly
-                :placeholder="hotkeyRecording ? '请按下快捷键…' : formatHotkey(defaultHotkey)"
+                :placeholder="hotkeyRecording ? t('请按下快捷键…', 'Press a hotkey…') : formatHotkey(defaultHotkey)"
                 :title="hotkeyStr" :class="{ recording: hotkeyRecording }" @click="startHotkeyRecording" />
-              <button class="s-btn" @click="startHotkeyRecording">{{ hotkeyRecording ? '取消' : '录制' }}</button>
-              <button class="s-btn" @click="applyHotkey" :disabled="!hotkeyChanged">应用</button>
+              <button class="s-btn" @click="startHotkeyRecording">{{ hotkeyRecording ? t('取消', 'Cancel') : t('录制', 'Record') }}</button>
+              <button class="s-btn" @click="applyHotkey" :disabled="!hotkeyChanged">{{ t('应用', 'Apply') }}</button>
             </div>
             <!-- Fn 在网页里按不出 keydown,录不下来,只能直接选。 -->
             <div v-if="IS_MAC" class="s-row" style="margin-top:4px">
-              <button class="s-btn" @click="useFnHotkey">用 Fn(🌐)键</button>
-              <span class="s-tip" style="margin:0">需要在「系统设置 → 键盘」把「按下 🌐 键时」设为「不执行任何操作」</span>
+              <button class="s-btn" @click="useFnHotkey">{{ t('用 Fn(🌐)键', 'Use Fn (🌐) key') }}</button>
+              <span class="s-tip" style="margin:0">{{ t('需要在「系统设置 → 键盘」把「按下 🌐 键时」设为「不执行任何操作」', 'In System Settings → Keyboard, set “Press 🌐 key to” to “Do Nothing”') }}</span>
             </div>
             <div v-if="hotkeyRecording" class="s-tip">
-              请按下快捷键组合…支持 {{ IS_MAC ? '⌃ ⌥ ⇧ ⌘' : 'Ctrl / Alt / Shift / Win' }} 加字母、数字、空格、回车、Tab、Esc、{{ IS_LINUX ? 'F1–F12' : 'F1–F20' }} 等。
+              {{ t(`请按下快捷键组合…支持 ${IS_MAC ? '⌃ ⌥ ⇧ ⌘' : 'Ctrl / Alt / Shift / Win'} 加字母、数字、空格、回车、Tab、Esc、${IS_LINUX ? 'F1–F12' : 'F1–F20'} 等。`,
+                `Press a key combination… ${IS_MAC ? '⌃ ⌥ ⇧ ⌘' : 'Ctrl / Alt / Shift / Win'} plus a letter, digit, Space, Enter, Tab, Esc, ${IS_LINUX ? 'F1–F12' : 'F1–F20'} and so on.`) }}
             </div>
             <div v-if="hotkeyMsg" :class="['s-tip', hotkeyMsgErr ? 's-err' : 'srv-problem']">{{ hotkeyMsg }}</div>
             <div class="s-row" style="margin-top:6px">
               <label class="toggle"><input type="checkbox" v-model="distinguishSides" @change="toggleDistinguishSides" /><span class="slider"></span></label>
-              <span class="s-label">区分左右修饰键</span>
+              <span class="s-label">{{ t('区分左右修饰键', 'Distinguish left/right modifiers') }}</span>
             </div>
             <div class="s-tip">
-              关掉之后,录下来的 <code>left_ctrl</code> 左右两个 Ctrl 都能触发。
-              不写左右的写法(如 <code>ctrl+alt</code>)本来就两边都认,不受这个开关影响。
+              {{ t('关掉之后,录下来的 ', 'When off, a recorded ') }}<code>left_ctrl</code>{{ t(' 左右两个 Ctrl 都能触发。', ' is triggered by either Ctrl.') }}
+              {{ t('不写左右的写法(如 ', 'Forms without a side (like ') }}<code>ctrl+alt</code>{{ t(')本来就两边都认,不受这个开关影响。', ") always match both sides and aren't affected by this switch.") }}
             </div>
             <div class="s-row" style="margin-top:6px">
-              <span class="s-label" style="flex:1">录音方式</span>
+              <span class="s-label" style="flex:1">{{ t('录音方式', 'Recording mode') }}</span>
               <select class="s-select" style="width:auto" v-model="hotkeyToggle" @change="onHotkeyToggleChange">
-                <option :value="false">按住说话,松开结束</option>
-                <option :value="true">按一下开始,再按一下结束</option>
+                <option :value="false">{{ t('按住说话,松开结束', 'Hold to talk, release to stop') }}</option>
+                <option :value="true">{{ t('按一下开始,再按一下结束', 'Press to start, press again to stop') }}</option>
               </select>
             </div>
-            <div class="s-tip">录音中按 Esc 可放弃这一段(不识别)。</div>
+            <div class="s-tip">{{ t('录音中按 Esc 可放弃这一段(不识别)。', 'Press Esc while recording to discard it (nothing is transcribed).') }}</div>
           </div>
 
           <!-- Toggles -->
           <div class="s-section">
             <div class="s-row">
               <label class="toggle"><input type="checkbox" v-model="autoInputEnabled" @change="onAutoInputToggle" /><span class="slider"></span></label>
-              <span class="s-label">自动输入到窗口</span>
+              <span class="s-label">{{ t('自动输入到窗口', 'Auto-insert into window') }}</span>
             </div>
             <div v-if="autoInputEnabled" class="s-row" style="margin-top:6px">
-              <span class="s-label" style="flex:1">输入方式</span>
+              <span class="s-label" style="flex:1">{{ t('输入方式', 'Insert method') }}</span>
               <select class="s-select" style="width:auto" v-model="inputMethod" @change="onInputMethodChange">
-                <option value="paste">粘贴(推荐)</option>
-                <option value="type">模拟打字</option>
-                <option value="copy">只复制到剪贴板</option>
+                <option value="paste">{{ t('粘贴(推荐)', 'Paste (recommended)') }}</option>
+                <option value="type">{{ t('模拟打字', 'Simulate typing') }}</option>
+                <option value="copy">{{ t('只复制到剪贴板', 'Copy to clipboard only') }}</option>
               </select>
             </div>
             <div v-if="autoInputEnabled" class="s-tip">
               {{ inputMethod === 'paste'
-                ? '借用剪贴板一次性贴进去,贴完把原来的剪贴板内容还回去。长文本快,不受输入法影响。'
+                ? t('借用剪贴板一次性贴进去,贴完把原来的剪贴板内容还回去。长文本快,不受输入法影响。', 'Pastes through the clipboard in one go, then puts your previous clipboard contents back. Fast for long text and unaffected by input methods.')
                 : inputMethod === 'type'
-                  ? '逐字模拟键盘。文本里的换行会变成回车 —— 在聊天软件里等于直接发送。只在某个输入框不接受粘贴时用。'
-                  : '识别结果只放进剪贴板,不碰当前窗口,自己按粘贴。不需要「辅助功能」权限。' }}
+                  ? t('逐字模拟键盘。文本里的换行会变成回车 —— 在聊天软件里等于直接发送。只在某个输入框不接受粘贴时用。', "Types character by character. Line breaks become Enter — in chat apps that sends the message. Use it only when a field won't accept paste.")
+                  : t('识别结果只放进剪贴板,不碰当前窗口,自己按粘贴。不需要「辅助功能」权限。', "Only puts the result on the clipboard without touching the current window; paste it yourself. Doesn't need the Accessibility permission.") }}
             </div>
             <div class="s-row" style="margin-top:6px">
               <span class="s-label" style="flex:1">界面语言 / Language</span>
@@ -340,28 +341,28 @@
             </div>
             <div class="s-row" style="margin-top:6px">
               <label class="toggle"><input type="checkbox" v-model="autoStart" @change="toggleAutoStart" /><span class="slider"></span></label>
-              <span class="s-label">开机自启动</span>
+              <span class="s-label">{{ t('开机自启动', 'Start at login') }}</span>
             </div>
             <div class="s-row" style="margin-top:6px">
               <label class="toggle"><input type="checkbox" v-model="startMinimized" @change="toggleStartMinimized" /><span class="slider"></span></label>
-              <span class="s-label">启动时最小化</span>
+              <span class="s-label">{{ t('启动时最小化', 'Start minimized') }}</span>
             </div>
             <div class="s-row" style="margin-top:6px">
               <label class="toggle"><input type="checkbox" v-model="saveHistory" @change="onSaveHistoryToggle" /><span class="slider"></span></label>
-              <span class="s-label">保存识别历史</span>
+              <span class="s-label">{{ t('保存识别历史', 'Save transcription history') }}</span>
             </div>
             <div class="s-tip">
               {{ saveHistory
-                ? `存在本机的应用数据目录里(最多 ${HISTORY_CAP} 条),不会上传。重启后主界面仍能搜到、再次输入。`
-                : '新的识别结果只留到这次退出为止,不写进磁盘。' }}
+                ? t(`存在本机的应用数据目录里(最多 ${HISTORY_CAP} 条),不会上传。重启后主界面仍能搜到、再次输入。`, `Kept in this computer's app data folder (up to ${HISTORY_CAP} entries), never uploaded. Still searchable and reusable from the main window after a restart.`)
+                : t('新的识别结果只留到这次退出为止,不写进磁盘。', 'New results are kept only until you quit and are never written to disk.') }}
             </div>
             <!-- 关掉保存时问一次已有的要不要删:关开关的人多半是不想留痕,
                  但也可能只是不想再存新的,替他删掉就找不回来了。 -->
             <div v-if="askClearHistory" class="choice-banner" style="margin-top:6px">
-              <div class="choice-q">已停止保存。已有的 {{ historyTotal }} 条记录要一起删掉吗?</div>
+              <div class="choice-q">{{ t(`已停止保存。已有的 ${historyTotal} 条记录要一起删掉吗?`, `Saving is off. Delete the ${historyTotal} existing entries too?`) }}</div>
               <div class="choice-actions">
-                <button class="s-btn" @click="confirmClearHistory">删除</button>
-                <button class="s-btn" @click="askClearHistory = false">保留</button>
+                <button class="s-btn" @click="confirmClearHistory">{{ t('删除', 'Delete') }}</button>
+                <button class="s-btn" @click="askClearHistory = false">{{ t('保留', 'Keep') }}</button>
               </div>
             </div>
           </div>
@@ -372,9 +373,9 @@
           <!-- macOS 系统权限 -->
           <div class="s-section" v-if="perms?.is_macos">
             <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
-              <span>系统权限</span>
+              <span>{{ t('系统权限', 'System permissions') }}</span>
               <button class="s-btn" @click="refreshPermissions" :disabled="permsLoading">
-                {{ permsLoading ? '...' : '刷新' }}
+                {{ permsLoading ? '...' : t('刷新', 'Refresh') }}
               </button>
             </div>
             <div v-for="row in permissionRows" :key="row.key" class="perm-row">
@@ -387,13 +388,13 @@
               </div>
               <div class="perm-actions">
                 <button v-if="row.canRequest" class="s-btn" @click="requestPerm(row.key)" :disabled="permBusy === row.key">
-                  {{ permBusy === row.key ? '...' : '请求授权' }}
+                  {{ permBusy === row.key ? '...' : t('请求授权', 'Request') }}
                 </button>
-                <button class="s-btn" @click="openPermSettings(row.key)">打开设置</button>
+                <button class="s-btn" @click="openPermSettings(row.key)">{{ t('打开设置', 'Open Settings') }}</button>
               </div>
             </div>
             <div class="s-tip" style="margin-top:6px">
-              已拒绝的权限系统不会再弹窗，需在「系统设置 → 隐私与安全性」中手动勾选；辅助功能改动后可能需要重启本应用。
+              {{ t('已拒绝的权限系统不会再弹窗，需在「系统设置 → 隐私与安全性」中手动勾选；辅助功能改动后可能需要重启本应用。', "Once a permission is denied, macOS won't ask again — turn it on in System Settings → Privacy & Security. After changing Accessibility you may need to restart this app.") }}
             </div>
           </div>
           </template>
@@ -405,8 +406,8 @@
                按猜测把它们排在一起只会造出一条看着可信、其实是编的时间线。 -->
           <div class="s-section">
             <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
-              <span>日志</span>
-              <span style="color:var(--muted);font-size:0.65rem">{{ activeLog.length }} 行</span>
+              <span>{{ t('日志', 'Logs') }}</span>
+              <span style="color:var(--muted);font-size:0.65rem">{{ t(`${activeLog.length} 行`, `${activeLog.length} lines`) }}</span>
             </div>
             <div class="s-row mode-switch">
               <button v-for="s in logSources" :key="s.id"
@@ -421,16 +422,16 @@
             </div>
             <div class="s-row" style="margin-top:4px">
               <template v-if="logSource === 'client'">
-                <button class="s-btn" @click="guiLogs = []">清空</button>
+                <button class="s-btn" @click="guiLogs = []">{{ t('清空', 'Clear') }}</button>
                 <!-- 界面上只留最近 500 行，完整的在日志文件里；报问题时一键带上版本和系统。 -->
-                <button class="s-btn" @click="openLogDir" :disabled="!guiLogFile">打开日志目录</button>
-                <button class="s-btn" @click="copyDiagnostics">复制诊断信息</button>
+                <button class="s-btn" @click="openLogDir" :disabled="!guiLogFile">{{ t('打开日志目录', 'Open log folder') }}</button>
+                <button class="s-btn" @click="copyDiagnostics">{{ t('复制诊断信息', 'Copy diagnostics') }}</button>
               </template>
               <button v-else class="s-btn" @click="refreshServers" :disabled="serversLoading">
-                {{ serversLoading ? '...' : '刷新' }}
+                {{ serversLoading ? '...' : t('刷新', 'Refresh') }}
               </button>
             </div>
-            <div v-if="activeLogPath" class="s-tip" style="margin-top:4px">文件：{{ activeLogPath }}</div>
+            <div v-if="activeLogPath" class="s-tip" style="margin-top:4px">{{ t('文件：', 'File: ') }}{{ activeLogPath }}</div>
           </div>
           </template>
 
@@ -439,35 +440,35 @@
           <!-- 关于：版本号只有一个来源(gui/src-tauri/Cargo.toml)，构建 ID 每次构建都换，
                本地反复构建时全靠它认出手里跑的是哪个产物。 -->
           <div class="s-section">
-            <div class="s-title">关于</div>
-            <div class="about-row"><span class="s-label">版本</span><span class="about-val">v{{ build.version }}</span></div>
+            <div class="s-title">{{ t('关于', 'About') }}</div>
+            <div class="about-row"><span class="s-label">{{ t('版本', 'Version') }}</span><span class="about-val">v{{ build.version }}</span></div>
             <div class="about-row">
-              <span class="s-label">构建</span>
+              <span class="s-label">{{ t('构建', 'Build') }}</span>
               <span class="about-val mono" :title="build.build_id">{{ buildShort }}</span>
             </div>
-            <div class="about-row"><span class="s-label">构建时间</span><span class="about-val mono">{{ build.built_at }}</span></div>
+            <div class="about-row"><span class="s-label">{{ t('构建时间', 'Built at') }}</span><span class="about-val mono">{{ build.built_at }}</span></div>
             <div class="s-row" style="margin-top:6px">
-              <button class="s-btn" @click="copyBuildId">复制完整构建 ID</button>
+              <button class="s-btn" @click="copyBuildId">{{ t('复制完整构建 ID', 'Copy full build ID') }}</button>
             </div>
           </div>
 
           <!-- Update -->
           <div class="s-section">
-            <div class="s-title">软件更新</div>
+            <div class="s-title">{{ t('软件更新', 'Software update') }}</div>
             <div v-if="updateInfo" class="update-info">
               <span :class="updateInfo.available ? 'update-new' : 'update-ok'">
-                {{ updateInfo.available ? `新版本: ${updateInfo.latest_version}` : '已是最新版本' }}
+                {{ updateInfo.available ? t(`新版本: ${updateInfo.latest_version}`, `New version: ${updateInfo.latest_version}`) : t('已是最新版本', "You're up to date") }}
               </span>
-              <span class="s-tip">当前: v{{ updateInfo.current_version }}</span>
+              <span class="s-tip">{{ t('当前: ', 'Current: ') }}v{{ updateInfo.current_version }}</span>
               <p v-if="updateInfo.body && updateInfo.available" class="update-body">{{ updateInfo.body }}</p>
             </div>
             <div v-if="updateStatus" class="s-tip" :class="{ ok: updateStatusType === 'ok' }">{{ updateStatus }}</div>
             <div class="s-row" style="margin-top:4px">
               <button class="s-btn" @click="doCheckUpdate" :disabled="updateChecking">
-                {{ updateChecking ? '检查中...' : '检查更新' }}
+                {{ updateChecking ? t('检查中...', 'Checking...') : t('检查更新', 'Check for updates') }}
               </button>
               <button v-if="updateInfo?.available" class="s-btn" @click="doInstallUpdate" :disabled="updateInstalling" style="background:var(--green);color:var(--bg)">
-                {{ updateInstalling ? '下载中...' : '下载安装' }}
+                {{ updateInstalling ? t('下载中...', 'Downloading...') : t('下载安装', 'Download and install') }}
               </button>
             </div>
           </div>
@@ -475,11 +476,11 @@
           <!-- 托盘建不成（Linux 缺 AppIndicator 等）时，托盘里的「退出」不存在，
                关闭按钮又只是最小化——这里是唯一的退出口。 -->
           <div class="s-section">
-            <div class="s-title">退出</div>
-            <div v-if="!trayOk" class="s-tip srv-problem">⚠ 系统托盘没能创建（原因见「日志」），关闭按钮只会最小化窗口；要退出请点下面的按钮。</div>
-            <div v-else class="s-tip">关闭按钮只是收起窗口，快捷键仍在后台工作；托盘菜单里也能退出。</div>
+            <div class="s-title">{{ t('退出', 'Quit') }}</div>
+            <div v-if="!trayOk" class="s-tip srv-problem">⚠ {{ t('系统托盘没能创建（原因见「日志」），关闭按钮只会最小化窗口；要退出请点下面的按钮。', "The system tray couldn't be created (see Logs for why), so the close button only minimizes the window; use the button below to quit.") }}</div>
+            <div v-else class="s-tip">{{ t('关闭按钮只是收起窗口，快捷键仍在后台工作；托盘菜单里也能退出。', 'The close button only hides the window; the hotkey keeps working in the background. You can also quit from the tray menu.') }}</div>
             <div class="s-row" style="margin-top:4px">
-              <button class="s-btn" @click="quitApp">退出应用</button>
+              <button class="s-btn" @click="quitApp">{{ t('退出应用', 'Quit app') }}</button>
             </div>
           </div>
           </template>
@@ -491,22 +492,22 @@
     <div class="main" v-show="!showSettings">
       <!-- 缺权限提示(仅 macOS) -->
       <div v-if="missingPermLabels.length" class="perm-banner" @click="showSettings = true">
-        ⚠️ {{ missingPermLabels.join('、') }}未授权，相关功能不可用 · 点击前往授权
+        ⚠️ {{ t(`${missingPermLabels.join('、')}未授权，相关功能不可用 · 点击前往授权`, `${missingPermLabels.join(', ')} not granted, so related features won't work · Click to grant`) }}
       </div>
       <!-- 快捷键监听器没起来(缺权限 / Wayland / 刚授权没重启):按了没反应之前就说清楚。 -->
       <div v-else-if="hotkeyProblem" class="perm-banner" @click="showSettings = true; tab = 'general'">
-        ⚠️ 全局快捷键不可用:{{ hotkeyProblem }}
+        ⚠️ {{ t('全局快捷键不可用:', 'Global hotkey unavailable: ') }}{{ hotkeyProblem }}
       </div>
 
       <!-- 首次使用问一次输出方式。「自动输入」默认关，新用户说完话目标窗口里什么都
            没出现，只会以为坏了；可默认打开又会在没授权辅助功能时直接报错。所以问。 -->
       <div v-if="showOutputChoice" class="choice-banner">
-        <div class="choice-q">说完的文字要自动输入到当前光标处吗？</div>
+        <div class="choice-q">{{ t('说完的文字要自动输入到当前光标处吗？', 'Insert what you say at the cursor automatically?') }}</div>
         <div class="choice-actions">
-          <button class="s-btn" @click="chooseOutput(true)">自动输入</button>
-          <button class="s-btn" @click="chooseOutput(false)">只显示在这里</button>
+          <button class="s-btn" @click="chooseOutput(true)">{{ t('自动输入', 'Auto-insert') }}</button>
+          <button class="s-btn" @click="chooseOutput(false)">{{ t('只显示在这里', 'Just show it here') }}</button>
         </div>
-        <div class="s-tip">之后随时可以在 ⚙ → 常规 →「自动输入到窗口」里改。</div>
+        <div class="s-tip">{{ t('之后随时可以在 ⚙ → 常规 →「自动输入到窗口」里改。', 'You can change this anytime in ⚙ → General → “Auto-insert into window”.') }}</div>
       </div>
 
       <!-- Record Button -->
@@ -522,18 +523,18 @@
           <span class="record-icon">{{ recording ? '⏹' : '🎤' }}</span>
         </button>
         <div class="record-status">
-          <span v-if="recording" class="status-rec">录音中 {{ timerText }}</span>
-          <span v-else-if="loading" class="status-proc">{{ llmProcessing ? 'LLM 处理中' : '识别中' }} {{ processingTimerText }}</span>
+          <span v-if="recording" class="status-rec">{{ t('录音中', 'Recording') }} {{ timerText }}</span>
+          <span v-else-if="loading" class="status-proc">{{ llmProcessing ? t('LLM 处理中', 'LLM processing') : t('识别中', 'Transcribing') }} {{ processingTimerText }}</span>
           <!-- 模型没就绪时录音按钮是灰的,得说清楚在等什么(R11) -->
-          <span v-else-if="healthState === 'loading'" class="status-proc">模型加载中，稍等再说…</span>
-          <span v-else-if="healthState === 'error'" class="status-off" :title="sttHealth?.error ?? ''">模型加载失败，请在设置里换一个模型或重启服务</span>
-          <span v-else-if="canRecord" class="status-ready">{{ hotkeyToggle ? '按一下开始' : '按住说话' }} · {{ displayHotkey }}</span>
-          <span v-else-if="connecting" class="status-proc">正在连接服务器…</span>
-          <span v-else class="status-off">未连接服务器</span>
+          <span v-else-if="healthState === 'loading'" class="status-proc">{{ t('模型加载中，稍等再说…', 'Model loading, give it a moment…') }}</span>
+          <span v-else-if="healthState === 'error'" class="status-off" :title="sttHealth?.error ?? ''">{{ t('模型加载失败，请在设置里换一个模型或重启服务', 'Model failed to load — pick another model in Settings or restart the service') }}</span>
+          <span v-else-if="canRecord" class="status-ready">{{ hotkeyToggle ? t('按一下开始', 'Press to start') : t('按住说话', 'Hold to talk') }} · {{ displayHotkey }}</span>
+          <span v-else-if="connecting" class="status-proc">{{ t('正在连接服务器…', 'Connecting to server…') }}</span>
+          <span v-else class="status-off">{{ t('未连接服务器', 'Not connected to server') }}</span>
         </div>
         <!-- 转写一个现成的音频文件(F21)。服务端一直有 /transcribe,界面上没有入口。 -->
         <button class="file-btn" @click="transcribeFile" :disabled="!canRecord || loading || recording">
-          📁 转写音频文件
+          📁 {{ t('转写音频文件', 'Transcribe audio file') }}
         </button>
       </div>
 
@@ -554,23 +555,23 @@
                LLM 没开 / 没做成时两者一样,不显示。 -->
           <div v-if="resultOriginal" class="result-compare">
             <div class="seg">
-              <button :class="{ on: resultView === 'original' }" @click="resultView = 'original'">原文</button>
-              <button :class="{ on: resultView === 'final' }" @click="resultView = 'final'">整理后</button>
+              <button :class="{ on: resultView === 'original' }" @click="resultView = 'original'">{{ t('原文', 'Original') }}</button>
+              <button :class="{ on: resultView === 'final' }" @click="resultView = 'final'">{{ t('整理后', 'Polished') }}</button>
             </div>
             <button class="r-mini" @click="useOriginal" :disabled="result === resultOriginal && resultView === 'final'"
-              title="把原文放进编辑框(会替换掉现在的内容)">用原文</button>
+              :title="t('把原文放进编辑框(会替换掉现在的内容)', 'Put the original in the editor (replaces the current text)')">{{ t('用原文', 'Use original') }}</button>
           </div>
           <!-- 可以选中一部分、改个错字再复制 / 输入。以前是整段只读的 <p>,点一下就整段复制。
                原文只读,免得两份文字各改各的;要改原文先点「用原文」。 -->
           <textarea v-if="resultView === 'final' || !resultOriginal" class="result-text" v-model="result"
-            spellcheck="false" placeholder="(空)"></textarea>
+            spellcheck="false" :placeholder="t('(空)', '(empty)')"></textarea>
           <textarea v-else class="result-text original" :value="resultOriginal" readonly
-            title="原文只读;要在它的基础上改,点「用原文」"></textarea>
+            :title="t('原文只读;要在它的基础上改,点「用原文」', 'The original is read-only; click “Use original” to edit from it')"></textarea>
           <div class="result-actions">
             <button class="r-btn" @click="copyResult" :class="{ ok: copyFeedback }">
-              {{ copyFeedback ? '已复制 ✓' : '📋 复制' }}
+              {{ copyFeedback ? t('已复制 ✓', 'Copied ✓') : t('📋 复制', '📋 Copy') }}
             </button>
-            <button class="r-btn" @click="doAutoInput">⌨️ 输入</button>
+            <button class="r-btn" @click="doAutoInput">{{ t('⌨️ 输入', '⌨️ Insert') }}</button>
             <button class="r-btn" @click="clearResult">✕</button>
           </div>
         </div>
@@ -580,32 +581,32 @@
       <div class="history-area" v-if="historyTotal > 0 && !resultOpen && !loading">
         <div class="history-head">
           <input class="history-search" v-model="historyQuery" type="search" spellcheck="false"
-            :placeholder="`搜索 ${historyTotal} 条识别记录`" />
+            :placeholder="t(`搜索 ${historyTotal} 条识别记录`, `Search ${historyTotal} transcriptions`)" />
           <!-- 两步确认:第一下只把按钮变成「确认清空」,3 秒内再点才真删。 -->
           <button class="h-clear" :class="{ armed: historyClearArmed }" @click="clearHistory">
-            {{ historyClearArmed ? '确认清空?' : '清空' }}
+            {{ historyClearArmed ? t('确认清空?', 'Confirm clear?') : t('清空', 'Clear') }}
           </button>
         </div>
         <div class="history-scroll">
           <div v-for="item in history" :key="item.id" class="history-item" @click="openHistory(item)" :title="item.text">
             <span class="history-text">{{ item.text }}</span>
             <div class="history-meta">
-              <span class="history-time">{{ fmtHistoryTime(item.ts) }}{{ item.original ? ' · 已整理' : '' }}{{ item.model ? ` · ${item.model}` : '' }}</span>
+              <span class="history-time">{{ fmtHistoryTime(item.ts) }}{{ item.original ? t(' · 已整理', ' · polished') : '' }}{{ item.model ? ` · ${item.model}` : '' }}</span>
               <span class="history-ops">
-                <button class="h-op" title="复制" @click.stop="copyText(item.text)">📋</button>
-                <button class="h-op" title="输入到上一个窗口" @click.stop="insertText(item.text)">⌨️</button>
-                <button class="h-op" title="删除这一条" @click.stop="deleteHistory(item.id)">🗑</button>
+                <button class="h-op" :title="t('复制', 'Copy')" @click.stop="copyText(item.text)">📋</button>
+                <button class="h-op" :title="t('输入到上一个窗口', 'Insert into previous window')" @click.stop="insertText(item.text)">⌨️</button>
+                <button class="h-op" :title="t('删除这一条', 'Delete this entry')" @click.stop="deleteHistory(item.id)">🗑</button>
               </span>
             </div>
           </div>
-          <div v-if="history.length === 0" class="history-none">没有匹配「{{ historyQuery.trim() }}」的记录</div>
+          <div v-if="history.length === 0" class="history-none">{{ t(`没有匹配「${historyQuery.trim()}」的记录`, `No entries match “${historyQuery.trim()}”`) }}</div>
         </div>
       </div>
 
       <!-- Empty state -->
       <div class="empty-state" v-if="!resultOpen && !loading && !recording && historyTotal === 0">
         <div class="empty-icon">🎙️</div>
-        <div class="empty-text">按住按钮或按 {{ displayHotkey }} 开始语音输入</div>
+        <div class="empty-text">{{ t(`按住按钮或按 ${displayHotkey} 开始语音输入`, `Hold the button or press ${displayHotkey} to start dictating`) }}</div>
       </div>
     </div>
 
@@ -842,13 +843,16 @@ const KEY_LABEL: Record<string, [mac: string, other: string]> = {
 function formatHotkey(s: string): string {
   let sided = false;
   const labels = s.split("+").map(raw => {
-    const t = raw.trim().toLowerCase();
-    if (!t) return "?";  // 空段(旧 bug 录出来的 `left_ctrl+ `)要看得见,别显示成完整的样子
-    const m = /^(left|right)_(\w+)$/.exec(t) || /^([lr])(ctrl|alt|shift|cmd)$/.exec(t);
-    const base = m ? m[2] : t;
+    const tok = raw.trim().toLowerCase();
+    if (!tok) return "?";  // 空段(旧 bug 录出来的 `left_ctrl+ `)要看得见,别显示成完整的样子
+    const m = /^(left|right)_(\w+)$/.exec(tok) || /^([lr])(ctrl|alt|shift|cmd)$/.exec(tok);
+    const base = m ? m[2] : tok;
     const mod = MOD_LABEL[base];
     if (mod) {
-      const side = m && distinguishSides.value ? (m[1].startsWith("l") ? "左" : "右") : "";
+      // 英文:macOS 上符号前加 L / R(L⌃),其它平台写 Left / Right。
+      const side = m && distinguishSides.value
+        ? (m[1].startsWith("l") ? t("左", IS_MAC ? "L" : "Left ") : t("右", IS_MAC ? "R" : "Right "))
+        : "";
       if (side) sided = true;
       return side + (IS_MAC ? mod[0] : mod[1]);
     }
@@ -866,10 +870,11 @@ const selectedDevice = ref<string | null>(null);
 const perms = ref<PermissionReport | null>(null);
 const permsLoading = ref(false);
 const permBusy = ref<PermissionKey | "">("");
+// label / desc 写成 getter:在 computed / 模板里取值,切换界面语言时跟着变。
 const PERM_META: { key: PermissionKey; label: string; desc: string }[] = [
-  { key: "microphone", label: "麦克风", desc: "录音识别需要" },
-  { key: "input_monitoring", label: "输入监控", desc: "全局快捷键需要" },
-  { key: "accessibility", label: "辅助功能", desc: "把文字自动输入到其他窗口需要" },
+  { key: "microphone", get label() { return t("麦克风", "Microphone"); }, get desc() { return t("录音识别需要", "Needed to record speech"); } },
+  { key: "input_monitoring", get label() { return t("输入监控", "Input Monitoring"); }, get desc() { return t("全局快捷键需要", "Needed for the global hotkey"); } },
+  { key: "accessibility", get label() { return t("辅助功能", "Accessibility"); }, get desc() { return t("把文字自动输入到其他窗口需要", "Needed to insert text into other windows"); } },
 ];
 
 // Update
@@ -913,11 +918,11 @@ function openWizard() {
 type SettingsTab = "service" | "general" | "perm" | "logs" | "about";
 const tab = ref<SettingsTab>("service");
 const visibleTabs = computed(() => [
-  { id: "service" as const, label: "服务" },
-  { id: "general" as const, label: "常规" },
-  ...(perms.value?.is_macos ? [{ id: "perm" as const, label: "权限" }] : []),
-  { id: "logs" as const, label: "日志" },
-  { id: "about" as const, label: "关于" },
+  { id: "service" as const, label: t("服务", "Service") },
+  { id: "general" as const, label: t("常规", "General") },
+  ...(perms.value?.is_macos ? [{ id: "perm" as const, label: t("权限", "Permissions") }] : []),
+  { id: "logs" as const, label: t("日志", "Logs") },
+  { id: "about" as const, label: t("关于", "About") },
 ]);
 
 // ── 日志来源 ──
@@ -930,7 +935,7 @@ const visibleTabs = computed(() => [
 type LogSource = "client" | "stt" | "llm";
 const logSource = ref<LogSource>("client");
 const logSources = computed(() => [
-  { id: "client" as const, label: "客户端" },
+  { id: "client" as const, label: t("客户端", "Client") },
   ...(serverMode.value === "local"
     ? [{ id: "stt" as const, label: "STT" }, { id: "llm" as const, label: "LLM" }]
     : []),
@@ -946,9 +951,9 @@ const activeLogPath = computed(() => {
   return serverReport.value?.[logSource.value]?.log_path ?? null;
 });
 const logEmptyText = computed(() => {
-  if (logSource.value === "client") return "暂无日志";
-  if (serverMode.value !== "local") return "远程模式下没有本地服务日志";
-  return "这个服务还没被本应用启动过";
+  if (logSource.value === "client") return t("暂无日志", "No logs yet");
+  if (serverMode.value !== "local") return t("远程模式下没有本地服务日志", "No local service logs in remote mode");
+  return t("这个服务还没被本应用启动过", "This service hasn't been started by the app yet");
 });
 /** 从别处跳到日志页并选好来源（「服务器」一段里的「查看日志」用）。 */
 function openLog(src: LogSource) { logSource.value = src; tab.value = "logs"; }
@@ -960,8 +965,8 @@ function openLog(src: LogSource) { logSource.value = src; tab.value = "logs"; }
 const build = ref({ version: "", build_id: "", built_at: "" });
 const buildShort = computed(() => build.value.build_id.slice(0, 8) || "—");
 async function copyBuildId() {
-  try { await navigator.clipboard.writeText(build.value.build_id); toast("构建 ID 已复制", "ok"); }
-  catch (e) { toast(`复制失败: ${e}`, "err"); }
+  try { await navigator.clipboard.writeText(build.value.build_id); toast(t("构建 ID 已复制", "Build ID copied"), "ok"); }
+  catch (e) { toast(t(`复制失败: ${e}`, `Copy failed: ${e}`), "err"); }
 }
 const logBoxRef = ref<HTMLElement | null>(null);
 // 日志框以前绑了 ref 却没人用：刷过一屏之后最新的一行就落在可视区外，
@@ -996,16 +1001,16 @@ const connView = computed<{ cls: string; text: string; title: string }>(() => {
   // 模型,说「连接中」看着像连不上。
   if (st === "loading") {
     const m = h?.current_model ? ` · ${h.current_model}` : "";
-    return { cls: "wait", text: `模型加载中…${m}`, title: "" };
+    return { cls: "wait", text: t(`模型加载中…${m}`, `Loading model…${m}`), title: "" };
   }
   if (st === "error") {
-    const why = h?.error || "原因未知";
-    return { cls: "off", text: `模型加载失败（${why}）`, title: why };
+    const why = h?.error || t("原因未知", "unknown reason");
+    return { cls: "off", text: t(`模型加载失败（${why}）`, `Model failed to load (${why})`), title: why };
   }
-  if (connecting.value) return { cls: "wait", text: "连接中…", title: "" };
-  if (st === "unreachable" || !connected.value) return { cls: "off", text: "未连接", title: h?.url ?? "" };
+  if (connecting.value) return { cls: "wait", text: t("连接中…", "Connecting…"), title: "" };
+  if (st === "unreachable" || !connected.value) return { cls: "off", text: t("未连接", "Not connected"), title: h?.url ?? "" };
   const model = h?.current_model || currentModelName.value;
-  return { cls: "on", text: model ? `已就绪 · ${model}` : "已就绪", title: model };
+  return { cls: "on", text: model ? t(`已就绪 · ${model}`, `Ready · ${model}`) : t("已就绪", "Ready"), title: model };
 });
 
 /**
@@ -1018,7 +1023,7 @@ function applySttHealth(h: SttHealth) {
   if (h.state === "unreachable") {
     // 之前是连着的才提一句;一直连不上的时候别反复弹。
     if (connected.value && (prev === "ready" || prev === "loading" || prev === "error")) {
-      toast("与 STT 服务的连接断开了", "err");
+      toast(t("与 STT 服务的连接断开了", "Lost connection to the STT service"), "err");
     }
     connected.value = false;
     return;
@@ -1039,12 +1044,15 @@ const sortedSttModels = computed(() => {
 /** 下拉框里的一行:说人话的描述 + 状态。内部名放在悬停提示里。 */
 function sttModelLabel(m: ModelInfo): string {
   const tags: string[] = [];
-  if (m.is_loaded) tags.push("✓ 使用中");
-  if (m.recommended) tags.push("推荐");
-  if (m.available === false) tags.push(`不可用:${m.unavailable_reason || "本机不支持"}`);
-  else if (m.downloaded === false) tags.push(m.memory_gb ? `需下载 ~${m.memory_gb} GB` : "需下载");
+  if (m.is_loaded) tags.push(t("✓ 使用中", "✓ in use"));
+  if (m.recommended) tags.push(t("推荐", "recommended"));
+  if (m.available === false) {
+    const why = m.unavailable_reason || t("本机不支持", "not supported on this machine");
+    tags.push(t(`不可用:${why}`, `unavailable: ${why}`));
+  }
+  else if (m.downloaded === false) tags.push(m.memory_gb ? t(`需下载 ~${m.memory_gb} GB`, `~${m.memory_gb} GB download`) : t("需下载", "download needed"));
   const name = m.description || m.name;
-  return tags.length ? `${name}(${tags.join(" · ")})` : name;
+  return tags.length ? t(`${name}(${tags.join(" · ")})`, `${name} (${tags.join(" · ")})`) : name;
 }
 const displayHotkey = computed(() => formatHotkey(savedHotkey.value || defaultHotkey));
 const hotkeyFieldText = computed(() =>
@@ -1075,12 +1083,15 @@ const permissionRows = computed(() =>
 );
 // ── 服务器状态行 ──
 const SERVER_META: { kind: ServerKind; label: string }[] = [
-  { kind: "stt", label: "STT 语音识别" },
-  { kind: "llm", label: "LLM 后处理" },
+  { kind: "stt", get label() { return t("STT 语音识别", "STT (speech recognition)"); } },
+  { kind: "llm", get label() { return t("LLM 后处理", "LLM post-processing"); } },
 ];
 
 function srvStateText(s: ServerState) {
-  return { not_configured: "未配置", stopped: "未运行", starting: "启动中", running: "运行中", failed: "失败" }[s] || s;
+  return {
+    not_configured: t("未配置", "Not configured"), stopped: t("未运行", "Stopped"), starting: t("启动中", "Starting"),
+    running: t("运行中", "Running"), failed: t("失败", "Failed"),
+  }[s] || s;
 }
 function srvStateClass(s: ServerState) {
   return s === "running" ? "ok" : s === "starting" ? "warn" : s === "failed" ? "bad" : "";
@@ -1089,21 +1100,21 @@ function srvStateClass(s: ServerState) {
 /** 归属三档的显示文案与配色。 */
 const OWNER_CHIP: Record<ServerOwner, { text: string; cls: string }> = {
   // 本应用 spawn 的，生命周期完全归我们管。
-  app: { text: "本应用启动", cls: "ok" },
+  app: { get text() { return t("本应用启动", "Started by app"); }, cls: "ok" },
   // 用户自己在终端里起的，但校验过确实是本项目的服务——能停，只是得让用户
   // 知道这不是应用起的，免得他以为自己的终端会话会跟着一起消失。
-  external_project: { text: "外部（本项目）", cls: "warn" },
+  external_project: { get text() { return t("外部（本项目）", "External (this project)"); }, cls: "warn" },
   // 端口上有东西，但认不出是谁。中性色：不是错误，只是管不着。
-  external_unknown: { text: "外部（未识别）", cls: "muted" },
+  external_unknown: { get text() { return t("外部（未识别）", "External (unknown)"); }, cls: "muted" },
 };
 
 /** 开关旁边那行字。生效中要说清楚在等什么,否则几秒钟的静默像是没反应。 */
 const llmToggleText = computed(() => {
   if (llmToggling.value) {
-    if (serverMode.value !== "local") return "处理中…";
-    return llmEnabled.value ? "正在启动 LLM 服务…" : "正在停止 LLM 服务…";
+    if (serverMode.value !== "local") return t("处理中…", "Working…");
+    return llmEnabled.value ? t("正在启动 LLM 服务…", "Starting LLM service…") : t("正在停止 LLM 服务…", "Stopping LLM service…");
   }
-  return llmEnabled.value ? "已启用" : "已禁用";
+  return llmEnabled.value ? t("已启用", "Enabled") : t("已禁用", "Disabled");
 });
 
 const serverRows = computed(() =>
@@ -1125,14 +1136,14 @@ const serverRows = computed(() =>
     const onButMissing = m.kind === "llm" && llmEnabled.value && (state === "stopped" || state === "failed");
     const desc = status
       ? [
-          `端口 ${status.port}`,
+          t(`端口 ${status.port}`, `port ${status.port}`),
           status.pid ? `pid ${status.pid}` : "",
-          status.current_model ? `模型 ${status.current_model}` : "",
+          status.current_model ? t(`模型 ${status.current_model}`, `model ${status.current_model}`) : "",
           status.detail || "",
-          offBecauseToggle ? "已随「LLM 后处理」关闭；打开那个开关会自动启动" : "",
-          onButMissing ? "⚠「LLM 后处理」开着但服务没在跑，转录时的后处理会失败；点「启动」，或把那个开关关掉" : "",
-        ].filter(Boolean).join("　")
-      : "状态未知";
+          offBecauseToggle ? t("已随「LLM 后处理」关闭；打开那个开关会自动启动", "Off because LLM post-processing is off; turning it on starts this automatically") : "",
+          onButMissing ? t("⚠「LLM 后处理」开着但服务没在跑，转录时的后处理会失败；点「启动」，或把那个开关关掉", "⚠ LLM post-processing is on but this service isn't running, so post-processing will fail; click Start, or turn that switch off") : "",
+        ].filter(Boolean).join(t("　", " · "))
+      : t("状态未知", "Status unknown");
     return {
       kind: m.kind,
       label: m.label,
@@ -1145,7 +1156,7 @@ const serverRows = computed(() =>
       canStop,
       // 停不掉的（认不出身份）自然也谈不上重启。
       canRestart: !isUp || canStop,
-      stopHint: canStop ? "" : "这个进程认不出是不是本项目的服务，本应用不会碰它",
+      stopHint: canStop ? "" : t("这个进程认不出是不是本项目的服务，本应用不会碰它", "Can't tell whether this process is this project's service, so the app won't touch it"),
       desc,
     };
   })
@@ -1210,11 +1221,11 @@ async function copyDiagnostics() {
   try {
     const text = await invoke<string>("get_diagnostics");
     await navigator.clipboard.writeText(text);
-    toast("诊断信息已复制，可以直接粘贴到问题反馈里", "ok");
-  } catch (e) { toast(`复制失败: ${e}`, "err"); }
+    toast(t("诊断信息已复制，可以直接粘贴到问题反馈里", "Diagnostics copied — paste them into your bug report"), "ok");
+  } catch (e) { toast(t(`复制失败: ${e}`, `Copy failed: ${e}`), "err"); }
 }
 async function quitApp() {
-  try { await invoke("quit_app"); } catch (e) { toast(`退出失败: ${e}`, "err"); }
+  try { await invoke("quit_app"); } catch (e) { toast(t(`退出失败: ${e}`, `Quit failed: ${e}`), "err"); }
 }
 
 async function getConfig(): Promise<VoiceInputConfig> {
@@ -1231,7 +1242,7 @@ async function saveConfigPatch(patch: (cfg: VoiceInputConfig) => void): Promise<
     return true;
   } catch (e) {
     console.error("Config save failed:", e);
-    toast(`设置保存失败: ${e}`, "err");
+    toast(t(`设置保存失败: ${e}`, `Couldn't save settings: ${e}`), "err");
     return false;
   }
 }
@@ -1261,14 +1272,14 @@ async function transcribeFile() {
     const r = await invoke<{ file: string; text: string } | null>("pick_and_transcribe_file");
     if (r) {
       if (!r.text.trim()) {
-        toast(`${r.file}:没识别出内容`, "info");
+        toast(t(`${r.file}:没识别出内容`, `${r.file}: nothing recognized`), "info");
       } else {
         result.value = r.text;
         resultOriginal.value = "";
         resultView.value = "final";
         resultOpen.value = true;
         addToHistory(r.text, "");
-        toast(`${r.file} 转写完成`, "ok");
+        toast(t(`${r.file} 转写完成`, `${r.file} transcribed`), "ok");
       }
     }
   } catch (e) { toast(`${e}`, "err"); }
@@ -1282,7 +1293,7 @@ async function addToHistory(text: string, original: string) {
   try {
     const entry = await invoke<HistoryEntry | null>("history_add", { text, original: original || null });
     currentHistory = entry ? { id: entry.id, text } : null;
-  } catch (e) { toast(`识别历史没存上: ${e}`, "err"); }
+  } catch (e) { toast(t(`识别历史没存上: ${e}`, `Couldn't save to history: ${e}`), "err"); }
   // 上次留下的搜索词会把刚说的这条过滤掉,关掉结果卡片时列表里找不到它。
   historyQuery.value = "";
   await refreshHistory();
@@ -1290,7 +1301,7 @@ async function addToHistory(text: string, original: string) {
 
 async function deleteHistory(id: number) {
   try { await invoke("history_delete", { id }); }
-  catch (e) { toast(`删除失败: ${e}`, "err"); }
+  catch (e) { toast(t(`删除失败: ${e}`, `Delete failed: ${e}`), "err"); }
   await refreshHistory();
 }
 
@@ -1308,8 +1319,8 @@ async function clearHistory() {
   await doClearHistory();
 }
 async function doClearHistory() {
-  try { await invoke("history_clear"); toast("识别历史已清空", "ok"); }
-  catch (e) { toast(`清空失败: ${e}`, "err"); }
+  try { await invoke("history_clear"); toast(t("识别历史已清空", "History cleared"), "ok"); }
+  catch (e) { toast(t(`清空失败: ${e}`, `Clear failed: ${e}`), "err"); }
   historyQuery.value = "";
   await refreshHistory();
 }
@@ -1325,9 +1336,10 @@ async function onSaveHistoryToggle() {
     return;
   }
   askClearHistory.value = !on && historyTotal.value > 0;
-  if (on) toast("之后的识别结果会保存到本机", "ok");
+  if (on) toast(t("之后的识别结果会保存到本机", "New results will be saved on this computer"), "ok");
 }
 
+const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** 今天的只显示时分;今年的加月日;更早的显示完整日期。 */
 function fmtHistoryTime(ts: number): string {
   const d = new Date(ts);
@@ -1335,7 +1347,9 @@ function fmtHistoryTime(ts: number): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   if (d.toDateString() === now.toDateString()) return hm;
-  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+  if (d.getFullYear() === now.getFullYear()) {
+    return t(`${d.getMonth() + 1}月${d.getDate()}日 ${hm}`, `${MONTHS_EN[d.getMonth()]} ${d.getDate()} ${hm}`);
+  }
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
@@ -1379,9 +1393,9 @@ async function startRecord() {
     // 到点停止并照常识别。
     timerInterval = setInterval(() => {
       elapsedMs.value += 100;
-      if (elapsedMs.value === BUTTON_RECORD_LIMIT_MS - 30000) toast("还剩 30 秒,满 5 分钟会自动停止并识别", "info");
+      if (elapsedMs.value === BUTTON_RECORD_LIMIT_MS - 30000) toast(t("还剩 30 秒,满 5 分钟会自动停止并识别", "30 seconds left; recording stops and transcribes automatically at 5 minutes"), "info");
       if (elapsedMs.value >= BUTTON_RECORD_LIMIT_MS) {
-        toast("录音已满 5 分钟,已自动停止并开始识别", "info");
+        toast(t("录音已满 5 分钟,已自动停止并开始识别", "Reached 5 minutes; stopped recording and transcribing now"), "info");
         stopRecord();
       }
     }, 100);
@@ -1389,7 +1403,7 @@ async function startRecord() {
       try { audioLevel.value = await invoke<number>("get_audio_level"); } catch {}
     }, 100);
   } catch (e) {
-    toast(`录音失败: ${e}`, "err");
+    toast(t(`录音失败: ${e}`, `Recording failed: ${e}`), "err");
     recording.value = false;
   }
 }
@@ -1407,7 +1421,7 @@ async function stopRecord() {
   } catch (e) {
     loading.value = false;
     if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
-    toast(`转录失败: ${e}`, "err");
+    toast(t(`转录失败: ${e}`, `Transcription failed: ${e}`), "err");
   }
 }
 
@@ -1417,17 +1431,22 @@ async function refreshDevices() {
     audioDevices.value = await invoke<AudioDeviceInfo[]>("get_audio_devices");
   } catch (e) {
     // 设备列举失败别静默：下拉框只剩「默认设备」时用户根本猜不到是出了错。
-    toast(`读取麦克风列表失败: ${e}`, "err");
+    toast(t(`读取麦克风列表失败: ${e}`, `Couldn't list microphones: ${e}`), "err");
   }
 }
 async function onDeviceChange() {
   const ok = await saveConfigPatch(cfg => { cfg.audio.device = selectedDevice.value; });
-  if (ok) toast(selectedDevice.value ? `麦克风已切换到 ${selectedDevice.value}` : "已切回默认麦克风", "ok");
+  if (ok) toast(selectedDevice.value
+    ? t(`麦克风已切换到 ${selectedDevice.value}`, `Microphone switched to ${selectedDevice.value}`)
+    : t("已切回默认麦克风", "Switched back to the default microphone"), "ok");
 }
 
 // ── 权限(macOS) ──
 function permStateText(s: PermissionStatus) {
-  return { granted: "已授权", denied: "已拒绝", not_determined: "未询问", restricted: "受限" }[s] || s;
+  return {
+    granted: t("已授权", "Granted"), denied: t("已拒绝", "Denied"),
+    not_determined: t("未询问", "Not asked"), restricted: t("受限", "Restricted"),
+  }[s] || s;
 }
 function permStateClass(s: PermissionStatus) {
   return s === "granted" ? "ok" : s === "not_determined" ? "warn" : "bad";
@@ -1458,7 +1477,7 @@ async function reviveHotkey() {
     // 直接返回原因,不用再去日志里找错误行猜。
     await invoke("register_hotkey", { shortcut: key });
     hotkeyProblem.value = "";
-    toast("输入监控已授权，快捷键已生效", "ok");
+    toast(t("输入监控已授权，快捷键已生效", "Input Monitoring granted; the hotkey is active"), "ok");
   } catch (e) { toast(`${e}`, "err"); }
 }
 
@@ -1468,8 +1487,10 @@ async function requestPerm(key: PermissionKey) {
   try {
     const next = await invoke<PermissionStatus>("request_permission", { permission: key });
     if (perms.value) perms.value[key] = next;
-    toast(next === "granted" ? "已授权" : "尚未授权，请在系统设置中手动勾选后点「刷新」", next === "granted" ? "ok" : "err");
-  } catch (e) { toast(`权限申请失败: ${e}`, "err"); }
+    toast(next === "granted"
+      ? t("已授权", "Granted")
+      : t("尚未授权，请在系统设置中手动勾选后点「刷新」", "Not granted yet — turn it on in System Settings, then click Refresh"), next === "granted" ? "ok" : "err");
+  } catch (e) { toast(t(`权限申请失败: ${e}`, `Permission request failed: ${e}`), "err"); }
   permBusy.value = "";
   await refreshPermissions();
 }
@@ -1477,8 +1498,8 @@ async function requestPerm(key: PermissionKey) {
 async function openPermSettings(key: PermissionKey) {
   try {
     await invoke("open_permission_settings", { permission: key });
-    toast("已打开系统设置，勾选后请点「刷新」", "info");
-  } catch (e) { toast(`打开系统设置失败: ${e}`, "err"); }
+    toast(t("已打开系统设置，勾选后请点「刷新」", "Opened System Settings — turn it on, then click Refresh"), "info");
+  } catch (e) { toast(t(`打开系统设置失败: ${e}`, `Couldn't open System Settings: ${e}`), "err"); }
 }
 
 // ── 服务器管理 ──
@@ -1517,10 +1538,12 @@ async function switchMode(mode: ServerMode) {
   try {
     const url = await invoke<string>("set_server_mode", { mode });
     serverMode.value = mode;
-    toast(mode === "local" ? `已切到本地管理（${url}）` : `已切到远程连接（${url}）`, "ok");
+    toast(mode === "local"
+      ? t(`已切到本地管理（${url}）`, `Switched to running locally (${url})`)
+      : t(`已切到远程连接（${url}）`, `Switched to remote server (${url})`), "ok");
     await refreshServers();
     switched = true;
-  } catch (e) { toast(`切换失败: ${e}`, "err"); }
+  } catch (e) { toast(t(`切换失败: ${e}`, `Switch failed: ${e}`), "err"); }
   modeBusy.value = false;
   syncServerPolling();
   // 换了模式就是换了连接目标,得重连,而不是留着上一套的 connected 和模型列表。
@@ -1547,7 +1570,7 @@ async function startSrv(kind: ServerKind) {
   try {
     const msg = await invoke<string>("start_server", { kind });
     toast(msg, "ok");
-  } catch (e) { toast(`启动失败: ${e}`, "err"); }
+  } catch (e) { toast(t(`启动失败: ${e}`, `Start failed: ${e}`), "err"); }
   srvBusy.value = "";
   await refreshServers();
   // 以前到这里就结束了:面板上写着「运行中」,头部却一直「未连接」,录音按钮
@@ -1560,7 +1583,7 @@ async function stopSrv(kind: ServerKind) {
   try {
     const msg = await invoke<string>("stop_server", { kind });
     toast(msg, "ok");
-  } catch (e) { toast(`停止失败: ${e}`, "err"); }
+  } catch (e) { toast(t(`停止失败: ${e}`, `Stop failed: ${e}`), "err"); }
   srvBusy.value = "";
   await refreshServers();
 }
@@ -1570,7 +1593,7 @@ async function restartSrv(kind: ServerKind) {
   try {
     const msg = await invoke<string>("restart_server", { kind });
     toast(msg, "ok");
-  } catch (e) { toast(`重启失败: ${e}`, "err"); }
+  } catch (e) { toast(t(`重启失败: ${e}`, `Restart failed: ${e}`), "err"); }
   srvBusy.value = "";
   await refreshServers();
   await connectAfterServerAction(kind);
@@ -1585,8 +1608,10 @@ async function restartSrv(kind: ServerKind) {
  * 远程服务可能就在 80 / 443 上,只要求是个合法端口。
  */
 function portError(value: unknown, label: string, min = 1): string | null {
-  if (typeof value !== "number" || !Number.isInteger(value)) return `${label}端口要填一个整数`;
-  if (value < min || value > 65535) return `${label}端口要在 ${min}–65535 之间(现在是 ${value})`;
+  // 英文:label 是 "STT " / "LLM " / ""(远程),拼成 "STT port" / "Port"。
+  const what = label ? `${label}port` : "Port";
+  if (typeof value !== "number" || !Number.isInteger(value)) return t(`${label}端口要填一个整数`, `${what} must be a whole number`);
+  if (value < min || value > 65535) return t(`${label}端口要在 ${min}–65535 之间(现在是 ${value})`, `${what} must be between ${min} and 65535 (it is ${value})`);
   return null;
 }
 /** 上一次成功保存的本地端口。输入非法时退回它们,别让界面和配置对不上。 */
@@ -1599,9 +1624,9 @@ async function saveLocal() {
   const portProblem =
     portError(sttPort.value, "STT ", 1024) ??
     portError(llmPort.value, "LLM ", 1024) ??
-    (sttPort.value === llmPort.value ? "STT 和 LLM 不能用同一个端口" : null);
+    (sttPort.value === llmPort.value ? t("STT 和 LLM 不能用同一个端口", "STT and LLM can't use the same port") : null);
   if (portProblem) {
-    toast(`${portProblem},已恢复为原来的端口`, "err");
+    toast(t(`${portProblem},已恢复为原来的端口`, `${portProblem}; restored the previous ports`), "err");
     sttPort.value = savedLocalPorts.stt;
     llmPort.value = savedLocalPorts.llm;
   }
@@ -1629,7 +1654,7 @@ async function saveLocal() {
     const report = await invoke<LocalPathReport>("set_local_server_config", { local });
     savedLocalPorts = { stt: local.stt_port, llm: local.llm_port };
     if (report.problem) toast(report.problem, "err");
-  } catch (e) { toast(`保存失败: ${e}`, "err"); }
+  } catch (e) { toast(t(`保存失败: ${e}`, `Save failed: ${e}`), "err"); }
   await refreshServers();
 }
 
@@ -1637,7 +1662,7 @@ async function saveLocal() {
 const hfEndpoint = ref("");
 async function onHfEndpointChange() {
   await saveLocal();
-  toast("下载源已保存;重启 STT 服务后生效(只影响之后新下载的模型)", "info");
+  toast(t("下载源已保存;重启 STT 服务后生效(只影响之后新下载的模型)", "Download source saved; takes effect after restarting the STT service (only affects models downloaded later)"), "info");
 }
 
 // ── 环境体检(F2)──
@@ -1646,9 +1671,9 @@ type EnvStatus = "ok" | "warn" | "fail";
 interface EnvCheckItem { id: string; label: string; status: EnvStatus; detail: string; fix: string | null }
 interface EnvReport { items: EnvCheckItem[]; ok: boolean; setup_command: string }
 const ENV_CHIP: Record<EnvStatus, { cls: string; text: string }> = {
-  ok: { cls: "ok", text: "正常" },
-  warn: { cls: "warn", text: "注意" },
-  fail: { cls: "bad", text: "有问题" },
+  ok: { cls: "ok", get text() { return t("正常", "OK"); } },
+  warn: { cls: "warn", get text() { return t("注意", "Warning"); } },
+  fail: { cls: "bad", get text() { return t("有问题", "Problem"); } },
 };
 const envReport = ref<EnvReport | null>(null);
 const envChecking = ref(false);
@@ -1658,13 +1683,13 @@ async function runEnvCheck() {
   envChecking.value = true;
   envError.value = "";
   try { envReport.value = await invoke<EnvReport>("check_environment"); }
-  catch (e) { envReport.value = null; envError.value = `体检失败: ${e}`; }
+  catch (e) { envReport.value = null; envError.value = t(`体检失败: ${e}`, `Environment check failed: ${e}`); }
   envChecking.value = false;
 }
 async function copyEnvCommand() {
   if (!envReport.value) return;
-  try { await navigator.clipboard.writeText(envReport.value.setup_command); toast("命令已复制，粘贴到终端里运行", "ok"); }
-  catch (e) { toast(`复制失败: ${e}`, "err"); }
+  try { await navigator.clipboard.writeText(envReport.value.setup_command); toast(t("命令已复制，粘贴到终端里运行", "Command copied — paste it into a terminal to run"), "ok"); }
+  catch (e) { toast(t(`复制失败: ${e}`, `Copy failed: ${e}`), "err"); }
 }
 // 路径一改,旧报告说的就是另一套环境了,留着只会误导。
 watch([repoPath, pythonPath], () => { envReport.value = null; envError.value = ""; });
@@ -1678,11 +1703,11 @@ async function detectPaths() {
       repoPath.value = d.repo_path;
       pythonPath.value = d.python_path || "";
       await saveLocal();
-      toast(d.problem ? d.problem : `已探测到：${d.repo_path}`, d.problem ? "err" : "ok");
+      toast(d.problem ? d.problem : t(`已探测到：${d.repo_path}`, `Detected: ${d.repo_path}`), d.problem ? "err" : "ok");
     } else {
-      toast(d.problem || "没有探测到仓库，请手动填写路径", "err");
+      toast(d.problem || t("没有探测到仓库，请手动填写路径", "No repo found — enter the path manually"), "err");
     }
-  } catch (e) { toast(`探测失败: ${e}`, "err"); }
+  } catch (e) { toast(t(`探测失败: ${e}`, `Detection failed: ${e}`), "err"); }
   detecting.value = false;
 }
 
@@ -1755,14 +1780,20 @@ async function toggleDistinguishSides() {
     // 「应用」时拨这个开关,新快捷键就被悄悄注册上了,配置里却还是旧的。
     await invoke("register_hotkey", { shortcut: savedHotkey.value || defaultHotkey });
     hotkeyProblem.value = "";
-    toast(distinguishSides.value ? "已改为区分左右" : "已改为左右通用", "ok");
-  } catch (e) { toast(`快捷键重新注册失败: ${e}`, "err"); }
+    toast(distinguishSides.value
+      ? t("已改为区分左右", "Now distinguishing left and right")
+      : t("已改为左右通用", "Now treating left and right the same"), "ok");
+  } catch (e) { toast(t(`快捷键重新注册失败: ${e}`, `Couldn't re-register the hotkey: ${e}`), "err"); }
 }
 type InputMethod = "paste" | "type" | "copy";
 const inputMethod = ref<InputMethod>("paste");
 async function onInputMethodChange() {
   const ok = await saveConfigPatch(cfg => { cfg.ui.input_method = inputMethod.value; });
-  if (ok) toast({ paste: "改为粘贴方式输入", type: "改为模拟打字输入", copy: "改为只复制到剪贴板" }[inputMethod.value], "ok");
+  if (ok) toast({
+    paste: t("改为粘贴方式输入", "Now inserting by paste"),
+    type: t("改为模拟打字输入", "Now inserting by simulated typing"),
+    copy: t("改为只复制到剪贴板", "Now copying to the clipboard only"),
+  }[inputMethod.value], "ok");
 }
 function onAutoInputToggle() {
   // 在设置里拨过这个开关，就等于回答了横幅那个问题，不必再问。
@@ -1822,9 +1853,12 @@ async function chooseOutput(auto: boolean) {
   autoInputEnabled.value = auto;
   outputChoiceMade.value = true;
   if (auto && perms.value?.is_macos && perms.value.accessibility !== "granted") {
-    toast("自动输入需要「辅助功能」权限：第一次输入时会弹出授权，也可以先到 ⚙ → 权限 里授权", "info");
+    toast(t("自动输入需要「辅助功能」权限：第一次输入时会弹出授权，也可以先到 ⚙ → 权限 里授权",
+      "Auto-insert needs the Accessibility permission: you'll be asked the first time, or grant it now in ⚙ → Permissions"), "info");
   } else {
-    toast(auto ? "说完会自动输入到光标处" : "结果只显示在这里，可以点「复制」或「输入」", "ok");
+    toast(auto
+      ? t("说完会自动输入到光标处", "What you say will be inserted at the cursor")
+      : t("结果只显示在这里，可以点「复制」或「输入」", "Results show here only; use Copy or Insert"), "ok");
   }
 }
 
@@ -1893,13 +1927,13 @@ async function connectLoop() {
     for (;;) {
       let failure = "";
       try {
-        if (await connectOnce()) { toast("已连接", "ok"); return; }
+        if (await connectOnce()) { toast(t("已连接", "Connected"), "ok"); return; }
       } catch (e) { failure = `${e}`; }
       // 预算用完才认输。中途每次失败都不吭声:服务还在加载模型是预期内的,
       // 每 2 秒弹一次红字只会把日志面板刷满。
       if (Date.now() >= connectDeadline) {
         // 向导开着时它自己会说服务的状态;新用户还没配服务,这里再弹红字只会吓人。
-        if (!showOnboarding.value) toast(failure ? `连接失败: ${failure}` : "服务器无响应", "err");
+        if (!showOnboarding.value) toast(failure ? t(`连接失败: ${failure}`, `Connection failed: ${failure}`) : t("服务器无响应", "Server not responding"), "err");
         return;
       }
       await sleep(CONNECT_RETRY_MS);
@@ -1916,7 +1950,7 @@ async function updateServer() {
   try {
     // `set_server_host` 自己会把地址写进配置并落盘,这里不用再存一遍。
     await invoke("set_server_host", { host, port, token: serverToken.value.trim() });
-  } catch (e) { toast(`连接失败: ${e}`, "err"); return; }
+  } catch (e) { toast(t(`连接失败: ${e}`, `Connection failed: ${e}`), "err"); return; }
   await ensureConnected(0);
 }
 
@@ -1983,21 +2017,21 @@ async function switchStt() {
         is_loaded: boolean; is_loading: boolean; is_current: boolean; error: string | null;
         loading?: { downloaded_bytes: number } | null;
       }>("get_model_status", { name });
-      if (st.is_loaded) { toast(`已切换到 ${name}`, "ok"); break; }
-      if (st.error) throw `${st.error}(已回到原来的模型)`;
-      if (!st.is_current && !st.is_loading) throw "切换被中断(可能又选了别的模型)";
+      if (st.is_loaded) { toast(t(`已切换到 ${name}`, `Switched to ${name}`), "ok"); break; }
+      if (st.error) throw t(`${st.error}(已回到原来的模型)`, `${st.error} (reverted to the previous model)`);
+      if (!st.is_current && !st.is_loading) throw t("切换被中断(可能又选了别的模型)", "Switch interrupted (another model may have been selected)");
       const secs = Math.round((Date.now() - started) / 1000);
       const mb = Math.round((st.loading?.downloaded_bytes ?? 0) / 1048576);
       sttSwitchNote.value = mb > 0
-        ? `正在下载模型… 已下载 ${mb} MB(${secs} 秒)`
+        ? t(`正在下载模型… 已下载 ${mb} MB(${secs} 秒)`, `Downloading model… ${mb} MB so far (${secs}s)`)
         : secs < 10
-          ? "正在加载模型…"
-          : `正在加载模型… ${secs} 秒(第一次用这个模型需要下载,可能要几分钟)`;
+          ? t("正在加载模型…", "Loading model…")
+          : t(`正在加载模型… ${secs} 秒(第一次用这个模型需要下载,可能要几分钟)`, `Loading model… ${secs}s (first use of a model downloads it, which can take a few minutes)`);
       // 等太久就不在这里干等了,服务端会继续加载,头部状态会跟着变。
-      if (Date.now() - started > 15 * 60 * 1000) { toast("模型还在加载,完成后自动生效", "info"); break; }
+      if (Date.now() - started > 15 * 60 * 1000) { toast(t("模型还在加载,完成后自动生效", "Model is still loading; it takes effect when done"), "info"); break; }
       await sleep(1500);
     }
-  } catch (e) { toast(`切换失败: ${e}`, "err"); }
+  } catch (e) { toast(t(`切换失败: ${e}`, `Switch failed: ${e}`), "err"); }
   sttLoading.value = false;
   sttSwitchNote.value = "";
   // 列表里的 ✓ 和下拉框的选中项都以服务端为准刷新一次(失败时会回到原模型)。
@@ -2006,13 +2040,13 @@ async function switchStt() {
 async function switchLlm() {
   if (!llmModel.value) return;
   llmLoading.value = true;
-  try { await invoke<string>("switch_llm_model", { name: llmModel.value }); toast("LLM 已切换", "ok"); }
+  try { await invoke<string>("switch_llm_model", { name: llmModel.value }); toast(t("LLM 已切换", "LLM switched"), "ok"); }
   catch (e) {
     // 下载大模型常常超过转发的超时,服务端会说「还在加载,完成后自动生效」——
     // 那不是失败,别用红字吓人(R16)。
     const msg = `${e}`;
     if (msg.includes("还在加载")) toast(msg, "info");
-    else toast(`LLM 切换失败: ${msg}`, "err");
+    else toast(t(`LLM 切换失败: ${msg}`, `LLM switch failed: ${msg}`), "err");
   }
   llmLoading.value = false;
 }
@@ -2032,7 +2066,7 @@ async function toggleLlm() {
   llmToggling.value = true;
   try {
     const msg = await invoke<string>("set_llm_enabled", { enabled: want });
-    toast(msg || `LLM ${want ? '已启用' : '已禁用'}`, "ok");
+    toast(msg || t(`LLM ${want ? '已启用' : '已禁用'}`, `LLM ${want ? "enabled" : "disabled"}`), "ok");
   } catch (e) {
     llmEnabled.value = !want;
     // 「还在加载」不是失败:后端会在后台接着等,好了自动开(llm-enabled-late)。
@@ -2076,13 +2110,13 @@ function codeToToken(code: string): string | null {
 
 /** 不支持的键叫什么,用于「暂不支持 X 键」。 */
 function unsupportedKeyName(e: KeyboardEvent): string {
-  if (/^(Digit|Numpad)\d$/.test(e.code)) return `数字 ${e.code.slice(-1)}`;
-  if (e.code.startsWith("Arrow")) return "方向";
+  if (/^(Digit|Numpad)\d$/.test(e.code)) return t(`数字 ${e.code.slice(-1)}`, `Number ${e.code.slice(-1)}`);
+  if (e.code.startsWith("Arrow")) return t("方向", "Arrow");
   if (/^F\d+$/.test(e.code)) return e.code;
   if (e.key === "Fn" || e.key === "FnLock") return "Fn";
   // 标点之类:e.key 可读就用它,否则退回物理键名
   if (e.key && e.key.trim() && e.key.length <= 2 && e.key !== "Unidentified") return e.key;
-  return e.code || e.key || "这个";
+  return e.code || e.key || t("这个", "This");
 }
 
 /** 单独按下时和平时打字分不开的键:光一个它(或只加 Shift)当快捷键,每次打字都会误触发。 */
@@ -2096,7 +2130,7 @@ function setHotkeyMsg(msg: string, err = true) { hotkeyMsg.value = msg; hotkeyMs
 async function checkSavedHotkey() {
   if (!savedHotkey.value) return;
   try { await invoke("validate_hotkey", { shortcut: savedHotkey.value }); }
-  catch (e) { setHotkeyMsg(`当前快捷键没有生效:${e}`); }
+  catch (e) { setHotkeyMsg(t(`当前快捷键没有生效:${e}`, `The current hotkey isn't active: ${e}`)); }
 }
 
 function stopHotkeyListening() {
@@ -2112,10 +2146,12 @@ const hotkeyToggle = ref(false);
 async function onHotkeyToggleChange() {
   try {
     await invoke("set_hotkey_toggle", { toggle: hotkeyToggle.value });
-    toast(hotkeyToggle.value ? "改为按一下开始、再按一下结束" : "改为按住说话", "ok");
+    toast(hotkeyToggle.value
+      ? t("改为按一下开始、再按一下结束", "Now: press to start, press again to stop")
+      : t("改为按住说话", "Now: hold to talk"), "ok");
   } catch (e) {
     hotkeyToggle.value = !hotkeyToggle.value;
-    toast(`设置失败: ${e}`, "err");
+    toast(t(`设置失败: ${e}`, `Couldn't change the setting: ${e}`), "err");
   }
 }
 
@@ -2170,7 +2206,8 @@ function startHotkeyRecording() {
     hotkeyRecording.value = false;
     stopHotkeyListening();
     if (!mainKey && mods.length === 1) {
-      setHotkeyMsg("只用一个修饰键时,平时每次按它(比如 Ctrl+C 里的 Ctrl)都会开始录音。", false);
+      setHotkeyMsg(t("只用一个修饰键时,平时每次按它(比如 Ctrl+C 里的 Ctrl)都会开始录音。",
+        "With a single modifier key, every ordinary press of it (like the Ctrl in Ctrl+C) will start recording."), false);
     }
     // 用和注册时同一个解析器再验一遍:录得下来却注册不了的组合当场说出原因,
     // 而不是等点了「应用」才冒出一句「更新失败」。
@@ -2193,7 +2230,11 @@ function startHotkeyRecording() {
         return;  // 只累积修饰键,等待主键
       }
       const token = codeToToken(e.code);
-      if (!token) { reject(`暂不支持 ${unsupportedKeyName(e)} 键`); return; }
+      if (!token) {
+        const name = unsupportedKeyName(e);
+        reject(t(`暂不支持 ${name} 键`, `The ${name} key isn't supported yet`));
+        return;
+      }
       // 修饰键在点「录制」之前就按下了的话,收不到它自己的 keydown,只能从
       // 主键事件的标志位上补回来。分不出左右,就用两边都认的写法。
       for (const [flag, bare] of [[e.ctrlKey, "ctrl"], [e.altKey, "alt"], [e.shiftKey, "shift"], [e.metaKey, "cmd"]] as const) {
@@ -2202,12 +2243,17 @@ function startHotkeyRecording() {
       // ⌘ / Win + 字母数字是系统和各个应用自己的快捷键(⌘C、⌘V…)。全局监听只旁听、
       // 不拦截,按下去会同时触发那个快捷键和录音。
       if (mods.some(x => x.endsWith('cmd')) && /^[a-z0-9]$/.test(token)) {
-        reject(`${IS_MAC ? '⌘' : 'Win+'}${token.toUpperCase()} 是系统 / 应用的快捷键,按下会同时触发它;请换一个组合,或单独用右 ${IS_MAC ? '⌘' : 'Win'}`);
+        const combo = `${IS_MAC ? '⌘' : 'Win+'}${token.toUpperCase()}`;
+        reject(t(`${combo} 是系统 / 应用的快捷键,按下会同时触发它;请换一个组合,或单独用右 ${IS_MAC ? '⌘' : 'Win'}`,
+          `${combo} is a system / app shortcut and would fire as well; pick another combination, or use Right ${IS_MAC ? '⌘' : 'Win'} on its own`));
         return;
       }
       if (isTypingKey(token) && mods.every(x => x.endsWith('shift'))) {
-        const what = mods.length ? `${IS_MAC ? '⇧' : 'Shift+'}${formatHotkey(token)}` : `单独的 ${formatHotkey(token)} 键`;
-        reject(`${what}平时打字就会按到,请配合 ${IS_MAC ? '⌃ 或 ⌥' : 'Ctrl 或 Alt'} 使用`);
+        const what = mods.length
+          ? `${IS_MAC ? '⇧' : 'Shift+'}${formatHotkey(token)}`
+          : t(`单独的 ${formatHotkey(token)} 键`, `The ${formatHotkey(token)} key on its own`);
+        reject(t(`${what}平时打字就会按到,请配合 ${IS_MAC ? '⌃ 或 ⌥' : 'Ctrl 或 Alt'} 使用`,
+          `${what} gets pressed during normal typing; combine it with ${IS_MAC ? '⌃ or ⌥' : 'Ctrl or Alt'}`));
         return;
       }
       finish(token);  // 主键按下 → 结束
@@ -2224,7 +2270,7 @@ function useFnHotkey() {
   if (hotkeyRecording.value) startHotkeyRecording();  // 录制中就先取消
   hotkeyStr.value = "fn";
   hotkeyChanged.value = true;
-  setHotkeyMsg("已选 Fn,点「应用」生效", false);
+  setHotkeyMsg(t("已选 Fn,点「应用」生效", "Fn selected; click Apply to use it"), false);
 }
 async function applyHotkey() {
   if (!hotkeyStr.value) return;
@@ -2235,7 +2281,7 @@ async function applyHotkey() {
   } catch (e) {
     // 后端给的是中文原因(哪个键、为什么不行)。以前这里只有一句「更新失败」。
     setHotkeyMsg(`${e}`);
-    toast(`快捷键没有更新:${e}`, "err");
+    toast(t(`快捷键没有更新:${e}`, `Hotkey not updated: ${e}`), "err");
     return;
   }
   // 注册成功之后才落盘:注册不了的快捷键存进配置,下次启动就是一个静默失效的快捷键。
@@ -2243,26 +2289,27 @@ async function applyHotkey() {
   hotkeyChanged.value = false;
   setHotkeyMsg("");
   if (await saveConfigPatch(cfg => { cfg.hotkey.key = shortcut; })) {
-    toast(`快捷键已更新为 ${formatHotkey(shortcut)}`, "ok");
+    toast(t(`快捷键已更新为 ${formatHotkey(shortcut)}`, `Hotkey set to ${formatHotkey(shortcut)}`), "ok");
   }
 }
 
 // ── 识别语言 ──
 /** 客户端一律发代码;服务端按当前模型换成它要的写法(stt_engine.resolve_language)。 */
-const LANGUAGE_OPTIONS = [
-  { code: "auto", label: "自动" },
-  { code: "zh", label: "中文" },
+const languageOptionsBase = () => [
+  { code: "auto", label: t("自动", "Auto") },
+  { code: "zh", label: t("中文", "Chinese") },
   { code: "en", label: "English" },
-  { code: "yue", label: "粤语" },
-  { code: "ja", label: "日本語" },
-  { code: "ko", label: "한국어" },
+  { code: "yue", label: t("粤语", "Cantonese") },
+  { code: "ja", label: t("日本語", "Japanese") },
+  { code: "ko", label: t("한국어", "Korean") },
 ];
 // 手改过 config.json 填了别的语言时也照实显示,不让下拉框变成空白。
-const languageOptions = computed(() =>
-  LANGUAGE_OPTIONS.some(o => o.code === language.value)
-    ? LANGUAGE_OPTIONS
-    : [...LANGUAGE_OPTIONS, { code: language.value, label: language.value }]
-);
+const languageOptions = computed(() => {
+  const base = languageOptionsBase();
+  return base.some(o => o.code === language.value)
+    ? base
+    : [...base, { code: language.value, label: language.value }];
+});
 async function onLanguageChange() {
   const next = language.value;
   if (await saveConfigPatch(cfg => { cfg.audio.language = next; })) savedLanguage = next;
@@ -2278,19 +2325,19 @@ async function loadPrompt() {
     promptStatus.value = "";
   } catch (e) {
     promptLoaded.value = false;
-    promptStatus.value = `读取失败:${e}`;
+    promptStatus.value = t(`读取失败:${e}`, `Couldn't load: ${e}`);
   }
   promptLoading.value = false;
 }
 async function savePrompt() {
-  if (!promptText.value.trim()) { toast("提示词不能为空;想用默认的请点「恢复默认」", "err"); return; }
+  if (!promptText.value.trim()) { toast(t("提示词不能为空;想用默认的请点「恢复默认」", "The prompt can't be empty; click Reset to default to use the default one"), "err"); return; }
   promptLoading.value = true;
   try {
     await invoke("save_llm_prompt", { text: promptText.value });
-    promptStatus.value = "已保存";
-    toast("提示词已保存", "ok");
+    promptStatus.value = t("已保存", "Saved");
+    toast(t("提示词已保存", "Prompt saved"), "ok");
   } catch (e) {
-    promptStatus.value = "保存失败";
+    promptStatus.value = t("保存失败", "Save failed");
     toast(`${e}`, "err");
   }
   promptLoading.value = false;
@@ -2298,7 +2345,7 @@ async function savePrompt() {
 // 提示词预设(F14)。套用只是填进输入框,点「保存」才生效 —— 让用户先看一眼再用。
 // 每条都保留两条底线:只整理、不回答不执行;保持原意。
 const PROMPT_PRESETS = [
-  { id: "chat", label: "聊天", text: `你是语音输入的后处理助手,输出会直接发进聊天软件。
+  { id: "chat", get label() { return t("聊天", "Chat"); }, text: `你是语音输入的后处理助手,输出会直接发进聊天软件。
 
 整理规则:
 1. 删掉「嗯」「那个」「就是说」「然后」等填充词和口头改口,只保留改口后的说法
@@ -2313,7 +2360,7 @@ const PROMPT_PRESETS = [
 输出:你那边四点方便吗
 
 只输出整理后的文本。` },
-  { id: "email", label: "邮件 / 文档", text: `你是语音输入的后处理助手,输出会写进邮件或文档。
+  { id: "email", get label() { return t("邮件 / 文档", "Email / documents"); }, text: `你是语音输入的后处理助手,输出会写进邮件或文档。
 
 整理规则:
 1. 去掉填充词和口头改口,保留改口后的说法
@@ -2322,7 +2369,7 @@ const PROMPT_PRESETS = [
 4. 数字、日期、金额用阿拉伯数字
 
 只输出整理后的文本。` },
-  { id: "tech", label: "技术 / 编程", text: `你是语音输入的后处理助手,用户在写代码注释、提交说明或技术讨论。
+  { id: "tech", get label() { return t("技术 / 编程", "Tech / coding"); }, text: `你是语音输入的后处理助手,用户在写代码注释、提交说明或技术讨论。
 
 整理规则:
 1. 删掉「嗯」「那个」「就是说」「然后」等填充词和口头改口
@@ -2344,7 +2391,7 @@ function applyPromptPreset() {
   if (p) {
     promptText.value = p.text;
     promptLoaded.value = true;  // 框里是完整内容了,允许保存
-    promptStatus.value = `已填入「${p.label}」预设,点「保存」后生效`;
+    promptStatus.value = t(`已填入「${p.label}」预设,点「保存」后生效`, `Filled in the “${p.label}” preset; click Save to apply it`);
   }
   promptPreset.value = "";
 }
@@ -2354,8 +2401,8 @@ async function resetPrompt() {
   try {
     promptText.value = await invoke<string>("reset_llm_prompt");
     promptLoaded.value = true;
-    promptStatus.value = "已恢复默认";
-    toast("已恢复默认提示词", "ok");
+    promptStatus.value = t("已恢复默认", "Reset to default");
+    toast(t("已恢复默认提示词", "Default prompt restored"), "ok");
   } catch (e) { toast(`${e}`, "err"); }
   promptLoading.value = false;
 }
@@ -2364,17 +2411,26 @@ async function resetPrompt() {
 const vocabText = ref("");
 const vocabBusy = ref(false);
 const vocabLoaded = ref(false);
-const vocabSummary = ref("");
-function describeVocab(r: { hotwords: number; rules: number }) {
-  return r.hotwords || r.rules ? `${r.hotwords} 个热词 · ${r.rules} 条替换` : "还没有词条";
-}
+/** 词库条数(读到 / 存好之后);读取失败时是 null,错误在 vocabError。 */
+const vocabCounts = ref<{ hotwords: number; rules: number } | null>(null);
+const vocabError = ref("");
+// computed 而不是存成一句话:切换界面语言时跟着变。
+const vocabSummary = computed(() => {
+  if (vocabError.value) return t(`读取失败:${vocabError.value}`, `Couldn't load: ${vocabError.value}`);
+  const r = vocabCounts.value;
+  if (!r) return "";
+  return r.hotwords || r.rules
+    ? t(`${r.hotwords} 个热词 · ${r.rules} 条替换`, `${r.hotwords} hotwords · ${r.rules} replacements`)
+    : t("还没有词条", "No entries yet");
+});
 async function loadVocabulary() {
   try {
     const r = await invoke<{ entries: string[]; hotwords: number; rules: number }>("get_vocabulary");
     vocabText.value = r.entries.join("\n");
-    vocabSummary.value = describeVocab(r);
+    vocabCounts.value = r;
+    vocabError.value = "";
     vocabLoaded.value = true;
-  } catch (e) { vocabSummary.value = `读取失败:${e}`; }
+  } catch (e) { vocabError.value = `${e}`; }
 }
 async function saveVocabulary() {
   vocabBusy.value = true;
@@ -2382,8 +2438,9 @@ async function saveVocabulary() {
     const entries = vocabText.value.split("\n").map(l => l.trim()).filter(Boolean);
     const r = await invoke<{ entries: string[]; hotwords: number; rules: number }>("save_vocabulary", { entries });
     vocabText.value = r.entries.join("\n");
-    vocabSummary.value = describeVocab(r);
-    toast("个人词库已保存,下一句话就生效", "ok");
+    vocabCounts.value = r;
+    vocabError.value = "";
+    toast(t("个人词库已保存,下一句话就生效", "Vocabulary saved; it applies from your next phrase"), "ok");
   } catch (e) { toast(`${e}`, "err"); }
   vocabBusy.value = false;
 }
@@ -2399,24 +2456,27 @@ watch([showSettings, tab, llmEnabled], ([open, t, on]) => {
 // ── Update ──
 async function doCheckUpdate() {
   updateChecking.value = true;
-  updateStatus.value = "检查中...";
+  updateStatus.value = t("检查中...", "Checking...");
   updateStatusType.value = "info";
   // 10秒超时，防止卡死在"检查中..."
-  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("超时")), 10000));
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error(t("超时", "timed out"))), 10000));
   try {
     const info = await Promise.race([
       invoke<UpdateInfo>("check_update"),
       timeout
     ]) as UpdateInfo;
     updateInfo.value = info;
-    if (info.available) { updateStatus.value = `发现新版本 ${info.latest_version}`; toast(`新版本 ${info.latest_version} 可用`, "ok"); }
-    else { updateStatus.value = "已是最新版本"; updateStatusType.value = "ok"; }
-  } catch (e) { updateStatus.value = `检查失败: ${e}`; }
+    if (info.available) {
+      updateStatus.value = t(`发现新版本 ${info.latest_version}`, `New version ${info.latest_version} found`);
+      toast(t(`新版本 ${info.latest_version} 可用`, `Version ${info.latest_version} is available`), "ok");
+    }
+    else { updateStatus.value = t("已是最新版本", "You're up to date"); updateStatusType.value = "ok"; }
+  } catch (e) { updateStatus.value = t(`检查失败: ${e}`, `Check failed: ${e}`); }
   updateChecking.value = false;
 }
 async function doInstallUpdate() {
   updateInstalling.value = true;
-  updateStatus.value = "正在下载...";
+  updateStatus.value = t("正在下载...", "Downloading...");
   updateStatusType.value = "info";
   // 原来这里是 120 秒硬超时。Windows 的 NSIS 安装包三四十兆,网络慢一点就会在
   // 下载还好好地进行时弹「下载超时」,而后端其实还在下、下完照样会退出应用 ——
@@ -2427,13 +2487,13 @@ async function doInstallUpdate() {
   const INSTALL_STALL_MS = 600000;
   let lastProgress = Date.now();
   const stall = new Promise((_, reject) => {
-    const t = setInterval(() => {
+    const timer = setInterval(() => {
       if (Date.now() - lastProgress > INSTALL_STALL_MS) {
-        clearInterval(t);
-        reject(new Error("更新长时间没有进展"));
+        clearInterval(timer);
+        reject(new Error(t("更新长时间没有进展", "The update has made no progress for a long time")));
       }
     }, 5000);
-    installStallTimer = t;
+    installStallTimer = timer;
   });
   const un = await listen<string>("update-progress", e => {
     lastProgress = Date.now();
@@ -2446,8 +2506,8 @@ async function doInstallUpdate() {
     ]) as string;
     updateStatus.value = msg;
     updateStatusType.value = "ok";
-    toast("更新已安装，正在重启…", "ok");
-  } catch (e) { updateStatus.value = `安装失败: ${e}`; }
+    toast(t("更新已安装，正在重启…", "Update installed, restarting…"), "ok");
+  } catch (e) { updateStatus.value = t(`安装失败: ${e}`, `Install failed: ${e}`); }
   finally {
     un();
     if (installStallTimer) { clearInterval(installStallTimer); installStallTimer = null; }
@@ -2478,15 +2538,15 @@ async function copyText(text: string): Promise<boolean> {
   if (!text.trim()) return false;
   // 以前不等结果,写剪贴板失败也显示「已复制」。
   try { await navigator.clipboard.writeText(text); }
-  catch (e) { toast(`复制失败: ${e}`, "err"); return false; }
-  toast("已复制", "ok");
+  catch (e) { toast(t(`复制失败: ${e}`, `Copy failed: ${e}`), "err"); return false; }
+  toast(t("已复制", "Copied"), "ok");
   return true;
 }
 async function insertText(text: string) {
   if (!text.trim()) return;
   // 点这个按钮时焦点在本应用自己的窗口上:让后端先把前台交还给上一个应用再敲字,
   // 不然字全敲给了自己。
-  try { await invoke("auto_input", { text, handBackFocus: true }); toast("已输入", "ok"); }
+  try { await invoke("auto_input", { text, handBackFocus: true }); toast(t("已输入", "Inserted"), "ok"); }
   catch (e) {
     // 缺「辅助功能」权限时 Rust 端会返回可读原因,原样展示,不要吞掉
     toast(`${e}`, "err");
@@ -2609,7 +2669,7 @@ onMounted(async () => {
     loading.value = false;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     if (levelInterval) { clearInterval(levelInterval); levelInterval = null; }
-    toast("已取消这一段录音", "info");
+    toast(t("已取消这一段录音", "Recording discarded"), "info");
   });
   // 托盘菜单里的「检查更新」「设置」。以前前端听着 tray-check-update，却没有任何地方发它。
   // 检查结果显示在「关于」页，得切过去，不然用户看到的是一个跟更新无关的页面。
@@ -2646,7 +2706,7 @@ onMounted(async () => {
       resultOpen.value = true;
       addToHistory(text, resultOriginal.value);
       // 向导的「试一下」自己会显示结果,这里再弹一条就盖在向导上了。
-      if (!showOnboarding.value) toast("识别完成", "ok");
+      if (!showOnboarding.value) toast(t("识别完成", "Transcription done"), "ok");
       // 自动输入失败(最常见是缺「辅助功能」权限)必须让用户看见:
       // 以前这里 catch 成空函数,转录一切正常但目标窗口什么都没出现。
       if (autoInputEnabled.value) {
@@ -2655,10 +2715,11 @@ onMounted(async () => {
         if (inputMethod.value === "copy") {
           // 只复制不碰任何窗口,主窗口在不在前台都无所谓。
           invoke("auto_input", { text })
-            .then(() => toast("已复制到剪贴板", "ok"))
+            .then(() => toast(t("已复制到剪贴板", "Copied to clipboard"), "ok"))
             .catch(e => toast(`${e}`, "err"));
         } else if (document.hasFocus()) {
-          toast("主窗口在前台,结果没有自动输入;点「⌨️ 输入」发送到上一个窗口", "info");
+          toast(t("主窗口在前台,结果没有自动输入;点「⌨️ 输入」发送到上一个窗口",
+            "The main window is in front, so the result wasn't auto-inserted; click “⌨️ Insert” to send it to the previous window"), "info");
         } else {
           invoke("auto_input", { text }).catch(e => { toast(`${e}`, "err"); refreshPermissions(); });
         }
@@ -2675,8 +2736,8 @@ onMounted(async () => {
     loading.value = false;
     llmProcessing.value = false;
     if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
-    if (event.payload === NO_SPEECH) toast("没听到声音，请靠近麦克风再说一次", "info");
-    else toast(`失败: ${event.payload}`, "err");
+    if (event.payload === NO_SPEECH) toast(t("没听到声音，请靠近麦克风再说一次", "Didn't hear anything — move closer to the mic and try again"), "info");
+    else toast(t(`失败: ${event.payload}`, `Failed: ${event.payload}`), "err");
   });
 
   // 录音相关的提醒：配置的麦克风不在、改用了默认麦克风；录音中麦克风断开；
@@ -2687,12 +2748,12 @@ onMounted(async () => {
   // LLM 后处理没做成、退回了原文(R8)。结果照常出来,但得说一声这次没经过 LLM,
   // 不然用户只会觉得「后处理怎么没效果」。
   listen<string>("transcribe-warning", (event) =>
-    toast(`LLM 后处理没做成，已使用原文：${event.payload}`, "err"));
+    toast(t(`LLM 后处理没做成，已使用原文：${event.payload}`, `LLM post-processing failed, used the original text: ${event.payload}`), "err"));
 
   // Auto-check for updates (silent)
   try {
     const info = await invoke<UpdateInfo>("check_update");
-    if (info.available) { updateInfo.value = info; toast(`新版本 ${info.latest_version} 可用`, "ok"); }
+    if (info.available) { updateInfo.value = info; toast(t(`新版本 ${info.latest_version} 可用`, `Version ${info.latest_version} is available`), "ok"); }
   } catch {}
 });
 
