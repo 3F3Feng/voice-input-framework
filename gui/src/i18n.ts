@@ -13,14 +13,16 @@ import { invoke } from "@tauri-apps/api/core";
 export type LanguagePref = "auto" | "zh" | "en";
 export type Locale = "zh" | "en";
 
-export const locale = ref<Locale>("zh");
-
 /** 系统首选语言是中文就用中文,否则英文。 */
 export function systemLocale(): Locale {
   const langs = navigator.languages?.length ? navigator.languages : [navigator.language];
   const first = (langs[0] || "zh").toLowerCase();
   return first.startsWith("zh") ? "zh" : "en";
 }
+
+// 先按系统语言起步(绝大多数人是「跟随系统」),读到配置后再按偏好修正,
+// 免得英文系统上先闪一下中文。
+export const locale = ref<Locale>(systemLocale());
 
 export function resolveLocale(pref: string | undefined): Locale {
   return pref === "zh" || pref === "en" ? pref : systemLocale();
