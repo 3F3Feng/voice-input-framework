@@ -94,7 +94,7 @@ pub enum ServerState {
     Starting,
     /// `/health` 通了。
     Running,
-    /// 子进程退出了(或者压根没起来)。`detail` 里是原因。
+    /// 子进程退出了(或者压根没起来),或者进程活着但模型加载失败。`detail` 里是原因。
     Failed,
 }
 
@@ -789,6 +789,9 @@ fn force_kill(pid: u32) {
 struct Health {
     status: String,
     current_model: Option<String>,
+    /// `status == "error"` 时服务端给出的加载失败原因。
+    #[serde(default)]
+    error: Option<String>,
 }
 
 /// 打一次 `/health`。通了返回模型名,不通返回 `None`。
@@ -796,6 +799,12 @@ struct Health {
 /// 这是「采纳还是拉起」的唯一判据:能应答 `/health` 的就是可用的服务,
 /// 不关心它是谁起的。
 async fn probe(port: u16) -> Option<Health> {
+    probe_raw(port).await.filter(|health| health.status == "ok")
+}
+
+/// 打一次 `/health`,不管 `status` 是什么都原样返回。只有 `status` 能区分
+/// 「还在加载」和「加载失败了」——后者不报出来,界面会永远停在「正在加载模型」。
+async fn probe_raw(port: u16) -> Option<Health> {
     let client = reqwest::Client::builder()
         .timeout(HEALTH_TIMEOUT)
         .build()
@@ -808,8 +817,7 @@ async fn probe(port: u16) -> Option<Health> {
     if !resp.status().is_success() {
         return None;
     }
-    let health: Health = resp.json().await.ok()?;
-    (health.status == "ok").then_some(health)
+    resp.json().await.ok()
 }
 
 // ── 对外的异步 API ──
@@ -851,7 +859,13 @@ pub async fn status(
     kind: ServerKind,
 ) -> ServerStatus {
     let port = port_of(kind, &cfg.local);
-    let health = probe(port).await;
+    let raw = probe_raw(port).await;
+    // 进程活着、端口也应答,但模型加载失败了:得和「还在加载」分开报。
+    let load_error = raw
+        .as_ref()
+        .filter(|h| h.status == "error")
+        .map(|h| h.error.clone().unwrap_or_else(|| "原因未知,见日志".into()));
+    let health = raw.filter(|h| h.status == "ok");
 
     let snapshot = manager.lock().ok().and_then(|mut m| m.snapshot(kind));
     let paths_ok = SpawnOptions::from_config(&cfg.local).is_ok();
@@ -901,6 +915,22 @@ pub async fn status(
                 detail: Some(detail.into()),
                 log_path: other.as_ref().map(|s| s.log_path.clone()),
                 recent_logs: other.map(|s| s.recent_logs).unwrap_or_default(),
+            }
+        }
+        // 进程还活着,`/health` 明确说模型加载失败了。不能再报「启动中」:
+        // 服务不会自己好起来,等多久都一样。
+        (None, Some(snap)) if snap.alive && snap.port == port && load_error.is_some() => {
+            ServerStatus {
+                kind,
+                state: ServerState::Failed,
+                port,
+                owner: ServerOwner::App,
+                can_stop: ServerOwner::App.can_manage(),
+                pid: Some(snap.pid),
+                current_model: None,
+                detail: Some(format!("模型加载失败:{}", load_error.unwrap_or_default())),
+                log_path: Some(snap.log_path),
+                recent_logs: snap.recent_logs,
             }
         }
         // 进程还活着但 `/health` 没通 = 正在加载模型(同样要求端口一致)。

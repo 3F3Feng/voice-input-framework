@@ -68,6 +68,9 @@ class HealthStatus(BaseModel):
     #: 实际选中的推理后端与机器画像(设备 / 精度 / 核数 / 内存 / 显存)。
     #: 客户端和排查问题的人靠它判断这台机器到底跑在 GPU 上还是 CPU 上。
     hardware: dict[str, Any] | None = None
+    #: 最近一次加载失败的原因(status == "error" 时有值)。没有它,加载失败和
+    #: 「还在加载」在外面看起来一模一样,界面会永远停在「正在加载模型」。
+    error: str | None = None
 
 
 # ============== STT Engine ==============
@@ -83,6 +86,7 @@ class STTEngine:
         self._model_type = None
         self._is_loaded = False
         self._loading = False
+        self._load_error: str | None = None
         self._load_lock = asyncio.Lock()
         # 实际选中的推理后端,加载模型时填上。/health 会如实报出来 —— 用户
         # (和我们)得能一眼看出这台机器到底跑在 GPU 上还是 CPU 上。
@@ -108,6 +112,7 @@ class STTEngine:
                 return self._is_loaded
 
             self._loading = True
+            self._load_error = None
             try:
                 logger.info(f"Loading STT model: {self._model_info['model_id']}")
                 loop = asyncio.get_event_loop()
@@ -126,6 +131,7 @@ class STTEngine:
                 return True
             except Exception as e:
                 logger.error(f"Failed to load STT model: {e}", exc_info=True)
+                self._load_error = f"{type(e).__name__}: {e}"
                 self.failed_requests += 1
                 return False
             finally:
@@ -244,6 +250,7 @@ class STTEngine:
             # 重置状态
             self._is_loaded = False
             self._loading = False
+            self._load_error = None
 
             # 释放旧模型内存
             if self._model is not None:
@@ -396,6 +403,10 @@ class STTEngine:
 
     def is_model_loaded(self) -> bool:
         return self._is_loaded
+
+    def load_error(self) -> str | None:
+        """最近一次加载失败的原因;正在加载或已加载成功时为 None。"""
+        return None if (self._is_loaded or self._loading) else self._load_error
 
     def get_stats(self) -> dict[str, Any]:
         return {

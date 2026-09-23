@@ -285,8 +285,15 @@ async def request_id_middleware(request: Request, call_next):
 @app.get("/health", response_model=HealthStatus)
 async def health_check():
     """健康检查"""
+    load_error = engine.load_error()
+    if engine.is_model_loaded():
+        status = "ok"
+    elif load_error:
+        status = "error"
+    else:
+        status = "loading"
     return HealthStatus(
-        status="ok" if engine.is_model_loaded() else "loading",
+        status=status,
         version="1.1.0",
         uptime_seconds=time.time() - engine.start_time,
         current_model=engine.current_model_name,
@@ -298,6 +305,7 @@ async def health_check():
         # 实际选中的后端与机器画像。用户(和我们)得能一眼看出这台机器到底
         # 跑在 GPU 上还是 CPU 上、为什么给了这个模型 —— 以前这些全靠猜。
         hardware=engine.backend_info() or {"status": "模型尚未加载"},
+        error=load_error,
     )
 
 

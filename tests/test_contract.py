@@ -33,8 +33,11 @@ class TestHealthContract:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.json()
-        # status 为合法状态之一:loading(模型未加载/加载中)或 ok(已就绪)
-        assert body["status"] in ("loading", "ok")
+        # status 为合法状态之一:loading(模型未加载/加载中)、ok(已就绪)
+        # 或 error(加载失败,原因在 error 字段里)
+        assert body["status"] in ("loading", "ok", "error")
+        if body["status"] == "error":
+            assert body["error"]
         assert body["version"] == "1.1.0"
         assert "uptime_seconds" in body
         assert body["current_model"]  # 非空

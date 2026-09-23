@@ -119,6 +119,33 @@ class TestSTTEngine:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_load_failure_is_reported_not_stuck_loading(self, monkeypatch):
+        """加载失败要留下原因,/health 报 error,而不是永远停在 loading"""
+        from fastapi.testclient import TestClient
+
+        import services.stt_server as srv
+        from services.stt_server import STTEngine
+
+        engine = STTEngine()
+
+        def boom():
+            raise ModuleNotFoundError("No module named 'mlx_whisper'")
+
+        monkeypatch.setattr(engine, "_load_model_sync", boom)
+        assert await engine.load() is False
+        assert "mlx_whisper" in engine.load_error()
+
+        monkeypatch.setattr(srv, "engine", engine)
+        body = TestClient(srv.app).get("/health").json()
+        assert body["status"] == "error"
+        assert "mlx_whisper" in body["error"]
+
+        # 重新加载期间不再报上一次的失败原因
+        engine._load_error = "stale"
+        engine._loading = True
+        assert engine.load_error() is None
+
+    @pytest.mark.asyncio
     @pytest.mark.skip(reason="MLX model loads successfully by default")
     async def test_transcribe_raises_when_load_fails(self):
         """Test that transcribe raises error when model load fails (requires broken config)"""
