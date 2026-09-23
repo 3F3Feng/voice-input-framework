@@ -28,6 +28,8 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 rdev = "0.5"
 base64 = "0.22"
+# 客户端日志的本地时间戳。依赖树里本来就有(serde_with → chrono),不新增下载。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # macOS 专用:CGEventTap 监听快捷键(替代 rdev——rdev 的 macOS 后端在
 # 事件回调里调 TSMGetInputSourceProperty,macOS 15+ 非主线程调用会

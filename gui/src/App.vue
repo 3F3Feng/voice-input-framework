@@ -299,7 +299,12 @@
               <div v-if="activeLog.length === 0" class="log-empty">{{ logEmptyText }}</div>
             </div>
             <div class="s-row" style="margin-top:4px">
-              <button v-if="logSource === 'client'" class="s-btn" @click="guiLogs = []">清空</button>
+              <template v-if="logSource === 'client'">
+                <button class="s-btn" @click="guiLogs = []">清空</button>
+                <!-- 界面上只留最近 500 行，完整的在日志文件里；报问题时一键带上版本和系统。 -->
+                <button class="s-btn" @click="openLogDir" :disabled="!guiLogFile">打开日志目录</button>
+                <button class="s-btn" @click="copyDiagnostics">复制诊断信息</button>
+              </template>
               <button v-else class="s-btn" @click="refreshServers" :disabled="serversLoading">
                 {{ serversLoading ? '...' : '刷新' }}
               </button>
@@ -642,7 +647,14 @@ const updateChecking = ref(false);
 const updateInstalling = ref(false);
 
 // Logs
-const guiLogs = ref<{ msg: string; level: string }[]>([]);
+/** `seq` 只有 Rust 侧的日志才有（前端 toast 没有），用来和补拉的缓冲去重。 */
+interface GuiLogEntry { msg: string; level: string; seq?: number }
+/** Rust `log.rs` 的 `LogLine`。 */
+interface RustLogLine { seq: number; level: string; text: string }
+const GUI_LOG_CAP = 500;
+const guiLogs = ref<GuiLogEntry[]>([]);
+/** 客户端日志文件路径。日志目录建不出来时为 null。 */
+const guiLogFile = ref<string | null>(null);
 
 // ── 设置面板的标签页 ──
 // 以前是十个 s-section 在一个 400×500 的窗口里一路往下堆，找一个开关要滚三屏。
@@ -673,14 +685,14 @@ const logSources = computed(() => [
     ? [{ id: "stt" as const, label: "STT" }, { id: "llm" as const, label: "LLM" }]
     : []),
 ]);
-const activeLog = computed<{ msg: string; level: string }[]>(() => {
+const activeLog = computed<GuiLogEntry[]>(() => {
   if (logSource.value === "client") return guiLogs.value;
   const st = serverReport.value?.[logSource.value];
   // 子进程的 stdout 没有分级，全按 info 渲染，不去猜哪行是错误。
   return (st?.recent_logs ?? []).map(msg => ({ msg, level: "info" }));
 });
 const activeLogPath = computed(() => {
-  if (logSource.value === "client") return null;
+  if (logSource.value === "client") return guiLogFile.value;
   return serverReport.value?.[logSource.value]?.log_path ?? null;
 });
 const logEmptyText = computed(() => {
@@ -855,13 +867,51 @@ const missingPermLabels = computed(() =>
 );
 
 // ── Helpers ──
+function pushGuiLog(entry: GuiLogEntry) {
+  guiLogs.value.push(entry);
+  if (guiLogs.value.length > GUI_LOG_CAP) guiLogs.value = guiLogs.value.slice(-GUI_LOG_CAP);
+}
 function toast(msg: string, type = "info") {
   const id = ++toastId;
   toasts.value.push({ id, msg, type });
   setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id); }, 2500);
   const prefix = type === "err" ? "[ERROR]" : type === "ok" ? "[OK]" : "[INFO]";
-  guiLogs.value.push({ msg: `${prefix} ${msg}`, level: type });
-  if (guiLogs.value.length > 500) guiLogs.value = guiLogs.value.slice(-500);
+  // 和 Rust 侧的日志行同一个样子（HH:MM:SS [LEVEL] ...），两边混在一个框里才读得顺。
+  const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  pushGuiLog({ msg: `${ts} ${prefix} ${msg}`, level: type });
+}
+
+// ── 客户端日志 ──
+// Rust 侧的 log_info! / log_error! 一直在发 `gui-log`，但以前前端从来没听过：
+// 「快捷键创建失败（缺输入监控）」「Wayland 下快捷键不工作」「配置解析失败已备份」
+// 「自动启动失败」全都到不了日志页。setup() 里打的那些发生在 webview 加载之前，
+// 光听事件也收不到，所以挂载时先补拉 Rust 的缓冲。
+const toGuiLog = (l: RustLogLine): GuiLogEntry =>
+  ({ msg: l.text, level: l.level === "ERROR" ? "err" : "info", seq: l.seq });
+
+async function initGuiLogs() {
+  try {
+    // 先挂监听再拉缓冲：反过来的话，拉完到挂上之间打的日志两边都拿不到。
+    // 两边都拿到的那几行按 seq 去重；只在缓冲里的一定比事件里的早，拼在前面。
+    await listen<RustLogLine>("gui-log", e => pushGuiLog(toGuiLog(e.payload)));
+    const snap = await invoke<{ lines: RustLogLine[]; file: string | null }>("get_gui_logs");
+    guiLogFile.value = snap.file;
+    const seen = new Set(guiLogs.value.map(l => l.seq));
+    const backlog = snap.lines.filter(l => !seen.has(l.seq)).map(toGuiLog);
+    guiLogs.value = [...backlog, ...guiLogs.value].slice(-GUI_LOG_CAP);
+  } catch (e) { console.error("get_gui_logs failed:", e); }
+}
+async function openLogDir() {
+  try { await invoke("open_log_dir"); }
+  catch (e) { toast(`${e}`, "err"); }
+}
+/** 版本、构建、系统、连接方式和最近的客户端日志，报问题时直接粘过来。 */
+async function copyDiagnostics() {
+  try {
+    const text = await invoke<string>("get_diagnostics");
+    await navigator.clipboard.writeText(text);
+    toast("诊断信息已复制，可以直接粘贴到问题反馈里", "ok");
+  } catch (e) { toast(`复制失败: ${e}`, "err"); }
 }
 
 async function getConfig(): Promise<VoiceInputConfig> {
@@ -1736,6 +1786,8 @@ watch(sttState, (next, prev) => {
 });
 
 onMounted(async () => {
+  // 最先做：后面每一步的 toast 都要排在启动日志后面，而不是被补拉的缓冲插到前头。
+  await initGuiLogs();
   try { build.value = await invoke<{ version: string; build_id: string; built_at: string }>("get_build_info"); }
   catch (e) { console.error("get_build_info error:", e); }
   await loadConfig();
@@ -1986,6 +2038,8 @@ html, body, #app { height: 100%; }
 /* Log box */
 .log-box { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px; max-height: 200px; overflow-y: auto; font-size: 0.65rem; font-family: monospace; line-height: 1.5; }
 .log-entry { word-break: break-all; margin-bottom: 2px; }
+.log-entry.err { color: var(--red); }
+.log-entry.ok { color: var(--green); }
 .log-empty { color: var(--muted); font-style: italic; font-size: 0.7rem; padding: 8px; }
 
 /* ── Main Content ── */

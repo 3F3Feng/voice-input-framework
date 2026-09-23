@@ -988,6 +988,35 @@ async fn detect_local_server() -> Result<server_manager::DetectResult, String> {
     Ok(server_manager::detect())
 }
 
+// ── 应用外壳:托盘、诊断、退出 ──
+
+/// 「复制诊断信息」的内容:版本、构建、系统、连接方式、日志文件位置和最近的日志。
+/// 用户报问题时一键粘过来,不用我们再一条条问「什么版本、什么系统」。
+#[tauri::command]
+async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
+    let build = BuildInfo::current();
+    let (mode, stt_url) = {
+        let cfg = state.config.lock().map_err(|e| e.to_string())?;
+        (cfg.server.mode, cfg.server.effective_stt_url())
+    };
+    let snap = log::snapshot();
+    let skip = snap.lines.len().saturating_sub(200);
+    let tail: Vec<&str> = snap.lines[skip..].iter().map(|l| l.text.as_str()).collect();
+    Ok(format!(
+        "Voice Input v{} · build {} · {}\n系统: {} {}\n连接: {:?} {}\n日志文件: {}\n\n── 最近 {} 行客户端日志 ──\n{}\n",
+        build.version,
+        build.build_id,
+        build.built_at,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        mode,
+        stt_url,
+        snap.file.as_deref().unwrap_or("(未创建)"),
+        tail.len(),
+        tail.join("\n")
+    ))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1016,6 +1045,9 @@ pub fn run() {
             // (ui.use_tray 默认开启),主窗口通过托盘菜单打开,因此代价可接受。
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // 日志最先初始化:下面读配置时的「解析失败已备份」要能落进日志文件。
+            log::init(app.handle());
 
             let mut cfg = config::VoiceInputConfig::load(app.handle());
 
@@ -1066,8 +1098,6 @@ pub fn run() {
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
                 servers: std::sync::Arc::new(Mutex::new(manager)),
             });
-
-            log::init(app.handle());
 
             let build = BuildInfo::current();
             log_info!(
@@ -1211,6 +1241,9 @@ pub fn run() {
             set_server_mode,
             set_local_server_config,
             detect_local_server,
+            log::get_gui_logs,
+            log::open_log_dir,
+            get_diagnostics,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
