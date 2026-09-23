@@ -1,7 +1,7 @@
 //! Auto-input: type text into the active window using keyboard simulation.
 //! Uses the `enigo` crate for cross-platform keyboard input.
 
-use enigo::{Enigo, Keyboard};
+use enigo::{Direction, Enigo, Key, Keyboard};
 
 /// Type text into the currently focused window.
 pub fn type_text(text: &str) -> Result<(), String> {
@@ -14,15 +14,37 @@ pub fn type_text(text: &str) -> Result<(), String> {
     // 这里提前拦截,把静默失败变成明确的错误。
     check_accessibility_permission()?;
 
-    let mut enigo = Enigo::new(&Default::default())
-        .map_err(|e| format!("Failed to create input simulator: {}", e))?;
+    let mut enigo =
+        Enigo::new(&Default::default()).map_err(|e| format!("创建键盘模拟器失败: {}", e))?;
 
     // Type the text character by character using enigo's text() method.
     // This simulates real keyboard input to the active window.
     enigo
         .text(text)
-        .map_err(|e| format!("Failed to type text: {}", e))?;
+        .map_err(|e| format!("模拟输入失败: {}", e))?;
 
+    Ok(())
+}
+
+/// 模拟一次「粘贴」快捷键(macOS 上 Cmd+V,其它平台 Ctrl+V)。
+///
+/// 剪贴板由调用方先写好、事后还原(见 `lib.rs` 的 `deliver_text`)。
+pub fn press_paste() -> Result<(), String> {
+    check_accessibility_permission()?;
+    let mut enigo =
+        Enigo::new(&Default::default()).map_err(|e| format!("创建键盘模拟器失败: {}", e))?;
+    #[cfg(target_os = "macos")]
+    let modifier = Key::Meta;
+    #[cfg(not(target_os = "macos"))]
+    let modifier = Key::Control;
+    enigo
+        .key(modifier, Direction::Press)
+        .map_err(|e| format!("模拟粘贴失败: {}", e))?;
+    let clicked = enigo.key(Key::Unicode('v'), Direction::Click);
+    // 无论点 V 成没成,修饰键都得松开,否则用户的 Cmd / Ctrl 会一直「按着」。
+    let released = enigo.key(modifier, Direction::Release);
+    clicked.map_err(|e| format!("模拟粘贴失败: {}", e))?;
+    released.map_err(|e| format!("模拟粘贴失败: {}", e))?;
     Ok(())
 }
 

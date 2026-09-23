@@ -815,7 +815,7 @@ async fn auto_input(
         }
         // 前台切换是异步的,马上敲字会落进半路上的窗口。
         tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-        let result = input::type_text(&text);
+        let result = deliver_text(&app, &text).await;
         // `hide:` 之后整个应用处于「隐藏」状态,之后悬浮胶囊 orderFront 也出不来。
         // 输完就解除隐藏,但不抢前台(主窗口本身已经藏起来了)。
         #[cfg(target_os = "macos")]
@@ -831,7 +831,45 @@ async fn auto_input(
         }
         return result;
     }
-    input::type_text(&text)
+    deliver_text(&app, &text).await
+}
+
+/// 按配置的方式把文字送进当前焦点窗口。
+///
+/// 粘贴方式是默认的:逐字模拟键盘时,文本里的换行会变成回车键 —— 在聊天软件里
+/// 等于把没说完的话提前发出去;长文本逐字敲也慢,还会被激活的输入法截走。
+async fn deliver_text(app: &tauri::AppHandle, text: &str) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    if text.is_empty() {
+        return Ok(());
+    }
+    let method = app
+        .state::<AppState>()
+        .config
+        .lock()
+        .map(|c| c.ui.input_method)
+        .unwrap_or_default();
+    if method == config::InputMethod::Type {
+        return input::type_text(text);
+    }
+
+    let previous = app.clipboard().read_text().ok();
+    app.clipboard()
+        .write_text(text.to_string())
+        .map_err(|e| format!("写剪贴板失败: {}", e))?;
+    // 剪贴板变更在有的平台上是异步生效的,紧接着粘贴可能贴出旧内容。
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    let pasted = input::press_paste();
+    // 等目标应用把剪贴板读走再还原;还原前确认剪贴板里还是我们写的那段 ——
+    // 这几百毫秒里用户自己复制了别的东西,就别把它覆盖掉。
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    if let Some(prev) = previous {
+        if app.clipboard().read_text().ok().as_deref() == Some(text) {
+            let _ = app.clipboard().write_text(prev);
+        }
+    }
+    pasted
 }
 
 // ── Permission commands (macOS TCC) ──

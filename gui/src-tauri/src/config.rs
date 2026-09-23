@@ -161,6 +161,22 @@ pub struct UiConfig {
     /// 前端不会给他们看横幅。
     #[serde(default)]
     pub output_choice_made: bool,
+    /// 自动输入用什么方式把字送进目标窗口,见 [`InputMethod`]。
+    #[serde(default)]
+    pub input_method: InputMethod,
+}
+
+/// 把识别结果送进目标窗口的方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputMethod {
+    /// 写剪贴板 → 模拟粘贴 → 把原剪贴板还回去。默认:长文本一次到位,不受输入法
+    /// 影响,换行也不会变成「回车 = 发送」。
+    #[default]
+    Paste,
+    /// 逐字模拟键盘。老行为;少数不接受粘贴的输入框(比如某些密码框、远程桌面)
+    /// 只能用它。注意文本里的换行会被当成回车键。
+    Type,
 }
 
 fn default_true() -> bool {
@@ -255,6 +271,7 @@ impl Default for VoiceInputConfig {
                 opacity: 0.8,
                 auto_input: false,
                 output_choice_made: false,
+                input_method: InputMethod::default(),
             },
             audio: AudioConfig {
                 device: None,
@@ -462,6 +479,7 @@ impl VoiceInputConfig {
                 opacity: old.ui.as_ref().and_then(|u| u.opacity).unwrap_or(0.8),
                 auto_input: false,
                 output_choice_made: false,
+                input_method: InputMethod::default(),
             },
             audio: AudioConfig {
                 device: old.audio.as_ref().and_then(|a| {

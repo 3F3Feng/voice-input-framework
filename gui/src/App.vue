@@ -235,6 +235,18 @@
               <label class="toggle"><input type="checkbox" v-model="autoInputEnabled" @change="onAutoInputToggle" /><span class="slider"></span></label>
               <span class="s-label">自动输入到窗口</span>
             </div>
+            <div v-if="autoInputEnabled" class="s-row" style="margin-top:6px">
+              <span class="s-label" style="flex:1">输入方式</span>
+              <select class="s-select" style="width:auto" v-model="inputMethod" @change="onInputMethodChange">
+                <option value="paste">粘贴(推荐)</option>
+                <option value="type">模拟打字</option>
+              </select>
+            </div>
+            <div v-if="autoInputEnabled" class="s-tip">
+              {{ inputMethod === 'paste'
+                ? '借用剪贴板一次性贴进去,贴完把原来的剪贴板内容还回去。长文本快,不受输入法影响。'
+                : '逐字模拟键盘。文本里的换行会变成回车 —— 在聊天软件里等于直接发送。只在某个输入框不接受粘贴时用。' }}
+            </div>
             <div class="s-row" style="margin-top:6px">
               <label class="toggle"><input type="checkbox" v-model="autoStart" @change="toggleAutoStart" /><span class="slider"></span></label>
               <span class="s-label">开机自启动</span>
@@ -523,7 +535,7 @@ interface VoiceInputConfig {
   // use_floating_indicator / use_tray / opacity 还在 config.json 里（降级兼容，见 config.rs），
   // 但没有任何地方读，这里不再声明；整份对象读出来再原样写回，它们照样保留。
   // output_choice_made 是后加的，老配置里没有。
-  ui: { start_minimized: boolean; auto_input?: boolean; output_choice_made?: boolean };
+  ui: { start_minimized: boolean; auto_input?: boolean; output_choice_made?: boolean; input_method?: InputMethod };
   audio: { device: string | null; language: string };
   llm: { enabled: boolean };
   _version: string;
@@ -1269,6 +1281,7 @@ async function loadConfig() {
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     outputChoiceMade.value = cfg.ui.output_choice_made ?? false;
+    inputMethod.value = cfg.ui.input_method ?? "paste";
     selectedDevice.value = cfg.audio.device;
     // 旧配置没有 server.mode / server.local，Rust 端补了默认值；这里仍然
     // 用 ?? 兜一层，免得手改过配置文件时前端直接崩。
@@ -1312,6 +1325,12 @@ async function toggleDistinguishSides() {
     await invoke("register_hotkey", { shortcut: savedHotkey.value || defaultHotkey });
     toast(distinguishSides.value ? "已改为区分左右" : "已改为左右通用", "ok");
   } catch (e) { toast(`快捷键重新注册失败: ${e}`, "err"); }
+}
+type InputMethod = "paste" | "type";
+const inputMethod = ref<InputMethod>("paste");
+async function onInputMethodChange() {
+  const ok = await saveConfigPatch(cfg => { cfg.ui.input_method = inputMethod.value; });
+  if (ok) toast(inputMethod.value === "paste" ? "改为粘贴方式输入" : "改为模拟打字输入", "ok");
 }
 function onAutoInputToggle() {
   // 在设置里拨过这个开关，就等于回答了横幅那个问题，不必再问。
