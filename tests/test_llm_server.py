@@ -204,6 +204,38 @@ class TestLoadFailureAndModelChoice:
         assert not state_file.exists()
 
     @pytest.mark.asyncio
+    async def test_failed_switch_rolls_back_to_previous_model(self, monkeypatch, state_file):
+        """切到加载不了的 LLM 模型:回到原来的模型,切换失败的原因照样报出来"""
+        from fastapi.testclient import TestClient
+
+        import services.llm_server as srv
+
+        monkeypatch.setattr(srv, "IS_APPLE_SILICON", True)
+        engine = srv.LLMEngine(default_model="Qwen3-0.6B")
+        bad_id = engine.MODEL_IDS["Qwen3-1.7B"]
+
+        def load(model_id):
+            if model_id == bad_id:
+                raise OSError("download interrupted")
+            engine._model, engine._tokenizer = object(), object()
+
+        monkeypatch.setattr(engine, "_load_sync", load)
+        assert await engine.load() is True
+        assert await engine.load("Qwen3-1.7B", remember=True) is False
+        assert engine.current_model_name == "Qwen3-0.6B"
+        assert engine.is_model_loaded()
+        assert "download interrupted" in engine._load_error
+        assert "已回到 Qwen3-0.6B" in engine._load_error
+        assert not state_file.exists()  # 失败的选择不记
+
+        monkeypatch.setattr(srv, "engine", engine)
+        client = TestClient(srv.app)
+        assert client.get("/health").json()["status"] == "ok"
+        r = client.post("/models/select", data={"model_name": "Qwen3-1.7B"})
+        assert r.status_code == 503
+        assert "download interrupted" in r.json()["message"]
+
+    @pytest.mark.asyncio
     async def test_non_apple_platform_says_why(self, monkeypatch, state_file):
         import services.llm_server as srv
 

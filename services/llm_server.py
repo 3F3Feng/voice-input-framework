@@ -300,6 +300,9 @@ class LLMEngine:
             # `_loading` 本身保留: is_loading() 对外暴露加载状态(/ready 等接口在用)。
             self._loading = True
             self._load_error = None
+            # 切换前那个模型要是能用,新模型加载失败时就回退过去(和 STT 侧一致)。
+            # 以前失败了就什么模型都没有,后处理从此每句都失败,直到用户再选一个。
+            previous = self.current_model_name if self._is_loaded else None
             try:
                 # 切换模型前先释放旧模型内存(与 STT 侧一致,否则每次切换都泄漏一份权重)
                 if self._model is not None:
@@ -316,9 +319,25 @@ class LLMEngine:
             except Exception as e:
                 logger.error(f"Failed to load LLM model: {e}", exc_info=True)
                 self._load_error = f"{type(e).__name__}: {e}"
+                if previous and previous != target_model:
+                    await self._rollback_to(previous)
                 return False
             finally:
                 self._loading = False
+
+    async def _rollback_to(self, previous: str) -> None:
+        """新模型加载失败后,把切换前的模型装回来。调用方须持有 `_load_lock`。"""
+        logger.info(f"Rolling back to previous LLM model {previous}")
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._load_sync, self.MODEL_IDS[previous])
+        except Exception as e:  # noqa: BLE001 - 回退失败只能如实说出来
+            logger.error(f"Rollback to {previous} failed as well: {e}")
+            self._load_error = f"{self._load_error};回退到 {previous} 也失败了:{e}"
+            return
+        self.current_model_name = previous
+        self._is_loaded = True
+        self._load_error = f"{self._load_error}(已回到 {previous})"
 
     def _release_model(self):
         """释放当前已加载的模型内存"""
@@ -614,7 +633,9 @@ async def select_model(model_name: str = Form(...)):
             # 中间的转发层和客户端都只看状态码,一路把失败当成功传到界面上,
             # 用户会收到一条「已切换」的提示,而模型其实没换。
             logger.error(f"Model load failed: {model_name}")
-            reason = engine.load_error()
+            # 不用 load_error():失败后回退到了原模型时它是 None(服务是好的),
+            # 可这次切换失败的原因还得告诉用户。
+            reason = engine._load_error
             body["message"] = f"模型 {model_name} 加载失败" + (f":{reason}" if reason else "")
             return JSONResponse(status_code=503, content=body)
         return body
