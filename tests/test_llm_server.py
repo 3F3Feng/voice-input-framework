@@ -344,9 +344,16 @@ class TestOutputGuards:
     def test_empty_and_lossy_output_is_rejected(self):
         from services.llm_server import reject_reason
 
-        original = "我们明天下午两点半开会,记得带电脑和充电器,还有上周的会议纪要。"
+        original = "我们明天下午两点半开会,记得带电脑和充电器,还有上周的会议纪要。" * 3
         assert reject_reason(original, "", hit_token_limit=False)
         assert reject_reason(original, "开会。", hit_token_limit=False)
+
+    def test_self_correction_that_shortens_a_lot_is_accepted(self):
+        """口头改口会把短句删掉一大半,这是正确整理(实测输出)"""
+        from services.llm_server import reject_reason
+
+        original = "嗯那个就是说我们明天下午三点不对是两点半开会"
+        assert reject_reason(original, "明天下午两点半开会", hit_token_limit=False) is None
 
     def test_normal_cleanup_is_accepted(self):
         from services.llm_server import reject_reason

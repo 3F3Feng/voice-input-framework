@@ -177,8 +177,11 @@ def reject_reason(original: str, cleaned: str, hit_token_limit: bool) -> str | N
     # 整理(去填充词、加标点)不会让文字变长太多;长出一大截基本是在回答或续写。
     if len(cleaned) > n * 1.5 + 10:
         return "LLM 输出比原文长很多,像是在回答而不是整理"
-    # 反过来短得离谱,多半是只截了一句或者丢了大段内容。
-    if n >= 20 and len(cleaned) < n * 0.4:
+    # 反过来短得离谱,多半是只截了一句或者丢了大段内容。只看长文本:短句里
+    # 口头改口(「三点不对是两点半」)和填充词本来就能删掉一大半,实测
+    # 「嗯那个就是说我们明天下午三点不对是两点半开会」→「明天下午两点半开会」
+    # 是正确结果,不能当成丢内容。
+    if n >= 80 and len(cleaned) < n * 0.3:
         return "LLM 输出比原文短太多,可能丢了内容"
     return None
 
@@ -292,6 +295,11 @@ class LLMEngine:
 
     def process(self, text: str) -> ProcessResult:
         """处理文本"""
+        if not text.strip():
+            # 空文本没有可整理的,别让模型对着空输入自由发挥。
+            return ProcessResult(
+                text=text, original_text=text, llm_latency_ms=0, model="", success=True
+            )
         if not self._is_loaded:
             return ProcessResult(
                 text=text,
