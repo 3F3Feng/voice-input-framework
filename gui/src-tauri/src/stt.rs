@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -194,14 +195,36 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
 /// 这里比它多留一点,好让服务端写好的失败原因回得来。
 const LLM_SWITCH_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// 远程服务要求的访问令牌(F20,服务端 shared/auth.py)。只在远程模式下设置;
+/// 本应用拉起的本地服务不带令牌。放在全局是因为 `SttClient` 到处都是临时 new 出来的。
+static API_TOKEN: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+pub fn set_api_token(token: Option<String>) {
+    if let Ok(mut t) = API_TOKEN.write() {
+        *t = token
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+    }
+}
+
+fn api_token() -> Option<String> {
+    API_TOKEN.read().ok().and_then(|t| t.clone())
+}
+
 /// 带超时的 HTTP 客户端。以前每处都是 `Client::new()` —— 默认**没有任何超时**,
 /// 服务卡住时请求会一直挂着,前端连接循环的「截止时间」形同虚设。
 fn http(timeout: Duration) -> Client {
-    Client::builder()
+    let mut builder = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(timeout)
-        .build()
-        .unwrap_or_else(|_| Client::new())
+        .timeout(timeout);
+    if let Some(token) = api_token() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)) {
+            headers.insert(reqwest::header::AUTHORIZATION, v);
+        }
+        builder = builder.default_headers(headers);
+    }
+    builder.build().unwrap_or_else(|_| Client::new())
 }
 
 /// 请求没发出去 / 没等到回答时,给用户看的那句话。
@@ -265,7 +288,16 @@ impl SttClient {
     ) -> Result<String, String> {
         let url = format!("{}/ws/stream", ws_base(&self.stt_url));
 
-        let (mut ws, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(&url))
+        let mut request = url
+            .as_str()
+            .into_client_request()
+            .map_err(|e| format!("{}({}):地址不对:{}", ERR_UNREACHABLE, self.stt_url, e))?;
+        if let Some(token) = api_token() {
+            if let Ok(v) = format!("Bearer {}", token).parse() {
+                request.headers_mut().insert("Authorization", v);
+            }
+        }
+        let (mut ws, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(request))
             .await
             .map_err(|_| format!("{}({}):连接超时", ERR_UNREACHABLE, self.stt_url))?
             .map_err(|e| format!("{}({}):{}", ERR_UNREACHABLE, self.stt_url, e))?;

@@ -48,6 +48,7 @@ from services.stt_engine import (
     TranscriptionRequest,
     TranscriptionResult,
 )
+from shared import auth
 from shared.constants import (
     DEFAULT_BIND_HOST,
     DEFAULT_CORS_ORIGINS,
@@ -252,7 +253,7 @@ async def call_llm_server(
         后处理成功;否则是一句给用户看的原因,此时 processed_text 就是原文。
     """
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=auth.outgoing_headers()) as client:
             response = await client.post(
                 f"{LLM_SERVER_URL}/process",
                 json={
@@ -301,7 +302,7 @@ _llm_model_cache: dict = {"model": None, "at": float("-inf"), "refreshing": Fals
 
 async def _refresh_llm_model() -> None:
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=auth.outgoing_headers()) as client:
             resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
             if resp.status_code == 200:
                 _llm_model_cache["model"] = resp.json().get("current_model")
@@ -357,6 +358,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def api_token_middleware(request: Request, call_next):
+    """可选的访问令牌(F20,见 shared/auth.py)。没设 VIF_API_TOKEN 时什么都不做。"""
+    if auth.needs_check(request.method, request.url.path) and not auth.token_ok(
+        request.headers.get("authorization"), request.query_params.get("token")
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={"error_code": "UNAUTHORIZED", "error_message": auth.UNAUTHORIZED_MESSAGE},
+        )
+    return await call_next(request)
 
 
 # 请求ID中间件
@@ -462,7 +476,7 @@ def _upstream_message(resp: httpx.Response) -> str:
 async def list_llm_models():
     """转发：获取可用 LLM 模型列表"""
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=auth.outgoing_headers()) as client:
             resp = await client.get(f"{LLM_SERVER_URL}/models", timeout=10.0)
             if resp.status_code == 200:
                 data = resp.json()
@@ -483,7 +497,7 @@ async def select_llm_model(request: Request):
     try:
         body = await request.json()
         model_name = body.get("model_name", "")
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=auth.outgoing_headers()) as client:
             resp = await client.post(
                 f"{LLM_SERVER_URL}/models/select", data={"model_name": model_name}, timeout=30.0
             )
@@ -517,7 +531,7 @@ async def select_llm_model(request: Request):
 async def llm_health():
     """转发：LLM 服务器健康检查"""
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=auth.outgoing_headers()) as client:
             resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
             return resp.json()
     except Exception as e:
@@ -563,7 +577,7 @@ async def set_llm_enabled(request: Request):
 async def get_llm_prompt():
     """转发：获取 LLM 提示词"""
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=auth.outgoing_headers()) as client:
             resp = await client.get(f"{LLM_SERVER_URL}/prompt", timeout=5.0)
             if resp.status_code == 200:
                 return resp.json()
@@ -577,7 +591,7 @@ async def update_llm_prompt(request: Request):
     """转发：更新 LLM 提示词"""
     try:
         body = await request.json()
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=auth.outgoing_headers()) as client:
             resp = await client.put(f"{LLM_SERVER_URL}/prompt", json=body, timeout=10.0)
             if resp.status_code == 200:
                 return resp.json()
@@ -629,7 +643,7 @@ async def set_vocabulary(request: Request):
 async def reset_llm_prompt():
     """转发:恢复默认 LLM 提示词"""
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=auth.outgoing_headers()) as client:
             resp = await client.delete(f"{LLM_SERVER_URL}/prompt", timeout=10.0)
             if resp.status_code == 200:
                 return resp.json()
@@ -769,6 +783,12 @@ async def _with_keepalive(coro, stage: str, send):
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
     """WebSocket 流式识别"""
+    # 令牌(F20)。HTTP 中间件管不到 WebSocket,这里单独查;不对就拒绝握手。
+    if not auth.token_ok(
+        websocket.headers.get("authorization"), websocket.query_params.get("token")
+    ):
+        await websocket.close(code=4401, reason="unauthorized")
+        return
     await websocket.accept()
     engine.increment_connections()
     logger.info("WebSocket connection accepted")

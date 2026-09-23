@@ -28,6 +28,7 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
+from shared import auth
 from shared.constants import (  # noqa: E402
     DEFAULT_BIND_HOST,
     DEFAULT_CORS_ORIGINS,
@@ -576,6 +577,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def api_token_middleware(request: Request, call_next):
+    """可选的访问令牌(F20,见 shared/auth.py)。没设 VIF_API_TOKEN 时什么都不做。"""
+    if auth.needs_check(request.method, request.url.path) and not auth.token_ok(
+        request.headers.get("authorization"), request.query_params.get("token")
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={"error_code": "UNAUTHORIZED", "error_message": auth.UNAUTHORIZED_MESSAGE},
+        )
+    return await call_next(request)
 
 
 @app.get("/health", response_model=HealthStatus)

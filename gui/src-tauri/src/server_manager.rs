@@ -2207,6 +2207,7 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
                     llm_port: TEST_LLM_PORT,
                     ..Default::default()
                 },
+                token: None,
             }
         }
 
@@ -2717,6 +2718,7 @@ mod real_servers {
                 llm_port: 6545,
                 ..Default::default()
             },
+            token: None,
         };
         let manager = Mutex::new(ServerManager::new(
             std::env::temp_dir().join("vif-real-check"),

@@ -271,6 +271,7 @@ npm run tauri build
 | `VIF_LLM_HOST` | 127.0.0.1 | LLM 服务监听地址;在 STT 服务里是转发目标地址 |
 | `VIF_LLM_ENABLED` | true | 是否启用 LLM 后处理 |
 | `VIF_LLM_MODEL` | Qwen3.5-4B-OptiQ | 默认 LLM 模型 |
+| `VIF_API_TOKEN` | 未设置 | 访问令牌。设了之后除 `/health` 外的请求都要带 `Authorization: Bearer <令牌>`(WebSocket 也可用 `?token=`);客户端在「远程连接」里填。**暴露到局域网时务必设置** |
 | `VIF_CORS_ORIGINS` | 本地 GUI 的几个来源 | 允许的跨域来源,逗号分隔;见 `shared/constants.py` 的 `DEFAULT_CORS_ORIGINS` |
 | `VIF_REQUEST_TIMEOUT` | 300.0 | 请求超时(秒) |
 | `VIF_LOG_LEVEL` | INFO | 日志级别 |
@@ -279,7 +280,8 @@ npm run tauri build
 > 默认就不该暴露到局域网。所以**要从别的机器连过来,必须显式设置**
 > `VIF_STT_HOST=0.0.0.0`(LLM 服务同理用 `VIF_LLM_HOST`),并且相应地把
 > `VIF_CORS_ORIGINS` 设成客户端的来源 —— 不设的话请求会被 CORS 挡掉。
-> 暴露到局域网之前请自行确认网络是可信的。
+> 暴露到局域网时请同时设置 `VIF_API_TOKEN`(STT 和 LLM 两个服务用同一个值),
+> 并在客户端「远程连接」里填上同一个令牌。
 >
 > 完整模型元数据见 `shared/model_registry.py`(单一来源)。
 >

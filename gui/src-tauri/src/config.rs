@@ -39,6 +39,9 @@ pub struct ServerConfig {
     pub mode: ServerMode,
     #[serde(default)]
     pub local: LocalServerConfig,
+    /// 远程服务的访问令牌(服务端设了 `VIF_API_TOKEN` 时才需要,F20)。
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 /// 本地管理模式下拉起 Python 服务需要的信息。
@@ -98,6 +101,14 @@ impl Default for LocalServerConfig {
 }
 
 impl ServerConfig {
+    /// 当前该带的令牌:只有远程模式带。本应用拉起的本地服务不设令牌。
+    pub fn active_token(&self) -> Option<String> {
+        match self.mode {
+            ServerMode::Remote => self.token.clone().filter(|t| !t.trim().is_empty()),
+            ServerMode::Local => None,
+        }
+    }
+
     /// 首次启动、并且探测到了仓库时的出厂设置:本地管理 + 随应用启动。
     /// 返回是否生效。
     ///
@@ -275,6 +286,7 @@ impl Default for VoiceInputConfig {
                 port: 6544,
                 mode: ServerMode::default(),
                 local: LocalServerConfig::default(),
+                token: None,
             },
             hotkey: HotkeyConfig {
                 key: "left_ctrl+left_alt".into(),
@@ -467,6 +479,7 @@ impl VoiceInputConfig {
                 // 老 Python 客户端没有「本地管理」概念,迁移过来一律是远程/手动。
                 mode: ServerMode::default(),
                 local: LocalServerConfig::default(),
+                token: None,
             },
             hotkey: HotkeyConfig {
                 key: old

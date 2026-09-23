@@ -60,12 +60,17 @@ async fn set_server_host(
     state: State<'_, AppState>,
     host: String,
     port: Option<u16>,
+    token: Option<String>,
 ) -> Result<(), String> {
     let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
     cfg.server.host = host;
     if let Some(port) = port {
         cfg.server.port = port;
     }
+    if let Some(token) = token {
+        cfg.server.token = Some(token.trim().to_string()).filter(|t| !t.is_empty());
+    }
+    stt::set_api_token(cfg.server.active_token());
     // 本地管理模式下这个输入框改的是「远程地址」,只存不用——客户端仍然连
     // 本地端口。切回远程模式时 `set_server_mode` 会重新指向它。
     if cfg.server.mode == config::ServerMode::Remote {
@@ -1287,6 +1292,7 @@ async fn set_server_mode(
     let url = {
         let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
         cfg.server.mode = mode;
+        stt::set_api_token(cfg.server.active_token());
         let url = cfg.server.effective_stt_url();
         cfg.save(&app)?;
         url
@@ -1470,6 +1476,7 @@ pub fn run() {
             // 客户端连哪儿由模式决定:远程连 host,本地连 127.0.0.1:stt_port。
             // 老配置没有 mode 字段 → 默认 Remote → 和以前完全一样。
             let stt_url = cfg.server.effective_stt_url();
+            stt::set_api_token(cfg.server.active_token());
             let shortcut = cfg.hotkey.key.clone();
             let distinguish_sides = cfg.hotkey.distinguish_left_right;
             hotkey::set_toggle_mode(cfg.hotkey.toggle);

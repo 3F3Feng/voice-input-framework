@@ -59,6 +59,11 @@
                   @keyup.enter="updateServer" @change="onServerSettingChange" />
                 <button class="s-btn" @click="updateServer" :disabled="connecting">{{ connecting ? '...' : '连接' }}</button>
               </div>
+              <!-- 服务端设了 VIF_API_TOKEN 时才需要(F20)。空着 = 不带令牌。 -->
+              <div class="s-row" style="margin-top:4px">
+                <input class="s-input" v-model="serverToken" type="password" autocomplete="off"
+                  placeholder="访问令牌(服务端设了 VIF_API_TOKEN 才需要)" @keyup.enter="updateServer" />
+              </div>
               <div class="s-tip">只连接，不管理进程。服务需要在对端自行启动。主机可填裸主机名，也可填完整 URL。</div>
             </template>
 
@@ -664,7 +669,7 @@ interface LocalServerConfig {
 interface VoiceInputConfig {
   // mode / local 是后加的：旧 config.json 里没有这两项，Rust 端有 serde 默认值，
   // 读出来一定是 remote + 空 local。
-  server: { host: string; port: number; mode: ServerMode; local: LocalServerConfig };
+  server: { host: string; port: number; mode: ServerMode; local: LocalServerConfig; token?: string | null };
   hotkey: { key: string; distinguish_left_right: boolean; toggle?: boolean };
   // use_floating_indicator / use_tray / opacity 还在 config.json 里（降级兼容，见 config.rs），
   // 但没有任何地方读，这里不再声明；整份对象读出来再原样写回，它们照样保留。
@@ -745,6 +750,8 @@ const promptLoaded = ref(false);
 const sttSwitchNote = ref("");
 
 const serverHost = ref("localhost");
+/** 远程服务的访问令牌(F20)。 */
+const serverToken = ref("");
 const serverPort = ref(6544);
 
 // 服务器管理
@@ -1636,6 +1643,7 @@ async function loadConfig() {
   try {
     const cfg = await getConfig();
     serverHost.value = cfg.server.host;
+    serverToken.value = cfg.server.token ?? "";
     serverPort.value = cfg.server.port;
     hotkeyStr.value = cfg.hotkey.key;
     savedHotkey.value = cfg.hotkey.key;
@@ -1808,7 +1816,7 @@ async function updateServer() {
   const port = serverPort.value || 6544;
   try {
     // `set_server_host` 自己会把地址写进配置并落盘,这里不用再存一遍。
-    await invoke("set_server_host", { host, port });
+    await invoke("set_server_host", { host, port, token: serverToken.value.trim() });
   } catch (e) { toast(`连接失败: ${e}`, "err"); return; }
   await ensureConnected(0);
 }
