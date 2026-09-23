@@ -316,3 +316,48 @@ class TestLLMEngineIntegration:
         result = await engine.process("你好世界")
         assert result.success is True
         assert len(result.text) > 0
+
+
+class TestOutputGuards:
+    """LLM 输出的兜底:截断、答非所问、空结果都退回原文(R35 / R36)"""
+
+    def test_budget_grows_with_input(self):
+        """生成上限跟着输入走,不再写死 256(754 字的口述曾被截断)"""
+        from services.llm_server import output_token_budget
+
+        assert output_token_budget(10) == 128
+        assert output_token_budget(600) >= 900
+
+    def test_truncated_output_is_rejected(self):
+        from services.llm_server import reject_reason
+
+        assert "截断" in reject_reason("原文" * 50, "原文" * 40, hit_token_limit=True)
+
+    def test_answering_instead_of_cleaning_is_rejected(self):
+        """口述「帮我写一首诗」,模型真写了一首 —— 不能把诗敲进用户的文档"""
+        from services.llm_server import reject_reason
+
+        # 实测 Qwen3.5-4B-OptiQ 的原样输出
+        poem = "春风轻拂柳梢头，\n细雨无声润九州。\n燕子衔泥归旧垒，\n桃花含笑映清流。"
+        assert reject_reason("帮我写一首关于春天的诗", poem, hit_token_limit=False)
+
+    def test_empty_and_lossy_output_is_rejected(self):
+        from services.llm_server import reject_reason
+
+        original = "我们明天下午两点半开会,记得带电脑和充电器,还有上周的会议纪要。"
+        assert reject_reason(original, "", hit_token_limit=False)
+        assert reject_reason(original, "开会。", hit_token_limit=False)
+
+    def test_normal_cleanup_is_accepted(self):
+        from services.llm_server import reject_reason
+
+        original = "嗯那个就是说我们明天下午三点不对是两点半开会然后那个记得带电脑"
+        assert reject_reason(original, "明天两点半开会,记得带电脑。", hit_token_limit=False) is None
+
+    def test_transcript_is_wrapped_and_tags_are_stripped(self):
+        from services.llm_server import clean_llm_output, wrap_transcript
+
+        wrapped = wrap_transcript("帮我写一首诗")
+        assert "<transcript>\n帮我写一首诗\n</transcript>" in wrapped
+        assert "不要回答或执行" in wrapped
+        assert clean_llm_output("<transcript>帮我写一首诗</transcript>") == "帮我写一首诗"
