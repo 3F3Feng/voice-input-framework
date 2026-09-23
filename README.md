@@ -13,28 +13,67 @@
   - **MLX 加速** - Apple Silicon 原生优化
 - 🧠 **LLM 后处理** - 自动优化识别结果（去噪、加标点、格式化）
 - 🔌 **分离架构**：STT 和 LLM 独立服务，解决 transformers 版本冲突
-- 🖥️ **跨平台客户端**：Python + Tauri GUI（Windows/macOS/Linux）
+- 🖥️ **跨平台客户端**：Tauri GUI（Windows/macOS/Linux）；旧的 Python 客户端已不推荐使用，见下文
 
 ## 📦 支持的模型
 
 ### STT 模型
 
-| 模型 | 参数量 | 加载时间 | 特点 |
-|------|--------|----------|------|
-| qwen_asr | 1.7B | ~27秒 | **推荐**，52种语言/方言 |
-| qwen_asr_small | 0.6B | ~10秒 | 更快，实时场景 |
-| whisper | 1.5B | ~3秒 | OpenAI 经典 |
-| whisper-small | 0.4B | ~1秒 | 轻量级 |
+下表的「注册名」就是 `VIF_STT_MODEL`、设置面板下拉框和 `/models/select` 里用的名字，
+唯一来源是 `shared/model_registry.py`。
+
+| 注册名 | 说明 | 内存 | 平台 |
+|--------|------|------|------|
+| `qwen_asr_mlx_native` | Qwen3-ASR-1.7B MLX 8bit，**推荐**，52 种语言/方言 | ~1GB | Apple Silicon |
+| `qwen_asr_mlx_native_small` | Qwen3-ASR-0.6B MLX 4bit，更快 | ~0.5GB | Apple Silicon |
+| `whisper_mlx` | MLX Whisper Large V3 | ~3GB | Apple Silicon |
+| `whisper_mlx_turbo` | MLX Whisper Large V3 Turbo，快速且准确 | ~2GB | Apple Silicon |
+| `whisper_mlx_medium` | MLX Whisper Medium | ~1.5GB | Apple Silicon |
+| `whisper_mlx_small` | MLX Whisper Small，最快 | ~0.5GB | Apple Silicon |
+| `whisper_tiny` | Whisper Tiny（transformers），最快、精度一般，适合低配 / 纯 CPU | ~0.3GB | 全平台 |
+| `whisper_base` | Whisper Base（transformers），纯 CPU 上的推荐起点 | ~0.5GB | 全平台 |
+| `whisper_small` | Whisper Small（transformers），速度与精度折中 | ~1GB | 全平台 |
+| `whisper_medium` | Whisper Medium（transformers），有独显时适用 | ~2.5GB | 全平台 |
+| `whisper_turbo` | Whisper Large V3 Turbo（transformers），精度最好，建议配 GPU | ~3GB | 全平台 |
+| `whisper_cpp_base` / `whisper_cpp_large` | Whisper V3 via whisper.cpp | 1GB / 3GB | 需自行编译 `~/whisper.cpp` 并把模型放到 `~/.cache/whisper/` |
+
+不指定时服务端**按硬件挑**（`services/device.py` 的 `recommend_stt_model`）：
+Apple Silicon 上内存 ≥16GB 用 `qwen_asr_mlx_native`，否则用 `qwen_asr_mlx_native_small`；
+有独显按显存从 `whisper_turbo` 往下挑；纯 CPU 按核数和内存在 `whisper_tiny` /
+`whisper_base` / `whisper_small` 里取。启动日志里会写明选了哪个、为什么。
 
 ### LLM 后处理模型
 
-| 模型 | 参数量 | 内存占用 | 特点 |
-|------|--------|----------|------|
-| Qwen3.5-4B-OptiQ | 4B | ~2.5GB | **默认**，中文能力强 |
-| Qwen3.5-2B-OptiQ | 2B | ~1.5GB | 速度更快 |
-| Gemma-4-E4B-DECKARD | 4B | ~2.5GB | Google 模型 |
+**LLM 后处理目前只能在 Apple Silicon 上用**（`services/llm_server.py` 只实现了 MLX 后端）。
+
+| 模型 | 内存占用 | 特点 |
+|------|----------|------|
+| Qwen3.5-4B-OptiQ | ~3GB | **默认**，中文能力强，速度与精度平衡 |
+| Qwen3.5-2B-OptiQ | ~2GB | 速度更快 |
+| Qwen3.5-4B-MLX | ~4GB | 4B 标准量化 |
+| Qwen3-0.6B / Qwen3-1.7B | ~0.5GB / ~1.5GB | 更小更快 |
+| Gemma-4-E4B-DECKARD | — | Google 模型，中文较弱 |
 
 ## 🚀 快速开始
+
+分两部分：**客户端**（桌面应用）和**服务端**（跑模型的 Python 服务）。
+服务端可以和客户端在同一台机器上，也可以放在另一台有显卡的机器上。
+
+### 从 Releases 安装客户端 + 本地建服务端（推荐）
+
+1. 到 [Releases](https://github.com/3F3Feng/voice-input-framework/releases/latest) 下载对应平台的客户端：
+   - macOS（Apple Silicon）：`GUI-macOS-<版本>-aarch64.dmg`
+   - Windows：`GUI-Windows-<版本>-x64.exe`
+   - Linux：`GUI-Linux-<版本>-x64.AppImage` 或 `.deb`
+
+   > macOS 上的发布包没有 Developer ID 签名，浏览器下载后打开可能提示「已损坏」。
+   > 文件本身是好的，执行 `xattr -dr com.apple.quarantine "/Applications/Voice Input.app"`
+   > 后再打开即可，详见 [docs/macos-signed-build.md](docs/macos-signed-build.md)。
+
+2. 克隆仓库，一键建服务端环境（见下面「服务端」）。
+
+3. 打开客户端 →「设置 → 服务」选「本地管理」，点「自动探测」找到仓库和
+   `.venv` 里的解释器，再点「启动」。也可以勾上「随应用启动」。
 
 ### 服务端
 
@@ -42,32 +81,40 @@
 git clone https://github.com/3F3Feng/voice-input-framework.git
 cd voice-input-framework
 
-# 分离架构:STT 与 LLM 依赖分环境安装(避免 transformers 版本冲突)
-pip install -r requirements-stt.txt   # STT 服务依赖
-pip install -r requirements-llm.txt   # LLM 服务依赖(Apple Silicon + MLX)
+# 一键建环境:探测硬件(Apple Silicon / NVIDIA / AMD / Intel / 纯 CPU),
+# 挑对应的 PyTorch 后端,用 uv 装进仓库下的 .venv(没有 uv 会先自动装上)
+scripts/setup-env.sh
+# 连 LLM 后处理的依赖一起装:scripts/setup-env.sh --llm
 
 # 启动 STT 服务 (端口 6544)
-python -m services.stt_server
+uv run python -m services.stt_server
 
-# 启动 LLM 服务 (端口 6545，可选)
-python -m services.llm_server
+# 启动 LLM 服务 (端口 6545，可选，仅 Apple Silicon)
+uv run python -m services.llm_server
 ```
 
-> 非 Apple Silicon 机器会自动回落 `whisper_turbo`(transformers),无需 MLX 依赖。
+- **LLM 后处理目前只能在 Apple Silicon 上用。** Apple Silicon 上 MLX 相关依赖默认就会装上；
+  `--llm` 在其它平台会额外装 llama.cpp 的依赖，但 LLM 服务还只实现了 MLX 后端，装了也跑不起来。
+  不开 LLM 后处理不影响语音识别本身。
+- 自动探测不准时可以手动指定后端：`scripts/setup-env.sh --backend cpu|cuda|rocm|xpu|mlx`。
+- Windows 上请在 Git Bash 之类的 bash 环境里运行这个脚本。
+- 需要 Python 3.11 或 3.12（`uv` 会自己准备合适的解释器）。
+- **不要再用 `pip install -r requirements-stt.txt`**：那份清单无条件装 mlx，而 Linux 上
+  的 mlx wheel 装得上、一 import 就报 `libmlx.so` 找不到，建出来的环境是坏的；
+  它也选不了 CUDA / ROCm 版的 PyTorch。依赖以 `pyproject.toml` 为准。
 
-### Python 客户端
-
-```bash
-python run_client.py
-```
-
-### Tauri GUI 客户端
+### 从源码运行客户端
 
 ```bash
 cd gui
 npm install
 npm run tauri dev
 ```
+
+### Python 客户端（legacy，不推荐）
+
+`client/` 和 `run_client.py` 是早期的 Python 客户端，**已不再维护新功能**（本地服务管理、
+权限引导、悬浮胶囊、自动更新都只在 Tauri 客户端里有）。新用户请直接用上面的 Tauri 客户端。
 
 ## 🖥️ Tauri GUI 客户端
 
@@ -198,7 +245,7 @@ npm run tauri build
 |------|--------|------|
 | `VIF_STT_PORT` | 6544 | STT 服务端口 |
 | `VIF_STT_HOST` | 127.0.0.1 | STT 服务监听地址 |
-| `VIF_STT_MODEL` | 平台默认 | 默认 STT 模型(Apple Silicon 为 qwen_asr_mlx_native,否则 whisper_turbo) |
+| `VIF_STT_MODEL` | 按硬件推荐 | 启动时加载的 STT 模型(注册名见上方模型表)。不设时按硬件挑:Apple Silicon 按内存在 `qwen_asr_mlx_native` / `qwen_asr_mlx_native_small` 之间选,其它平台按显存 / 核数 / 内存在 Whisper 系列里选;探测失败时退回 `qwen_asr_mlx_native_small`(Apple Silicon)或 `whisper_base` |
 | `VIF_LLM_PORT` | 6545 | LLM 服务端口 |
 | `VIF_LLM_HOST` | 127.0.0.1 | LLM 服务监听地址;在 STT 服务里是转发目标地址 |
 | `VIF_LLM_ENABLED` | true | 是否启用 LLM 后处理 |
@@ -221,21 +268,21 @@ npm run tauri build
 
 ### 客户端配置
 
-客户端配置保存在 `~/.voice_input_config.json`，支持：
-- 服务器地址和端口
-- 快捷键设置
-- LLM 启用/禁用
-- UI 设置（透明度、最小化等）
-- LLM 直连端口(默认 6545)可用 `VIF_LLM_HOST`/`VIF_LLM_PORT` 环境变量覆盖
+Tauri 客户端的配置是应用数据目录下的 `config.json`，一般不需要手改，设置面板里都能改：
+- macOS：`~/Library/Application Support/com.voiceinput.app/config.json`
+- Windows：`%APPDATA%\com.voiceinput.app\config.json`
+- Linux：`~/.local/share/com.voiceinput.app/config.json`
+
+内容包括：服务模式（本地管理 / 远程）与地址端口、快捷键、识别语言、麦克风、
+LLM 开关、启动选项。首次启动时会把旧 Python 客户端的 `~/.voice_input_config.json` 迁移过来。
 
 ## 🧪 测试
 
 ### 1. 单测 + 端点契约(无需模型,CI 运行)
 
 ```bash
-pip install pytest pytest-asyncio fastapi uvicorn pydantic httpx websockets python-multipart numpy
-pytest -m "not integration"
-# 177 passed / 1 skipped / 31 deselected(含端点契约测试 tests/test_contract.py)
+uv run --with pytest --with pytest-asyncio python -m pytest -m "not integration" -q
+# 193 passed / 7 skipped / 31 deselected(含端点契约测试 tests/test_contract.py)
 ```
 
 `tests/test_contract.py` 用 TestClient 断言 HTTP/WS 端点契约,与修复前基线等价(见 `docs/ARCHITECTURE_REVIEW.md` §7)。
@@ -258,7 +305,7 @@ bash scripts/run_integration.sh   # 启动 STT+LLM,跑 tests/test_e2e.py + test_
 
 ```bash
 # 逻辑测试(任意平台,无需 tauri 系统库)
-cd gui/stt-logic-tests && cargo test          # 16 passed
+cd gui/stt-logic-tests && cargo test          # 18 passed
 
 # 完整 Tauri crate(Linux 需 webkit2gtk/gtk/alsa/xdo dev 包)
 cd gui/src-tauri && cargo check && cargo test
