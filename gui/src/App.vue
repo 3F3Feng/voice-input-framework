@@ -480,6 +480,10 @@
           <span v-else-if="connecting" class="status-proc">正在连接服务器…</span>
           <span v-else class="status-off">未连接服务器</span>
         </div>
+        <!-- 转写一个现成的音频文件(F21)。服务端一直有 /transcribe,界面上没有入口。 -->
+        <button class="file-btn" @click="transcribeFile" :disabled="!canRecord || loading || recording">
+          📁 转写音频文件
+        </button>
       </div>
 
       <!-- Audio Level Meter -->
@@ -1173,6 +1177,29 @@ watch(historyQuery, () => {
   if (historySearchTimer) clearTimeout(historySearchTimer);
   historySearchTimer = setTimeout(refreshHistory, 150);
 });
+
+async function transcribeFile() {
+  loading.value = true;
+  processingMs.value = 0;
+  processingTimerInterval = setInterval(() => { processingMs.value += 100; }, 100);
+  try {
+    const r = await invoke<{ file: string; text: string } | null>("pick_and_transcribe_file");
+    if (r) {
+      if (!r.text.trim()) {
+        toast(`${r.file}:没识别出内容`, "info");
+      } else {
+        result.value = r.text;
+        resultOriginal.value = "";
+        resultView.value = "final";
+        resultOpen.value = true;
+        addToHistory(r.text, "");
+        toast(`${r.file} 转写完成`, "ok");
+      }
+    }
+  } catch (e) { toast(`${e}`, "err"); }
+  loading.value = false;
+  if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
+}
 
 async function addToHistory(text: string, original: string) {
   if (!text.trim()) return;
@@ -2706,6 +2733,9 @@ html, body, #app { height: 100%; }
 /* Empty */
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; }
 .empty-icon { font-size: 2.5rem; opacity: 0.3; }
+.file-btn { margin-top: 6px; background: none; border: none; color: var(--muted); font-size: 0.68rem; cursor: pointer; }
+.file-btn:hover:not(:disabled) { color: var(--text); text-decoration: underline; }
+.file-btn:disabled { opacity: 0.4; cursor: default; }
 .empty-text { font-size: 0.78rem; color: var(--muted); text-align: center; line-height: 1.5; }
 
 /* Footer */

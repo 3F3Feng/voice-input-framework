@@ -536,6 +536,57 @@ async fn save_llm_prompt(state: State<'_, AppState>, text: String) -> Result<(),
     stt::SttClient::new(&host).save_llm_prompt(&text).await
 }
 
+/// 选一个音频文件转写(F21)。返回 `None` 表示用户取消了选择。
+///
+/// 服务端一直有 `/transcribe`,界面上却没有入口;要转一段录音只能用仓库里另一个
+/// Python 小工具。现在 WAV(任意采样率 / 声道)都能直接转,其它格式服务端会说清楚
+/// 要先转成 WAV。
+#[tauri::command]
+async fn pick_and_transcribe_file(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<serde_json::Value>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("选择要转写的音频")
+        .add_filter("WAV 音频", &["wav", "wave"])
+        .add_filter("所有文件", &["*"])
+        .pick_file(move |picked| {
+            let _ = tx.send(picked);
+        });
+    let Some(picked) = rx.await.map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|e| format!("读不到选中的文件: {}", e))?;
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "audio.wav".into());
+    let meta = std::fs::metadata(&path).map_err(|e| format!("读不到 {}: {}", file_name, e))?;
+    // 和服务端的上传上限一致(shared/constants.py 的 MAX_UPLOAD_SIZE),免得传半天才被拒。
+    const MAX_UPLOAD: u64 = 100 * 1024 * 1024;
+    if meta.len() > MAX_UPLOAD {
+        return Err(format!("{} 超过 100 MB,请先切成小段再转写", file_name));
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("读不到 {}: {}", file_name, e))?;
+    let (host, language) = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        let cfg = state.config.lock().map_err(|e| e.to_string())?;
+        (c.stt_url.clone(), cfg.audio.language.clone())
+    };
+    let text = stt::SttClient::new(&host)
+        .transcribe_file(bytes, &file_name, &language)
+        .await?;
+    Ok(Some(serde_json::json!({ "file": file_name, "text": text })))
+}
+
 #[tauri::command]
 async fn get_vocabulary(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let host = {
@@ -1581,6 +1632,7 @@ pub fn run() {
             save_llm_prompt,
             reset_llm_prompt,
             get_vocabulary,
+            pick_and_transcribe_file,
             save_vocabulary,
             get_llm_enabled,
             get_llm_status,

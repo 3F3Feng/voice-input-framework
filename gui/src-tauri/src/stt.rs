@@ -560,6 +560,28 @@ impl SttClient {
         ensure_ok(resp, "保存提示词").await.map(|_| ())
     }
 
+    /// 上传一个音频文件转写(服务端 `/transcribe`,见 services/audio_io.py)。
+    pub async fn transcribe_file(
+        &self,
+        bytes: Vec<u8>,
+        file_name: &str,
+        language: &str,
+    ) -> Result<String, String> {
+        let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name.to_string());
+        let form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("language", language.to_string());
+        // 长文件在 CPU 上可能要转好几分钟,服务端自己的上限是 600 秒。
+        let resp = http(Duration::from_secs(660))
+            .post(format!("{}/transcribe", self.stt_url))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| request_error("转写文件", e))?;
+        let data = ensure_ok(resp, "转写文件").await?;
+        Ok(data["text"].as_str().unwrap_or("").to_string())
+    }
+
     /// 个人词库(服务端 services/vocabulary.py):原始的若干行。
     pub async fn get_vocabulary(&self) -> Result<Value, String> {
         let resp = http(QUERY_TIMEOUT)
