@@ -1,3 +1,7 @@
+# ⚠️ 已废弃,不要再用。依赖以 pyproject.toml 为准,建环境请用 scripts/setup-env.sh。
+#    这份清单选不了 CUDA / ROCm 版 PyTorch;MLX 相关依赖只在 Apple Silicon 上能用。
+#    只为老脚本兼容保留。
+
 # Voice Input Framework - LLM Service Dependencies
 # 运行在 mlx-test conda 环境中
 
