@@ -215,8 +215,9 @@
                 <option value="">套用预设…</option>
                 <option v-for="p in PROMPT_PRESETS" :key="p.id" :value="p.id">{{ p.label }}</option>
               </select>
-              <span v-if="promptStatus" class="s-tip">{{ promptStatus }}</span>
             </div>
+            <!-- 单独一行:和四个按钮挤在一起时会被压成一条窄窄的竖栏。 -->
+            <div v-if="promptStatus" class="s-tip" style="margin-top:4px">{{ promptStatus }}</div>
           </div>
 
           <!-- 个人词库(F13):人名、产品名总被认错。不依赖 LLM 后处理,关着也生效。 -->
@@ -448,7 +449,7 @@
               <button class="s-btn" @click="doCheckUpdate" :disabled="updateChecking">
                 {{ updateChecking ? '检查中...' : '检查更新' }}
               </button>
-              <button v-if="updateInfo?.available" class="s-btn" @click="doInstallUpdate" :disabled="updateInstalling" style="background:var(--green);color:#000">
+              <button v-if="updateInfo?.available" class="s-btn" @click="doInstallUpdate" :disabled="updateInstalling" style="background:var(--green);color:var(--bg)">
                 {{ updateInstalling ? '下载中...' : '下载安装' }}
               </button>
             </div>
@@ -2610,6 +2611,25 @@ onUnmounted(() => {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif;
   color: var(--text);
   background: var(--bg);
+  color-scheme: dark;
+}
+/* 跟随系统的浅色模式(F22)。以前只有深色:白天在浅色桌面上格外扎眼。
+   强调色调深一档,浅底上才读得清;半透明的状态底色两种主题通用,不用改。
+   悬浮胶囊(indicator.html)是浮在别的应用上的,保持深色。 */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f7f8;
+    --card: #ffffff;
+    --surface: #efeff2;
+    --border: #dcdce2;
+    --green: #16a34a;
+    --red: #dc2626;
+    --yellow: #b45309;
+    --blue: #2563eb;
+    --text: #18181b;
+    --muted: #6b6b76;
+    color-scheme: light;
+  }
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body, #app { height: 100%; }
@@ -2776,7 +2796,7 @@ html, body, #app { height: 100%; }
 /* 整个应用是 user-select: none,结果框得单独放开(WebKit 还要带前缀)。 */
 .result-text { flex: 1; padding: 14px; font-size: 0.92rem; line-height: 1.6; overflow-y: auto; cursor: text; -webkit-user-select: text; user-select: text; min-height: 0; word-break: break-word;
   width: 100%; resize: none; border: none; outline: none; background: transparent; color: var(--text); font-family: inherit; }
-.result-text.original { color: #a1a1aa; }
+.result-text.original { color: var(--muted); }
 .result-compare { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 0; flex-shrink: 0; }
 .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .seg button { background: none; border: none; color: var(--muted); font-size: 0.68rem; padding: 3px 10px; cursor: pointer; }
