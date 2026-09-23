@@ -370,6 +370,9 @@ impl ServerManager {
             // 管道另一头是我们,不是终端。Python 这时按系统区域设置编码输出,
             // 中文 Windows 上就是 GBK——日志里全是乱码。明确要 UTF-8。
             .env("PYTHONIOENCODING", "utf-8")
+            // 本地服务只绑回环、客户端在本地模式下也不带令牌(F20)。应用要是从一个设了
+            // VIF_API_TOKEN 的终端里启动,子进程会继承它,于是每个请求都 401。
+            .env_remove("VIF_API_TOKEN")
             .env("PYTHONUTF8", "1")
             // 只绑回环:本应用连的是 127.0.0.1,没有理由把服务暴露到局域网。
             .env("VIF_STT_HOST", "127.0.0.1")
