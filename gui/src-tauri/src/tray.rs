@@ -52,6 +52,7 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let copy_last = MenuItem::with_id(app, "copy_last", "复制最近一条结果", false, None::<&str>)?;
     let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
+    let wizard_item = MenuItem::with_id(app, "wizard", "设置向导…", true, None::<&str>)?;
     let update_item = MenuItem::with_id(app, "check_update", "检查更新", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, Some("CmdOrCtrl+Q"))?;
 
@@ -64,6 +65,7 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &PredefinedMenuItem::separator(app)?,
             &show_item,
             &settings_item,
+            &wizard_item,
             &update_item,
             &PredefinedMenuItem::separator(app)?,
             &quit_item,
@@ -92,6 +94,11 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             "settings" => {
                 crate::show_main_window(app);
                 let _ = app.emit("tray-open-settings", ());
+            }
+            // 随时能重新走一遍向导(换了环境、想改成远程……)。
+            "wizard" => {
+                crate::show_main_window(app);
+                let _ = app.emit("tray-open-wizard", ());
             }
             "check_update" => {
                 // 检查结果显示在设置面板的「关于」页,窗口藏着的话用户看不到。

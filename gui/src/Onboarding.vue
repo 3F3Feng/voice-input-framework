@@ -7,7 +7,8 @@
       <div class="ob-dots" :title="`第 ${stepIndex + 1} 步,共 ${steps.length} 步`">
         <span v-for="(s, i) in steps" :key="s" :class="['ob-dot', { on: i === stepIndex, past: i < stepIndex }]"></span>
       </div>
-      <button v-if="step !== 'finish'" class="ob-skip" @click="finish" :disabled="finishing">跳过</button>
+      <!-- 从设置里重新打开时叫「关闭」:用户是回来改东西的,不是在「跳过」什么。 -->
+      <button v-if="step !== 'finish'" class="ob-skip" @click="finish" :disabled="finishing">{{ manual ? '关闭' : '跳过' }}</button>
     </header>
 
     <div class="ob-body">
@@ -210,8 +211,10 @@
       </template>
     </div>
 
-    <footer v-if="step !== 'welcome'" class="ob-foot">
-      <button v-if="stepIndex > 0 && step !== 'finish'" class="s-btn" @click="go(-1)">上一步</button>
+    <!-- 每一步都能退回上一步,包括最后的「完成」;第一步也给「下一步」,
+         重新打开向导时不必为了往下走而重选一遍模式(沿用当前模式)。 -->
+    <footer class="ob-foot">
+      <button v-if="stepIndex > 0" class="s-btn" @click="go(-1)">上一步</button>
       <span class="ob-spacer"></span>
       <span v-if="step === 'server' && !serverReady" class="s-tip ob-foot-tip">没就绪也可以先往下走</span>
       <button v-if="step === 'finish'" class="s-btn ob-primary" @click="finish" :disabled="finishing">开始使用</button>
@@ -227,7 +230,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 // 主界面算好的、给人看的快捷键(⌃⌥ / Ctrl+Alt)。只要这一个 prop:格式化规则
 // 留在 App.vue 一处,别在这里再抄一份。
-defineProps<{ hotkeyLabel: string }>();
+/** `manual`:用户从设置 / 托盘里主动打开的(不是首次启动自动弹的)。 */
+defineProps<{ hotkeyLabel: string; manual?: boolean }>();
 const emit = defineEmits<{ (e: "done"): void }>();
 
 // ── 类型:只声明向导用到的字段;配置读出来整份再原样写回,别的字段不会丢 ──

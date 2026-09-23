@@ -33,6 +33,10 @@
         <div class="settings-scroll">
           <!-- 服务 -->
           <template v-if="tab === 'service'">
+          <div class="s-row wizard-entry">
+            <span class="s-tip" style="margin:0;flex:1">不想一项项手动配?向导会带你走一遍:服务、权限、输出方式、试说一句。</span>
+            <button class="s-btn" @click="openWizard">打开设置向导</button>
+          </div>
           <!-- 服务器 -->
           <div class="s-section">
             <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -598,7 +602,7 @@
     </div>
 
     <!-- 首次启动向导(F1):盖住整个窗口。什么时候出现见 decideOnboarding。 -->
-    <Onboarding v-if="showOnboarding" :hotkey-label="displayHotkey" @done="onOnboardingDone" />
+    <Onboarding v-if="showOnboarding" :hotkey-label="displayHotkey" :manual="onboardingManual" @done="onOnboardingDone" />
 
     <!-- Footer -->
     <footer class="footer">
@@ -882,6 +886,14 @@ const outputChoiceMade = ref(true);
 /** 首启向导走过(或跳过)没有。读到配置之前同样当作走过。 */
 const onboardingDone = ref(true);
 const showOnboarding = ref(false);
+/** 向导是用户自己打开的(设置 / 托盘),不是首次启动自动弹的。 */
+const onboardingManual = ref(false);
+/** 随时重新打开设置向导:换了电脑、重建了环境、想换成远程……都不必去翻设置页。 */
+function openWizard() {
+  showSettings.value = false;
+  onboardingManual.value = true;
+  showOnboarding.value = true;
+}
 
 // ── 设置面板的标签页 ──
 // 以前是十个 s-section 在一个 400×500 的窗口里一路往下堆，找一个开关要滚三屏。
@@ -1775,6 +1787,7 @@ async function decideOnboarding(bootConnect: Promise<void>) {
 /** 向导结束(走完或跳过):它改过的配置、模式、权限都重新读一遍,再按新目标连一次。 */
 async function onOnboardingDone() {
   showOnboarding.value = false;
+  onboardingManual.value = false;
   await loadConfig();
   // 向导不管有没有存上 onboarding_done,这次都算走过了,别再弹横幅。
   onboardingDone.value = true;
@@ -2585,6 +2598,7 @@ onMounted(async () => {
   // 检查结果显示在「关于」页，得切过去，不然用户看到的是一个跟更新无关的页面。
   listen("tray-check-update", () => { showSettings.value = true; tab.value = "about"; doCheckUpdate(); });
   listen("tray-open-settings", () => { showSettings.value = true; });
+  listen("tray-open-wizard", openWizard);
   // 从系统设置授权回来时窗口会重新拿到焦点：顺手查一次权限，输入监控刚授权的话
   // 上面的 watcher 会把快捷键监听器重建起来，不用用户再去点「刷新」。
   window.addEventListener("focus", () => { if (perms.value?.is_macos) refreshPermissions(); });
@@ -2915,6 +2929,7 @@ html, body, #app { height: 100%; }
 /* Empty */
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; }
 .empty-icon { font-size: 2.5rem; opacity: 0.3; }
+.wizard-entry { margin-bottom: 10px; padding: 8px 10px; border: 1px dashed var(--border); border-radius: 8px; gap: 8px; }
 .file-btn { margin-top: 6px; background: none; border: none; color: var(--muted); font-size: 0.68rem; cursor: pointer; }
 .file-btn:hover:not(:disabled) { color: var(--text); text-decoration: underline; }
 .file-btn:disabled { opacity: 0.4; cursor: default; }
