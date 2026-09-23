@@ -253,12 +253,15 @@
               <select class="s-select" style="width:auto" v-model="inputMethod" @change="onInputMethodChange">
                 <option value="paste">粘贴(推荐)</option>
                 <option value="type">模拟打字</option>
+                <option value="copy">只复制到剪贴板</option>
               </select>
             </div>
             <div v-if="autoInputEnabled" class="s-tip">
               {{ inputMethod === 'paste'
                 ? '借用剪贴板一次性贴进去,贴完把原来的剪贴板内容还回去。长文本快,不受输入法影响。'
-                : '逐字模拟键盘。文本里的换行会变成回车 —— 在聊天软件里等于直接发送。只在某个输入框不接受粘贴时用。' }}
+                : inputMethod === 'type'
+                  ? '逐字模拟键盘。文本里的换行会变成回车 —— 在聊天软件里等于直接发送。只在某个输入框不接受粘贴时用。'
+                  : '识别结果只放进剪贴板,不碰当前窗口,自己按粘贴。不需要「辅助功能」权限。' }}
             </div>
             <div class="s-row" style="margin-top:6px">
               <label class="toggle"><input type="checkbox" v-model="autoStart" @change="toggleAutoStart" /><span class="slider"></span></label>
@@ -1418,11 +1421,11 @@ async function toggleDistinguishSides() {
     toast(distinguishSides.value ? "已改为区分左右" : "已改为左右通用", "ok");
   } catch (e) { toast(`快捷键重新注册失败: ${e}`, "err"); }
 }
-type InputMethod = "paste" | "type";
+type InputMethod = "paste" | "type" | "copy";
 const inputMethod = ref<InputMethod>("paste");
 async function onInputMethodChange() {
   const ok = await saveConfigPatch(cfg => { cfg.ui.input_method = inputMethod.value; });
-  if (ok) toast(inputMethod.value === "paste" ? "改为粘贴方式输入" : "改为模拟打字输入", "ok");
+  if (ok) toast({ paste: "改为粘贴方式输入", type: "改为模拟打字输入", copy: "改为只复制到剪贴板" }[inputMethod.value], "ok");
 }
 function onAutoInputToggle() {
   // 在设置里拨过这个开关，就等于回答了横幅那个问题，不必再问。
@@ -2116,7 +2119,12 @@ onMounted(async () => {
       if (autoInputEnabled.value) {
         // 主窗口正在前台时,焦点就在本应用自己身上,自动输入只会敲给自己。
         // 不输,提示用户用「输入」按钮(它会先把前台交还给上一个应用)。
-        if (document.hasFocus()) {
+        if (inputMethod.value === "copy") {
+          // 只复制不碰任何窗口,主窗口在不在前台都无所谓。
+          invoke("auto_input", { text })
+            .then(() => toast("已复制到剪贴板", "ok"))
+            .catch(e => toast(`${e}`, "err"));
+        } else if (document.hasFocus()) {
           toast("主窗口在前台,结果没有自动输入;点「⌨️ 输入」发送到上一个窗口", "info");
         } else {
           invoke("auto_input", { text }).catch(e => { toast(`${e}`, "err"); refreshPermissions(); });

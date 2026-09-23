@@ -957,6 +957,12 @@ async fn deliver_text(app: &tauri::AppHandle, text: &str) -> Result<(), String> 
     if method == config::InputMethod::Type {
         return input::type_text(text);
     }
+    if method == config::InputMethod::Copy {
+        return app
+            .clipboard()
+            .write_text(text.to_string())
+            .map_err(|e| format!("写剪贴板失败: {}", e));
+    }
 
     let previous = app.clipboard().read_text().ok();
     app.clipboard()
