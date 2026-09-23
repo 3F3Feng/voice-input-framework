@@ -989,6 +989,8 @@ function addToHistory(text: string) {
 }
 
 // ── Recording ──
+/** 按钮录音的上限,和快捷键路径(hotkey.rs 的 MAX_RECORD_SECS)一致。 */
+const BUTTON_RECORD_LIMIT_MS = 5 * 60 * 1000;
 async function startRecord() {
   if (!connected.value || loading.value) return;
   if (recording.value) return;  // state lock: prevent double-trigger
@@ -998,7 +1000,17 @@ async function startRecord() {
     result.value = "";
     await invoke("start_recording");
     elapsedMs.value = 0;
-    timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
+    // 快捷键路径的 5 分钟上限在 Rust 那边(hotkey.rs 的 record_limit_step),按钮路径
+    // 以前没有任何上限:鼠标一直按着就一直录。和快捷键保持一致:提前 30 秒提醒,
+    // 到点停止并照常识别。
+    timerInterval = setInterval(() => {
+      elapsedMs.value += 100;
+      if (elapsedMs.value === BUTTON_RECORD_LIMIT_MS - 30000) toast("还剩 30 秒,满 5 分钟会自动停止并识别", "info");
+      if (elapsedMs.value >= BUTTON_RECORD_LIMIT_MS) {
+        toast("录音已满 5 分钟,已自动停止并开始识别", "info");
+        stopRecord();
+      }
+    }, 100);
     levelInterval = setInterval(async () => {
       try { audioLevel.value = await invoke<number>("get_audio_level"); } catch {}
     }, 100);
