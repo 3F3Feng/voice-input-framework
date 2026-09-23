@@ -77,10 +77,18 @@ class TestLLMProxyContract:
     def test_llm_enabled_structure(self, client):
         r = client.get("/llm/enabled")
         assert r.status_code == 200
-        # 结构契约:返回 {"enabled": bool}(值由 VIF_LLM_ENABLED/持久化状态决定,环境相关)
+        # 结构契约:{"enabled": bool, "supported": bool, "reason": str|null}
+        # (值由 VIF_LLM_ENABLED/持久化状态/平台决定,环境相关)。F17 加了后两个:
+        # 不支持的平台上客户端据此把开关置灰并说明原因。
         body = r.json()
-        assert set(body) == {"enabled"}
+        assert set(body) == {"enabled", "supported", "reason"}
         assert isinstance(body["enabled"], bool)
+        assert isinstance(body["supported"], bool)
+        if body["supported"]:
+            assert body["reason"] is None
+        else:
+            assert isinstance(body["reason"], str) and body["reason"]
+            assert body["enabled"] is False
 
     def test_llm_proxy_structure(self, client):
         """LLM 转发端点契约(M7):LLM 不可达时返回结构化 ErrorResponse;可达时返回正常数据

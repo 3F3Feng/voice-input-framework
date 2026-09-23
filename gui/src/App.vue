@@ -137,12 +137,17 @@
           <div class="s-section">
             <div class="s-title">LLM 后处理</div>
             <div class="s-row">
-              <label class="toggle"><input type="checkbox" v-model="llmEnabled" @change="toggleLlm" :disabled="llmToggling" /><span class="slider"></span></label>
-              <span class="s-label" :class="{ 'llm-busy': llmToggling }">{{ llmToggleText }}</span>
+              <label class="toggle"><input type="checkbox" v-model="llmEnabled" @change="toggleLlm" :disabled="llmToggling || !llmSupported" /><span class="slider"></span></label>
+              <span class="s-label" :class="{ 'llm-busy': llmToggling }">{{ llmSupported ? llmToggleText : '不可用' }}</span>
+            </div>
+            <!-- 不支持的平台(目前只有 Apple Silicon 能跑 mlx-lm)把开关置灰并说明原因。
+                 以前照样能拨,拨了要等满 30 秒才说「还在加载模型」(F17)。 -->
+            <div v-if="!llmSupported" class="s-tip" style="margin-top:4px">
+              {{ llmUnsupportedReason || '这台机器不支持 LLM 后处理' }}
             </div>
             <!-- 本地管理模式下这个开关不只是个标志位:LLM 服务跟着它起停。
                  加载模型要几秒,开关这几秒是锁着的——得让用户知道那不是卡死。 -->
-            <div v-if="serverMode === 'local'" class="s-tip" style="margin-top:4px">
+            <div v-else-if="serverMode === 'local'" class="s-tip" style="margin-top:4px">
               LLM 服务跟着这个开关走：打开时启动（加载模型要几秒），关闭时停止，不用一直占着内存。只停本应用启动的那个；你自己在终端里跑的服务会保留。
             </div>
             <div v-if="llmEnabled" style="margin-top: 8px;">
@@ -597,6 +602,10 @@ const llmPort = ref(6545);
 const localAutoStart = ref(false);
 let serverPollTimer: ReturnType<typeof setInterval> | null = null;
 const llmEnabled = ref(true);
+/** 服务端能不能做 LLM 后处理(`GET /llm/enabled` 的 supported / reason,F17)。 */
+interface LlmStatus { enabled: boolean; supported: boolean; reason: string | null; }
+const llmSupported = ref(true);
+const llmUnsupportedReason = ref("");
 /** 开关正在生效中。本地模式下这几秒是在等 LLM 服务加载模型。 */
 const llmToggling = ref(false);
 const promptText = ref("");
@@ -1466,7 +1475,12 @@ async function loadModels(): Promise<boolean> {
     ok = true;
   } catch (e) { console.error("get_models error:", e); }
   await loadLlmModels();
-  try { llmEnabled.value = await invoke<boolean>("get_llm_enabled"); } catch {}
+  try {
+    const st = await invoke<LlmStatus>("get_llm_status");
+    llmEnabled.value = st.enabled;
+    llmSupported.value = st.supported;
+    llmUnsupportedReason.value = st.reason ?? "";
+  } catch {}
   return ok;
 }
 

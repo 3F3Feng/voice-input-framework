@@ -57,7 +57,7 @@ from shared.constants import (
     WS_MAX_MESSAGE_SIZE,
 )
 from shared.data_types import ErrorResponse
-from shared.model_registry import MODELS_CONFIG, get_default_model
+from shared.model_registry import IS_APPLE_SILICON, MODELS_CONFIG, get_default_model
 
 # ============== Configuration ==============
 # 默认只绑定回环地址:本服务无鉴权,不应默认暴露到局域网。
@@ -162,6 +162,39 @@ if "VIF_LLM_MODEL" not in os.environ:
         logger.info(f"Restoring LLM model from saved state: {saved_llm}")
         LLM_MODEL = saved_llm
         os.environ.setdefault("VIF_LLM_MODEL", saved_llm)
+
+
+def _llm_support() -> tuple[bool, str | None]:
+    """这台 STT 服务背后的 LLM 后处理能不能用,不能用时给出原因。
+
+    `services/llm_server.py` 只有 mlx-lm 这一个后端,只能在 Apple Silicon 上跑。
+    以前在 Windows / Linux 上照样能打开开关:LLM 服务起来就加载失败,界面等满
+    30 秒后说「还在加载模型」;而开关的默认值又是开,每句话都白走一趟反代。
+    LLM 服务配在别的机器上(`VIF_LLM_HOST` 不是本机)时,能不能跑由那台机器
+    决定,这里不拦。
+    """
+    if IS_APPLE_SILICON:
+        return True, None
+    if LLM_SERVER_HOST not in ("127.0.0.1", "localhost", "::1"):
+        return True, None
+    return False, "LLM 后处理目前只支持 Apple Silicon 的 Mac(依赖 mlx-lm),这台机器上用不了"
+
+
+LLM_SUPPORTED, LLM_UNSUPPORTED_REASON = _llm_support()
+
+
+def llm_active() -> bool:
+    """这句话要不要走 LLM 后处理:开关开着,而且这台机器能跑。"""
+    return LLM_ENABLED and LLM_SUPPORTED
+
+
+def _llm_status() -> dict:
+    return {
+        "enabled": llm_active(),
+        "supported": LLM_SUPPORTED,
+        "reason": None if LLM_SUPPORTED else LLM_UNSUPPORTED_REASON,
+    }
+
 
 # ============== Context Variables ==============
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
@@ -455,7 +488,9 @@ async def llm_health():
 @app.get("/llm/enabled")
 async def get_llm_enabled():
     """获取 LLM 后处理是否启用"""
-    return {"enabled": LLM_ENABLED}
+    # `supported` / `reason`:不支持的平台上客户端把开关置灰并说明原因(F17)。
+    # `enabled` 报的是实际生效的值——不支持时永远是 false,开关才不会显示成开着。
+    return _llm_status()
 
 
 @app.put("/llm/enabled")
@@ -463,14 +498,24 @@ async def set_llm_enabled(request: Request):
     """设置 LLM 后处理是否启用"""
     global LLM_ENABLED
     body = await request.json()
-    enabled = body.get("enabled", True)
-    LLM_ENABLED = bool(enabled)
+    enabled = bool(body.get("enabled", True))
+    if enabled and not LLM_SUPPORTED:
+        # 409:请求本身没问题,是这台机器的状态不允许。不持久化,免得换到能跑
+        # 的配置之后莫名其妙自己开了。
+        return JSONResponse(
+            status_code=409,
+            content=ErrorResponse(
+                error_code="LLM_UNSUPPORTED",
+                error_message=LLM_UNSUPPORTED_REASON or "这台机器不支持 LLM 后处理",
+            ).to_dict(),
+        )
+    LLM_ENABLED = enabled
     # 持久化
     state = load_state()
     state["llm_enabled"] = LLM_ENABLED
     save_state(state)
     logger.info(f"LLM enabled set to {LLM_ENABLED} (persisted)")
-    return {"enabled": LLM_ENABLED}
+    return _llm_status()
 
 
 # ============== LLM Prompt API ==============
@@ -629,14 +674,14 @@ async def websocket_stream(websocket: WebSocket):
             return False
 
     # 获取 LLM 服务器状态
-    llm_info = {"llm_enabled": LLM_ENABLED, "llm_model": None}
+    llm_info = {"llm_enabled": llm_active(), "llm_model": None}
     try:
         async with httpx.AsyncClient() as client:
             llm_resp = await client.get(f"{LLM_SERVER_URL}/health", timeout=5.0)
             if llm_resp.status_code == 200:
                 llm_data = llm_resp.json()
                 llm_info = {
-                    "llm_enabled": LLM_ENABLED,
+                    "llm_enabled": llm_active(),
                     "llm_model": llm_data.get("current_model", "unknown"),
                 }
     except Exception as e:
@@ -778,7 +823,7 @@ async def websocket_stream(websocket: WebSocket):
             )
 
             # LLM 后处理
-            if result.text.strip() and LLM_ENABLED:
+            if result.text.strip() and llm_active():
                 await _safe_send(
                     {
                         "type": "llm_start",

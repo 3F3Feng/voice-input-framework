@@ -256,3 +256,22 @@ fn model_info_carries_catalog_fields() {
     assert_eq!(m.unavailable_reason.as_deref(), Some("需要 Apple Silicon 的 Mac"));
     assert_eq!(m.memory_gb, Some(3.0));
 }
+
+// ── LLM 后处理开关状态(F17)──
+
+#[test]
+fn llm_status_reads_supported_and_reason() {
+    let v = serde_json::json!({"enabled": false, "supported": false, "reason": "只支持 Apple Silicon"});
+    let st = stt::LlmStatus::from_json(&v).unwrap();
+    assert!(!st.enabled && !st.supported);
+    assert_eq!(st.reason.as_deref(), Some("只支持 Apple Silicon"));
+}
+
+#[test]
+fn llm_status_from_old_server_counts_as_supported() {
+    // 老服务端只回 {"enabled": bool}:照旧当作支持,行为和以前一样。
+    let st = stt::LlmStatus::from_json(&serde_json::json!({"enabled": true})).unwrap();
+    assert!(st.enabled && st.supported);
+    assert_eq!(st.reason, None);
+    assert!(stt::LlmStatus::from_json(&serde_json::json!({})).is_err());
+}

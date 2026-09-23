@@ -537,6 +537,24 @@ async fn get_llm_enabled(
     Ok(enabled)
 }
 
+/// 后处理开关的完整状态:开没开、这台服务支不支持、不支持的原因(F17)。
+///
+/// 前端连上服务时调它,不支持的平台上把开关置灰并把原因写在旁边——以前在
+/// Windows / Linux 上照样能拨,拨了之后要等满 30 秒才说「还在加载模型」。
+#[tauri::command]
+async fn get_llm_status(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<stt::LlmStatus, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    let status = stt::SttClient::new(&host).get_llm_status().await?;
+    cache_llm_enabled(&app, &state, status.enabled);
+    Ok(status)
+}
+
 /// 打开后处理时,等 LLM 服务加载完模型的上限。
 ///
 /// 超时不代表「失败了」,只代表「还没好」——进程还在跑,模型还在读。取 30 秒是
@@ -624,6 +642,15 @@ async fn set_llm_enabled(
     let mut notes: Vec<String> = Vec::new();
 
     if enabled {
+        // 不支持的平台先拦下来,别去拉起一个注定加载失败的 LLM 进程(F17)。
+        // 问不到(老服务端 / 暂时不通)就照旧往下走,由后面的步骤报错。
+        if let Ok(st) = stt::SttClient::new(&host).get_llm_status().await {
+            if !st.supported {
+                return Err(st
+                    .reason
+                    .unwrap_or_else(|| "这台机器不支持 LLM 后处理".to_string()));
+            }
+        }
         if local_managed {
             let msg = server_manager::start(&servers, &cfg, server_manager::ServerKind::Llm)
                 .await
@@ -1350,6 +1377,7 @@ pub fn run() {
             save_llm_prompt,
             reset_llm_prompt,
             get_llm_enabled,
+            get_llm_status,
             set_llm_enabled,
             auto_input,
             get_permissions,

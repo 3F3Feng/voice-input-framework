@@ -42,6 +42,33 @@ struct LlmModelsResponse {
     enabled: Option<bool>,
 }
 
+/// LLM 后处理开关的状态(`GET /llm/enabled`)。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LlmStatus {
+    pub enabled: bool,
+    /// 这台服务能不能做 LLM 后处理。目前只有 Apple Silicon 能(mlx-lm)。
+    pub supported: bool,
+    /// 不支持时的原因,前端原样显示在置灰的开关旁边。
+    pub reason: Option<String>,
+}
+
+impl LlmStatus {
+    /// 老服务端只回 `{"enabled": bool}`:没有 `supported` 就当作支持,行为和以前一样。
+    pub fn from_json(data: &Value) -> Result<Self, String> {
+        let enabled = data["enabled"]
+            .as_bool()
+            .ok_or_else(|| "读取后处理开关失败:服务端没有返回 enabled".to_string())?;
+        Ok(Self {
+            enabled,
+            supported: data["supported"].as_bool().unwrap_or(true),
+            reason: data["reason"]
+                .as_str()
+                .filter(|r| !r.trim().is_empty())
+                .map(str::to_string),
+        })
+    }
+}
+
 /// 没录到任何音频时的错误。前端按这句话认出「没听到声音」,而不是当成故障。
 pub const NO_SPEECH: &str = "没有录到声音";
 
@@ -511,15 +538,17 @@ impl SttClient {
     }
 
     pub async fn get_llm_enabled(&self) -> Result<bool, String> {
+        self.get_llm_status().await.map(|s| s.enabled)
+    }
+
+    pub async fn get_llm_status(&self) -> Result<LlmStatus, String> {
         let resp = http(QUERY_TIMEOUT)
             .get(format!("{}/llm/enabled", self.stt_url))
             .send()
             .await
             .map_err(|e| request_error("读取后处理开关", e))?;
         let data = ensure_ok(resp, "读取后处理开关").await?;
-        data["enabled"]
-            .as_bool()
-            .ok_or_else(|| "读取后处理开关失败:服务端没有返回 enabled".to_string())
+        LlmStatus::from_json(&data)
     }
 
     pub async fn set_llm_enabled(&self, enabled: bool) -> Result<(), String> {

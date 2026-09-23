@@ -510,6 +510,8 @@ class TestLLMProxyError:
         monkeypatch.setattr(engine, "transcribe", fake_transcribe)
         monkeypatch.setattr(srv, "engine", engine)
         monkeypatch.setattr(srv, "call_llm_server", fake_llm)
+        # 非 Apple 平台(CI)上 LLM 后处理默认不可用,这里要测的是「能用但失败了」
+        monkeypatch.setattr(srv, "LLM_SUPPORTED", True)
 
         for enabled, want in [(True, "连不上 LLM 服务(可能没有启动)"), (False, None)]:
             monkeypatch.setattr(srv, "LLM_ENABLED", enabled)
@@ -526,6 +528,36 @@ class TestLLMProxyError:
             assert msg["text"] == "嗯那个明天开会"
             assert "llm_error" in msg
             assert msg["llm_error"] == want
+
+    def test_unsupported_platform_cannot_enable_llm(self, monkeypatch):
+        """非 Apple 平台:开关报不支持和原因,打开返回 409,不落盘(F17)"""
+        from fastapi.testclient import TestClient
+
+        import services.stt_server as srv
+
+        monkeypatch.setattr(srv, "LLM_SUPPORTED", False)
+        monkeypatch.setattr(srv, "LLM_UNSUPPORTED_REASON", "只支持 Apple Silicon")
+        monkeypatch.setattr(srv, "LLM_ENABLED", True)
+        monkeypatch.setattr(srv, "save_state", lambda state: pytest.fail("不该持久化"))
+        client = TestClient(srv.app)
+
+        body = client.get("/llm/enabled").json()
+        assert body == {"enabled": False, "supported": False, "reason": "只支持 Apple Silicon"}
+        assert srv.llm_active() is False  # 转写时也不再白走一趟 LLM
+
+        r = client.put("/llm/enabled", json={"enabled": True})
+        assert r.status_code == 409
+        assert r.json()["error_message"] == "只支持 Apple Silicon"
+
+    def test_supported_platform_reports_no_reason(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        import services.stt_server as srv
+
+        monkeypatch.setattr(srv, "LLM_SUPPORTED", True)
+        monkeypatch.setattr(srv, "LLM_ENABLED", True)
+        body = TestClient(srv.app).get("/llm/enabled").json()
+        assert body == {"enabled": True, "supported": True, "reason": None}
 
     def test_llm_switch_timeout_says_still_loading(self, monkeypatch):
         """转发切换超时 ≠ 切换失败:LLM 还在后台加载,完成后会自己生效(R16)"""
