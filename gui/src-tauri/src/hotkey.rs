@@ -139,6 +139,31 @@ pub enum HotkeyKey {
     Delete,
     /// Backspace
     Backspace,
+    /// 左 / 右 Cmd(macOS)、Win(Windows)、Super(Linux)
+    MetaLeft,
+    MetaRight,
+    /// Fn / 🌐(只有 macOS 能收到)
+    Fn,
+    /// 主键盘上的数字 0–9(不含小键盘)
+    Digit0,
+    Digit1,
+    Digit2,
+    Digit3,
+    Digit4,
+    Digit5,
+    Digit6,
+    Digit7,
+    Digit8,
+    Digit9,
+    /// F13–F20:键盘上一般没有,常见于宏键盘 / 被改键映射出来,正适合当专用的说话键
+    F13,
+    F14,
+    F15,
+    F16,
+    F17,
+    F18,
+    F19,
+    F20,
     /// F1–F12
     F1,
     F2,
@@ -217,6 +242,7 @@ fn both_sides(k: HotkeyKey) -> Option<[HotkeyKey; 2]> {
             [HotkeyKey::ShiftLeft, HotkeyKey::ShiftRight]
         }
         HotkeyKey::Alt | HotkeyKey::AltGr => [HotkeyKey::Alt, HotkeyKey::AltGr],
+        HotkeyKey::MetaLeft | HotkeyKey::MetaRight => [HotkeyKey::MetaLeft, HotkeyKey::MetaRight],
         _ => return None,
     })
 }
@@ -278,15 +304,14 @@ fn unsupported_reason(token: &str) -> String {
         .unwrap_or(&t);
     match t {
         "cmd" | "command" | "meta" | "super" | "win" | "windows" | "os" => {
-            "暂不支持 Cmd / Win 键".to_string()
+            "Cmd / Win 键的写法是 left_cmd / right_cmd / cmd".to_string()
         }
         "up" | "down" | "left" | "right" | "arrowup" | "arrowdown" | "arrowleft" | "arrowright" => {
             "暂不支持方向键".to_string()
         }
-        "fn" | "globe" => "暂不支持 Fn 键".to_string(),
-        _ if t.len() == 1 && t.as_bytes()[0].is_ascii_digit() => "暂不支持数字键".to_string(),
+        "fn" | "globe" => "Fn 键只在 macOS 上能用".to_string(),
         _ if t.starts_with('f') && t.len() > 1 && t[1..].bytes().all(|b| b.is_ascii_digit()) => {
-            "功能键只支持 F1–F12".to_string()
+            "功能键只支持 F1–F20(Linux 上只到 F12)".to_string()
         }
         _ => format!("不认识的键「{}」", token),
     }
@@ -311,6 +336,16 @@ fn is_sided_token(token: &str) -> bool {
             | "lshift"
             | "right_shift"
             | "rshift"
+            | "left_cmd"
+            | "lcmd"
+            | "left_win"
+            | "left_super"
+            | "left_meta"
+            | "right_cmd"
+            | "rcmd"
+            | "right_win"
+            | "right_super"
+            | "right_meta"
     )
 }
 
@@ -327,6 +362,29 @@ fn parse_key(token: &str) -> Option<HotkeyKey> {
         "alt" => Some(HotkeyKey::Alt),
         "shift" => Some(HotkeyKey::ShiftLeft),
         "capslock" | "caps" => Some(HotkeyKey::CapsLock),
+        // Cmd(macOS)/ Win(Windows)/ Super(Linux)是同一个物理位置的键。
+        "left_cmd" | "lcmd" | "left_win" | "left_super" | "left_meta" => Some(HotkeyKey::MetaLeft),
+        "right_cmd" | "rcmd" | "right_win" | "right_super" | "right_meta" => {
+            Some(HotkeyKey::MetaRight)
+        }
+        "cmd" | "command" | "win" | "super" | "meta" => Some(HotkeyKey::MetaLeft),
+        // 必须排在下面「f 开头 → 功能键」那一条前面,否则 "fn" 会被当成 F 加数字,
+        // 解析数字失败后整个返回 None。只有 macOS 收得到 Fn 的按下 / 抬起。
+        "fn" | "globe" if cfg!(target_os = "macos") => Some(HotkeyKey::Fn),
+        _ if t.len() == 1 && t.as_bytes()[0].is_ascii_digit() => Some(
+            [
+                HotkeyKey::Digit0,
+                HotkeyKey::Digit1,
+                HotkeyKey::Digit2,
+                HotkeyKey::Digit3,
+                HotkeyKey::Digit4,
+                HotkeyKey::Digit5,
+                HotkeyKey::Digit6,
+                HotkeyKey::Digit7,
+                HotkeyKey::Digit8,
+                HotkeyKey::Digit9,
+            ][(t.as_bytes()[0] - b'0') as usize],
+        ),
         "space" => Some(HotkeyKey::Space),
         "enter" | "return" => Some(HotkeyKey::Return),
         "tab" => Some(HotkeyKey::Tab),
@@ -339,7 +397,13 @@ fn parse_key(token: &str) -> Option<HotkeyKey> {
         // 会被判成非法组合,快捷键静默失效)。
         _ if t.starts_with('f') && (2..=3).contains(&t.len()) => {
             let n: u8 = t[1..].parse().ok()?;
-            if !(1..=12).contains(&n) {
+            // rdev(Linux)的键表只到 F12。
+            let max = if cfg!(any(target_os = "macos", target_os = "windows")) {
+                20
+            } else {
+                12
+            };
+            if !(1..=max).contains(&n) {
                 return None;
             }
             Some(match n {
@@ -355,6 +419,14 @@ fn parse_key(token: &str) -> Option<HotkeyKey> {
                 10 => HotkeyKey::F10,
                 11 => HotkeyKey::F11,
                 12 => HotkeyKey::F12,
+                13 => HotkeyKey::F13,
+                14 => HotkeyKey::F14,
+                15 => HotkeyKey::F15,
+                16 => HotkeyKey::F16,
+                17 => HotkeyKey::F17,
+                18 => HotkeyKey::F18,
+                19 => HotkeyKey::F19,
+                20 => HotkeyKey::F20,
                 _ => return None,
             })
         }
@@ -968,6 +1040,27 @@ mod mac_tap {
             0x6D => HotkeyKey::F10,
             0x67 => HotkeyKey::F11,
             0x6F => HotkeyKey::F12,
+            0x69 => HotkeyKey::F13,
+            0x6B => HotkeyKey::F14,
+            0x71 => HotkeyKey::F15,
+            0x6A => HotkeyKey::F16,
+            0x40 => HotkeyKey::F17,
+            0x4F => HotkeyKey::F18,
+            0x50 => HotkeyKey::F19,
+            0x5A => HotkeyKey::F20,
+            0x37 => HotkeyKey::MetaLeft,
+            0x36 => HotkeyKey::MetaRight,
+            0x3F => HotkeyKey::Fn,
+            0x1D => HotkeyKey::Digit0,
+            0x12 => HotkeyKey::Digit1,
+            0x13 => HotkeyKey::Digit2,
+            0x14 => HotkeyKey::Digit3,
+            0x15 => HotkeyKey::Digit4,
+            0x17 => HotkeyKey::Digit5,
+            0x16 => HotkeyKey::Digit6,
+            0x1A => HotkeyKey::Digit7,
+            0x1C => HotkeyKey::Digit8,
+            0x19 => HotkeyKey::Digit9,
             _ => return None,
         })
     }
@@ -988,6 +1081,8 @@ mod mac_tap {
     const NX_DEVICE_RSHIFT: u64 = 0x0000_0004;
     const NX_DEVICE_LALT: u64 = 0x0000_0020;
     const NX_DEVICE_RALT: u64 = 0x0000_0040;
+    const NX_DEVICE_LCMD: u64 = 0x0000_0008;
+    const NX_DEVICE_RCMD: u64 = 0x0000_0010;
 
     /// 这个修饰键现在是按下状态吗。
     ///
@@ -1034,6 +1129,18 @@ mod mac_tap {
             // (mod_flag, hid_to_hotkey) 都是 Some 才处理,Caps Lock 被整个忽略
             // —— parse_key 明明认 "capslock",设了却什么都不会发生。
             0x39 => return Some(flags.contains(CGEventFlags::CGEventFlagAlphaShift)),
+            0x37 => (
+                NX_DEVICE_LCMD,
+                NX_DEVICE_LCMD | NX_DEVICE_RCMD,
+                CGEventFlags::CGEventFlagCommand,
+            ),
+            0x36 => (
+                NX_DEVICE_RCMD,
+                NX_DEVICE_LCMD | NX_DEVICE_RCMD,
+                CGEventFlags::CGEventFlagCommand,
+            ),
+            // Fn 没有左右,按下 / 抬起就是 SecondaryFn 这一位的变化。
+            0x3F => return Some(flags.contains(CGEventFlags::CGEventFlagSecondaryFn)),
             _ => return None,
         };
         Some(if bits & family != 0 {
@@ -1256,6 +1363,18 @@ fn rdev_to_hotkey(k: &rdev::Key) -> Option<HotkeyKey> {
         rdev::Key::F10 => HotkeyKey::F10,
         rdev::Key::F11 => HotkeyKey::F11,
         rdev::Key::F12 => HotkeyKey::F12,
+        rdev::Key::MetaLeft => HotkeyKey::MetaLeft,
+        rdev::Key::MetaRight => HotkeyKey::MetaRight,
+        rdev::Key::Num0 => HotkeyKey::Digit0,
+        rdev::Key::Num1 => HotkeyKey::Digit1,
+        rdev::Key::Num2 => HotkeyKey::Digit2,
+        rdev::Key::Num3 => HotkeyKey::Digit3,
+        rdev::Key::Num4 => HotkeyKey::Digit4,
+        rdev::Key::Num5 => HotkeyKey::Digit5,
+        rdev::Key::Num6 => HotkeyKey::Digit6,
+        rdev::Key::Num7 => HotkeyKey::Digit7,
+        rdev::Key::Num8 => HotkeyKey::Digit8,
+        rdev::Key::Num9 => HotkeyKey::Digit9,
         rdev::Key::KeyA => HotkeyKey::KeyA,
         rdev::Key::KeyB => HotkeyKey::KeyB,
         rdev::Key::KeyC => HotkeyKey::KeyC,
@@ -1336,6 +1455,28 @@ fn hotkey_to_vk(k: &HotkeyKey) -> Option<i32> {
         HotkeyKey::F10 => 0x79,
         HotkeyKey::F11 => 0x7A,
         HotkeyKey::F12 => 0x7B,
+        HotkeyKey::F13 => 0x7C,
+        HotkeyKey::F14 => 0x7D,
+        HotkeyKey::F15 => 0x7E,
+        HotkeyKey::F16 => 0x7F,
+        HotkeyKey::F17 => 0x80,
+        HotkeyKey::F18 => 0x81,
+        HotkeyKey::F19 => 0x82,
+        HotkeyKey::F20 => 0x83,
+        // Fn 在 Windows 上由键盘固件处理,系统根本看不到它;解析阶段已经拒绝了。
+        HotkeyKey::Fn => return None,
+        HotkeyKey::MetaLeft => 0x5B,  // VK_LWIN
+        HotkeyKey::MetaRight => 0x5C, // VK_RWIN
+        HotkeyKey::Digit0 => 0x30,
+        HotkeyKey::Digit1 => 0x31,
+        HotkeyKey::Digit2 => 0x32,
+        HotkeyKey::Digit3 => 0x33,
+        HotkeyKey::Digit4 => 0x34,
+        HotkeyKey::Digit5 => 0x35,
+        HotkeyKey::Digit6 => 0x36,
+        HotkeyKey::Digit7 => 0x37,
+        HotkeyKey::Digit8 => 0x38,
+        HotkeyKey::Digit9 => 0x39,
         HotkeyKey::KeyA => 0x41,
         HotkeyKey::KeyB => 0x42,
         HotkeyKey::KeyC => 0x43,
@@ -1367,6 +1508,34 @@ fn hotkey_to_vk(k: &HotkeyKey) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cmd_fn_digits_and_high_function_keys() {
+        use super::HotkeyKey as K;
+        // 不写边的 cmd 两边都认,写了边看开关
+        assert_eq!(
+            parse_hotkey("cmd", true).unwrap()[0].alts,
+            vec![K::MetaLeft, K::MetaRight]
+        );
+        assert_eq!(
+            parse_hotkey("right_cmd", true).unwrap()[0].alts,
+            vec![K::MetaRight]
+        );
+        assert_eq!(
+            parse_hotkey("ctrl+5", true).unwrap()[1].alts,
+            vec![K::Digit5]
+        );
+        // "fn" 以前会掉进「f + 数字」那一条,解析数字失败后整个返回 None
+        assert_eq!(
+            parse_hotkey("fn", true).is_some(),
+            cfg!(target_os = "macos")
+        );
+        assert_eq!(
+            parse_hotkey("f13", true).is_some(),
+            !cfg!(target_os = "linux")
+        );
+        assert!(parse_hotkey("f21", true).is_none());
+    }
+
     #[test]
     fn esc_cancels_unless_it_is_part_of_the_hotkey() {
         let keys = parse_hotkey("left_ctrl+left_alt", true).unwrap();
@@ -1441,7 +1610,16 @@ mod tests {
     fn function_keys_parse() {
         assert_eq!(alts("f1", true), Some(vec![vec![HotkeyKey::F1]]));
         assert_eq!(alts("f12", true), Some(vec![vec![HotkeyKey::F12]]));
-        assert_eq!(alts("f13", true), None);
+        // F13–F20 在 macOS / Windows 上可用;Linux 的 rdev 键表只到 F12。
+        assert_eq!(
+            alts("f13", true),
+            if cfg!(target_os = "linux") {
+                None
+            } else {
+                Some(vec![vec![HotkeyKey::F13]])
+            }
+        );
+        assert_eq!(alts("f21", true), None);
         assert_eq!(alts("f0", true), None);
     }
 
@@ -1483,15 +1661,15 @@ mod tests {
         let reason = |s: &str| parse_hotkey_checked(s, true).unwrap_err();
         assert!(reason("left_ctrl+ ").contains("空的一段"));
         assert!(reason("").contains("为空"));
-        assert!(reason("left_cmd+a").contains("Cmd"));
-        assert!(reason("ctrl+meta").contains("Cmd"));
-        assert!(reason("ctrl+5").contains("数字"));
-        assert!(reason("ctrl+f13").contains("F1–F12"));
+        assert!(reason("ctrl+f21").contains("F1–F20"));
         assert!(reason("ctrl+arrowup").contains("方向键"));
         let r = reason("ctrl+å");
         assert!(r.contains("å"), "{}", r);
         // 原串要带在原因里,用户能对上是哪一次录制
-        assert!(reason("ctrl+5").contains("ctrl+5"));
+        assert!(reason("ctrl+arrowup").contains("ctrl+arrowup"));
+        if !cfg!(target_os = "macos") {
+            assert!(reason("fn").contains("macOS"));
+        }
     }
 
     /// 录制器按 `e.code` 映射出来的每个 token 都必须是这里认的 —— 两边的
@@ -1513,12 +1691,18 @@ mod tests {
             "backspace",
             "delete",
             "capslock",
+            "left_cmd",
+            "right_cmd",
         ]
         .into_iter()
         .map(String::from)
         .collect();
         tokens.extend(('a'..='z').map(|c| c.to_string()));
+        tokens.extend(('0'..='9').map(|c| c.to_string()));
         tokens.extend((1..=12).map(|n| format!("f{}", n)));
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            tokens.extend((13..=20).map(|n| format!("f{}", n)));
+        }
         for t in &tokens {
             assert!(
                 parse_hotkey(t, true).is_some(),

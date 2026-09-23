@@ -157,7 +157,12 @@ npm run tauri dev
 
 ### 快捷键
 
-默认 `left_ctrl+left_alt`，按住说话、松开转写。
+默认 `left_ctrl+left_alt`，按住说话、松开转写；「设置 → 常规 → 录音方式」可改成按一下开始、
+再按一下结束。录音中按 Esc 放弃这一段。
+
+可用的键：Ctrl / Alt / Shift / Cmd(Win) 修饰键，字母、数字、空格、回车、Tab、Esc、
+F1–F20（Linux 只到 F12）；macOS 上还能单独用 Fn(🌐) 键（设置里点「用 Fn 键」，并把系统设置
+里「按下 🌐 键时」改成「不执行任何操作」）。⌘ / Win 加字母数字是系统快捷键，录制时会拒绝。
 
 **不写左右就两边都认。** 写 `ctrl+alt` 时左右两侧都能触发；只有明确写
 `left_ctrl` 才只认左边。想让录制出来的 `left_ctrl+left_alt` 也左右通用，

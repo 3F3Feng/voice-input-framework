@@ -272,8 +272,13 @@
               <button class="s-btn" @click="startHotkeyRecording">{{ hotkeyRecording ? '取消' : '录制' }}</button>
               <button class="s-btn" @click="applyHotkey" :disabled="!hotkeyChanged">应用</button>
             </div>
+            <!-- Fn 在网页里按不出 keydown,录不下来,只能直接选。 -->
+            <div v-if="IS_MAC" class="s-row" style="margin-top:4px">
+              <button class="s-btn" @click="useFnHotkey">用 Fn(🌐)键</button>
+              <span class="s-tip" style="margin:0">需要在「系统设置 → 键盘」把「按下 🌐 键时」设为「不执行任何操作」</span>
+            </div>
             <div v-if="hotkeyRecording" class="s-tip">
-              请按下快捷键组合…支持 {{ IS_MAC ? '⌃ ⌥ ⇧' : 'Ctrl / Alt / Shift' }} 加字母、空格、回车、Tab、Esc、F1–F12 等。
+              请按下快捷键组合…支持 {{ IS_MAC ? '⌃ ⌥ ⇧ ⌘' : 'Ctrl / Alt / Shift / Win' }} 加字母、数字、空格、回车、Tab、Esc、{{ IS_LINUX ? 'F1–F12' : 'F1–F20' }} 等。
             </div>
             <div v-if="hotkeyMsg" :class="['s-tip', hotkeyMsgErr ? 's-err' : 'srv-problem']">{{ hotkeyMsg }}</div>
             <div class="s-row" style="margin-top:6px">
@@ -789,13 +794,16 @@ const language = ref("auto");
 let savedLanguage = "auto";
 
 const IS_MAC = navigator.userAgent.includes("Mac");
+const IS_LINUX = !IS_MAC && navigator.userAgent.includes("Linux");
 const MOD_LABEL: Record<string, [mac: string, other: string]> = {
   ctrl: ["⌃", "Ctrl"], control: ["⌃", "Ctrl"], alt: ["⌥", "Alt"], shift: ["⇧", "Shift"],
+  cmd: ["⌘", "Win"], win: ["⌘", "Win"], super: ["⌘", "Super"], meta: ["⌘", "Win"],
 };
 const KEY_LABEL: Record<string, [mac: string, other: string]> = {
   space: ["Space", "Space"], enter: ["↩", "Enter"], return: ["↩", "Enter"], tab: ["⇥", "Tab"],
   esc: ["Esc", "Esc"], escape: ["Esc", "Esc"], backspace: ["⌫", "Backspace"],
   delete: ["⌦", "Delete"], del: ["⌦", "Delete"], capslock: ["⇪", "CapsLock"], caps: ["⇪", "CapsLock"],
+  fn: ["Fn", "Fn"], globe: ["Fn", "Fn"],
 };
 
 /**
@@ -808,7 +816,7 @@ function formatHotkey(s: string): string {
   const labels = s.split("+").map(raw => {
     const t = raw.trim().toLowerCase();
     if (!t) return "?";  // 空段(旧 bug 录出来的 `left_ctrl+ `)要看得见,别显示成完整的样子
-    const m = /^(left|right)_(\w+)$/.exec(t) || /^([lr])(ctrl|alt|shift)$/.exec(t);
+    const m = /^(left|right)_(\w+)$/.exec(t) || /^([lr])(ctrl|alt|shift|cmd)$/.exec(t);
     const base = m ? m[2] : t;
     const mod = MOD_LABEL[base];
     if (mod) {
@@ -818,7 +826,7 @@ function formatHotkey(s: string): string {
     }
     const key = KEY_LABEL[base];
     if (key) return IS_MAC ? key[0] : key[1];
-    return /^([a-z]|f\d+)$/.test(base) ? base.toUpperCase() : raw.trim();
+    return /^([a-z0-9]|f\d+)$/.test(base) ? base.toUpperCase() : raw.trim();
   });
   // macOS 惯例是符号连写(⌃⌥Space);带了「左 / 右」时连写就读不清了,用空格隔开。
   return labels.join(IS_MAC ? (sided ? " " : "") : "+");
@@ -1947,7 +1955,10 @@ let hotkeyHandler: ((e: KeyboardEvent) => void) | null = null;
 function codeToToken(code: string): string | null {
   if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
   const f = /^F(\d{1,2})$/.exec(code);
-  if (f) { const n = Number(f[1]); return n >= 1 && n <= 12 ? `f${n}` : null; }
+  // F13–F20:macOS / Windows 的监听认得;Linux 的 rdev 只到 F12。
+  if (f) { const n = Number(f[1]); return n >= 1 && n <= (IS_LINUX ? 12 : 20) ? `f${n}` : null; }
+  // 主键盘上的数字(小键盘的不认:三个平台的监听都没接)
+  if (/^Digit\d$/.test(code)) return code.slice(5);
   const named: Record<string, string> = {
     Space: "space", Enter: "enter", NumpadEnter: "enter", Tab: "tab", Escape: "esc",
     Backspace: "backspace", Delete: "delete", CapsLock: "capslock",
@@ -1968,7 +1979,7 @@ function unsupportedKeyName(e: KeyboardEvent): string {
 
 /** 单独按下时和平时打字分不开的键:光一个它(或只加 Shift)当快捷键,每次打字都会误触发。 */
 const TYPING_TOKENS = new Set(["space", "enter", "tab", "backspace", "delete"]);
-const isTypingKey = (t: string) => TYPING_TOKENS.has(t) || /^[a-z]$/.test(t);
+const isTypingKey = (t: string) => TYPING_TOKENS.has(t) || /^[a-z0-9]$/.test(t);
 
 function setHotkeyMsg(msg: string, err = true) { hotkeyMsg.value = msg; hotkeyMsgErr.value = err; }
 
@@ -2031,6 +2042,8 @@ function startHotkeyRecording() {
       case 'AltRight': return 'right_alt';
       case 'ShiftLeft': return 'left_shift';
       case 'ShiftRight': return 'right_shift';
+      case 'MetaLeft': return 'left_cmd';
+      case 'MetaRight': return 'right_cmd';
       default: return null;
     }
   };
@@ -2065,13 +2078,6 @@ function startHotkeyRecording() {
     const m = modName(e.code);
     if (e.type === 'keydown') {
       if (e.repeat) return;
-      // Cmd / Win:后端的全局监听认不出它,录下来也用不了。以前会录成
-      // `left_cmd`,点「应用」才失败。
-      if (e.code.startsWith('Meta') || e.metaKey) {
-        // 按着 Cmd 再按别的键时 e.code 是那个键,名字不能从它取。
-        reject(`暂不支持 ${IS_MAC ? '⌘ Cmd' : 'Win'} 键,请用 ${IS_MAC ? '⌃ ⌥ ⇧' : 'Ctrl / Alt / Shift'} 组合`);
-        return;
-      }
       if (m) {
         if (!mods.includes(m)) mods.push(m);
         setHotkeyMsg("");
@@ -2082,8 +2088,14 @@ function startHotkeyRecording() {
       if (!token) { reject(`暂不支持 ${unsupportedKeyName(e)} 键`); return; }
       // 修饰键在点「录制」之前就按下了的话,收不到它自己的 keydown,只能从
       // 主键事件的标志位上补回来。分不出左右,就用两边都认的写法。
-      for (const [flag, bare] of [[e.ctrlKey, "ctrl"], [e.altKey, "alt"], [e.shiftKey, "shift"]] as const) {
+      for (const [flag, bare] of [[e.ctrlKey, "ctrl"], [e.altKey, "alt"], [e.shiftKey, "shift"], [e.metaKey, "cmd"]] as const) {
         if (flag && !mods.some(x => x.endsWith(bare))) mods.push(bare);
+      }
+      // ⌘ / Win + 字母数字是系统和各个应用自己的快捷键(⌘C、⌘V…)。全局监听只旁听、
+      // 不拦截,按下去会同时触发那个快捷键和录音。
+      if (mods.some(x => x.endsWith('cmd')) && /^[a-z0-9]$/.test(token)) {
+        reject(`${IS_MAC ? '⌘' : 'Win+'}${token.toUpperCase()} 是系统 / 应用的快捷键,按下会同时触发它;请换一个组合,或单独用右 ${IS_MAC ? '⌘' : 'Win'}`);
+        return;
       }
       if (isTypingKey(token) && mods.every(x => x.endsWith('shift'))) {
         const what = mods.length ? `${IS_MAC ? '⇧' : 'Shift+'}${formatHotkey(token)}` : `单独的 ${formatHotkey(token)} 键`;
@@ -2099,6 +2111,12 @@ function startHotkeyRecording() {
   hotkeyHandler = handler;
   document.addEventListener('keydown', handler);
   document.addEventListener('keyup', handler);
+}
+function useFnHotkey() {
+  if (hotkeyRecording.value) startHotkeyRecording();  // 录制中就先取消
+  hotkeyStr.value = "fn";
+  hotkeyChanged.value = true;
+  setHotkeyMsg("已选 Fn,点「应用」生效", false);
 }
 async function applyHotkey() {
   if (!hotkeyStr.value) return;
