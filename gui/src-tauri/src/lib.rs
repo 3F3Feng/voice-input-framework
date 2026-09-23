@@ -1,6 +1,7 @@
 mod audio;
 mod config;
 mod heartbeat;
+mod history;
 mod hotkey;
 mod indicator;
 mod input;
@@ -1459,6 +1460,8 @@ pub fn run() {
                     e
                 );
             }
+            // 托盘「复制最近一条」接上持久化的历史:重启后不用等说完第一句才能用。
+            history::seed_tray(app.handle());
 
             // 启动时只查询三项权限并记录,不一次性把三个弹窗全甩给用户。
             // 唯一在启动时主动申请的是「输入监控」——全局快捷键监听器马上就要
@@ -1609,6 +1612,10 @@ pub fn run() {
             tray_available,
             quit_app,
             get_stt_health,
+            history::history_list,
+            history::history_add,
+            history::history_delete,
+            history::history_clear,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

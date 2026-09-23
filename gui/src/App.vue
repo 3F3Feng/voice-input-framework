@@ -295,6 +295,24 @@
               <label class="toggle"><input type="checkbox" v-model="startMinimized" @change="toggleStartMinimized" /><span class="slider"></span></label>
               <span class="s-label">启动时最小化</span>
             </div>
+            <div class="s-row" style="margin-top:6px">
+              <label class="toggle"><input type="checkbox" v-model="saveHistory" @change="onSaveHistoryToggle" /><span class="slider"></span></label>
+              <span class="s-label">保存识别历史</span>
+            </div>
+            <div class="s-tip">
+              {{ saveHistory
+                ? `存在本机的应用数据目录里(最多 ${HISTORY_CAP} 条),不会上传。重启后主界面仍能搜到、再次输入。`
+                : '新的识别结果只留到这次退出为止,不写进磁盘。' }}
+            </div>
+            <!-- 关掉保存时问一次已有的要不要删:关开关的人多半是不想留痕,
+                 但也可能只是不想再存新的,替他删掉就找不回来了。 -->
+            <div v-if="askClearHistory" class="choice-banner" style="margin-top:6px">
+              <div class="choice-q">已停止保存。已有的 {{ historyTotal }} 条记录要一起删掉吗?</div>
+              <div class="choice-actions">
+                <button class="s-btn" @click="confirmClearHistory">删除</button>
+                <button class="s-btn" @click="askClearHistory = false">保留</button>
+              </div>
+            </div>
           </div>
           </template>
 
@@ -472,12 +490,27 @@
       </div>
 
       <!-- Result -->
-      <div class="result-area" v-if="result || loading">
+      <div class="result-area" v-if="resultOpen || loading">
         <div v-if="loading && !recording" class="result-loading">
           <div class="spinner"></div>
         </div>
-        <div v-if="result" class="result-content">
-          <p class="result-text" @click="copyResult">{{ result }}</p>
+        <div v-if="resultOpen" class="result-content">
+          <!-- 经过 LLM 整理、文字变了的时候才有:对照原文,或者整段退回原文。
+               LLM 没开 / 没做成时两者一样,不显示。 -->
+          <div v-if="resultOriginal" class="result-compare">
+            <div class="seg">
+              <button :class="{ on: resultView === 'original' }" @click="resultView = 'original'">原文</button>
+              <button :class="{ on: resultView === 'final' }" @click="resultView = 'final'">整理后</button>
+            </div>
+            <button class="r-mini" @click="useOriginal" :disabled="result === resultOriginal && resultView === 'final'"
+              title="把原文放进编辑框(会替换掉现在的内容)">用原文</button>
+          </div>
+          <!-- 可以选中一部分、改个错字再复制 / 输入。以前是整段只读的 <p>,点一下就整段复制。
+               原文只读,免得两份文字各改各的;要改原文先点「用原文」。 -->
+          <textarea v-if="resultView === 'final' || !resultOriginal" class="result-text" v-model="result"
+            spellcheck="false" placeholder="(空)"></textarea>
+          <textarea v-else class="result-text original" :value="resultOriginal" readonly
+            title="原文只读;要在它的基础上改,点「用原文」"></textarea>
           <div class="result-actions">
             <button class="r-btn" @click="copyResult" :class="{ ok: copyFeedback }">
               {{ copyFeedback ? '已复制 ✓' : '📋 复制' }}
@@ -489,18 +522,33 @@
       </div>
 
       <!-- History -->
-      <div class="history-area" v-if="history.length > 0 && !result && !loading">
-        <div class="history-title">最近识别</div>
+      <div class="history-area" v-if="historyTotal > 0 && !resultOpen && !loading">
+        <div class="history-head">
+          <input class="history-search" v-model="historyQuery" type="search" spellcheck="false"
+            :placeholder="`搜索 ${historyTotal} 条识别记录`" />
+          <!-- 两步确认:第一下只把按钮变成「确认清空」,3 秒内再点才真删。 -->
+          <button class="h-clear" :class="{ armed: historyClearArmed }" @click="clearHistory">
+            {{ historyClearArmed ? '确认清空?' : '清空' }}
+          </button>
+        </div>
         <div class="history-scroll">
-          <div v-for="(item, i) in history" :key="i" class="history-item" @click="result = item.text">
+          <div v-for="item in history" :key="item.id" class="history-item" @click="openHistory(item)" :title="item.text">
             <span class="history-text">{{ item.text }}</span>
-            <span class="history-time">{{ item.time }}</span>
+            <div class="history-meta">
+              <span class="history-time">{{ fmtHistoryTime(item.ts) }}{{ item.original ? ' · 已整理' : '' }}{{ item.model ? ` · ${item.model}` : '' }}</span>
+              <span class="history-ops">
+                <button class="h-op" title="复制" @click.stop="copyText(item.text)">📋</button>
+                <button class="h-op" title="输入到上一个窗口" @click.stop="insertText(item.text)">⌨️</button>
+                <button class="h-op" title="删除这一条" @click.stop="deleteHistory(item.id)">🗑</button>
+              </span>
+            </div>
           </div>
+          <div v-if="history.length === 0" class="history-none">没有匹配「{{ historyQuery.trim() }}」的记录</div>
         </div>
       </div>
 
       <!-- Empty state -->
-      <div class="empty-state" v-if="!result && !loading && !recording && history.length === 0">
+      <div class="empty-state" v-if="!resultOpen && !loading && !recording && historyTotal === 0">
         <div class="empty-icon">🎙️</div>
         <div class="empty-text">按住按钮或按 {{ displayHotkey }} 开始语音输入</div>
       </div>
@@ -583,12 +631,14 @@ interface VoiceInputConfig {
   // use_floating_indicator / use_tray / opacity 还在 config.json 里（降级兼容，见 config.rs），
   // 但没有任何地方读，这里不再声明；整份对象读出来再原样写回，它们照样保留。
   // output_choice_made 是后加的，老配置里没有。
-  ui: { start_minimized: boolean; auto_input?: boolean; output_choice_made?: boolean; input_method?: InputMethod };
+  // save_history 是后加的(F16),老配置里没有,Rust 端默认 true。
+  ui: { start_minimized: boolean; auto_input?: boolean; output_choice_made?: boolean; input_method?: InputMethod; save_history?: boolean };
   audio: { device: string | null; language: string };
   llm: { enabled: boolean };
   _version: string;
 }
-interface HistoryItem { text: string; time: string; }
+/** 与 src-tauri/src/history.rs 的 HistoryEntry 对应。`original` 只在和结果不同时才有。 */
+interface HistoryEntry { id: number; ts: number; text: string; original?: string | null; model?: string | null; }
 /** get_audio_devices 的真实返回：见 src-tauri/src/audio.rs 的 AudioDeviceInfo。
  *  这里以前声明成 Record<string, string>，于是下拉框把整个对象序列化出来当选项名，
  *  选中后写进 cfg.audio.device 的也是个对象，serde 那头直接拒收。 */
@@ -619,10 +669,27 @@ interface SttHealth {
 }
 const sttHealth = ref<SttHealth | null>(null);
 const loading = ref(false);
+/** 结果框里的文字(可编辑)。「复制」「输入」用的就是它,不是识别出来的那份。 */
 const result = ref("");
+/** 结果卡片开着没有。不能拿 `result` 非空来判断:用户把框里的字删光,
+ *  卡片就会在手底下消失。 */
+const resultOpen = ref(false);
+/** 这条结果的 STT 原文;和结果一样(没经过 LLM、或 LLM 没做成)时为空。 */
+const resultOriginal = ref("");
+const resultView = ref<"final" | "original">("final");
 const showSettings = ref(false);
 const copyFeedback = ref(false);
-const history = ref<HistoryItem[]>([]);
+/** 当前搜索条件下的历史(新的在前)。 */
+const history = ref<HistoryEntry[]>([]);
+/** 不算搜索过滤的总条数:区分「没有历史」和「没搜到」。 */
+const historyTotal = ref(0);
+const historyQuery = ref("");
+const historyClearArmed = ref(false);
+const saveHistory = ref(true);
+/** 刚关掉「保存识别历史」,在问已有的要不要删。 */
+const askClearHistory = ref(false);
+/** 与 history.rs 的 HISTORY_CAP 一致,只用于设置页的说明文字。 */
+const HISTORY_CAP = 500;
 
 const sttModels = ref<ModelInfo[]>([]);
 const llmModels = ref<ModelInfo[]>([]);
@@ -1090,11 +1157,90 @@ async function saveConfigPatch(patch: (cfg: VoiceInputConfig) => void): Promise<
   }
 }
 
-function addToHistory(text: string) {
-  if (!text) return;
+// ── 识别历史(F16)──
+// 以前只在内存里、最多 20 条,重启就没了。现在由 Rust 存进应用数据目录的
+// history.json;搜索也在 Rust 那边做(纯逻辑有单测),这里只管显示。
+async function refreshHistory() {
+  try {
+    const page = await invoke<{ entries: HistoryEntry[]; total: number }>("history_list", { query: historyQuery.value });
+    history.value = page.entries;
+    historyTotal.value = page.total;
+  } catch (e) { console.error("history_list failed:", e); }
+}
+let historySearchTimer: ReturnType<typeof setTimeout> | null = null;
+watch(historyQuery, () => {
+  // 输入法组字时每个键都会触发,等手停一下再搜。
+  if (historySearchTimer) clearTimeout(historySearchTimer);
+  historySearchTimer = setTimeout(refreshHistory, 150);
+});
+
+async function addToHistory(text: string, original: string) {
+  if (!text.trim()) return;
+  // 「保存识别历史」关着时 Rust 只把它留在内存里,不写盘;这里不用分情况。
+  try { await invoke("history_add", { text, original: original || null }); }
+  catch (e) { toast(`识别历史没存上: ${e}`, "err"); }
+  // 上次留下的搜索词会把刚说的这条过滤掉,关掉结果卡片时列表里找不到它。
+  historyQuery.value = "";
+  await refreshHistory();
+}
+
+async function deleteHistory(id: number) {
+  try { await invoke("history_delete", { id }); }
+  catch (e) { toast(`删除失败: ${e}`, "err"); }
+  await refreshHistory();
+}
+
+let historyClearTimer: ReturnType<typeof setTimeout> | null = null;
+async function clearHistory() {
+  // 几百条一键就没了,不给一次反悔的机会说不过去;弹系统对话框又太重,
+  // 就让按钮自己变成「确认清空?」,3 秒内再点一下才算数。
+  if (!historyClearArmed.value) {
+    historyClearArmed.value = true;
+    historyClearTimer = setTimeout(() => { historyClearArmed.value = false; }, 3000);
+    return;
+  }
+  if (historyClearTimer) { clearTimeout(historyClearTimer); historyClearTimer = null; }
+  historyClearArmed.value = false;
+  await doClearHistory();
+}
+async function doClearHistory() {
+  try { await invoke("history_clear"); toast("识别历史已清空", "ok"); }
+  catch (e) { toast(`清空失败: ${e}`, "err"); }
+  historyQuery.value = "";
+  await refreshHistory();
+}
+async function confirmClearHistory() {
+  askClearHistory.value = false;
+  await doClearHistory();
+}
+
+async function onSaveHistoryToggle() {
+  const on = saveHistory.value;
+  if (!(await saveConfigPatch(cfg => { cfg.ui.save_history = on; }))) {
+    saveHistory.value = !on;
+    return;
+  }
+  askClearHistory.value = !on && historyTotal.value > 0;
+  if (on) toast("之后的识别结果会保存到本机", "ok");
+}
+
+/** 今天的只显示时分;今年的加月日;更早的显示完整日期。 */
+function fmtHistoryTime(ts: number): string {
+  const d = new Date(ts);
   const now = new Date();
-  history.value.unshift({ text, time: now.toLocaleTimeString() });
-  if (history.value.length > 20) history.value = history.value.slice(0, 20);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (d.toDateString() === now.toDateString()) return hm;
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** 点历史里的一条:放回结果框,可以改、可以对照原文。 */
+function openHistory(item: HistoryEntry) {
+  result.value = item.text;
+  resultOriginal.value = item.original || "";
+  resultView.value = "final";
+  resultOpen.value = true;
 }
 
 // ── Recording ──
@@ -1106,7 +1252,7 @@ async function startRecord() {
   recording.value = true;       // set state BEFORE await to block bounces
   try {
     loading.value = false;
-    result.value = "";
+    resetResult();
     await invoke("start_recording");
     elapsedMs.value = 0;
     // 快捷键路径的 5 分钟上限在 Rust 那边(hotkey.rs 的 record_limit_step),按钮路径
@@ -1409,6 +1555,7 @@ async function loadConfig() {
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
     outputChoiceMade.value = cfg.ui.output_choice_made ?? false;
     inputMethod.value = cfg.ui.input_method ?? "paste";
+    saveHistory.value = cfg.ui.save_history ?? true;
     selectedDevice.value = cfg.audio.device;
     // 旧配置没有 server.mode / server.local，Rust 端补了默认值；这里仍然
     // 用 ?? 兜一层，免得手改过配置文件时前端直接崩。
@@ -2099,27 +2246,48 @@ async function doInstallUpdate() {
 }
 
 // ── Result ──
-async function copyResult() {
-  if (!result.value) return;
-  // 以前不等结果,写剪贴板失败也显示「已复制」。
-  try { await navigator.clipboard.writeText(result.value); }
-  catch (e) { toast(`复制失败: ${e}`, "err"); return; }
-  copyFeedback.value = true;
-  toast("已复制", "ok");
-  setTimeout(() => { copyFeedback.value = false; }, 2000);
+/** 这一次转写的 STT 原文(`transcribe-progress` 里的 stt_result),等最终结果来了再用。 */
+let pendingOriginal = "";
+function resetResult() {
+  result.value = "";
+  resultOriginal.value = "";
+  resultView.value = "final";
+  resultOpen.value = false;
+  pendingOriginal = "";
 }
-async function doAutoInput() {
-  if (!result.value) return;
+/** 按钮作用于眼前显示的那份:切到「原文」时复制 / 输入的就是原文。 */
+const shownResult = computed(() =>
+  resultView.value === "original" && resultOriginal.value ? resultOriginal.value : result.value);
+function useOriginal() {
+  result.value = resultOriginal.value;
+  resultView.value = "final";
+}
+async function copyText(text: string): Promise<boolean> {
+  if (!text.trim()) return false;
+  // 以前不等结果,写剪贴板失败也显示「已复制」。
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) { toast(`复制失败: ${e}`, "err"); return false; }
+  toast("已复制", "ok");
+  return true;
+}
+async function insertText(text: string) {
+  if (!text.trim()) return;
   // 点这个按钮时焦点在本应用自己的窗口上:让后端先把前台交还给上一个应用再敲字,
   // 不然字全敲给了自己。
-  try { await invoke("auto_input", { text: result.value, handBackFocus: true }); toast("已输入", "ok"); }
+  try { await invoke("auto_input", { text, handBackFocus: true }); toast("已输入", "ok"); }
   catch (e) {
     // 缺「辅助功能」权限时 Rust 端会返回可读原因,原样展示,不要吞掉
     toast(`${e}`, "err");
     refreshPermissions();
   }
 }
-function clearResult() { result.value = ""; }
+async function copyResult() {
+  if (!(await copyText(shownResult.value))) return;
+  copyFeedback.value = true;
+  setTimeout(() => { copyFeedback.value = false; }, 2000);
+}
+function doAutoInput() { return insertText(shownResult.value); }
+function clearResult() { resetResult(); }
 // ── Lifecycle ──
 // 打开设置面板时重新查一次:用户可能刚在系统设置里改过授权
 watch(showSettings, open => { if (open) refreshPermissions(); });
@@ -2165,6 +2333,7 @@ onMounted(async () => {
   await refreshDevices();
   await refreshPermissions();
   await refreshServers();
+  await refreshHistory();
 
   // 后台心跳(R12):先拉一次当前结论——事件只在状态变化时才发,webview 起来之前
   // 发过的收不到——再订阅之后的变化。
@@ -2190,7 +2359,7 @@ onMounted(async () => {
   // Frontend only updates UI state to reflect what Rust already did.
   listen("hotkey-press", () => {
     recording.value = true;
-    result.value = "";
+    resetResult();
     elapsedMs.value = 0;
     timerInterval = setInterval(() => { elapsedMs.value += 100; }, 100);
     levelInterval = setInterval(async () => {
@@ -2243,6 +2412,8 @@ onMounted(async () => {
   listen("transcribe-progress", (event) => {
     const data = event.payload as any;
     if (data?.type === "llm_start" || data?.type === "llm_progress") llmProcessing.value = true;
+    // 服务端在最终结果之前先发一条 STT 原文,LLM 改写过的话靠它对照。
+    if (data?.type === "stt_result" && typeof data.text === "string") pendingOriginal = data.text;
   });
 
   listen<string>("transcribe-done", (event) => {
@@ -2251,8 +2422,14 @@ onMounted(async () => {
     if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
     const text = event.payload;
     if (text) {
+      const original = pendingOriginal.trim();
+      pendingOriginal = "";
       result.value = text;
-      addToHistory(text);
+      // 忽略首尾空白再比,和 history.rs 的 normalize_original 同一个口径。
+      resultOriginal.value = original && original !== text.trim() ? original : "";
+      resultView.value = "final";
+      resultOpen.value = true;
+      addToHistory(text, resultOriginal.value);
       toast("识别完成", "ok");
       // 自动输入失败(最常见是缺「辅助功能」权限)必须让用户看见:
       // 以前这里 catch 成空函数,转录一切正常但目标窗口什么都没出现。
@@ -2278,6 +2455,7 @@ onMounted(async () => {
   // 这里直接跳过，用户说完话什么反馈都没有。
   const NO_SPEECH = "没有录到声音";
   listen<string>("transcribe-error", (event) => {
+    pendingOriginal = "";
     loading.value = false;
     llmProcessing.value = false;
     if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
@@ -2488,7 +2666,17 @@ html, body, #app { height: 100%; }
 .result-area { width: 100%; max-width: 360px; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .result-loading { display: flex; justify-content: center; padding: 16px; }
 .result-content { background: var(--card); border-radius: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
-.result-text { flex: 1; padding: 14px; font-size: 0.92rem; line-height: 1.6; overflow-y: auto; cursor: text; user-select: text; min-height: 0; word-break: break-word; }
+/* 整个应用是 user-select: none,结果框得单独放开(WebKit 还要带前缀)。 */
+.result-text { flex: 1; padding: 14px; font-size: 0.92rem; line-height: 1.6; overflow-y: auto; cursor: text; -webkit-user-select: text; user-select: text; min-height: 0; word-break: break-word;
+  width: 100%; resize: none; border: none; outline: none; background: transparent; color: var(--text); font-family: inherit; }
+.result-text.original { color: #a1a1aa; }
+.result-compare { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 0; flex-shrink: 0; }
+.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { background: none; border: none; color: var(--muted); font-size: 0.68rem; padding: 3px 10px; cursor: pointer; }
+.seg button.on { background: var(--border); color: var(--text); }
+.r-mini { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 0.68rem; padding: 3px 8px; cursor: pointer; }
+.r-mini:hover:not(:disabled) { color: var(--blue); border-color: var(--blue); }
+.r-mini:disabled { opacity: 0.4; cursor: default; }
 .result-actions { display: flex; gap: 1px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .r-btn { flex: 1; background: var(--surface); color: var(--muted); border: none; padding: 8px; font-size: 0.72rem; cursor: pointer; transition: all 0.15s; }
 .r-btn:hover { color: var(--text); background: var(--card); }
@@ -2496,12 +2684,24 @@ html, body, #app { height: 100%; }
 
 /* History */
 .history-area { width: 100%; max-width: 360px; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.history-title { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.history-head { display: flex; gap: 6px; margin-bottom: 8px; flex-shrink: 0; }
+.history-search { flex: 1; min-width: 0; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font-size: 0.74rem; outline: none; -webkit-user-select: text; user-select: text; }
+.history-search:focus { border-color: var(--blue); }
+.h-clear { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 0.7rem; padding: 0 10px; cursor: pointer; white-space: nowrap; }
+.h-clear:hover { color: var(--text); }
+.h-clear.armed { color: var(--red); border-color: var(--red); }
 .history-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 .history-item { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; transition: all 0.15s; display: flex; flex-direction: column; gap: 2px; }
 .history-item:hover { border-color: var(--blue); }
 .history-text { font-size: 0.82rem; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-time { font-size: 0.65rem; color: var(--muted); }
+.history-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 20px; }
+.history-time { font-size: 0.65rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* 每条的操作平时收着,悬停 / 键盘聚焦时才出来,列表看着不乱。 */
+.history-ops { display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; flex-shrink: 0; }
+.history-item:hover .history-ops, .history-item:focus-within .history-ops { opacity: 1; }
+.h-op { background: none; border: none; font-size: 0.72rem; padding: 1px 4px; border-radius: 4px; cursor: pointer; }
+.h-op:hover { background: var(--surface); }
+.history-none { font-size: 0.74rem; color: var(--muted); text-align: center; padding: 16px 0; }
 
 /* Empty */
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; }

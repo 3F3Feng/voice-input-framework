@@ -174,6 +174,10 @@ pub struct UiConfig {
     /// 自动输入用什么方式把字送进目标窗口,见 [`InputMethod`]。
     #[serde(default)]
     pub input_method: InputMethod,
+    /// 识别结果是否写进本机的历史文件(`history.rs`)。默认开:找回刚才说过的话
+    /// 是常用需求;关掉是隐私选项,关了之后新结果只留在本次会话的内存里。
+    #[serde(default = "default_true")]
+    pub save_history: bool,
 }
 
 /// 把识别结果送进目标窗口的方式。
@@ -285,6 +289,7 @@ impl Default for VoiceInputConfig {
                 auto_input: false,
                 output_choice_made: false,
                 input_method: InputMethod::default(),
+                save_history: true,
             },
             audio: AudioConfig {
                 device: None,
@@ -492,6 +497,7 @@ impl VoiceInputConfig {
                 auto_input: false,
                 output_choice_made: false,
                 input_method: InputMethod::default(),
+                save_history: true,
             },
             audio: AudioConfig {
                 device: old.audio.as_ref().and_then(|a| {
@@ -703,6 +709,14 @@ mod tests {
         let cfg: VoiceInputConfig = serde_json::from_str(LEGACY_CONFIG).unwrap();
         assert!(!cfg.ui.output_choice_made);
         assert!(cfg.ui.auto_input);
+    }
+
+    /// 老配置里没有 `save_history`:读出来是「保存」,和默认值一致。
+    #[test]
+    fn legacy_config_saves_history_by_default() {
+        let cfg: VoiceInputConfig = serde_json::from_str(LEGACY_CONFIG).unwrap();
+        assert!(cfg.ui.save_history);
+        assert!(VoiceInputConfig::default().ui.save_history);
     }
 
     /// 没用的三个 UI 字段缺了也要读得出来(将来删掉它们时不至于读坏新配置)。

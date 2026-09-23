@@ -143,6 +143,18 @@ pub fn remember_result(app: &tauri::AppHandle, text: &str) {
     }
 }
 
+/// 忘掉最近一条结果,「复制」项回到置灰。清空识别历史时用:用户点了清空,
+/// 就不该还能从托盘里把上一句复制出来。
+pub fn forget_result(app: &tauri::AppHandle) {
+    if let Ok(mut last) = LAST_RESULT.lock() {
+        last.clear();
+    }
+    if let Some(items) = app.try_state::<TrayItems>() {
+        let _ = items.copy_last.set_text("复制最近一条结果");
+        let _ = items.copy_last.set_enabled(false);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::preview;
