@@ -693,6 +693,33 @@ async def transcribe(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+#: 转写 / 后处理期间每隔多久给客户端发一次 `progress`。
+KEEPALIVE_INTERVAL_S = 5.0
+
+
+async def _with_keepalive(coro, stage: str, send):
+    """跑 `coro`,期间每 `KEEPALIVE_INTERVAL_S` 秒发一条 `{"type": "progress"}`。
+
+    客户端以前对每条消息只能干等一个固定上限(5 分钟):设短了,CPU 上转写长录音
+    会被误判超时;设长了,服务端真挂了要等 5 分钟才知道。有了心跳,客户端就能在
+    「一直有进展」时一直等、在「半天没动静」时很快放弃。老客户端不认 progress,
+    会直接忽略,协议向后兼容。
+    """
+    task = asyncio.ensure_future(coro)
+    started = time.time()
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=KEEPALIVE_INTERVAL_S)
+            if done:
+                return task.result()
+            await send(
+                {"type": "progress", "stage": stage, "elapsed_s": round(time.time() - started, 1)}
+            )
+    finally:
+        if not task.done():
+            task.cancel()
+
+
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
     """WebSocket 流式识别"""
@@ -827,9 +854,10 @@ async def websocket_stream(websocket: WebSocket):
         error_sent = False
         try:
             result = await asyncio.wait_for(
-                engine.transcribe(
-                    bytes(all_audio),
-                    language=language,
+                _with_keepalive(
+                    engine.transcribe(bytes(all_audio), language=language),
+                    "stt",
+                    _safe_send,
                 ),
                 timeout=600.0,
             )
@@ -854,7 +882,9 @@ async def websocket_stream(websocket: WebSocket):
                         "text": result.text[:50],
                     }
                 )
-                processed_text, llm_latency, llm_error = await call_llm_server(result.text)
+                processed_text, llm_latency, llm_error = await _with_keepalive(
+                    call_llm_server(result.text), "llm", _safe_send
+                )
             else:
                 processed_text = result.text
                 llm_latency = 0

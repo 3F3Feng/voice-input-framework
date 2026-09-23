@@ -275,3 +275,10 @@ fn llm_status_from_old_server_counts_as_supported() {
     assert_eq!(st.reason, None);
     assert!(stt::LlmStatus::from_json(&serde_json::json!({})).is_err());
 }
+
+#[test]
+fn result_wait_shrinks_once_the_server_sends_keepalives() {
+    // 老服务端不发心跳:照旧等 5 分钟;收到过心跳:60 秒没动静就算卡住。
+    assert_eq!(stt::result_wait(false).as_secs(), 300);
+    assert_eq!(stt::result_wait(true).as_secs(), 60);
+}

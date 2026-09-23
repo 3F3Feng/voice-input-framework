@@ -733,3 +733,49 @@ class TestLoadingProgress:
         release.set()
         assert await task is True
         assert engine.loading_progress() is None
+
+
+class TestKeepalive:
+    """转写 / 后处理期间给客户端发心跳"""
+
+    @pytest.mark.asyncio
+    async def test_progress_is_sent_while_waiting(self, monkeypatch):
+        import asyncio
+
+        import services.stt_server as srv
+
+        monkeypatch.setattr(srv, "KEEPALIVE_INTERVAL_S", 0.05)
+        sent = []
+
+        async def send(payload):
+            sent.append(payload)
+            return True
+
+        async def slow():
+            await asyncio.sleep(0.18)
+            return "done"
+
+        assert await srv._with_keepalive(slow(), "stt", send) == "done"
+        assert len(sent) >= 2
+        assert all(p["type"] == "progress" and p["stage"] == "stt" for p in sent)
+
+    @pytest.mark.asyncio
+    async def test_fast_work_sends_no_progress_and_errors_propagate(self):
+        import services.stt_server as srv
+
+        sent = []
+
+        async def send(payload):
+            sent.append(payload)
+            return True
+
+        async def fast():
+            return 42
+
+        async def boom():
+            raise RuntimeError("model gone")
+
+        assert await srv._with_keepalive(fast(), "stt", send) == 42
+        assert sent == []
+        with pytest.raises(RuntimeError, match="model gone"):
+            await srv._with_keepalive(boom(), "stt", send)

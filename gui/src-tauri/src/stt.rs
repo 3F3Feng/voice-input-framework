@@ -170,6 +170,15 @@ pub(crate) fn ws_base(stt_url: &str) -> String {
     }
 }
 
+/// 等下一条服务端消息的上限。见 `transcribe_stream` 里 `saw_keepalive` 的说明。
+pub(crate) fn result_wait(saw_keepalive: bool) -> Duration {
+    if saw_keepalive {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_secs(300)
+    }
+}
+
 /// 连接超时。服务不在时本机是立刻被拒;远程地址被丢包时,不设它要等系统的
 /// TCP 超时(几十秒),界面就一直停在「连接中」。
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -313,10 +322,15 @@ impl SttClient {
         // Receive result(s)
         let mut final_text = String::new();
         let ws_recv = ws_sender.clone();
+        // 服务端转写 / 后处理期间每 5 秒发一条 progress(stt_server.py 的
+        // `_with_keepalive`)。收到过心跳就知道它在干活,之后 60 秒没动静就是真挂了;
+        // 老服务端不发心跳,只能照旧等满上限。
+        let mut saw_keepalive = false;
         loop {
+            let wait = result_wait(saw_keepalive);
             let msg_result = {
                 let mut ws = ws_recv.lock().await;
-                tokio::time::timeout(std::time::Duration::from_secs(300), (*ws).next()).await
+                tokio::time::timeout(wait, (*ws).next()).await
             };
 
             let msg = match msg_result {
@@ -325,7 +339,11 @@ impl SttClient {
                 Ok(None) => break,
                 Err(_) => {
                     let _ = stream_task.await;
-                    return Err("等待识别结果超时(5 分钟)".to_string());
+                    return Err(if saw_keepalive {
+                        format!("识别服务 {} 秒没有动静,可能已经卡住", wait.as_secs())
+                    } else {
+                        "等待识别结果超时(5 分钟)".to_string()
+                    });
                 }
             };
 
@@ -370,6 +388,7 @@ impl SttClient {
                                 });
                             }
                         }
+                        "progress" => saw_keepalive = true,
                         "llm_progress" => {
                             let text = data["text"].as_str().unwrap_or("");
                             if let Some(ref tx) = event_tx {
