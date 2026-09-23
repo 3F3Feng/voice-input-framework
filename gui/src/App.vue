@@ -373,6 +373,17 @@
         ⚠️ {{ missingPermLabels.join('、') }}未授权，相关功能不可用 · 点击前往授权
       </div>
 
+      <!-- 首次使用问一次输出方式。「自动输入」默认关，新用户说完话目标窗口里什么都
+           没出现，只会以为坏了；可默认打开又会在没授权辅助功能时直接报错。所以问。 -->
+      <div v-if="showOutputChoice" class="choice-banner">
+        <div class="choice-q">说完的文字要自动输入到当前光标处吗？</div>
+        <div class="choice-actions">
+          <button class="s-btn" @click="chooseOutput(true)">自动输入</button>
+          <button class="s-btn" @click="chooseOutput(false)">只显示在这里</button>
+        </div>
+        <div class="s-tip">之后随时可以在 ⚙ → 常规 →「自动输入到窗口」里改。</div>
+      </div>
+
       <!-- Record Button -->
       <div class="record-area">
         <button
@@ -509,7 +520,10 @@ interface VoiceInputConfig {
   // 读出来一定是 remote + 空 local。
   server: { host: string; port: number; mode: ServerMode; local: LocalServerConfig };
   hotkey: { key: string; distinguish_left_right: boolean };
-  ui: { start_minimized: boolean; use_floating_indicator: boolean; use_tray: boolean; opacity: number; auto_input?: boolean };
+  // use_floating_indicator / use_tray / opacity 还在 config.json 里（降级兼容，见 config.rs），
+  // 但没有任何地方读，这里不再声明；整份对象读出来再原样写回，它们照样保留。
+  // output_choice_made 是后加的，老配置里没有。
+  ui: { start_minimized: boolean; auto_input?: boolean; output_choice_made?: boolean };
   audio: { device: string | null; language: string };
   llm: { enabled: boolean };
   _version: string;
@@ -668,6 +682,8 @@ const guiLogs = ref<GuiLogEntry[]>([]);
 const guiLogFile = ref<string | null>(null);
 /** 托盘建成了没有。建不成时关闭按钮只是最小化，「关于」里要给出退出口。 */
 const trayOk = ref(true);
+/** 用户选过输出方式没有。读到配置之前当作选过，免得横幅在启动时闪一下。 */
+const outputChoiceMade = ref(true);
 
 // ── 设置面板的标签页 ──
 // 以前是十个 s-section 在一个 400×500 的窗口里一路往下堆，找一个开关要滚三屏。
@@ -1222,6 +1238,7 @@ async function loadConfig() {
     void checkSavedHotkey();
     startMinimized.value = cfg.ui.start_minimized;
     autoInputEnabled.value = cfg.ui.auto_input ?? false;
+    outputChoiceMade.value = cfg.ui.output_choice_made ?? false;
     selectedDevice.value = cfg.audio.device;
     // 旧配置没有 server.mode / server.local，Rust 端补了默认值；这里仍然
     // 用 ?? 兜一层，免得手改过配置文件时前端直接崩。
@@ -1266,7 +1283,26 @@ async function toggleDistinguishSides() {
     toast(distinguishSides.value ? "已改为区分左右" : "已改为左右通用", "ok");
   } catch (e) { toast(`快捷键重新注册失败: ${e}`, "err"); }
 }
-function onAutoInputToggle() { saveConfigPatch(cfg => { cfg.ui.auto_input = autoInputEnabled.value; }); }
+function onAutoInputToggle() {
+  // 在设置里拨过这个开关，就等于回答了横幅那个问题，不必再问。
+  outputChoiceMade.value = true;
+  saveConfigPatch(cfg => { cfg.ui.auto_input = autoInputEnabled.value; cfg.ui.output_choice_made = true; });
+}
+
+// ── 输出方式（首次使用问一次） ──
+// 已经开着自动输入的老用户显然选过了，不给他们看。
+const showOutputChoice = computed(() => !outputChoiceMade.value && !autoInputEnabled.value);
+async function chooseOutput(auto: boolean) {
+  const ok = await saveConfigPatch(cfg => { cfg.ui.auto_input = auto; cfg.ui.output_choice_made = true; });
+  if (!ok) return;
+  autoInputEnabled.value = auto;
+  outputChoiceMade.value = true;
+  if (auto && perms.value?.is_macos && perms.value.accessibility !== "granted") {
+    toast("自动输入需要「辅助功能」权限：第一次输入时会弹出授权，也可以先到 ⚙ → 权限 里授权", "info");
+  } else {
+    toast(auto ? "说完会自动输入到光标处" : "结果只显示在这里，可以点「复制」或「输入」", "ok");
+  }
+}
 
 // ── Connection ──
 // 连接不再是「点一次按钮、试一次」。服务刚被拉起时 MLX 要 10–30 秒加载模型,
@@ -2033,6 +2069,9 @@ html, body, #app { height: 100%; }
 .perm-state.muted { color: var(--muted); background: rgba(113, 113, 122, 0.12); border-color: rgba(113, 113, 122, 0.3); }
 .perm-banner { width: 100%; max-width: 360px; background: rgba(251, 191, 36, 0.12); border: 1px solid rgba(251, 191, 36, 0.3); color: var(--yellow); border-radius: 8px; padding: 8px 10px; font-size: 0.7rem; line-height: 1.4; text-align: center; cursor: pointer; }
 .perm-banner:hover { background: rgba(251, 191, 36, 0.2); }
+.choice-banner { width: 100%; max-width: 360px; background: rgba(96, 165, 250, 0.1); border: 1px solid rgba(96, 165, 250, 0.3); border-radius: 8px; padding: 8px 10px; text-align: center; }
+.choice-q { font-size: 0.75rem; color: var(--text); }
+.choice-actions { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
 
 /* 服务器 */
 .mode-switch { gap: 0; }

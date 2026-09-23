@@ -91,6 +91,26 @@ impl Default for LocalServerConfig {
 }
 
 impl ServerConfig {
+    /// 首次启动、并且探测到了仓库时的出厂设置:本地管理 + 随应用启动。
+    /// 返回是否生效。
+    ///
+    /// `mode` 默认是 `Remote`,那是为老配置的向后兼容定的(见 [`ServerMode`]);
+    /// 可对一个刚装好、仓库就在本机的新用户来说,这意味着打开应用先看到一个连
+    /// 不存在的 `127.0.0.1:6544` 的「未连接」,得自己翻到 ⚙ → 服务 → 本地管理 →
+    /// 启动。所以只在「全新安装 + 探测到仓库」这一种情况下改默认,已有配置一律不动。
+    ///
+    /// 解释器没找到(仓库里还没建 .venv)时只切本地模式、不勾随应用启动:
+    /// 每次启动都去拉一个注定失败的进程只会刷一屏报错,面板上的「没有解释器」
+    /// 提示已经够说清楚该做什么了。
+    pub fn apply_first_run_defaults(&mut self, fresh_install: bool) -> bool {
+        if !fresh_install || self.local.repo_path.is_none() {
+            return false;
+        }
+        self.mode = ServerMode::Local;
+        self.local.auto_start = self.local.python_path.is_some();
+        true
+    }
+
     /// 客户端实际该连的 STT 地址。
     ///
     /// - 本地管理:永远是回环 + 本地端口。此时 `host` 字段(远程地址)被忽略,
@@ -121,10 +141,34 @@ pub struct HotkeyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiConfig {
     pub start_minimized: bool,
+    // 下面这三项**没有任何地方读**(悬浮胶囊、托盘一直是开的,透明度从没接上)。
+    // 不删,是为了降级兼容:2.2.0 及以前把它们声明成必填字段,新版写出的
+    // config.json 要是少了它们,用户退回旧版时整份配置解析失败——旧版的 `load`
+    // 会静默回到出厂值并覆盖文件,仓库路径、快捷键全丢。留着只多几个字节。
+    // 加上 serde 默认值,则是为了将来真删掉时,手里没有它们的配置也照样读得出来。
+    #[serde(default = "default_true")]
     pub use_floating_indicator: bool,
+    #[serde(default = "default_true")]
     pub use_tray: bool,
+    #[serde(default = "default_opacity")]
     pub opacity: f64,
     pub auto_input: bool,
+    /// 用户有没有明确选过「说完的文字要不要自动输入到光标处」。
+    ///
+    /// `auto_input` 默认关,新用户按快捷键说完话,目标窗口里什么都没出现,只会
+    /// 以为是坏了。所以主界面会问一次(横幅),选了哪边都把它置 true,之后不再问。
+    /// 老配置里没有这个字段,读出来是 false;但已经开着自动输入的老用户显然选过了,
+    /// 前端不会给他们看横幅。
+    #[serde(default)]
+    pub output_choice_made: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_opacity() -> f64 {
+    0.8
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +254,7 @@ impl Default for VoiceInputConfig {
                 use_tray: true,
                 opacity: 0.8,
                 auto_input: false,
+                output_choice_made: false,
             },
             audio: AudioConfig {
                 device: None,
@@ -228,6 +273,16 @@ impl VoiceInputConfig {
             PathBuf::from(home).join(".config/voice-input")
         });
         dir.join("config.json")
+    }
+
+    /// 这是不是一次真正的全新安装:磁盘上既没有本应用的 config.json,也没有
+    /// 老 Python 客户端的配置可迁移。必须在 `load` **之前**问——`load` 找不到文件
+    /// 时会立刻用默认值写一份出来。
+    ///
+    /// 配置损坏(文件在、读不懂)和从老客户端迁移过来的都不算:那是老用户,
+    /// 他们的连接方式不能被悄悄改掉。
+    pub fn is_fresh_install(app: &tauri::AppHandle) -> bool {
+        !Self::config_path(app).exists() && !Self::old_config_path().exists()
     }
 
     fn old_config_path() -> PathBuf {
@@ -360,6 +415,7 @@ impl VoiceInputConfig {
                 use_tray: old.ui.as_ref().and_then(|u| u.use_tray).unwrap_or(true),
                 opacity: old.ui.as_ref().and_then(|u| u.opacity).unwrap_or(0.8),
                 auto_input: false,
+                output_choice_made: false,
             },
             audio: AudioConfig {
                 device: old.audio.as_ref().and_then(|a| {
@@ -501,6 +557,76 @@ mod tests {
             back.server.local.repo_path.as_deref(),
             Some("/Users/me/voice-input-framework")
         );
+    }
+
+    fn detected(cfg: &mut VoiceInputConfig, python: bool) {
+        cfg.server.local.repo_path = Some("/Users/me/voice-input-framework".into());
+        if python {
+            cfg.server.local.python_path =
+                Some("/Users/me/voice-input-framework/.venv/bin/python".into());
+        }
+    }
+
+    #[test]
+    fn first_run_with_repo_defaults_to_local_and_auto_start() {
+        let mut cfg = VoiceInputConfig::default();
+        detected(&mut cfg, true);
+        assert!(cfg.server.apply_first_run_defaults(true));
+        assert_eq!(cfg.server.mode, ServerMode::Local);
+        assert!(cfg.server.local.auto_start);
+    }
+
+    /// 有仓库没 venv:切本地(面板会说缺解释器),但不每次启动都去拉一个必败的进程。
+    #[test]
+    fn first_run_without_python_does_not_auto_start() {
+        let mut cfg = VoiceInputConfig::default();
+        detected(&mut cfg, false);
+        assert!(cfg.server.apply_first_run_defaults(true));
+        assert_eq!(cfg.server.mode, ServerMode::Local);
+        assert!(!cfg.server.local.auto_start);
+    }
+
+    #[test]
+    fn first_run_without_repo_stays_remote() {
+        let mut cfg = VoiceInputConfig::default();
+        assert!(!cfg.server.apply_first_run_defaults(true));
+        assert_eq!(cfg.server.mode, ServerMode::Remote);
+        assert!(!cfg.server.local.auto_start);
+    }
+
+    /// 已有配置(哪怕刚探测到仓库)绝不改连接方式:那是向后兼容的底线。
+    #[test]
+    fn existing_config_is_never_switched_to_local() {
+        let mut cfg: VoiceInputConfig = serde_json::from_str(LEGACY_CONFIG).unwrap();
+        detected(&mut cfg, true);
+        assert!(!cfg.server.apply_first_run_defaults(false));
+        assert_eq!(cfg.server.mode, ServerMode::Remote);
+        assert!(!cfg.server.local.auto_start);
+    }
+
+    /// 老配置里没有 `output_choice_made`,读出来是「没选过」;自动输入开着的
+    /// 那份照样保持开着(前端据此不再弹横幅)。
+    #[test]
+    fn legacy_config_has_no_output_choice_yet() {
+        let cfg: VoiceInputConfig = serde_json::from_str(LEGACY_CONFIG).unwrap();
+        assert!(!cfg.ui.output_choice_made);
+        assert!(cfg.ui.auto_input);
+    }
+
+    /// 没用的三个 UI 字段缺了也要读得出来(将来删掉它们时不至于读坏新配置)。
+    #[test]
+    fn unused_ui_fields_are_optional() {
+        let json = r#"{
+          "server": { "host": "127.0.0.1", "port": 6544 },
+          "hotkey": { "key": "left_ctrl+left_alt", "distinguish_left_right": true },
+          "ui": { "start_minimized": false, "auto_input": false },
+          "audio": { "device": null, "language": "auto" },
+          "llm": { "enabled": true },
+          "_version": "2.0"
+        }"#;
+        let cfg: VoiceInputConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.ui.use_tray);
+        assert!((cfg.ui.opacity - 0.8).abs() < f64::EPSILON);
     }
 
     #[test]

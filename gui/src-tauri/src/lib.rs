@@ -1082,6 +1082,8 @@ pub fn run() {
             // 日志最先初始化:下面读配置时的「解析失败已备份」要能落进日志文件。
             log::init(app.handle());
 
+            // 必须在 `load` 之前问:找不到配置时 `load` 会立刻写一份默认的出来。
+            let fresh_install = config::VoiceInputConfig::is_fresh_install(app.handle());
             let mut cfg = config::VoiceInputConfig::load(app.handle());
 
             // 首次运行:猜一次仓库 / 解释器位置并存进配置。猜不到就留空——
@@ -1096,6 +1098,12 @@ pub fn run() {
                     );
                     cfg.server.local.repo_path = detected.repo_path;
                     cfg.server.local.python_path = detected.python_path;
+                    if cfg.server.apply_first_run_defaults(fresh_install) {
+                        log_info!(
+                            "[server] 首次启动且仓库就在本机:默认本地管理{}",
+                            if cfg.server.local.auto_start { "并随应用启动服务" } else { "(还没有解释器,先不自动启动)" }
+                        );
+                    }
                     let _ = cfg.save(app.handle());
                 } else if let Some(problem) = detected.problem {
                     log_info!("[server] {}", problem);
