@@ -93,11 +93,21 @@ uv run python -m services.stt_server
 uv run python -m services.llm_server
 ```
 
+Windows 上用 PowerShell 版脚本（参数与 bash 版对应：`-Backend cpu|cuda|xpu`、`-Llm`、`-Dev`；
+有 NVIDIA 显卡会自动选 CUDA，否则用 CPU）：
+
+```powershell
+cd voice-input-framework
+powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1
+uv run python -m services.stt_server
+```
+
 - **LLM 后处理目前只能在 Apple Silicon 上用。** Apple Silicon 上 MLX 相关依赖默认就会装上；
   `--llm` 在其它平台会额外装 llama.cpp 的依赖，但 LLM 服务还只实现了 MLX 后端，装了也跑不起来。
   不开 LLM 后处理不影响语音识别本身。
 - 自动探测不准时可以手动指定后端：`scripts/setup-env.sh --backend cpu|cuda|rocm|xpu|mlx`。
-- Windows 上请在 Git Bash 之类的 bash 环境里运行这个脚本。
+- 建完环境后可以在客户端「设置 → 服务」里点「环境体检」：逐项检查 Python 版本、关键依赖能否导入、
+  加速后端和 uv，有问题会给出修复命令。
 - 需要 Python 3.11 或 3.12（`uv` 会自己准备合适的解释器）。
 - **不要再用 `pip install -r requirements-stt.txt`**：那份清单无条件装 mlx，而 Linux 上
   的 mlx wheel 装得上、一 import 就报 `libmlx.so` 找不到，建出来的环境是坏的；

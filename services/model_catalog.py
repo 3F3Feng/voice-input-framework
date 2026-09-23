@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,9 @@ from typing import Any
 from shared.model_registry import IS_APPLE_SILICON, MODELS_CONFIG
 
 logger = logging.getLogger("stt-server")
+
+# 重建环境的命令。Windows 用户多半没有 bash,给 .sh 等于没给。
+SETUP_COMMAND = r"scripts\setup-env.ps1" if sys.platform == "win32" else "scripts/setup-env.sh"
 
 # 每种引擎需要能 import 的包。缺了就是「环境没装全」,而不是模型本身有问题。
 _ENGINE_PACKAGES = {
@@ -47,9 +51,9 @@ def unavailable_reason(info: dict[str, Any]) -> str | None:
         return None
     package = _ENGINE_PACKAGES.get(engine)
     if package and not _has_package(package):
-        return f"环境里缺少 {package},请用 scripts/setup-env.sh 重建环境"
+        return f"环境里缺少 {package},请用 {SETUP_COMMAND} 重建环境"
     if engine == "whisper_turbo" and not _has_package("torch"):
-        return "环境里缺少 torch,请用 scripts/setup-env.sh 重建环境"
+        return f"环境里缺少 torch,请用 {SETUP_COMMAND} 重建环境"
     return None
 
 
