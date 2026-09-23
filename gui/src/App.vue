@@ -917,6 +917,8 @@ function toast(msg: string, type = "info") {
 // 光听事件也收不到，所以挂载时先补拉 Rust 的缓冲。
 const toGuiLog = (l: RustLogLine): GuiLogEntry =>
   ({ msg: l.text, level: l.level === "ERROR" ? "err" : "info", seq: l.seq });
+/** 目前见过的最大 Rust 日志序号。用来判断「某个动作之后有没有冒出新的错误」。 */
+const lastRustLogSeq = () => guiLogs.value.reduce((m, l) => Math.max(m, l.seq ?? 0), 0);
 
 async function initGuiLogs() {
   try {
@@ -1035,6 +1037,32 @@ async function refreshPermissions() {
   try { perms.value = await invoke<PermissionReport>("get_permissions"); }
   catch (e) { console.error("get_permissions failed:", e); }
   permsLoading.value = false;
+}
+
+// 「输入监控」从未授权变成已授权时，把快捷键监听器重建一次。
+//
+// 监听器（CGEventTap）只在启动时建一次，那时没权限就直接建失败了；以前用户去系统
+// 设置里勾上之后，快捷键照样不工作，界面上也没说要重启。盯的是状态本身而不是
+// refreshPermissions 的调用点：「请求授权」按钮会先把新状态直接写进 perms 再刷新，
+// 在刷新里比前后值会漏掉这一下。
+watch(() => perms.value?.input_monitoring, async (next, prev) => {
+  if (!perms.value?.is_macos || !prev || prev === "granted" || next !== "granted") return;
+  await reviveHotkey();
+});
+
+async function reviveHotkey() {
+  const mark = lastRustLogSeq();
+  try {
+    // 用已保存的那个快捷键：输入框里可能是录了还没点「应用」的新组合。
+    const key = (await getConfig()).hotkey.key || defaultHotkey;
+    await invoke("register_hotkey", { shortcut: key });
+  } catch (e) { toast(`快捷键重新注册失败: ${e}`, "err"); return; }
+  // 监听器在后台线程里建，建不成只会打一条 [hotkey] 错误日志，命令本身照样返回成功。
+  // 等它一下再看日志里有没有冒出新的错误。
+  await sleep(1500);
+  const failed = guiLogs.value.some(l => (l.seq ?? 0) > mark && l.level === "err" && l.msg.includes("[hotkey]"));
+  if (failed) toast("输入监控已授权，但快捷键监听还是没能建立；请退出并重新打开本应用", "err");
+  else toast("输入监控已授权，快捷键已生效", "ok");
 }
 
 // 触发系统授权弹窗，最多等 30 秒（Rust 端轮询，超时返回当前状态）
@@ -1896,6 +1924,9 @@ onMounted(async () => {
   // 检查结果显示在「关于」页，得切过去，不然用户看到的是一个跟更新无关的页面。
   listen("tray-check-update", () => { showSettings.value = true; tab.value = "about"; doCheckUpdate(); });
   listen("tray-open-settings", () => { showSettings.value = true; });
+  // 从系统设置授权回来时窗口会重新拿到焦点：顺手查一次权限，输入监控刚授权的话
+  // 上面的 watcher 会把快捷键监听器重建起来，不用用户再去点「刷新」。
+  window.addEventListener("focus", () => { if (perms.value?.is_macos) refreshPermissions(); });
 
   // 后台每 6 小时检查一次更新。启动时的那一次在本函数末尾(静默的那次),
   // 以前这里还有一个 30 秒后的,同一次启动要查两遍。
