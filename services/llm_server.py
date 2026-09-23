@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Voice Input Framework - LLM Service
-独立的 LLM 后处理服务器,使用 mlx-lm 进行文本优化。
-运行在现有的 mlx-test conda 环境 (transformers 5.x)
+独立的 LLM 后处理服务器:把语音转写的原文整理成可以直接用的文字。
+推理后端:Apple Silicon 上用 mlx-lm,其它平台用 llama.cpp(GGUF),见 shared/llm_backend.py。
 Port: 6545
 """
 
@@ -28,7 +28,7 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
-from shared import auth
+from shared import auth, llm_backend  # noqa: E402
 from shared.constants import (  # noqa: E402
     DEFAULT_BIND_HOST,
     DEFAULT_CORS_ORIGINS,
@@ -86,7 +86,6 @@ def save_prompt(prompt: str) -> bool:
 # 里,LLM 进程根本不读——于是每拨一次后处理开关(停了再起),都回到默认的
 # Qwen3.5-4B-OptiQ。现在 LLM 服务自己记:切换成功才写,启动时没有环境变量就读回来。
 LLM_STATE_FILE = Path.home() / ".config" / "voice-input-framework" / "llm_state.json"
-DEFAULT_LLM_MODEL = "Qwen3.5-4B-OptiQ"
 
 
 def load_llm_state() -> dict:
@@ -108,9 +107,10 @@ def save_llm_state(state: dict) -> None:
         logger.warning(f"Failed to save LLM state file: {e}")
 
 
-def remember_llm_model(name: str) -> None:
+def remember_llm_model(name: str, key: str = "llm_model") -> None:
+    """记下用户选的模型。`key` 按后端分开(见各后端的 `state_key`)。"""
     state = load_llm_state()
-    state["llm_model"] = name
+    state[key] = name
     save_llm_state(state)
     logger.info(f"LLM model saved to state: {name}")
 
@@ -150,6 +150,8 @@ class HealthStatus(BaseModel):
     is_processing: bool = False
     #: 最近一次加载失败的原因(status == "error" 时有值)。
     error: str | None = None
+    #: 推理后端(mlx / llamacpp),排查「为什么这台机器列的是这些模型」时用。
+    backend: str | None = None
 
 
 # ============== 输出清洗 ==============
@@ -227,11 +229,22 @@ def reject_reason(original: str, cleaned: str, hit_token_limit: bool) -> str | N
     return None
 
 
-# ============== LLM Engine ==============
+# ============== 推理后端 ==============
+#
+# 以前只有 mlx-lm 一条路,LLM 后处理只能在 Apple Silicon 上用(F17)。现在按平台挑:
+# Apple Silicon 用 MLX,其它平台用 llama.cpp 跑 GGUF;选哪个见 shared/llm_backend.py。
+# 两个后端只在「怎么加载」「怎么把消息变成提示词并生成」上不同,其余的一切——
+# 加载失败上报、切换失败回退、llm_state.json、包原文、输出兜底、个人词库——
+# 都在 LLMEngine 里,两个后端共用,不会一个修了另一个漏掉。
 
 
-class LLMEngine:
-    """LLM 引擎管理器"""
+class MLXBackend:
+    """Apple Silicon:mlx-lm。这是原来唯一的实现,行为不变。"""
+
+    name = llm_backend.MLX
+    #: llm_state.json 里记模型选择的键。沿用老键名,已有用户的选择不丢。
+    state_key = "llm_model"
+    DEFAULT_MODEL = "Qwen3.5-4B-OptiQ"
 
     AVAILABLE_MODELS = [
         # Qwen3.5 MLX 量化模型 (推荐，中文最强)
@@ -257,15 +270,251 @@ class LLMEngine:
         "Gemma-4-E4B-DECKARD": "nightmedia/gemma-4-E4B-it-The-DECKARD-V2-Strong-HERETIC-UNCENSORED-Instruct-mxfp8-mlx",
     }
 
-    def __init__(self, default_model: str = "Qwen3.5-4B-OptiQ"):
-        self.default_model = default_model
-        self.current_model_name = default_model
+    def __init__(self, unavailable: str | None = None):
+        #: 这台机器上用不了这个后端的原因(None = 能用)。加载时才抛出来,好让
+        #: /health 报 error 并带上原因,而不是进程直接起不来、界面只看到连不上。
+        self.unavailable = unavailable
+
+    def load(self, model_id: str):
+        import mlx_lm
+
+        return mlx_lm.load(model_id)
+
+    def release(self) -> None:
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except Exception as e:  # mlx 不可用时静默跳过
+            logger.debug(f"MLX cache clear skipped: {e}")
+
+    def generate(self, model, tokenizer, messages: list[dict], text: str) -> tuple[str, bool]:
+        """生成。返回 ``(原始输出, 是否撞上了长度上限)``。"""
+        import mlx_lm
+
+        # 关闭思考模式。语音输入后处理是确定性的文本清洗任务,推理除了
+        # 烧 token 没有收益 —— 而且是有害的:推理模型会把整个思考过程
+        # 当正文吐出来(不一定带 <think> 标签),在 max_tokens 耗尽前根本
+        # 走不到真正的输出,结果就是把一大段分析文字敲进用户的文档。
+        # 老模型的 chat template 不认这个参数,TypeError 时按原样退回。
+        thinking_disabled = True
+        try:
+            prompt = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            thinking_disabled = False
+            prompt = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+
+        if not thinking_disabled:
+            # 老模板不认 enable_thinking,只能沿用土办法:抹掉可能触发思考的标记。
+            #
+            # 注意这两行绝不能在 enable_thinking=False 生效时执行 —— Qwen 的模板
+            # 此时会在结尾追加一个**空的** think 块(`<think>\n\n</think>\n\n`),
+            # 那是"思考已完成,直接给答案"的信号。把标签抹掉会留下畸形的
+            # `<|im_start|>assistant\n\n\n\n\n`,模型随即吐 EOS,返回空字符串。
+            prompt = prompt.replace("<think>", "")
+            prompt = prompt.replace("</think>", "")
+
+        max_tokens = output_token_budget(len(tokenizer.encode(text)))
+        response = mlx_lm.generate(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_tokens=max_tokens,
+        )
+        hit_limit = len(tokenizer.encode(response)) >= max_tokens - 1
+        return response, hit_limit
+
+
+def _raise_template_error(message: str):
+    raise ValueError(message)
+
+
+class GGUFChatTemplate:
+    """用 GGUF 文件里自带的 chat template 渲染提示词,并关掉 Qwen3 的思考模式。
+
+    不用 llama-cpp-python 的 `create_chat_completion`:它渲染模板时不会把
+    `enable_thinking` 传进去,Qwen3 于是照常先「思考」一大段——这正是 MLX 那边
+    用 `enable_thinking=False` 从根上关掉的问题(见 MLXBackend.generate)。这里自己
+    渲染,传同样的参数:Qwen3 的模板会在结尾补一个空的 think 块,表示直接给答案;
+    Qwen2.5 这类不认这个变量的模板,jinja 会直接忽略它,不需要 MLX 那边的退回分支。
+    """
+
+    # 文件里没带模板时用 ChatML(表里的 Qwen 全是这个格式)。
+    CHATML = (
+        "{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n"
+        "{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant\n{% endif %}"
+    )
+
+    def __init__(self, template: str | None, bos_token: str = "", eos_token: str = ""):
+        from jinja2.ext import loopcontrols
+        from jinja2.sandbox import ImmutableSandboxedEnvironment
+
+        # 和 transformers / llama-cpp-python 渲染模板时的设置保持一致,
+        # 否则空白处理不同,渲染出来的提示词和模型训练时见到的不一样。
+        env = ImmutableSandboxedEnvironment(
+            trim_blocks=True, lstrip_blocks=True, extensions=[loopcontrols]
+        )
+        env.globals["raise_exception"] = _raise_template_error
+        env.globals["strftime_now"] = lambda fmt: time.strftime(fmt)
+        self._template = env.from_string(template or self.CHATML)
+        self.bos_token = bos_token
+        self.eos_token = eos_token
+
+    @classmethod
+    def from_llama(cls, llm) -> "GGUFChatTemplate":
+        meta = getattr(llm, "metadata", None) or {}
+
+        def token_text(token_id) -> str:
+            try:
+                return llm.detokenize([token_id], special=True).decode("utf-8", "ignore")
+            except Exception:  # noqa: BLE001 - 取不到只是模板里少个变量
+                return ""
+
+        return cls(
+            meta.get("tokenizer.chat_template"),
+            bos_token=token_text(llm.token_bos()),
+            eos_token=token_text(llm.token_eos()),
+        )
+
+    def render(self, messages: list[dict]) -> str:
+        return self._template.render(
+            messages=messages,
+            add_generation_prompt=True,
+            enable_thinking=False,
+            bos_token=self.bos_token,
+            eos_token=self.eos_token,
+        )
+
+
+class LlamaCppBackend:
+    """非 Apple 平台:llama.cpp(llama-cpp-python)跑 GGUF。
+
+    模型名一律带 `-GGUF` 后缀,和 MLX 那张表不重名:两边的 `llm_state.json`、
+    GUI 配置里的 `llm_model` 都存名字,重名的话换了后端会悄悄加载另一种文件。
+    """
+
+    name = llm_backend.LLAMACPP
+    #: 和 MLX 分开记:在 Mac 上用 VIF_LLM_BACKEND 试一下 llama.cpp,不该把
+    #: 用户平时的 MLX 选择冲掉。
+    state_key = "llm_model_llamacpp"
+    DEFAULT_MODEL = "Qwen3.5-2B-GGUF"
+
+    #: 名字 → `<HF 仓库>/<GGUF 文件名>`。只下一个量化文件,而不是整个仓库
+    #: (一个 GGUF 仓库里各种量化加起来有十几 GB)。Qwen 官方没发 Qwen3.5 的
+    #: GGUF,用的是 unsloth 转的。
+    #:
+    #: 挑 Qwen3.5 而不是更老的 Qwen3 / Qwen2.5,是本机实测(M3 Max,Metal)的结果:
+    #: 「嗯那个就是说我们明天下午三点不对是两点半开会」,Qwen3.5-2B 整理成
+    #: 「明天下午两点半开会。」;Qwen3-1.7B 原样照抄一字不改;Qwen2.5-1.5B 整理成
+    #: 「明天下午三点开会」——把改口改反了,比不整理还糟。
+    #: Qwen3.5 要 llama-cpp-python >= 0.3.17(更早的版本不认 qwen35 架构)。
+    MODEL_IDS = {
+        "Qwen3.5-2B-GGUF": "unsloth/Qwen3.5-2B-GGUF/Qwen3.5-2B-Q4_K_M.gguf",
+        "Qwen3.5-0.8B-GGUF": "unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q4_K_M.gguf",
+        "Qwen3.5-4B-GGUF": "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf",
+    }
+    AVAILABLE_MODELS = [
+        "Qwen3.5-2B-GGUF",  # ~1.3GB,默认:短句改口整理得对,长文不丢内容
+        "Qwen3.5-0.8B-GGUF",  # ~0.5GB,最快,短句里的填充词和改口常常留着不动
+        "Qwen3.5-4B-GGUF",  # ~2.7GB,最准,纯 CPU 上一段长文要等很久
+    ]
+
+    #: 上下文窗口(token)。要装下系统提示 + 原文 + 1.5 倍的输出预算;
+    #: 750 字的口述一共两千多 token,8K 给得很宽。开太大只是白占内存(KV cache)。
+    N_CTX = int(os.getenv("VIF_LLM_CTX", "8192"))
+    #: 放到 GPU 上的层数,-1 = 全部。CPU 版的 llama.cpp 会忽略它,所以默认全放。
+    N_GPU_LAYERS = int(os.getenv("VIF_LLM_GPU_LAYERS", "-1"))
+
+    def __init__(self, unavailable: str | None = None):
+        self.unavailable = unavailable
+
+    @staticmethod
+    def split_ref(model_id: str) -> tuple[str, str]:
+        repo, _, filename = model_id.rpartition("/")
+        return repo, filename
+
+    def load(self, model_id: str):
+        from huggingface_hub import hf_hub_download
+        from llama_cpp import Llama
+
+        repo, filename = self.split_ref(model_id)
+        # 下到标准的 HF 缓存里(不另起目录):HF_ENDPOINT 镜像照样生效,
+        # 和别的模型一样按 blobs 目录的增长报下载进度。
+        path = hf_hub_download(repo_id=repo, filename=filename)
+        llm = Llama(
+            model_path=path,
+            n_ctx=self.N_CTX,
+            n_gpu_layers=self.N_GPU_LAYERS,
+            verbose=False,
+        )
+        return llm, GGUFChatTemplate.from_llama(llm)
+
+    def release(self) -> None:
+        # 不调 Llama.close():切换模型时另一个线程可能正拿着旧实例生成
+        # (见 LLMEngine._generate 取的本地引用),这时把底层模型释放掉会直接崩进程。
+        # 引用放掉之后由 __del__ 在最后一个使用者用完时释放。
+        pass
+
+    def generate(self, model, chat, messages: list[dict], text: str) -> tuple[str, bool]:
+        prompt = chat.render(messages)
+        budget = output_token_budget(len(model.tokenize(text.encode("utf-8"), add_bos=False)))
+        # 提示词 + 输出不能超出上下文窗口,超了 llama.cpp 会直接报错。收紧之后
+        # 真不够用,会以 finish_reason == "length" 结束,由 reject_reason 退回原文。
+        prompt_tokens = len(model.tokenize(prompt.encode("utf-8"), add_bos=False, special=True))
+        max_tokens = min(budget, self.N_CTX - prompt_tokens)
+        if max_tokens <= 0:
+            raise ValueError(f"原文太长,超出了 LLM 的上下文窗口({self.N_CTX} token)")
+        out = model.create_completion(
+            prompt=prompt,
+            max_tokens=max_tokens,
+            # 和 mlx_lm.generate 的默认一致:贪心解码,不加重复惩罚。
+            # 整理文字要的是确定、忠实;llama.cpp 默认的 1.1 重复惩罚会逼模型
+            # 避开原文里本来就重复的字词。
+            temperature=0.0,
+            repeat_penalty=1.0,
+            stop=["<|im_end|>", "<|endoftext|>"],
+        )
+        choice = out["choices"][0]
+        return choice["text"], choice.get("finish_reason") == "length"
+
+
+BACKENDS = {MLXBackend.name: MLXBackend, LlamaCppBackend.name: LlamaCppBackend}
+
+
+def make_backend():
+    """按平台、已装的包和 `VIF_LLM_BACKEND` 挑后端(规则见 shared/llm_backend.py)。"""
+    name, reason = llm_backend.choose_backend(IS_APPLE_SILICON, llm_backend.requested_backend())
+    return BACKENDS[name](unavailable=reason)
+
+
+# ============== LLM Engine ==============
+
+
+class LLMEngine:
+    """LLM 引擎管理器"""
+
+    def __init__(self, default_model: str | None = None, backend=None):
+        self.backend = backend or make_backend()
+        #: 当前后端的模型表。/models 只列这些:另一个后端的模型在这台机器上加载不了。
+        self.MODEL_IDS = self.backend.MODEL_IDS
+        self.AVAILABLE_MODELS = self.backend.AVAILABLE_MODELS
+        self.default_model = default_model or self.backend.DEFAULT_MODEL
+        self.current_model_name = self.default_model
         self._model = None
         self._tokenizer = None
         self._is_loaded = False
         self._loading = False
         #: 最近一次加载失败的原因。没有它 /health 永远是 loading:模型根本加载
-        #: 不了(非 Apple 平台没有 mlx_lm、下载断了、内存不够)和「还在加载」在
+        #: 不了(没装推理库、下载断了、内存不够)和「还在加载」在
         #: 外面看起来一模一样,打开后处理开关要白等满 30 秒才报「还在加载」。
         self._load_error: str | None = None
         self._load_lock = asyncio.Lock()
@@ -288,6 +537,8 @@ class LLMEngine:
         if not model_id:
             logger.error(f"Unknown model: {target_model}")
             self._load_error = f"未知的 LLM 模型:{target_model}"
+            if target_model in _other_backend_models(self.backend):
+                self._load_error += f"(那是另一个推理后端的模型,当前后端是 {self.backend.name})"
             return False
 
         async with self._load_lock:
@@ -308,14 +559,14 @@ class LLMEngine:
                 # 切换模型前先释放旧模型内存(与 STT 侧一致,否则每次切换都泄漏一份权重)
                 if self._model is not None:
                     self._release_model()
-                logger.info(f"Loading LLM model: {model_id}")
+                logger.info(f"Loading LLM model ({self.backend.name}): {model_id}")
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._load_sync, model_id)
                 self.current_model_name = target_model
                 self._is_loaded = True
                 logger.info(f"LLM model loaded successfully: {target_model}")
                 if remember:
-                    remember_llm_model(target_model)
+                    remember_llm_model(target_model, self.backend.state_key)
                 return True
             except Exception as e:
                 logger.error(f"Failed to load LLM model: {e}", exc_info=True)
@@ -347,12 +598,7 @@ class LLMEngine:
         self._is_loaded = False
         self._model = None
         self._tokenizer = None
-        try:
-            import mlx.core as mx
-
-            mx.clear_cache()
-        except Exception as e:  # mlx 不可用时静默跳过
-            logger.debug(f"MLX cache clear skipped: {e}")
+        self.backend.release()
         gc.collect()
         logger.info("Old LLM model memory released")
 
@@ -361,13 +607,11 @@ class LLMEngine:
 
         以前这里把异常吞掉只返回 False,原因只进了日志,/health 报不出来。
         """
-        if not IS_APPLE_SILICON:
-            # 不写这句,用户看到的是一句 `No module named 'mlx_lm'`,不知道是
-            # 少装了什么还是这台机器根本不行。
-            raise RuntimeError("LLM 后处理目前只支持 Apple Silicon(依赖 mlx-lm),这台机器上用不了")
-        import mlx_lm
-
-        self._model, self._tokenizer = mlx_lm.load(model_id)
+        if self.backend.unavailable:
+            # 不写这句,用户看到的是一句 `No module named 'llama_cpp'`,不知道是
+            # 少装了什么、该怎么装,还是这台机器根本不行。
+            raise RuntimeError(self.backend.unavailable)
+        self._model, self._tokenizer = self.backend.load(model_id)
 
     def process(self, text: str, vocabulary_hint: str | None = None) -> ProcessResult:
         """处理文本"""
@@ -385,8 +629,8 @@ class LLMEngine:
                 success=False,
             )
 
-        # /process 在默认线程池执行,并发请求会同时命中同一个 MLX 模型实例
-        # (生成状态非线程安全)并互相覆盖 _processing 标志 —— 这里串行化。
+        # /process 在默认线程池执行,并发请求会同时命中同一个模型实例
+        # (MLX 和 llama.cpp 的生成状态都非线程安全)并互相覆盖 _processing 标志 —— 这里串行化。
         with self._process_lock:
             self._processing = True
             try:
@@ -411,8 +655,6 @@ class LLMEngine:
             )
 
         try:
-            import mlx_lm
-
             # 加载提示词
             system_prompt = load_prompt()
             if vocabulary_hint:
@@ -426,46 +668,7 @@ class LLMEngine:
                 {"role": "user", "content": wrap_transcript(text)},
             ]
 
-            # 关闭思考模式。语音输入后处理是确定性的文本清洗任务,推理除了
-            # 烧 token 没有收益 —— 而且是有害的:推理模型会把整个思考过程
-            # 当正文吐出来(不一定带 <think> 标签),在 max_tokens 耗尽前根本
-            # 走不到真正的输出,结果就是把一大段分析文字敲进用户的文档。
-            # 老模型的 chat template 不认这个参数,TypeError 时按原样退回。
-            thinking_disabled = True
-            try:
-                prompt = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=False,
-                )
-            except TypeError:
-                thinking_disabled = False
-                prompt = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
-
-            if not thinking_disabled:
-                # 老模板不认 enable_thinking,只能沿用土办法:抹掉可能触发思考的标记。
-                #
-                # 注意这两行绝不能在 enable_thinking=False 生效时执行 —— Qwen 的模板
-                # 此时会在结尾追加一个**空的** think 块(`<think>\n\n</think>\n\n`),
-                # 那是"思考已完成,直接给答案"的信号。把标签抹掉会留下畸形的
-                # `<|im_start|>assistant\n\n\n\n\n`,模型随即吐 EOS,返回空字符串。
-                prompt = prompt.replace("<think>", "")
-                prompt = prompt.replace("</think>", "")
-
-            # 生成
-            max_tokens = output_token_budget(len(tokenizer.encode(text)))
-            response = mlx_lm.generate(
-                model=model,
-                tokenizer=tokenizer,
-                prompt=prompt,
-                max_tokens=max_tokens,
-            )
-            hit_limit = len(tokenizer.encode(response)) >= max_tokens - 1
+            response, hit_limit = self.backend.generate(model, tokenizer, messages, text)
 
             cleaned = clean_llm_output(response)
 
@@ -499,6 +702,7 @@ class LLMEngine:
                 llm_latency_ms=-1,
                 model=self.current_model_name,
                 success=False,
+                error=f"LLM 处理出错:{e}",
             )
 
     async def process_async(self, text: str, vocabulary_hint: str | None = None) -> ProcessResult:
@@ -528,34 +732,49 @@ LLM_HOST = os.getenv("VIF_LLM_HOST", DEFAULT_BIND_HOST)
 LLM_PORT = int(os.getenv("VIF_LLM_PORT", "6545"))
 
 
-def resolve_llm_model() -> str:
-    """启动时加载哪个模型:`VIF_LLM_MODEL` > 上次切换成功的 > 默认。"""
+def _other_backend_models(backend) -> set[str]:
+    return {name for cls in BACKENDS.values() if cls.name != backend.name for name in cls.MODEL_IDS}
+
+
+def resolve_llm_model(backend=None) -> str:
+    """启动时加载哪个模型:`VIF_LLM_MODEL` > 上次切换成功的 > 当前后端的默认。"""
+    backend = backend or BACKEND
     explicit = os.getenv("VIF_LLM_MODEL")
     if explicit:
-        return explicit
-    saved = load_llm_state().get("llm_model")
-    if saved in LLMEngine.MODEL_IDS:
+        if explicit in backend.MODEL_IDS or explicit not in _other_backend_models(backend):
+            # 不认识的名字照样交给 load,由它报「未知的 LLM 模型」,拼错了要让人看见。
+            return explicit
+        # GUI 配置里的 llm_model 是按 MLX 的名字写的,换到 Windows / Linux 上就对不上了。
+        # 这是另一个后端的合法模型,不是拼错:退回本后端的选择,而不是让服务起来就报错。
+        logger.warning(
+            f"VIF_LLM_MODEL={explicit} 是 {backend.name} 以外的后端的模型,改用本后端的选择"
+        )
+    saved = load_llm_state().get(backend.state_key)
+    if saved in backend.MODEL_IDS:
         logger.info(f"Restoring LLM model from saved state: {saved}")
         return saved
     if saved:
         logger.warning(f"Saved LLM model '{saved}' not available, using default")
-    return DEFAULT_LLM_MODEL
+    return backend.DEFAULT_MODEL
 
 
-LLM_MODEL = resolve_llm_model()
+BACKEND = make_backend()
+if BACKEND.unavailable:
+    logger.warning(f"LLM backend {BACKEND.name} unavailable: {BACKEND.unavailable}")
+LLM_MODEL = resolve_llm_model(BACKEND)
 CORS_ORIGINS = [
     o.strip() for o in os.getenv("VIF_CORS_ORIGINS", "").split(",") if o.strip()
 ] or DEFAULT_CORS_ORIGINS
 
 # 初始化引擎
-engine = LLMEngine(default_model=LLM_MODEL)
+engine = LLMEngine(default_model=LLM_MODEL, backend=BACKEND)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期:启动时后台加载模型,关闭时清理(FastAPI 推荐用法)"""
     logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
-    logger.info(f"Default model: {LLM_MODEL}")
+    logger.info(f"Backend: {BACKEND.name}, default model: {LLM_MODEL}")
     # 后台加载模型(非阻塞)
     asyncio.create_task(engine.load())
     yield
@@ -564,7 +783,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Voice Input Framework - LLM Service",
-    description="独立的文本后处理服务,使用 MLX-LM",
+    description="独立的文本后处理服务(MLX / llama.cpp)",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -611,18 +830,19 @@ async def health_check():
         active_connections=0,
         is_processing=engine.is_processing(),
         error=load_error,
+        backend=engine.backend.name,
     )
 
 
 @app.get("/models", response_model=list[ModelInfo])
 async def list_models():
-    """获取可用模型列表"""
+    """获取可用模型列表(只列当前推理后端能加载的)"""
     models = []
-    for name in LLMEngine.AVAILABLE_MODELS:
+    for name in engine.AVAILABLE_MODELS:
         models.append(
             ModelInfo(
                 name=name,
-                description=f"LLM model: {LLMEngine.MODEL_IDS.get(name, name)}",
+                description=f"LLM model ({engine.backend.name}): {engine.MODEL_IDS.get(name, name)}",
                 is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
                 is_current=(name == engine.current_model_name),
             )

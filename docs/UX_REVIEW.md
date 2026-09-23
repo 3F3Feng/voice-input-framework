@@ -444,6 +444,7 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
 | F1 首启向导 | 本地 / 远程两条路、环境体检、启动与下载进度、权限、输出方式、「试一下」;只在全新安装或启动后连不上可用服务时出现,跳过即不再出现 |
 | 结果编辑写回历史 | 复制 / 输入 / 关闭 / 切换时把改过的字写回那一条 |
 | 转写心跳 | 服务端转写 / 后处理期间每 5 秒发 progress,客户端收到过心跳后 60 秒无动静即判定卡住 |
+| F17 长期 | LLM 服务加 llama.cpp 后端(GGUF,默认 Qwen3.5-2B-GGUF):Apple Silicon 用 MLX,其它平台装了 llama-cpp-python 就用 llama.cpp,`VIF_LLM_BACKEND` 可强制;`/llm/enabled` 的 supported 跟着走,没装时提示 `setup-env --llm` |
 
 实测坐实并验证过的(本机真模型、真服务):R9 R25 R34 R35 R36 R37 R40、LLM 失败回退原文、
 转写心跳(49 秒推理收到 9 条)、个人词库(热词把「石峰」认成「石枫」,规则把「陶睿」换成 Tauri)、
@@ -457,13 +458,14 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
 - Linux:托盘缺失、Wayland;
 - 真麦克风:60 秒 / 5 分钟录音、拔麦克风;
 - hf-mirror 实际下载(境外 IP 会被转回 huggingface.co,只在国内网络下有意义)。
+- F17 llama.cpp 后端只在本机(M3 Max,Metal 版和 `VIF_LLM_GPU_LAYERS=0` 的纯 CPU)实测过;
+  Windows / Linux 上 `setup-env --llm` 现编译 llama-cpp-python、CUDA / Vulkan 版都没验证过。
 
 ### 5.3 后续迭代
 
-1. **F17 长期**:llama.cpp 后端,让 Windows / Linux 也能做 LLM 后处理(L)。
-2. **F22 剩余**:英文界面(i18n,工作量主要在把中文文案抽出来)。
-3. 录音期间就建 WS、边录边传(现在松手后才一次性上传;有了分块合并,长录音的等待已经缩短)。
-4. CI 的 Python 3.10 矩阵与 `requires-python >=3.11` 不一致 —— 要不要改 CI 由维护者决定。
+1. **F22 剩余**:英文界面(i18n,工作量主要在把中文文案抽出来)。
+2. 录音期间就建 WS、边录边传(现在松手后才一次性上传;有了分块合并,长录音的等待已经缩短)。
+3. CI 的 Python 3.10 矩阵与 `requires-python >=3.11` 不一致 —— 要不要改 CI 由维护者决定。
 
 ### 5.4 每批合并后的验证清单
 
@@ -480,3 +482,8 @@ uvx black --check services shared tests && uvx ruff check services shared tests 
 用 `say -v Tingting -f <文本> -o x.aiff && afconvert -f WAVE -d LEI16@16000 -c 1 x.aiff x.wav`
 合成测试语音;**不要调 `/models/select`**(成功时会写用户的状态文件),换模型请直接在
 Python 里实例化 `STTEngine`。
+
+llama.cpp 后端实测:在一次性 venv 里 `CMAKE_ARGS="-DGGML_METAL=on" uv pip install "llama-cpp-python>=0.3.17"`
+(abetlen 索引上的 Metal 预编译包解压报错,只能现编译),再用
+`VIF_LLM_BACKEND=llamacpp VIF_LLM_PORT=7645 HF_HOME=~/.cache/huggingface` 起 `services.llm_server`,
+并把 `HOME` 指到草稿目录(LLM 服务的提示词和 `llm_state.json` 都在 `~/.config` 下)。

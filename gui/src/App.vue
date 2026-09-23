@@ -182,7 +182,7 @@
               <label class="toggle"><input type="checkbox" v-model="llmEnabled" @change="toggleLlm" :disabled="llmToggling || !llmSupported" /><span class="slider"></span></label>
               <span class="s-label" :class="{ 'llm-busy': llmToggling }">{{ llmSupported ? llmToggleText : '不可用' }}</span>
             </div>
-            <!-- 不支持的平台(目前只有 Apple Silicon 能跑 mlx-lm)把开关置灰并说明原因。
+            <!-- 跑不了 LLM 后处理的机器(非 Apple 平台又没装 llama.cpp)把开关置灰,并照搬服务端给的原因(里面有安装命令)。
                  以前照样能拨,拨了要等满 30 秒才说「还在加载模型」(F17)。 -->
             <div v-if="!llmSupported" class="s-tip" style="margin-top:4px">
               {{ llmUnsupportedReason || '这台机器不支持 LLM 后处理' }}

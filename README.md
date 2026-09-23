@@ -44,7 +44,13 @@ Apple Silicon 上内存 ≥16GB 用 `qwen_asr_mlx_native`，否则用 `qwen_asr_
 
 ### LLM 后处理模型
 
-**LLM 后处理目前只能在 Apple Silicon 上用**（`services/llm_server.py` 只实现了 MLX 后端）。
+LLM 服务按平台挑推理后端：**Apple Silicon 用 MLX**（依赖默认就装），**Windows / Linux 用
+llama.cpp** 跑 GGUF 模型（要用 `scripts/setup-env.sh --llm` / `setup-env.ps1 -Llm` 装上
+`llama-cpp-python`，没装时界面上的后处理开关会置灰并提示这条命令）。
+想在 Mac 上也用 llama.cpp，设 `VIF_LLM_BACKEND=llamacpp` 并 `uv sync --extra llm-cpp`。
+两个后端的模型不通用，模型列表只列当前后端的。
+
+MLX 后端（Apple Silicon）：
 
 | 模型 | 内存占用 | 特点 |
 |------|----------|------|
@@ -53,6 +59,17 @@ Apple Silicon 上内存 ≥16GB 用 `qwen_asr_mlx_native`，否则用 `qwen_asr_
 | Qwen3.5-4B-MLX | ~4GB | 4B 标准量化 |
 | Qwen3-0.6B / Qwen3-1.7B | ~0.5GB / ~1.5GB | 更小更快 |
 | Gemma-4-E4B-DECKARD | — | Google 模型，中文较弱 |
+
+llama.cpp 后端（其它平台，Q4_K_M 量化，首次使用时下载到 HuggingFace 缓存）：
+
+| 模型 | 下载大小 | 特点 |
+|------|----------|------|
+| Qwen3.5-2B-GGUF | ~1.3GB | **默认**，改口、填充词都能整理对 |
+| Qwen3.5-0.8B-GGUF | ~0.5GB | 最快，但短句里的填充词和改口常常原样留着 |
+| Qwen3.5-4B-GGUF | ~2.7GB | 最准，纯 CPU 上一段长文要等十几秒以上 |
+
+`llama-cpp-python` 要 0.3.17 以上（更早的版本不认 Qwen3.5）。PyPI 上只有源码包，
+装的时候要现编译：需要 CMake 和 C/C++ 编译器（Windows 上是 Visual Studio Build Tools）。
 
 ## 🚀 快速开始
 
@@ -89,7 +106,7 @@ scripts/setup-env.sh
 # 启动 STT 服务 (端口 6544)
 uv run python -m services.stt_server
 
-# 启动 LLM 服务 (端口 6545，可选，仅 Apple Silicon)
+# 启动 LLM 服务 (端口 6545，可选;非 Apple 平台要先 --llm 装 llama.cpp)
 uv run python -m services.llm_server
 ```
 
@@ -102,9 +119,8 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1
 uv run python -m services.stt_server
 ```
 
-- **LLM 后处理目前只能在 Apple Silicon 上用。** Apple Silicon 上 MLX 相关依赖默认就会装上；
-  `--llm` 在其它平台会额外装 llama.cpp 的依赖，但 LLM 服务还只实现了 MLX 后端，装了也跑不起来。
-  不开 LLM 后处理不影响语音识别本身。
+- **LLM 后处理**：Apple Silicon 上 MLX 相关依赖默认就会装上；其它平台加 `--llm`（Windows 上 `-Llm`）
+  装 llama.cpp 的依赖。不开 LLM 后处理不影响语音识别本身。
 - 自动探测不准时可以手动指定后端：`scripts/setup-env.sh --backend cpu|cuda|rocm|xpu|mlx`。
 - 建完环境后可以在客户端「设置 → 服务」里点「环境体检」：逐项检查 Python 版本、关键依赖能否导入、
   加速后端和 uv，有问题会给出修复命令。
@@ -270,7 +286,10 @@ npm run tauri build
 | `VIF_LLM_PORT` | 6545 | LLM 服务端口 |
 | `VIF_LLM_HOST` | 127.0.0.1 | LLM 服务监听地址;在 STT 服务里是转发目标地址 |
 | `VIF_LLM_ENABLED` | true | 是否启用 LLM 后处理 |
-| `VIF_LLM_MODEL` | Qwen3.5-4B-OptiQ | 默认 LLM 模型 |
+| `VIF_LLM_MODEL` | Qwen3.5-4B-OptiQ(MLX)/ Qwen3.5-2B-GGUF(llama.cpp) | 默认 LLM 模型;填了另一个后端的模型名时忽略 |
+| `VIF_LLM_BACKEND` | 自动 | LLM 推理后端:`mlx` 或 `llamacpp`。不设时 Apple Silicon 用 MLX,其它平台用 llama.cpp |
+| `VIF_LLM_CTX` | 8192 | llama.cpp 后端的上下文窗口(token) |
+| `VIF_LLM_GPU_LAYERS` | -1 | llama.cpp 后端放到 GPU 上的层数,-1 为全部;CPU 版 llama.cpp 忽略它 |
 | `VIF_API_TOKEN` | 未设置 | 访问令牌。设了之后除 `/health` 外的请求都要带 `Authorization: Bearer <令牌>`(WebSocket 也可用 `?token=`);客户端在「远程连接」里填。**暴露到局域网时务必设置** |
 | `VIF_CORS_ORIGINS` | 本地 GUI 的几个来源 | 允许的跨域来源,逗号分隔;见 `shared/constants.py` 的 `DEFAULT_CORS_ORIGINS` |
 | `VIF_REQUEST_TIMEOUT` | 300.0 | 请求超时(秒) |

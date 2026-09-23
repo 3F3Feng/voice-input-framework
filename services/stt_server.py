@@ -48,7 +48,7 @@ from services.stt_engine import (
     TranscriptionRequest,
     TranscriptionResult,
 )
-from shared import auth
+from shared import auth, llm_backend
 from shared.constants import (
     DEFAULT_BIND_HOST,
     DEFAULT_CORS_ORIGINS,
@@ -168,17 +168,17 @@ if "VIF_LLM_MODEL" not in os.environ:
 def _llm_support() -> tuple[bool, str | None]:
     """这台 STT 服务背后的 LLM 后处理能不能用,不能用时给出原因。
 
-    `services/llm_server.py` 只有 mlx-lm 这一个后端,只能在 Apple Silicon 上跑。
-    以前在 Windows / Linux 上照样能打开开关:LLM 服务起来就加载失败,界面等满
-    30 秒后说「还在加载模型」;而开关的默认值又是开,每句话都白走一趟反代。
-    LLM 服务配在别的机器上(`VIF_LLM_HOST` 不是本机)时,能不能跑由那台机器
-    决定,这里不拦。
+    Apple Silicon 用 MLX,其它平台用 llama.cpp(要 `setup-env --llm` 装上);
+    判断规则和 LLM 服务挑后端用的是同一个函数(shared/llm_backend.py),两边不会
+    一个说能用、一个加载失败。以前在不支持的机器上照样能打开开关:LLM 服务起来
+    就加载失败,界面等满 30 秒后说「还在加载模型」;而开关的默认值又是开,每句话
+    都白走一趟反代。LLM 服务配在别的机器上(`VIF_LLM_HOST` 不是本机)时,能不能跑
+    由那台机器决定,这里不拦。
     """
-    if IS_APPLE_SILICON:
-        return True, None
     if LLM_SERVER_HOST not in ("127.0.0.1", "localhost", "::1"):
         return True, None
-    return False, "LLM 后处理目前只支持 Apple Silicon 的 Mac(依赖 mlx-lm),这台机器上用不了"
+    _backend, reason = llm_backend.choose_backend(IS_APPLE_SILICON, llm_backend.requested_backend())
+    return reason is None, reason
 
 
 LLM_SUPPORTED, LLM_UNSUPPORTED_REASON = _llm_support()

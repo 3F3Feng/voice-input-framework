@@ -100,7 +100,8 @@ switch ($Backend) {
 if ($Llm) {
     # 非 Apple 平台的 LLM 后处理走 llama.cpp
     $extras += @("--extra", "llm-cpp")
-    Warn "LLM 服务目前只实现了 MLX 后端:Windows 上装了 llama.cpp 依赖也还跑不起来。不影响语音识别本身。"
+    # PyPI 上的 llama-cpp-python 只有源码包,要现编译。编译失败最常见的原因是没装 C++ 工具链。
+    Say "llama-cpp-python 要现编译,需要 CMake 和 Visual Studio Build Tools(C++ 桌面开发);编译失败先检查这两样。"
 }
 if ($Dev) { $extras += @("--extra", "dev") }
 
@@ -133,6 +134,11 @@ try:
     print(f"    MLX     : 可用,设备 {mx.default_device()}")
 except Exception as e:
     print(f"    MLX     : 不可用({type(e).__name__})")
+try:
+    import llama_cpp  # LLM 后处理在非 Apple 平台上的后端(--llm 才装)
+    print(f"    llama.cpp: {llama_cpp.__version__}")
+except ImportError:
+    pass
 '@
 # 写成临时文件再跑,而不是经管道喂给 `python -`:Windows PowerShell 5.1 往原生命令的
 # stdin 写字符串时按 $OutputEncoding(默认 ASCII)编码,中文会变成问号。

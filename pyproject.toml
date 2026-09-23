@@ -93,8 +93,10 @@ xpu = [
 ]
 # 非 Apple 机器上的 LLM 后处理后端。MLX 只有 Apple Silicon 能跑,
 # 别的平台用 llama.cpp 跑 GGUF(CPU 可用,也能编译出 CUDA/ROCm/Vulkan 版)。
+# 0.3.17 起才认 Qwen3.5(qwen35 架构),默认的 GGUF 模型就是它;更早的版本加载时
+# 报 unknown model architecture。模板渲染用的 jinja2 是 llama-cpp-python 自带的依赖。
 llm-cpp = [
-    "llama-cpp-python>=0.3.2",
+    "llama-cpp-python>=0.3.17",
     "huggingface-hub>=0.24.0",
 ]
 dev = [

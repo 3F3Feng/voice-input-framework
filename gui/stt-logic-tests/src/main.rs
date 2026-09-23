@@ -261,10 +261,10 @@ fn model_info_carries_catalog_fields() {
 
 #[test]
 fn llm_status_reads_supported_and_reason() {
-    let v = serde_json::json!({"enabled": false, "supported": false, "reason": "只支持 Apple Silicon"});
+    let v = serde_json::json!({"enabled": false, "supported": false, "reason": "请运行 scripts/setup-env.sh --llm 安装后重启服务"});
     let st = stt::LlmStatus::from_json(&v).unwrap();
     assert!(!st.enabled && !st.supported);
-    assert_eq!(st.reason.as_deref(), Some("只支持 Apple Silicon"));
+    assert_eq!(st.reason.as_deref(), Some("请运行 scripts/setup-env.sh --llm 安装后重启服务"));
 }
 
 #[test]

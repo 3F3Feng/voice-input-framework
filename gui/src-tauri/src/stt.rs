@@ -47,7 +47,7 @@ struct LlmModelsResponse {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LlmStatus {
     pub enabled: bool,
-    /// 这台服务能不能做 LLM 后处理。目前只有 Apple Silicon 能(mlx-lm)。
+    /// 这台服务能不能做 LLM 后处理:Apple Silicon 用 MLX,其它平台要装了 llama.cpp。
     pub supported: bool,
     /// 不支持时的原因,前端原样显示在置灰的开关旁边。
     pub reason: Option<String>,

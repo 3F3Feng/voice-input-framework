@@ -13,6 +13,20 @@ if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
 
+@pytest.fixture(autouse=True)
+def _no_backend_override(monkeypatch):
+    """开发机上可能设着 VIF_LLM_BACKEND,别让它影响后端选择的断言。"""
+    monkeypatch.delenv("VIF_LLM_BACKEND", raising=False)
+
+
+def mlx_engine(srv=None, **kwargs):
+    """钉死 MLX 后端的引擎:这些老测试用的是 MLX 的模型名,而 CI(Linux)上
+    自动选出来的是 llama.cpp 后端。"""
+    if srv is None:
+        import services.llm_server as srv
+    return srv.LLMEngine(backend=srv.MLXBackend(), **kwargs)
+
+
 class TestProcessRequest:
     """Test ProcessRequest model"""
 
@@ -102,27 +116,24 @@ class TestLLMEngine:
 
     def test_init(self):
         """Test engine initialization"""
-        from services.llm_server import LLMEngine
-
-        engine = LLMEngine()
+        engine = mlx_engine()
         assert engine.default_model == "Qwen3.5-4B-OptiQ"
         assert not engine._is_loaded
         assert not engine._loading
 
     def test_available_models(self):
         """Test available models list"""
-        from services.llm_server import LLMEngine
+        from services.llm_server import MLXBackend
 
-        assert "Qwen3.5-4B-OptiQ" in LLMEngine.AVAILABLE_MODELS
-        assert "Qwen3.5-2B-OptiQ" in LLMEngine.AVAILABLE_MODELS
-        assert "Qwen3.5-4B-OptiQ" in LLMEngine.AVAILABLE_MODELS
+        assert "Qwen3.5-4B-OptiQ" in MLXBackend.AVAILABLE_MODELS
+        assert "Qwen3.5-2B-OptiQ" in MLXBackend.AVAILABLE_MODELS
 
     def test_model_ids_mapping(self):
         """Test model IDs mapping"""
-        from services.llm_server import LLMEngine
+        from services.llm_server import MLXBackend
 
-        assert LLMEngine.MODEL_IDS["Qwen3.5-4B-OptiQ"] == "mlx-community/Qwen3.5-4B-OptiQ-4bit"
-        assert LLMEngine.MODEL_IDS["Qwen3.5-2B-OptiQ"] == "mlx-community/Qwen3.5-2B-OptiQ-4bit"
+        assert MLXBackend.MODEL_IDS["Qwen3.5-4B-OptiQ"] == "mlx-community/Qwen3.5-4B-OptiQ-4bit"
+        assert MLXBackend.MODEL_IDS["Qwen3.5-2B-OptiQ"] == "mlx-community/Qwen3.5-2B-OptiQ-4bit"
 
     def test_is_loading(self):
         """Test loading state"""
@@ -152,7 +163,7 @@ class TestLLMEngine:
         # Should fall back to default
         assert engine.default_model == "invalid_model"
         # But MODEL_IDS won't have it
-        assert "invalid_model" not in LLMEngine.MODEL_IDS
+        assert "invalid_model" not in engine.MODEL_IDS
 
     @pytest.mark.asyncio
     async def test_load_returns_true_when_already_loaded(self):
@@ -210,8 +221,7 @@ class TestLoadFailureAndModelChoice:
 
         import services.llm_server as srv
 
-        monkeypatch.setattr(srv, "IS_APPLE_SILICON", True)
-        engine = srv.LLMEngine(default_model="Qwen3-0.6B")
+        engine = mlx_engine(srv, default_model="Qwen3-0.6B")
         bad_id = engine.MODEL_IDS["Qwen3-1.7B"]
 
         def load(model_id):
@@ -236,42 +246,48 @@ class TestLoadFailureAndModelChoice:
         assert "download interrupted" in r.json()["message"]
 
     @pytest.mark.asyncio
-    async def test_non_apple_platform_says_why(self, monkeypatch, state_file):
+    async def test_non_apple_platform_without_llama_cpp_says_how(self, monkeypatch, state_file):
+        """非 Apple、也没装 llama.cpp:加载失败,并告诉用户该运行哪个命令(F17)"""
         import services.llm_server as srv
+        from shared import llm_backend
 
         monkeypatch.setattr(srv, "IS_APPLE_SILICON", False)
+        monkeypatch.setattr(llm_backend, "has_package", lambda name: False)
         engine = srv.LLMEngine()
+        assert engine.backend.name == "llamacpp"
         assert await engine.load() is False
-        assert "Apple Silicon" in engine.load_error()
+        assert "setup-env" in engine.load_error()
+        assert "--llm" in engine.load_error() or "-Llm" in engine.load_error()
 
     @pytest.mark.asyncio
     async def test_selected_model_survives_restart(self, monkeypatch, state_file):
         import services.llm_server as srv
 
-        engine = srv.LLMEngine()
+        engine = mlx_engine(srv)
         monkeypatch.setattr(engine, "_load_sync", lambda model_id: None)
         assert await engine.load("Qwen3.5-2B-OptiQ", remember=True)
         assert srv.load_llm_state()["llm_model"] == "Qwen3.5-2B-OptiQ"
 
         # 「重启」:没有环境变量时沿用上次选的;环境变量仍然优先。
         monkeypatch.delenv("VIF_LLM_MODEL", raising=False)
-        assert srv.resolve_llm_model() == "Qwen3.5-2B-OptiQ"
+        assert srv.resolve_llm_model(engine.backend) == "Qwen3.5-2B-OptiQ"
         monkeypatch.setenv("VIF_LLM_MODEL", "Qwen3-0.6B")
-        assert srv.resolve_llm_model() == "Qwen3-0.6B"
+        assert srv.resolve_llm_model(engine.backend) == "Qwen3-0.6B"
 
     def test_unknown_saved_model_falls_back_to_default(self, monkeypatch, state_file):
         import services.llm_server as srv
 
         state_file.write_text('{"llm_model": "gone-model"}')
         monkeypatch.delenv("VIF_LLM_MODEL", raising=False)
-        assert srv.resolve_llm_model() == srv.DEFAULT_LLM_MODEL
+        backend = srv.MLXBackend()
+        assert srv.resolve_llm_model(backend) == backend.DEFAULT_MODEL
 
     def test_select_endpoint_remembers_only_on_success(self, monkeypatch, state_file):
         from fastapi.testclient import TestClient
 
         import services.llm_server as srv
 
-        engine = srv.LLMEngine()
+        engine = mlx_engine(srv)
         monkeypatch.setattr(srv, "engine", engine)
 
         def load_sync(model_id):

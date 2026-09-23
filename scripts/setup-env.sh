@@ -86,6 +86,8 @@ esac
 if [[ $WITH_LLM -eq 1 && "$BACKEND" != "mlx" ]]; then
   # 非 Apple 平台的 LLM 后处理走 llama.cpp;Apple 上用 MLX,不需要额外装
   EXTRAS+=(--extra llm-cpp)
+  # PyPI 上的 llama-cpp-python 只有源码包,要现编译。编译失败最常见的原因是缺工具链。
+  say "llama-cpp-python 要现编译,需要 CMake 和 C/C++ 编译器(如 build-essential);编译失败先检查这两样。"
 fi
 [[ $WITH_DEV -eq 1 ]] && EXTRAS+=(--extra dev)
 
@@ -116,6 +118,11 @@ try:
     print(f"    MLX     : 可用,设备 {mx.default_device()}")
 except Exception as e:
     print(f"    MLX     : 不可用({type(e).__name__})")
+try:
+    import llama_cpp  # LLM 后处理在非 Apple 平台上的后端(--llm 才装)
+    print(f"    llama.cpp: {llama_cpp.__version__}")
+except ImportError:
+    pass
 PY
 
 say "完成。启动服务:"
