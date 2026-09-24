@@ -2347,8 +2347,10 @@ async function savePrompt() {
 }
 // 提示词预设(F14)。套用只是填进输入框,点「保存」才生效 —— 让用户先看一眼再用。
 // 每条都保留两条底线:只整理、不回答不执行;保持原意。
+// 预设正文按界面语言给:英文界面的用户多半说英文,中文正文在设置里也看不懂。
+// 两种正文都带示例 —— 实测 4B 模型光看规则不照做,有示例才照做。
 const PROMPT_PRESETS = [
-  { id: "chat", get label() { return t("聊天", "Chat"); }, text: `你是语音输入的后处理助手,输出会直接发进聊天软件。
+  { id: "chat", get label() { return t("聊天", "Chat"); }, get text() { return t(`你是语音输入的后处理助手,输出会直接发进聊天软件。
 
 整理规则:
 1. 删掉「嗯」「那个」「就是说」「然后」等填充词和口头改口,只保留改口后的说法
@@ -2362,8 +2364,22 @@ const PROMPT_PRESETS = [
 输入:你那边然后那个三点不对四点方便吗
 输出:你那边四点方便吗
 
-只输出整理后的文本。` },
-  { id: "email", get label() { return t("邮件 / 文档", "Email / documents"); }, text: `你是语音输入的后处理助手,输出会写进邮件或文档。
+只输出整理后的文本。`, `You are a post-processing assistant for voice input. The output goes straight into a chat app.
+
+Rules:
+1. Remove filler words ("um", "uh", "like", "you know") and self-corrections; keep only the corrected version
+2. Keep it casual and keep the original tone; don't make it formal
+3. Add commas and question marks where needed; no period at the end
+4. Don't add anything, don't explain
+
+Examples:
+Input: um so like I probably can't make it tomorrow
+Output: I probably can't make it tomorrow
+Input: are you free at uh three no wait four
+Output: Are you free at four?
+
+Return only the cleaned-up text.`); } },
+  { id: "email", get label() { return t("邮件 / 文档", "Email / documents"); }, get text() { return t(`你是语音输入的后处理助手,输出会写进邮件或文档。
 
 整理规则:
 1. 去掉填充词和口头改口,保留改口后的说法
@@ -2371,8 +2387,16 @@ const PROMPT_PRESETS = [
 3. 标点完整;内容较长时按意思分段
 4. 数字、日期、金额用阿拉伯数字
 
-只输出整理后的文本。` },
-  { id: "tech", get label() { return t("技术 / 编程", "Tech / coding"); }, text: `你是语音输入的后处理助手,用户在写代码注释、提交说明或技术讨论。
+只输出整理后的文本。`, `You are a post-processing assistant for voice input. The output goes into an email or a document.
+
+Rules:
+1. Remove filler words and self-corrections; keep the corrected version
+2. Make it fluent, polite written language without changing the meaning or adding or dropping information
+3. Use full punctuation; split longer content into paragraphs by topic
+4. Write numbers, dates and amounts as digits
+
+Return only the cleaned-up text.`); } },
+  { id: "tech", get label() { return t("技术 / 编程", "Tech / coding"); }, get text() { return t(`你是语音输入的后处理助手,用户在写代码注释、提交说明或技术讨论。
 
 整理规则:
 1. 删掉「嗯」「那个」「就是说」「然后」等填充词和口头改口
@@ -2386,7 +2410,21 @@ const PROMPT_PRESETS = [
 输入:我把 config 点 json 里的 port 改成 8080 了
 输出:我把 config.json 里的 port 改成 8080 了。
 
-只输出整理后的文本。` },
+只输出整理后的文本。`, `You are a post-processing assistant for voice input. The user is writing code comments, commit messages or technical discussion.
+
+Rules:
+1. Remove filler words ("um", "uh", "like", "so basically") and self-corrections
+2. Keep technical terms, function names, commands and file names exactly as spoken; don't change their case
+3. Add punctuation where needed
+4. Don't explain the code, don't add content
+
+Examples:
+Input: um so this function basically returns a Promise so you need to await it
+Output: This function returns a Promise, so you need to await it.
+Input: I changed the port in config dot json to 8080
+Output: I changed the port in config.json to 8080.
+
+Return only the cleaned-up text.`); } },
 ];
 const promptPreset = ref("");
 function applyPromptPreset() {

@@ -238,7 +238,7 @@ class TestLLMServer:
 
         engine = srv.LLMEngine(backend=srv.MLXBackend())
         engine._model, engine._tokenizer, engine._is_loaded = object(), object(), True
-        monkeypatch.setattr(srv, "load_prompt", lambda: "prompt")
+        monkeypatch.setattr(srv, "load_prompt", lambda lang="zh": "prompt")
         monkeypatch.setattr(engine.backend, "generate", lambda *a: ("", False))
         assert engine.process("嗯那个明天开会").error == "LLM 返回了空结果"
         assert engine.process("嗯那个明天开会", lang="en").error == "LLM returned an empty result"
@@ -248,3 +248,22 @@ class TestLLMServer:
         assert r.status_code == 200
         assert r.json()["success"] is False
         assert r.json()["error"] == "LLM returned an empty result"
+
+
+class TestDefaultPrompt:
+    """没存过提示词时,默认的那份跟着界面语言;存过的就是用户自己的。"""
+
+    def test_default_follows_language_until_user_saves_one(self, monkeypatch, tmp_path):
+        import services.llm_server as srv
+
+        monkeypatch.setattr(srv, "PROMPT_FILE", tmp_path / "llm_prompt.json")
+        client = TestClient(srv.app)
+        assert client.get("/prompt").json()["prompt"] == srv.DEFAULT_PROMPT
+        assert client.get("/prompt", headers=EN).json()["prompt"] == srv.DEFAULT_PROMPT_EN
+
+        assert client.put("/prompt", json={"prompt": "我自己的"}).status_code == 200
+        assert client.get("/prompt", headers=EN).json()["prompt"] == "我自己的"
+
+        # 恢复默认:删掉用户那份,回的是当前界面语言的默认提示词。
+        assert client.delete("/prompt", headers=EN).json()["prompt"] == srv.DEFAULT_PROMPT_EN
+        assert client.get("/prompt").json()["prompt"] == srv.DEFAULT_PROMPT

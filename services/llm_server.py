@@ -58,16 +58,32 @@ DEFAULT_PROMPT = """你是一个语音输入后处理助手。
 
 只返回优化后的文本，不要额外解释。"""
 
+# 英文界面的默认提示词。用户没存过自己的提示词时,默认的那份跟着界面语言走:
+# 设置里看得懂,整理英文口述时也更顺手。存过的就是用户自己的,不管界面语言。
+DEFAULT_PROMPT_EN = """You are a post-processing assistant for voice input.
 
-def load_prompt() -> str:
-    """加载提示词"""
+Clean up the user's speech-to-text transcript:
+1. Remove filler words ("um", "uh", "like", "you know", repeated words)
+2. Keep the original meaning
+3. Add punctuation
+4. Keep it concise
+
+Return only the cleaned-up text, with no extra explanation."""
+
+
+def default_prompt(lang: str = i18n.ZH) -> str:
+    return DEFAULT_PROMPT_EN if lang == i18n.EN else DEFAULT_PROMPT
+
+
+def load_prompt(lang: str = i18n.ZH) -> str:
+    """加载提示词:用户存过的那份;没有就按界面语言给默认的。"""
     logger.info(f"Loading prompt from {PROMPT_FILE}")
     if PROMPT_FILE.exists():
         try:
             return PROMPT_FILE.read_text()
         except Exception as e:
             logger.warning(f"Failed to load prompt file: {e}")
-    return DEFAULT_PROMPT
+    return default_prompt(lang)
 
 
 def save_prompt(prompt: str) -> bool:
@@ -720,7 +736,7 @@ class LLMEngine:
 
         try:
             # 加载提示词
-            system_prompt = load_prompt()
+            system_prompt = load_prompt(lang)
             if vocabulary_hint:
                 # 个人词库(services/vocabulary.py):叫模型别把用户的专有名词「纠正」掉。
                 system_prompt = f"{system_prompt}\n\n{vocabulary_hint}"
@@ -999,9 +1015,9 @@ async def process_text(request: ProcessRequest, http_request: Request):
 
 # ============== Prompt Management API ==============
 @app.get("/prompt")
-async def get_prompt():
+async def get_prompt(request: Request):
     """获取当前提示词"""
-    return {"prompt": load_prompt()}
+    return {"prompt": load_prompt(i18n.lang_of(request))}
 
 
 @app.put("/prompt")
@@ -1031,7 +1047,7 @@ async def reset_prompt(request: Request):
         )
         raise HTTPException(status_code=500, detail=detail) from e
     logger.info("Prompt reset to default")
-    return {"prompt": DEFAULT_PROMPT}
+    return {"prompt": default_prompt(i18n.lang_of(request))}
 
 
 def main():
