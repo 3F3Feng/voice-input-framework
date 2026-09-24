@@ -469,6 +469,10 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
   真服务端的英文报错、Windows 安装器的中文都没在真应用里看过。
 - 新默认 LLM(Gemma-4-E2B)只在 M3 Max 上测过;8 GB 内存的 Mac、纯 CPU 的 Windows / Linux 上的
   速度和内存没量过。老用户升级后首次启动会下载约 4 GB 的新模型。
+- 上次异常退出提示(`crash.rs`):`.ips` 解析用本机两份真实报告核对过,横幅只在浏览器假后端里看过;
+  真应用里「崩溃 → 重开 → 半分钟内报告落盘 → 横幅出现」的整条链、更新重启不误报都没实测;
+  Windows 的 WER / CrashDumps 定位和更新安装器退出前删标记连编译都没过过(本机交叉编译卡在 ring 的 C 代码),要等 Windows CI;
+  Linux 只记日志。
 - F17 llama.cpp 后端只在本机(M3 Max,Metal 版和 `VIF_LLM_GPU_LAYERS=0` 的纯 CPU)实测过;
   Windows / Linux 上 `setup-env --llm` 现编译 llama-cpp-python、CUDA / Vulkan 版都没验证过。
 

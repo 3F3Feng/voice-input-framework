@@ -148,8 +148,30 @@ pub fn init(app_handle: &tauri::AppHandle) {
     }
 }
 
+thread_local! {
+    /// 这个线程是不是正在 [`__log_inner`] 里。panic 钩子要写日志,可万一 panic 就发生在
+    /// 写日志的中途(锁已经拿着),再进去只会死锁——钩子先问一声。
+    static IN_LOG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// 见 [`IN_LOG`]。
+pub fn is_logging_on_this_thread() -> bool {
+    IN_LOG.with(|f| f.get())
+}
+
+/// 离开作用域(包括 panic 展开)时把 [`IN_LOG`] 复位。
+struct InLogGuard;
+
+impl Drop for InLogGuard {
+    fn drop(&mut self) {
+        IN_LOG.with(|f| f.set(false));
+    }
+}
+
 #[doc(hidden)]
 pub fn __log_inner(level: &str, msg: &str) {
+    IN_LOG.with(|f| f.set(true));
+    let _guard = InLogGuard;
     let now = chrono::Local::now();
     let text = format!("{} [{}] {}", now.format("%H:%M:%S"), level, msg);
     eprintln!("{}", text);
