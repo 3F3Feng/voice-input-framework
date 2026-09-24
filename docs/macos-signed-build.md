@@ -138,6 +138,54 @@ A public key has been found, but no private key.
 本地构建没有理由要求开发者手里有发布签名私钥,所以关掉。发布签名只在
 `.github/workflows/build-release.yml` 里做,密钥存在仓库 secrets 里。
 
+## 发版签名(CI 里的 macOS 代码签名)
+
+发版流水线的 macOS 包**也必须用固定证书签名**,和本地构建用同一个身份。
+
+v2.3.0 之前流水线里没有证书,发出去的 `.app` 只有链接器给的 ad-hoc 签名
+(`Signature=adhoc`、identifier 是 `voice_input-<随机>`、designated requirement 是 cdhash)。
+用户点「更新」装上之后:系统设置里 Voice Input 的开关还开着,但那条授权属于旧的
+签名身份,和新的二进制对不上 —— 应用里「输入监控」「辅助功能」显示被拒,快捷键和
+自动输入失效,而且每次更新都会再来一遍。
+
+用证书签名后,designated requirement 是这样的,不含任何随构建变化的东西:
+
+```
+identifier "com.voiceinput.app" and anchor apple generic
+  and certificate leaf[subject.CN] = "Apple Development: <你的名字> (<ID>)"
+  and certificate 1[field.1.2.840.113635.100.6.2.1]
+```
+
+只认 bundle id 和证书名,所以同名的另一张证书、续期后的新证书签出来的都算同一个
+应用;本地 `scripts/build-macos.sh` 签的包和流水线签的包也算同一个,授权可以互通。
+
+### 配置(一次性,需要仓库管理员自己做)
+
+1. 钥匙串访问 → 我的证书 → 找到本地签名用的那张「Apple Development: …」(带私钥的,
+   展开能看到一把钥匙)→ 右键「导出」→ 格式选「个人信息交换(.p12)」,设一个导出密码。
+2. 在终端里把 .p12 转成 base64 并存成仓库 secret(`gh` 需要已登录,有仓库管理权限):
+
+   ```bash
+   base64 -i ~/Desktop/VoiceInput-signing.p12 | gh secret set APPLE_CERTIFICATE
+   gh secret set APPLE_CERTIFICATE_PASSWORD      # 粘贴上一步设的导出密码
+   gh secret set APPLE_SIGNING_IDENTITY --body "Apple Development: <你的名字> (<ID>)"
+   rm ~/Desktop/VoiceInput-signing.p12
+   ```
+
+   `APPLE_SIGNING_IDENTITY` 填证书的完整名称,和 `security find-identity -v -p codesigning`
+   列出来的引号里那一串一致。
+
+3. 之后打 tag 发版即可。流水线在构建前检查这三个 secret,缺了直接失败(不会再退回
+   ad-hoc 悄悄发版);构建后校验签名用的是证书、identifier 是 `com.voiceinput.app`、
+   designated requirement 不是 cdhash、`device.audio-input` entitlement 在,且
+   `.app.tar.gz`(更新器装的就是它)里的也是签过名的那一份。
+
+这张证书不是 Developer ID,不能公证:浏览器下载的包第一次打开仍要按
+「隔离属性」一节处理。但通过应用内更新安装的不受隔离属性影响,权限也不会再丢。
+
+Apple Development 证书一年一续。续期后把新导出的 .p12 重新存进 `APPLE_CERTIFICATE`
+即可;证书名不变,已经给出的授权继续有效。
+
 ## 发版怎么走
 
 版本号**只有一个来源**:`gui/src-tauri/Cargo.toml` 的 `package.version`。

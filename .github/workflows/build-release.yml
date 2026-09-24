@@ -167,6 +167,61 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev libasound2-dev libxdo-dev libxtst-dev
 
+      # macOS 发布包必须用固定证书签名。
+      #
+      # macOS 的隐私权限(麦克风 / 输入监控 / 辅助功能)按**代码签名身份**记录授权。
+      # 不带证书时 Tauri 只做 ad-hoc 签名,身份就是这次构建的 cdhash,每次发版都变:
+      # 用户点「更新」装上新版后,系统设置里 Voice Input 的开关还开着,授权却对不上
+      # 新的二进制,快捷键和自动输入悄悄失效(v2.3.0 就是这样发出去的)。
+      # 用证书签名后,身份是「bundle id + 证书名」,跨版本不变,授权一次长期有效。
+      #
+      # 缺 secret 时直接失败,而不是退回 ad-hoc 照常发版。怎么配见
+      # docs/macos-signed-build.md 的「发版签名」一节。
+      - name: Check macOS signing secrets
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          missing=""
+          [ -n "$APPLE_CERTIFICATE" ] || missing="$missing APPLE_CERTIFICATE"
+          [ -n "$APPLE_CERTIFICATE_PASSWORD" ] || missing="$missing APPLE_CERTIFICATE_PASSWORD"
+          [ -n "$APPLE_SIGNING_IDENTITY" ] || missing="$missing APPLE_SIGNING_IDENTITY"
+          if [ -n "$missing" ]; then
+            echo "::error::缺少 macOS 签名用的 secret:$missing。不签名发出去的包会让用户每次更新都丢掉系统权限,见 docs/macos-signed-build.md「发版签名」。"
+            exit 1
+          fi
+
+      # 证书导进我们自己建的钥匙串,整个 job 都在。
+      #
+      # 不能让 Tauri 自己导(给它 APPLE_CERTIFICATE):它签完 .app 就把临时钥匙串
+      # 删了,紧接着打 .dmg 时 bundle_dmg.sh 要用同一个身份签 dmg,找不到证书,
+      # 整个构建失败(实测)。这里导好之后只告诉 Tauri 身份名(APPLE_SIGNING_IDENTITY)。
+      - name: Import macOS signing certificate
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/vif-signing.keychain-db"
+          keychain_pw="$(openssl rand -hex 24)"
+          cert="$RUNNER_TEMP/vif-signing.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert"
+          security create-keychain -p "$keychain_pw" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_pw" "$keychain"
+          security import "$cert" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$cert"
+          # 不设分区列表的话,codesign 每次取私钥都要弹「允许访问钥匙串」,CI 上没人点。
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_pw" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+
       - name: Build Tauri app
         working-directory: gui
         # 签名密钥必须传进来。少了它 `createUpdaterArtifacts: true` 会直接让构建
@@ -178,9 +233,20 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 只有 macOS 用得上:证书已经在上一步导进钥匙串,这里只给身份名。
+          # 没设 APPLE_ID 等公证用的变量,所以不会去公证。
+          APPLE_SIGNING_IDENTITY: ${{ matrix.os == 'macos-latest' && secrets.APPLE_SIGNING_IDENTITY || '' }}
         run: |
           set -o pipefail
-          npx tauri build --target ${{ matrix.target }} 2>&1 | tee build.log
+          verbose=""
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            # --verbose 才会把 bundle_dmg.sh 等打包脚本的输出打出来,出错时有线索。
+            verbose="--verbose"
+          else
+            # 空字符串的 APPLE_SIGNING_IDENTITY 也算「设了」,清掉。
+            unset APPLE_SIGNING_IDENTITY
+          fi
+          npx tauri build --target ${{ matrix.target }} $verbose 2>&1 | tee build.log
 
           # 私钥和配置里的 pubkey 对不上时,tauri 只**警告**一句就照常出包:
           #   "The updater secret key from `TAURI_SIGNING_PRIVATE_KEY` does not
@@ -191,6 +257,43 @@ jobs:
             echo "::error::TAURI_SIGNING_PRIVATE_KEY 和 tauri.conf.json 里的 updater pubkey 不是一对,签出来的更新包客户端一个都验不过。"
             exit 1
           fi
+
+      # 签完再验一遍:证书真的用上了、身份不是 cdhash、麦克风 entitlement 在。
+      # 真证书签名会打开 hardened runtime,那时少了 device.audio-input,麦克风会被
+      # 系统直接拒绝(不弹窗、不进设置列表),比不签名还难查。
+      - name: Verify macOS signature
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="gui/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Voice Input.app"
+          info="$(codesign -dv --verbose=2 "$app" 2>&1 || true)"
+          req="$(codesign -d -r- "$app" 2>&1 || true)"
+          echo "$info"; echo "$req"
+          codesign --verify --deep --strict "$app"
+          echo "$info" | grep -q '^Identifier=com.voiceinput.app$' \
+            || { echo "::error::签名的 identifier 不是 com.voiceinput.app"; exit 1; }
+          echo "$info" | grep -q '^Authority=' \
+            || { echo "::error::没有用证书签名(仍是 ad-hoc)"; exit 1; }
+          if echo "$req" | grep -q 'cdhash'; then
+            echo "::error::designated requirement 还是 cdhash,每次发版身份都会变"; exit 1
+          fi
+          ents="$(codesign -d --entitlements - --xml "$app" 2>/dev/null || true)"
+          echo "$ents" | grep -q 'com.apple.security.device.audio-input' \
+            || { echo "::error::签名里没有 device.audio-input entitlement,hardened runtime 下麦克风会被直接拒绝"; exit 1; }
+          # 更新器装的是 .app.tar.gz,确认里面的也是签过名的那一份。
+          # 注意输出先整个抓进变量再 grep:`codesign ... | grep -q` 在 pipefail 下,
+          # grep 匹配到就退出,codesign 收到 SIGPIPE 返回非零,整条管道算失败(实测)。
+          tmp="$(mktemp -d)"
+          tar -xzf "$(dirname "$app")/Voice Input.app.tar.gz" -C "$tmp"
+          echo "tarball contents:"; ls -la "$tmp"
+          inner="$(find "$tmp" -maxdepth 2 -name '*.app' -type d | head -1)"
+          [ -n "$inner" ] || { echo "::error::.app.tar.gz 里没有 .app"; exit 1; }
+          inner_info="$(codesign -dv --verbose=2 "$inner" 2>&1 || true)"
+          echo "$inner_info" | grep -q '^Authority=' \
+            || { echo "::error::.app.tar.gz 里的 app 没有证书签名"; echo "$inner_info"; exit 1; }
+          echo "$inner_info" | grep -q '^Identifier=com.voiceinput.app$' \
+            || { echo "::error::.app.tar.gz 里的 app identifier 不对"; echo "$inner_info"; exit 1; }
 
       # 这里原本有一步从 tauri.conf.json 里正则抠 version,抠不到就退回 "0.0.0"。
       # 版本号现在只写在 gui/src-tauri/Cargo.toml 里(Tauri 缺省回落到它),

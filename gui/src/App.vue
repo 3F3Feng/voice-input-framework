@@ -394,7 +394,7 @@
               </div>
             </div>
             <div class="s-tip" style="margin-top:6px">
-              {{ t('已拒绝的权限系统不会再弹窗，需在「系统设置 → 隐私与安全性」中手动勾选；辅助功能改动后可能需要重启本应用。', "Once a permission is denied, macOS won't ask again — turn it on in System Settings → Privacy & Security. After changing Accessibility you may need to restart this app.") }}
+              {{ t('已拒绝的权限系统不会再弹窗，需在「系统设置 → 隐私与安全性」中手动勾选；辅助功能改动后可能需要重启本应用。系统设置里开关明明开着、这里却显示「已拒绝」:多半是应用更新后签名身份变了,在那个列表里选中 Voice Input 点「−」删掉,再重新添加。', "Once a permission is denied, macOS won't ask again — turn it on in System Settings → Privacy & Security. After changing Accessibility you may need to restart this app. If the switch in System Settings is already on but this shows Denied, the app’s signature probably changed with an update: select Voice Input in that list, remove it with “−”, then add it again.") }}
             </div>
           </div>
           </template>
