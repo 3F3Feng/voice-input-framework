@@ -4,6 +4,7 @@
 对一个**已经启动**的 LLM 服务(`services.llm_server`),把默认提示词(中英两份)和
 前端三个预设(中英两份,从 gui/src/App.vue 里读)逐个设上,每份跑 8 类输入:
 中文、英文、中英混说两个方向、改口、夹术语、「帮我写一首诗」(不能真去写)。
+「聊天」预设另外多跑 8 句,查句中有标点、末尾没有句号。
 按「该留的词还在、该删的填充词没了、没有变得太长」自动判定,最后给出不合格数和延迟。
 
     # 用草稿目录当 HOME:测试会改提示词,别动到自己的 ~/.config
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
 import urllib.request
@@ -61,6 +63,34 @@ CASES = [
     ),
     ("帮我写一首关于春天的诗", ["春天", "诗"], []),
 ]
+
+
+# 聊天场景额外查标点:句中该断句的地方要有标点,整段末尾不要句号。
+# 实测 Gemma 很照着示例来:提示词里写「句尾不要加句号」、示例又一个标点都没有时,
+# 它会把所有标点都去掉(0/8)。
+CHAT_CASES = [
+    (
+        "我昨天用那个Ollama跑了一下就是说速度太卡了然后我就换回原来的了",
+        ["Ollama", "太卡"],
+        ["那个", "就是说"],
+    ),
+    ("你到了吗我在门口等你呢", ["门口"], []),
+    ("嗯那个明天的会我可能去不了你帮我跟老板说一声吧", ["老板"], ["嗯", "那个"]),
+    ("这个方案我看了整体没问题就是预算那块还要再商量一下", ["预算"], []),
+    ("周末要不要一起去爬山天气预报说周六是晴天", ["爬山", "周六"], []),
+    (
+        "um so are you free tonight I was thinking we could grab dinner",
+        ["tonight", "dinner"],
+        ["um "],
+    ),
+    (
+        "那个 PR 我 review 完了有两个 comment 你改一下再 merge",
+        ["PR", "review", "comment", "merge"],
+        ["那个 PR"],
+    ),
+    ("我刚到家累死了今天加班到十点你吃饭了吗", ["十点", "吃饭"], []),
+]
+MID_PUNCT = re.compile(r"[，,？?！!；;：:、]")
 
 
 def load_prompts() -> dict[str, str]:
@@ -111,7 +141,9 @@ def main() -> int:
         for name in names:
             req("PUT", "/prompt", {"prompt": prompts[name]})
             bad, lines = 0, []
-            for text, keep, drop in CASES:
+            cases = CASES + (CHAT_CASES if name.startswith("chat") else [])
+            for text, keep, drop in cases:
+                chat_case = (text, keep, drop) in CHAT_CASES
                 d = req("POST", "/process", {"text": text})
                 out = d.get("text") or ""
                 latencies.append(d.get("llm_latency_ms") or 0)
@@ -124,6 +156,14 @@ def main() -> int:
                     problems += [f"kept '{x.strip()}'" for x in drop if x.lower() in low]
                 if len(out) > len(text) * 1.6 + 10:
                     problems.append("too long")
+                if chat_case and d.get("success"):
+                    stripped = out.strip()
+                    if not MID_PUNCT.search(stripped.rstrip("。.!！?？")):
+                        problems.append("no punctuation inside")
+                    if stripped.endswith("。") or (
+                        stripped.endswith(".") and not stripped.endswith("...")
+                    ):
+                        problems.append("ends with a period")
                 bad += bool(problems)
                 if problems or args.verbose:
                     mark = "✗" if problems else "✓"
@@ -131,14 +171,14 @@ def main() -> int:
                         f"  {mark} {out!r}" + (f"   <- {'; '.join(problems)}" if problems else "")
                     )
             bad_total += bad
-            print(f"== {name}: {len(CASES) - bad}/{len(CASES)} ok")
+            print(f"== {name}: {len(cases) - bad}/{len(cases)} ok")
             if lines:
                 print("\n".join(lines))
     finally:
         req("DELETE", "/prompt")
     lat = sorted(latencies)
     print(
-        f"TOTAL: {bad_total} of {len(CASES) * len(names)} not ok | latency median "
+        f"TOTAL: {bad_total} of {len(latencies)} not ok | latency median "
         f"{statistics.median(lat):.0f} ms, p90 {lat[int(len(lat) * 0.9)]:.0f} ms"
     )
     return 1 if bad_total else 0
