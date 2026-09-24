@@ -1,5 +1,8 @@
 //! Auto-input: type text into the active window using keyboard simulation.
 //! Uses the `enigo` crate for cross-platform keyboard input.
+//!
+//! 这里的函数**只能在主线程上调**(调用方用 `lib.rs` 的 `on_main_thread`):
+//! macOS 上 enigo 查键盘布局走 `TSMGetInputSourceProperty`,在别的线程上调会 SIGTRAP。
 
 use enigo::{Direction, Enigo, Key, Keyboard};
 

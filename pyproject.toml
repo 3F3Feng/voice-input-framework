@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voice-input-framework"
-version = "2.3.1"
+version = "2.3.2"
 description = "Voice Input Framework - 跨平台语音识别与 LLM 后处理"
 readme = "README.md"
 license = {text = "MIT"}
