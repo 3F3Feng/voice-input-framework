@@ -254,6 +254,11 @@ def _total_ram_gb() -> float:
         return 0.0
 
 
+def total_ram_gb() -> float:
+    """物理内存总量(GB),拿不到时为 0。LLM 服务按它挑默认模型。"""
+    return _total_ram_gb()
+
+
 def _vram_gb(torch, backend: Backend) -> float | None:
     """独显显存。Apple 是统一内存,归到 ram 里,这里返回 None。"""
     if backend.name in ("cuda", "rocm"):
