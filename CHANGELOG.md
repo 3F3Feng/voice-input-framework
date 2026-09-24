@@ -29,6 +29,12 @@
   默认模型加载失败时依次退回 E2B、Qwen3.5-4B。首次启动会下载约 6.8 GB。
 - 新增 `tools/llm_format_eval.py`:格式整理的 18 例自动检查。
 
+### Fixed
+
+- **「更新服务」在 macOS 上建环境失败**(`EXTRAS[@]: unbound variable`):`setup-env.sh` 开了
+  `set -u` 又直接展开空数组,macOS 自带的 bash 3.2 把它当成未绑定变量直接退出 ——
+  Apple Silicon 的默认路径正好是空数组。
+
 ## [2.4.0] - 2026-09-24
 
 > **升级须知**:边录边识别、服务版本号要新版服务端才有。更新应用后,主界面会提示
