@@ -29,6 +29,7 @@ if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
 from shared import auth, i18n, llm_backend  # noqa: E402
+from shared.app_version import APP_VERSION  # noqa: E402
 from shared.i18n import bi, en_of  # noqa: E402
 from shared.constants import (  # noqa: E402
     DEFAULT_BIND_HOST,
@@ -219,6 +220,9 @@ class HealthStatus(BaseModel):
     error: str | None = None
     #: 推理后端(mlx / llamacpp),排查「为什么这台机器列的是这些模型」时用。
     backend: str | None = None
+    #: 项目版本号(pyproject.toml,和客户端同一个版本号),见 shared/app_version.py。
+    #: 上面的 `version` 是接口版本,留着给老客户端。
+    app_version: str | None = None
 
 
 # ============== 输出清洗 ==============
@@ -1037,6 +1041,7 @@ async def health_check(request: Request):
         is_processing=engine.is_processing(),
         error=load_error,
         backend=engine.backend.name,
+        app_version=APP_VERSION,
     )
 
 

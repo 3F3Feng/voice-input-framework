@@ -661,13 +661,13 @@ const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
 /// - **只认 `\n`。** 下载模型时 tqdm 用 `\r` 原地刷新进度条,整个下载过程在它
 ///   看来是同一行,内存里攒成一个越来越长的字符串,日志尾巴上也一直看不到进度。
 #[derive(Default)]
-struct LineSplitter {
+pub(crate) struct LineSplitter {
     pending: Vec<u8>,
 }
 
 impl LineSplitter {
     /// 喂一段字节,吐出其中已经完整的行(空行丢掉:`\r\n` 会切出一个空行)。
-    fn feed(&mut self, chunk: &[u8]) -> Vec<String> {
+    pub(crate) fn feed(&mut self, chunk: &[u8]) -> Vec<String> {
         let mut out = Vec::new();
         for &b in chunk {
             if b == b'\n' || b == b'\r' {
@@ -683,7 +683,7 @@ impl LineSplitter {
     }
 
     /// 流结束时剩下的那半行。
-    fn finish(mut self) -> Option<String> {
+    pub(crate) fn finish(mut self) -> Option<String> {
         let mut out = Vec::new();
         self.flush_into(&mut out);
         out.pop()
@@ -890,7 +890,7 @@ fn pid_cwd(pid: u32) -> Option<PathBuf> {
 ///
 /// macOS 上这一步不是可选的:临时目录 `/var/folders/...` 实际是
 /// `/private/var/folders/...` 的软链,`lsof` 报后者而配置里存的可能是前者。
-fn same_dir(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_dir(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
         // 规范化失败(目录已经被删了)就退回字面比较,不做任何猜测。
