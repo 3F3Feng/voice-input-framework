@@ -127,7 +127,7 @@ def load_state() -> dict:
     """加载持久化的服务器状态"""
     try:
         if STATE_FILE.exists():
-            with open(STATE_FILE, "r") as f:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
     except Exception as e:
         logger.warning(f"Failed to load state file: {e}")
@@ -138,7 +138,7 @@ def save_state(state: dict):
     """保存服务器状态到文件"""
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        with open(STATE_FILE, "w") as f:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2)
     except Exception as e:
         logger.warning(f"Failed to save state file: {e}")

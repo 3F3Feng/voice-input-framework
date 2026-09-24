@@ -114,16 +114,32 @@ def load_prompt(lang: str = i18n.ZH) -> str:
     logger.info(f"Loading prompt from {PROMPT_FILE}")
     if PROMPT_FILE.exists():
         try:
-            return PROMPT_FILE.read_text()
+            return read_prompt_file(PROMPT_FILE)
         except Exception as e:
             logger.warning(f"Failed to load prompt file: {e}")
     return default_prompt(lang)
 
 
+def read_prompt_file(path: Path) -> str:
+    """读用户存的提示词。一律按 UTF-8 存;读不了再按系统编码读一次。
+
+    以前读写都没指定编码,用的是系统默认编码:英文版 Windows 是 cp1252,存中文提示词
+    直接失败(PUT /prompt 回 500);中文版 Windows 是 GBK,存得进去但文件是 GBK 的 ——
+    升级后这些老文件还得读得出来。
+    """
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        import locale
+
+        return raw.decode(locale.getpreferredencoding(False))
+
+
 def save_prompt(prompt: str) -> bool:
     """保存提示词"""
     try:
-        PROMPT_FILE.write_text(prompt)
+        PROMPT_FILE.write_text(prompt, encoding="utf-8")
         return True
     except Exception as e:
         logger.error(f"Failed to save prompt file: {e}")
@@ -142,7 +158,7 @@ LLM_STATE_FILE = Path.home() / ".config" / "voice-input-framework" / "llm_state.
 def load_llm_state() -> dict:
     try:
         if LLM_STATE_FILE.exists():
-            data = json.loads(LLM_STATE_FILE.read_text())
+            data = json.loads(LLM_STATE_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return data
     except Exception as e:
@@ -153,7 +169,7 @@ def load_llm_state() -> dict:
 def save_llm_state(state: dict) -> None:
     try:
         LLM_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LLM_STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+        LLM_STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as e:
         logger.warning(f"Failed to save LLM state file: {e}")
 

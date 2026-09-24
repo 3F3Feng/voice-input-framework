@@ -267,3 +267,25 @@ class TestDefaultPrompt:
         # 恢复默认:删掉用户那份,回的是当前界面语言的默认提示词。
         assert client.delete("/prompt", headers=EN).json()["prompt"] == srv.DEFAULT_PROMPT_EN
         assert client.get("/prompt").json()["prompt"] == srv.DEFAULT_PROMPT
+
+
+class TestPromptFileEncoding:
+    """提示词文件一律 UTF-8(英文版 Windows 的默认编码存不了中文,PUT /prompt 曾回 500)。"""
+
+    def test_saved_as_utf8(self, monkeypatch, tmp_path):
+        import services.llm_server as srv
+
+        monkeypatch.setattr(srv, "PROMPT_FILE", tmp_path / "llm_prompt.json")
+        assert srv.save_prompt("整理口述,保留 deploy 这样的英文词")
+        assert srv.PROMPT_FILE.read_bytes().decode("utf-8") == "整理口述,保留 deploy 这样的英文词"
+
+    def test_legacy_file_in_system_encoding_still_reads(self, monkeypatch, tmp_path):
+        """中文版 Windows 上老版本按 GBK 存的文件,升级后还读得出来。"""
+        import locale
+
+        import services.llm_server as srv
+
+        monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "gbk")
+        path = tmp_path / "llm_prompt.json"
+        path.write_bytes("去掉填充词".encode("gbk"))
+        assert srv.read_prompt_file(path) == "去掉填充词"
