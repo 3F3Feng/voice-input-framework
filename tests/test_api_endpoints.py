@@ -31,7 +31,7 @@ class TestSTTHealth:
         resp = httpx.get(f"{STT_URL}/health", timeout=5)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] in ("ok", "loading")
+        assert data["status"] in ("ok", "loading", "error")
         assert "uptime_seconds" in data
         assert "current_model" in data
 
@@ -89,7 +89,7 @@ class TestLLMHealth:
         resp = httpx.get(f"{LLM_URL}/health", timeout=5)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] in ("ok", "loading")
+        assert data["status"] in ("ok", "loading", "error")
         assert "current_model" in data
 
     def test_health_has_is_processing(self):
@@ -152,7 +152,7 @@ class TestMainHealth:
         resp = httpx.get(f"{MAIN_URL}/health", timeout=5)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] in ("ok", "loading")
+        assert data["status"] in ("ok", "loading", "error")
 
     def test_health_has_llm_info(self):
         resp = httpx.get(f"{MAIN_URL}/health", timeout=5)

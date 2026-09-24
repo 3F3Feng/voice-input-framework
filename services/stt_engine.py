@@ -11,7 +11,9 @@ import logging
 # 添加项目路径
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -21,6 +23,7 @@ if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
 from shared.constants import AUDIO_SAMPLE_RATE
+from shared.i18n import bi, en_of, exc_bilingual
 from shared.model_registry import IS_APPLE_SILICON, MODELS_CONFIG, get_default_model
 
 logger = logging.getLogger("stt-server")
@@ -51,6 +54,12 @@ class ModelInfo(BaseModel):
     description: str = ""
     is_loaded: bool = False
     is_default: bool = False
+    #: 以下字段给界面用,见 services/model_catalog.py
+    memory_gb: float | None = None
+    available: bool = True
+    unavailable_reason: str | None = None
+    downloaded: bool | None = None
+    recommended: bool = False
 
 
 class HealthStatus(BaseModel):
@@ -65,6 +74,189 @@ class HealthStatus(BaseModel):
     total_requests: int = 0
     failed_requests: int = 0
     diarize: dict[str, Any] | None = None
+    #: 实际选中的推理后端与机器画像(设备 / 精度 / 核数 / 内存 / 显存)。
+    #: 客户端和排查问题的人靠它判断这台机器到底跑在 GPU 上还是 CPU 上。
+    hardware: dict[str, Any] | None = None
+    #: 最近一次加载失败的原因(status == "error" 时有值)。没有它,加载失败和
+    #: 「还在加载」在外面看起来一模一样,界面会永远停在「正在加载模型」。
+    error: str | None = None
+    #: 加载进度(status == "loading" 时有值):加载了多久、这次下载了多少字节。
+    #: 首次使用一个模型要下几百 MB 到几 GB,以前界面只有一句「正在加载模型」。
+    loading: dict[str, Any] | None = None
+
+
+# ============== 静音与幻觉 ==============
+#
+# 语音模型对「没有人说话」的输入不会老实地返回空串。实测:3 秒纯静音送进
+# Qwen3-ASR-0.6B 得到 "The.",10 秒正弦波送进 whisper-tiny 得到
+# "Thank you so much for watching." —— 这些字会被原样敲进用户的文档。
+#
+# 两道闸:先按能量判静音,静音就不跑模型;跑完再挡一小撮公认的幻觉句
+# (整句完全匹配才挡,真说出来的话不会被误伤)。
+
+#: 均方根低于它、并且峰值也低于下面那个,才算静音。两个条件都要满足:只看均方根
+#: 会把「轻声说了一两个字、其余全是停顿」也判成静音。
+SILENCE_RMS_DBFS = -55.0
+SILENCE_PEAK_DBFS = -35.0
+
+_HALLUCINATIONS = {
+    "the",
+    "you",
+    "bye",
+    "thankyou",
+    "thanks",
+    "thankyouforwatching",
+    "thanksforwatching",
+    "thankyousomuchforwatching",
+    "pleasesubscribe",
+    "谢谢观看",
+    "谢谢大家观看",
+    "谢谢收看",
+    "感谢观看",
+    "请不吝点赞订阅转发打赏支持明镜与点点栏目",
+    "字幕由amaraorg社区提供",
+    "字幕byamaraorg社区",
+}
+
+
+def is_silent(audio) -> bool:
+    """整段音频是不是静音(float32,范围 -1..1)。"""
+    import numpy as np
+
+    if audio.size == 0:
+        return True
+    rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64))))
+    peak = float(np.max(np.abs(audio)))
+
+    def dbfs(x: float) -> float:
+        return 20 * np.log10(max(x, 1e-10))
+
+    return dbfs(rms) < SILENCE_RMS_DBFS and dbfs(peak) < SILENCE_PEAK_DBFS
+
+
+def is_hallucination(text: str) -> bool:
+    """整句是不是公认的静音幻觉。只做整句匹配,忽略大小写、空白和标点。"""
+    import unicodedata
+
+    normalized = "".join(
+        ch
+        for ch in text.lower()
+        if not ch.isspace() and not unicodedata.category(ch).startswith("P")
+    )
+    return normalized in _HALLUCINATIONS
+
+
+def _infer_sync(
+    model, model_type, audio_array, sample_rate: int, lang: str | None, context: str | None = None
+):
+    """在模型线程上跑一次推理,返回 (文本, 识别出的语言)。
+
+    `context` 是个人词库的热词(services/vocabulary.py),能接的引擎当上下文传进去。
+    """
+    # ── MLX 原生引擎 (mlx-audio) ──
+    if model_type == "qwen_asr_mlx_native":
+        return model.transcribe_sync(audio_array, lang or "auto", context=context)
+
+    # ── Whisper MLX 引擎 ──
+    if model_type == "whisper_mlx":
+        import mlx_whisper
+
+        # 不能传 return_timestamps:那是 transformers pipeline 的参数,mlx_whisper
+        # 会把它转给 DecodingOptions,每次都抛 TypeError —— whisper_mlx* 这组模型
+        # 以前一句都转写不出来(实测 mlx-whisper 0.4.x)。mlx_whisper 自己就按
+        # 30 秒一段处理长音频,不需要它。
+        result = mlx_whisper.transcribe(
+            audio_array,
+            path_or_hf_repo=model["model_id"],
+            language=lang,
+            initial_prompt=context,
+        )
+        return result.get("text", "").strip(), result.get("language", lang or "en")
+
+    # ── Whisper Turbo (transformers) ──
+    if model_type == "whisper_turbo":
+        # return_timestamps=True 不能省:音频超过 30 秒(3000 帧 mel)时
+        # transformers 会自动走长音频逐段生成,而那条路要求模型预测时间戳,
+        # 不开就直接抛 ValueError。以前 Windows / Linux 上(默认就是这个
+        # 引擎)说话超过 30 秒必然转写失败。实测 transformers 5.17 +
+        # whisper-tiny:35 秒音频不带它报错,带上正常出结果。
+        result = model(
+            audio_array,
+            return_timestamps=True,
+            generate_kwargs={"language": lang},
+        )
+        return result.get("text", "").strip(), lang or "en"
+
+    # ── Qwen3-ASR (transformers 或 MLX 环境) ──
+    results = model.transcribe(audio=(audio_array, sample_rate), language=lang)
+    if results and len(results) > 0:
+        return results[0].text, results[0].language
+    return "", lang
+
+
+# ============== 识别语言 ==============
+# 客户端(Tauri 的 `audio.language`)一律发 ISO 639 风格的代码:"zh" / "en" / "yue" /
+# "ja" / "ko",或者 "auto"。可各引擎要的写法并不一样:
+#   - Whisper 系(mlx-whisper / transformers / whisper.cpp)要的就是代码;
+#   - Qwen3-ASR(mlx-audio)要的是英文名 —— 它把 language 原样拼进提示词
+#     `language {name}<asr_text>`,只在 config.support_languages("Chinese"、
+#     "Cantonese"…)里按大小写不敏感查一次,查不到就照抄。以前直接传 "zh" 过去,
+#     提示词变成 `language zh<asr_text>`,模型从没见过这种写法,指定语言等于白指定。
+# 换算统一放在这里,客户端就不必知道服务端此刻跑的是哪个模型。
+
+#: 代码 → Qwen3-ASR 的语言名(名字取自模型 config.json 的 support_languages)。
+QWEN_LANGUAGE_NAMES: dict[str, str] = {
+    "zh": "Chinese",
+    "en": "English",
+    "yue": "Cantonese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "ru": "Russian",
+    "ar": "Arabic",
+    "th": "Thai",
+    "vi": "Vietnamese",
+    "id": "Indonesian",
+    "tr": "Turkish",
+    "hi": "Hindi",
+}
+_CODE_BY_QWEN_NAME = {name.lower(): code for code, name in QWEN_LANGUAGE_NAMES.items()}
+
+
+def resolve_language(
+    language: str | None, model_type: str | None, supports_yue: bool = True
+) -> str | None:
+    """把客户端发来的语言换成当前引擎认的写法;自动检测返回 None。
+
+    - 也接受 "Chinese" 这种英文名、"zh-CN" 这种带地区的写法,先统一成代码。
+    - Whisper 只有 large-v3 一代(100 种语言)才有粤语 token;更小的模型拿到
+      "yue" 会直接抛错,整句识别失败。所以这些模型上粤语退回 "zh" —— 粤语按
+      中文识别出来的字大体可用,总好过一个字都没有。
+    """
+    lang = (language or "").strip()
+    if not lang or lang.lower() == "auto":
+        return None
+    lower = lang.lower()
+    code = _CODE_BY_QWEN_NAME.get(lower) or lower.replace("_", "-").split("-")[0]
+
+    if (model_type or "").startswith("whisper"):
+        if code == "yue" and not supports_yue:
+            logger.info("当前 Whisper 模型不支持粤语,按中文(zh)识别")
+            return "zh"
+        return code
+    # Qwen3-ASR:认不出的就原样交给它,mlx-audio 自己还会再按名字匹配一次。
+    return QWEN_LANGUAGE_NAMES.get(code, lang)
+
+
+def _whisper_supports_yue(model_info: dict[str, Any] | None) -> bool:
+    """只有 large-v3 / large-v3-turbo 的词表里有粤语(yue)。"""
+    info = model_info or {}
+    hint = f"{info.get('model_id', '')} {info.get('whisper_model', '')}".lower()
+    return "large-v3" in hint or "v3-large" in hint
 
 
 # ============== STT Engine ==============
@@ -80,10 +272,29 @@ class STTEngine:
         self._model_type = None
         self._is_loaded = False
         self._loading = False
+        self._load_error: str | None = None
+        #: 这次加载开始的时刻、开始时缓存里已有的字节数(算「这次下载了多少」用)
+        self._load_started_at: float | None = None
+        self._load_bytes_at_start = 0
+        #: 切换失败的模型 → 失败原因。切换失败会回退到上一个模型,`_load_error`
+        #: 随之清空,原因就只能记在这里,好让 `/models/status/{name}` 答得出来。
+        self._switch_errors: dict[str, str] = {}
         self._load_lock = asyncio.Lock()
+        # 实际选中的推理后端,加载模型时填上。/health 会如实报出来 —— 用户
+        # (和我们)得能一眼看出这台机器到底跑在 GPU 上还是 CPU 上。
+        self._backend = None
         self._model_info = self.AVAILABLE_MODELS.get(
             default_model, self.AVAILABLE_MODELS["qwen_asr_mlx_native_small"]
         )
+        #: 所有模型操作(加载 + 推理)共用的**单个**工作线程。
+        #:
+        #: MLX 的 Metal stream 是线程局部的,加载和推理必须在同一个线程上 ——
+        #: 以前的做法是两者都直接在事件循环线程上同步跑,代价是加载(含首次下载)
+        #: 和每次推理期间整个服务不应答:本机实测一段 2.4 秒的转写期间 /health
+        #: 超时(1.5 秒),客户端的服务状态随之在「运行中 / 启动中」之间乱跳。
+        #: 一个专用线程同样满足「同一线程」,又不占事件循环;单线程也顺带把推理
+        #: 串行化了(模型实例本来就不是线程安全的)。
+        self._model_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt-model")
         self.start_time = time.time()
         self.total_requests = 0
         self.failed_requests = 0
@@ -102,24 +313,25 @@ class STTEngine:
                 return self._is_loaded
 
             self._loading = True
+            self._load_error = None
+            self._load_started_at = time.time()
+            self._load_bytes_at_start = self._cache_bytes()
             try:
                 logger.info(f"Loading STT model: {self._model_info['model_id']}")
                 loop = asyncio.get_event_loop()
 
-                # 加载主模型
+                # 加载主模型。一律放到专用的模型线程上(见 `_model_thread`):
+                # 以前 MLX 为了「和推理同一个线程」直接在事件循环上同步加载,
+                # 首次下载模型的几分钟里整个服务不应答,连 /health 都答不上来。
                 if not self._is_loaded:
-                    engine_type = self._model_info.get("engine", "")
-                    if engine_type == "qwen_asr_mlx_native":
-                        # MLX 原生引擎：Metal stream 是 thread-local，必须在主线程加载
-                        self._load_model_sync()
-                    else:
-                        await loop.run_in_executor(None, self._load_model_sync)
+                    await loop.run_in_executor(self._model_thread, self._load_model_sync)
                     self._is_loaded = True
                     logger.info("STT model loaded successfully")
 
                 return True
             except Exception as e:
                 logger.error(f"Failed to load STT model: {e}", exc_info=True)
+                self._load_error = exc_bilingual(e)
                 self.failed_requests += 1
                 return False
             finally:
@@ -127,18 +339,16 @@ class STTEngine:
 
     def _load_model_sync(self):
         """同步加载主模型"""
-        import torch
-
         model_id = self._model_info["model_id"]
         engine_type = self._model_info.get("engine", "qwen_asr_mlx_native")
 
-        # 检测设备
-        if torch.backends.mps.is_available():
-            device = "mps"
-        elif torch.cuda.is_available():
-            device = "cuda"
-        else:
-            device = "cpu"
+        # 后端选择集中在 services/device.py:那里认得出 ROCm(否则 A 卡会被
+        # 报成 N 卡)和 Intel XPU,也会按硬件挑精度,而不是「只有 CUDA 用 fp16」。
+        from services.device import detect as detect_backend
+
+        backend = detect_backend()
+        device = backend.torch_device
+        self._backend = backend
 
         # ── Whisper MLX 引擎 ──
         if engine_type == "whisper_mlx":
@@ -189,11 +399,11 @@ class STTEngine:
         if engine_type == "whisper_turbo":
             from transformers import pipeline
 
-            logger.info(f"Loading Whisper turbo on {device}...")
+            logger.info(f"Loading Whisper on {backend.detail} [{backend.dtype_name}]...")
             self._model = pipeline(
                 "automatic-speech-recognition",
                 model=model_id,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                torch_dtype=backend.torch_dtype(),
                 device=device,
             )
             self._model_type = "whisper_turbo"
@@ -202,12 +412,22 @@ class STTEngine:
         # ── 未匹配引擎 ──
         raise ValueError(f"Unknown engine type: {engine_type} for model: {model_id}")
 
-    async def switch_model(self, model_name: str) -> dict:
+    async def switch_model(
+        self,
+        model_name: str,
+        on_loaded: Callable[[str], None] | None = None,
+    ) -> dict:
         """
-        切换到指定的 STT 模型
+        切换到指定的 STT 模型(立即返回,后台加载)
 
         Args:
             model_name: 模型名称 (如 "qwen_asr_mlx_native_small", "whisper_turbo")
+            on_loaded: 新模型**真正加载成功之后**才调用,用来持久化选择。以前选择在
+                加载之前就写进状态文件,切到一个坏模型之后,重启服务还会接着加载它。
+
+        新模型加载失败时回退到切换前的模型(如果它当时是可用的),失败原因记在
+        `switch_error(model_name)` 里。旧模型必须先释放再加载新的 —— 两个都留在
+        内存里,小内存机器上会直接 OOM —— 所以回退意味着把旧模型重新加载一遍。
 
         Returns:
             dict: 包含切换状态的字典
@@ -220,6 +440,8 @@ class STTEngine:
         # 如果已经是当前模型且已加载，直接返回
         if model_name == self.current_model_name and self._is_loaded:
             logger.info(f"Model {model_name} is already loaded")
+            if on_loaded:
+                on_loaded(model_name)
             return {
                 "status": "success",
                 "message": f"Model {model_name} is already loaded",
@@ -229,41 +451,38 @@ class STTEngine:
             }
 
         logger.info(f"Switching from {self.current_model_name} to {model_name}")
+        # 只有切换前那个模型是真能用的,才值得回退过去。
+        previous = self.current_model_name if self._is_loaded else None
 
         # 切换与加载必须互斥:否则卸载旧模型时可能有 load() 正在写 _model/_model_type,
         # 导致状态错乱。(并发的 transcribe() 已在内部取本地引用,不会用到半释放的实例。)
         async with self._load_lock:
-            # 更新模型信息
-            self.current_model_name = model_name
-            self._model_info = self.AVAILABLE_MODELS[model_name]
-
-            # 重置状态
-            self._is_loaded = False
-            self._loading = False
-
-            # 释放旧模型内存
-            if self._model is not None:
-                import gc
-
-                import torch
-
-                self._model = None
-                self._model_type = None
-                if torch.backends.mps.is_available():
-                    torch.mps.empty_cache()
-                gc.collect()
-                logger.info("Old model memory released")
+            self._reset_to(model_name)
+        self._switch_errors.pop(model_name, None)
 
         # 在后台异步加载新模型
         async def load_in_background():
             try:
                 success = await self.load()
-                if success:
-                    logger.info(f"Model {model_name} loaded successfully")
-                else:
-                    logger.error(f"Failed to load model {model_name}")
-            except Exception as e:
-                logger.error(f"Error loading model {model_name}: {e}")
+            except Exception as e:  # noqa: BLE001 - load() 自己已经兜过,这里只是保险
+                self._load_error = exc_bilingual(e)
+                success = False
+            if success:
+                logger.info(f"Model {model_name} loaded successfully")
+                if on_loaded:
+                    on_loaded(model_name)
+                return
+            reason = self._load_error or bi("未知原因", "unknown reason")
+            self._switch_errors[model_name] = reason
+            logger.error(f"Failed to load model {model_name}: {reason}")
+            # 已经被别的切换取代了(用户又选了另一个),就别再回退。
+            if previous is None or self.current_model_name != model_name:
+                return
+            logger.info(f"Rolling back to previous model {previous}")
+            async with self._load_lock:
+                self._reset_to(previous)
+            if not await self.load():
+                logger.error(f"Rollback to {previous} failed as well: {self._load_error}")
 
         # 启动后台加载任务
         asyncio.create_task(load_in_background())
@@ -277,10 +496,42 @@ class STTEngine:
             "note": "Model is loading in background",
         }
 
+    def _reset_to(self, model_name: str) -> None:
+        """把当前模型指向 `model_name` 并释放旧模型。调用方须持有 `_load_lock`。"""
+        self.current_model_name = model_name
+        self._model_info = self.AVAILABLE_MODELS[model_name]
+        self._is_loaded = False
+        self._loading = False
+        self._load_error = None
+
+        # 释放旧模型内存
+        if self._model is not None:
+            import gc
+
+            self._model = None
+            self._model_type = None
+            try:
+                import torch
+
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+            except ImportError:
+                # MLX 模型不需要 torch;没装就不必清它的缓存。
+                pass
+            gc.collect()
+            logger.info("Old model memory released")
+
+    def switch_error(self, model_name: str) -> str | None:
+        """这个模型最近一次切换失败的原因;没失败过或正在重试时为 None。"""
+        if model_name == self.current_model_name and self._loading:
+            return None
+        return self._switch_errors.get(model_name)
+
     async def transcribe(
         self,
         audio_data: bytes,
         language: str = "auto",
+        context: str | None = None,
     ) -> TranscriptionResult:
         """转写音频"""
         import numpy as np
@@ -293,15 +544,33 @@ class STTEngine:
             if not self._is_loaded:
                 success = await self.load()
                 if not success:
-                    raise RuntimeError("Failed to load STT model")
+                    # 带上真正的原因。以前只剩一句 "Failed to load STT model",
+                    # 用户在界面上看到它,完全不知道该去修什么。
+                    reason = self._load_error or bi(
+                        "原因未知,见服务日志", "unknown reason, see the service log"
+                    )
+                    raise RuntimeError(
+                        bi(
+                            f"STT 模型 {self.current_model_name} 加载失败:{reason}",
+                            f"Failed to load STT model {self.current_model_name}: {en_of(reason)}",
+                        )
+                    )
 
-            # 转换音频
-            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            # 转换音频。奇数长度的字节流(半个采样)会让 frombuffer 直接抛
+            # ValueError,丢掉最后那一个字节即可。
+            usable = len(audio_data) - len(audio_data) % 2
+            audio_array = np.frombuffer(audio_data[:usable], dtype=np.int16)
             audio_array = audio_array.astype(np.float32) / 32768.0
             sample_rate = AUDIO_SAMPLE_RATE
 
-            # 执行转写
-            lang = None if language == "auto" else language
+            if is_silent(audio_array):
+                logger.info("Audio is silent, skipping model")
+                return TranscriptionResult(
+                    text="",
+                    language=language,
+                    stt_latency_ms=(time.time() - start_time) * 1000,
+                    model=self.current_model_name,
+                )
 
             # 取本地引用:并发的 switch_model() 会把 _model/_model_type 置空,
             # 本地引用保证本次转写用同一个(且完整的)实例跑完。
@@ -310,64 +579,36 @@ class STTEngine:
             if model is None:
                 raise RuntimeError("STT model is not available (switching?)")
 
-            # ── MLX 原生引擎 (mlx-audio) ── 必须在加载模型的同一线程执行
-            if model_type == "qwen_asr_mlx_native":
+            # 执行转写。语言按当前引擎换成它认的写法(见 resolve_language)。
+            lang = resolve_language(language, model_type, _whisper_supports_yue(self._model_info))
+
+            if model_type == "whisper_cpp":
+                # whisper.cpp 是外部进程,自己就在线程池里跑,不占事件循环。
+                audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
                 result = await model.transcribe(
-                    audio=(audio_array, sample_rate),
+                    audio_data=audio_bytes,
                     language=lang or "auto",
                     sample_rate=sample_rate,
                 )
                 text, detected_lang = result.text, result.language
             else:
-                text, detected_lang = "", lang or language
-
-                # ── Whisper MLX 引擎 ──
-                if model_type == "whisper_mlx":
-                    import mlx_whisper
-
-                    model_id = model["model_id"]
-                    result = mlx_whisper.transcribe(
-                        audio_array,
-                        path_or_hf_repo=model_id,
-                        language=lang,
-                        return_timestamps=True,
-                    )
-                    text = result.get("text", "").strip()
-                    detected_lang = result.get("language", lang or "en")
-
-                # ── Whisper.cpp 引擎 ──
-                elif model_type == "whisper_cpp":
-                    import numpy as np
-
-                    # whisper.cpp 需要 bytes
-                    audio_bytes = (audio_array * 32768).astype(np.int16).tobytes()
-                    result = await model.transcribe(
-                        audio_data=audio_bytes,
-                        language=lang or "auto",
-                        sample_rate=sample_rate,
-                    )
-                    text = result.text
-                    detected_lang = result.language
-
-                # ── Whisper Turbo (transformers) ──
-                elif model_type == "whisper_turbo":
-                    result = model(
-                        audio_array,
-                        generate_kwargs={"language": lang},
-                    )
-                    text = result.get("text", "").strip()
-                    detected_lang = lang or "en"
-
-                # ── Qwen3-ASR (transformers 或 MLX 环境) ──
-                else:
-                    results = model.transcribe(
-                        audio=(audio_array, sample_rate),
-                        language=lang,
-                    )
-                    if results and len(results) > 0:
-                        text = results[0].text
-                        detected_lang = results[0].language
+                # 其余引擎都是同步调用,放到模型线程上跑(MLX 必须和加载同一线程)。
+                loop = asyncio.get_running_loop()
+                text, detected_lang = await loop.run_in_executor(
+                    self._model_thread,
+                    _infer_sync,
+                    model,
+                    model_type,
+                    audio_array,
+                    sample_rate,
+                    lang,
+                    context,
+                )
+                detected_lang = detected_lang or lang or language
             text = text.strip()
+            if is_hallucination(text):
+                logger.info(f"Dropping hallucinated transcript: {text!r}")
+                text = ""
 
             latency = (time.time() - start_time) * 1000
             return TranscriptionResult(
@@ -386,8 +627,33 @@ class STTEngine:
     def is_loading(self) -> bool:
         return self._loading
 
+    def _cache_bytes(self) -> int:
+        from services.model_catalog import cache_bytes
+
+        return cache_bytes(self._model_info.get("model_id", ""))
+
+    def loading_progress(self) -> dict[str, Any] | None:
+        """正在加载时:模型名、已用秒数、这次下载了多少字节;没在加载时为 None。"""
+        if not self._loading or self._load_started_at is None:
+            return None
+        downloaded = max(0, self._cache_bytes() - self._load_bytes_at_start)
+        return {
+            "model": self.current_model_name,
+            "elapsed_s": round(time.time() - self._load_started_at, 1),
+            "downloaded_bytes": downloaded,
+            "phase": "downloading" if downloaded > 0 else "loading",
+        }
+
+    def backend_info(self, lang: str = "zh") -> dict | None:
+        """选中的推理后端(设备 / 精度 / 说明)。还没加载模型时为 None。"""
+        return self._backend.as_dict(lang) if self._backend else None
+
     def is_model_loaded(self) -> bool:
         return self._is_loaded
+
+    def load_error(self) -> str | None:
+        """最近一次加载失败的原因;正在加载或已加载成功时为 None。"""
+        return None if (self._is_loaded or self._loading) else self._load_error
 
     def get_stats(self) -> dict[str, Any]:
         return {

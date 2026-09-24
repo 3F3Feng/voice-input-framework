@@ -26,8 +26,11 @@ def check_python_version() -> None:
             f"当前是 {current}。\n"
             "依赖(numpy 1.26/mlx/torch)尚无 Python 3.13/3.14 的预编译包,"
             "pip 会尝试源码编译并失败。\n"
-            "请用 Python 3.11 或 3.12 重建环境:\n"
-            "  python3.12 -m venv .venv && source .venv/bin/activate\n"
-            "  pip install -r requirements-stt.txt\n"
-            "查看可用版本: python3.12 --version 或 ls /usr/local/bin/python3*"
+            "请在仓库根目录重建环境(脚本用 uv 自动准备 3.11/3.12 解释器,并按硬件挑依赖):\n"
+            "  scripts/setup-env.sh\n"
+            "  (Windows:powershell -ExecutionPolicy Bypass -File scripts\\setup-env.ps1)\n"
+            "  uv run python -m services.stt_server\n"
+            # 以前这里指向 `pip install -r requirements-stt.txt`:那份清单无条件装 mlx,
+            # Linux 上照做建出来的环境一 import 就报 libmlx.so 找不到。
+            "需要 LLM 后处理时加 --llm(目前仅 Apple Silicon 可用)。"
         )

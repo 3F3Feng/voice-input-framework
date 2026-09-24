@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voice-input-framework"
-version = "2.0.10"
-description = "Voice Input Framework - MLX 原生语音识别"
+version = "2.3.0"
+description = "Voice Input Framework - 跨平台语音识别与 LLM 后处理"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11,<3.13"
@@ -29,23 +29,76 @@ dependencies = [
     "httpx>=0.26.0",
     "python-multipart>=0.0.6",
     "pydantic>=2.5.0",
-    "numpy>=1.26.0",
+    # numpy 锁 1.x:2.x 的 C-API 破坏性变更会和为 1.x 编译的二进制冲突
+    # (报 _ARRAY_API not found)
+    "numpy>=1.26.4,<2.0",
     "scipy>=1.12.0",
     "noisereduce>=3.0.0",
     "rich>=13.7.0",
     "click>=8.1.0",
+    # STT 两个引擎都要 transformers;torch 由下面的硬件 extra 指定来源
+    "transformers>=4.37.0",
+    # ── MLX:**只在 Apple Silicon 上装** ──
+    # 这个 marker 是必须的,不是保险起见。mlx 现在确实为 Linux/Windows 发了
+    # wheel,但 Linux x86_64 那个是残的:装得上,一 import 就
+    # `ImportError: libmlx.so: cannot open shared object file`
+    # (wheel 里有 core...so,没有它链接的那个库;能用的 Linux 版在另一个
+    #  CUDA 包里)。在 Ubuntu 24.04 上实测过。
+    # requirements-stt.txt 以前无条件列了 mlx / mlx-audio,所以照着 README
+    # 在 Linux 上建环境,建出来就是坏的。
+    "mlx>=0.31.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm>=0.31.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-audio>=0.4.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # whisper_mlx* 这组模型走的是 mlx-whisper,不是 mlx-audio。以前从没列进依赖
+    # (老环境是手工装的),换成 uv 建环境后就没了:选 whisper_mlx 会在加载时报
+    # `No module named 'mlx_whisper'`。
+    "mlx-whisper>=0.4.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # Apple Silicon 上的 torch 以前是被 mlx-whisper 顺带拉进来的隐式依赖,可
+    # services/device.py 的 detect() 每次加载模型(包括纯 MLX 的模型)都要
+    # `import torch`。哪天 mlx-whisper 不再依赖 torch,Mac 上所有模型都加载不了。
+    # 别的平台的 torch 由下面的硬件 extra 指定来源,这里只管 Apple Silicon
+    # (PyPI 上的默认 torch 自带 MPS)。
+    "torch>=2.2.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
+# ── 按硬件选 torch 的来源 ──
+#
+# 这几个 extra 的依赖写的是同一个 torch,区别只在**从哪个源装**:
+# PyTorch 为每种加速后端发的是不同的 wheel(CPU / CUDA / ROCm / XPU),
+# 名字都叫 torch。下面 [tool.uv.sources] 把 extra 映射到对应的官方索引。
+#
+# 互斥,一次只能选一个(见 [tool.uv] 的 conflicts)。
+#
+# Apple Silicon 什么都不用选:PyPI 上的默认 torch 自带 MPS。
 [project.optional-dependencies]
-stt = [
-    "transformers>=4.37.0",
-    "torch>=2.1.0",
-    "torchaudio>=2.1.0",
+cpu = [
+    "torch>=2.2.0",
+    "torchaudio>=2.2.0",
 ]
-mlx = [
-    "mlx>=0.31.0",
-    "mlx-lm>=0.31.0",
-    "mlx-audio>=0.4.2",
+cuda = [
+    "torch>=2.2.0",
+    "torchaudio>=2.2.0",
+]
+rocm = [
+    "torch>=2.2.0",
+    "torchaudio>=2.2.0",
+    # torch 的 ROCm 版会拖这个配套 triton,而它只在 ROCm 索引上,PyPI 没有。
+    # 不显式列出来,uv 不允许给它指定索引来源。ROCm 只有 Linux。
+    "pytorch-triton-rocm; sys_platform == 'linux'",
+]
+xpu = [
+    "torch>=2.2.0",
+    "torchaudio>=2.2.0",
+    "pytorch-triton-xpu; sys_platform == 'linux'",
+]
+# 非 Apple 机器上的 LLM 后处理后端。MLX 只有 Apple Silicon 能跑,
+# 别的平台用 llama.cpp 跑 GGUF(CPU 可用,也能编译出 CUDA/ROCm/Vulkan 版)。
+# 0.3.25 起才认 Gemma 4(默认的 GGUF 模型);更早的版本加载时报 unknown model
+# architecture(那时服务会退回 Qwen3.5-2B,它要 0.3.17 以上)。模板渲染用的 jinja2
+# 是 llama-cpp-python 自带的依赖。
+llm-cpp = [
+    "llama-cpp-python>=0.3.25",
+    "huggingface-hub>=0.24.0",
 ]
 dev = [
     "pytest>=7.4.0",
@@ -59,6 +112,57 @@ dev = [
 [project.scripts]
 voice-server = "services.stt_server:main"
 voice-client = "run_client:main"
+
+[tool.uv]
+# 四个硬件 extra 装的是同一个包的不同 wheel,不能同时选
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cuda" },
+        { extra = "rocm" },
+        { extra = "xpu" },
+    ],
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.2"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-xpu"
+url = "https://download.pytorch.org/whl/xpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+    { index = "pytorch-rocm", extra = "rocm" },
+    { index = "pytorch-xpu", extra = "xpu" },
+]
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+    { index = "pytorch-rocm", extra = "rocm" },
+    { index = "pytorch-xpu", extra = "xpu" },
+]
+# torch 的加速版还会拖一个配套的 triton 进来,而那些 triton **只在对应的
+# PyTorch 索引上**,PyPI 上没有(或者只有对不上号的老版本)。索引设了
+# explicit = true 就只服务这里点名的包,所以必须把它们也写上 —— 漏掉的话
+# 解析会以一长串「triton-xpu==3.7.0 不存在」收场,这是实测踩到的。
+pytorch-triton-xpu = [{ index = "pytorch-xpu", extra = "xpu" }]
+pytorch-triton-rocm = [{ index = "pytorch-rocm", extra = "rocm" }]
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -97,7 +97,13 @@ pub fn open_settings(permission: Permission) -> Result<(), String> {
             .arg(permission.settings_url())
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("打开系统设置失败: {}", e))
+            .map_err(|e| {
+                crate::tr!(
+                    "打开系统设置失败: {}",
+                    "Couldn't open System Settings: {}",
+                    e
+                )
+            })
     }
     #[cfg(not(target_os = "macos"))]
     {

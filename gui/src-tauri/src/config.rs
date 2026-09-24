@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 
+use crate::tr;
+
 /// Tauri Voice Input configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceInputConfig {
@@ -39,6 +41,9 @@ pub struct ServerConfig {
     pub mode: ServerMode,
     #[serde(default)]
     pub local: LocalServerConfig,
+    /// 远程服务的访问令牌(服务端设了 `VIF_API_TOKEN` 时才需要,F20)。
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 /// 本地管理模式下拉起 Python 服务需要的信息。
@@ -66,6 +71,12 @@ pub struct LocalServerConfig {
     /// 不该在用户没要求的情况下悄悄占掉。
     #[serde(default)]
     pub auto_start: bool,
+    /// 模型下载源(HuggingFace 镜像),以 `HF_ENDPOINT` 传给子进程。留空用官方源。
+    ///
+    /// 界面主要是中文用户,而 huggingface.co 在大陆常常连不上:首次加载模型要下几百
+    /// MB 到几 GB,连不上就只能看着「正在加载模型」直到超时失败。
+    #[serde(default)]
+    pub hf_endpoint: Option<String>,
 }
 
 fn default_stt_port() -> u16 {
@@ -86,11 +97,40 @@ impl Default for LocalServerConfig {
             stt_model: None,
             llm_model: None,
             auto_start: false,
+            hf_endpoint: None,
         }
     }
 }
 
 impl ServerConfig {
+    /// 当前该带的令牌:只有远程模式带。本应用拉起的本地服务不设令牌。
+    pub fn active_token(&self) -> Option<String> {
+        match self.mode {
+            ServerMode::Remote => self.token.clone().filter(|t| !t.trim().is_empty()),
+            ServerMode::Local => None,
+        }
+    }
+
+    /// 首次启动、并且探测到了仓库时的出厂设置:本地管理 + 随应用启动。
+    /// 返回是否生效。
+    ///
+    /// `mode` 默认是 `Remote`,那是为老配置的向后兼容定的(见 [`ServerMode`]);
+    /// 可对一个刚装好、仓库就在本机的新用户来说,这意味着打开应用先看到一个连
+    /// 不存在的 `127.0.0.1:6544` 的「未连接」,得自己翻到 ⚙ → 服务 → 本地管理 →
+    /// 启动。所以只在「全新安装 + 探测到仓库」这一种情况下改默认,已有配置一律不动。
+    ///
+    /// 解释器没找到(仓库里还没建 .venv)时只切本地模式、不勾随应用启动:
+    /// 每次启动都去拉一个注定失败的进程只会刷一屏报错,面板上的「没有解释器」
+    /// 提示已经够说清楚该做什么了。
+    pub fn apply_first_run_defaults(&mut self, fresh_install: bool) -> bool {
+        if !fresh_install || self.local.repo_path.is_none() {
+            return false;
+        }
+        self.mode = ServerMode::Local;
+        self.local.auto_start = self.local.python_path.is_some();
+        true
+    }
+
     /// 客户端实际该连的 STT 地址。
     ///
     /// - 本地管理:永远是回环 + 本地端口。此时 `host` 字段(远程地址)被忽略,
@@ -116,15 +156,79 @@ impl ServerConfig {
 pub struct HotkeyConfig {
     pub key: String,
     pub distinguish_left_right: bool,
+    /// 切换式录音:按一下开始、再按一下结束。默认按住说话。
+    #[serde(default)]
+    pub toggle: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiConfig {
     pub start_minimized: bool,
+    // 下面这三项**没有任何地方读**(悬浮胶囊、托盘一直是开的,透明度从没接上)。
+    // 不删,是为了降级兼容:2.2.0 及以前把它们声明成必填字段,新版写出的
+    // config.json 要是少了它们,用户退回旧版时整份配置解析失败——旧版的 `load`
+    // 会静默回到出厂值并覆盖文件,仓库路径、快捷键全丢。留着只多几个字节。
+    // 加上 serde 默认值,则是为了将来真删掉时,手里没有它们的配置也照样读得出来。
+    #[serde(default = "default_true")]
     pub use_floating_indicator: bool,
+    #[serde(default = "default_true")]
     pub use_tray: bool,
+    #[serde(default = "default_opacity")]
     pub opacity: f64,
     pub auto_input: bool,
+    /// 用户有没有明确选过「说完的文字要不要自动输入到光标处」。
+    ///
+    /// `auto_input` 默认关,新用户按快捷键说完话,目标窗口里什么都没出现,只会
+    /// 以为是坏了。所以主界面会问一次(横幅),选了哪边都把它置 true,之后不再问。
+    /// 老配置里没有这个字段,读出来是 false;但已经开着自动输入的老用户显然选过了,
+    /// 前端不会给他们看横幅。
+    #[serde(default)]
+    pub output_choice_made: bool,
+    /// 自动输入用什么方式把字送进目标窗口,见 [`InputMethod`]。
+    #[serde(default)]
+    pub input_method: InputMethod,
+    /// 识别结果是否写进本机的历史文件(`history.rs`)。默认开:找回刚才说过的话
+    /// 是常用需求;关掉是隐私选项,关了之后新结果只留在本次会话的内存里。
+    #[serde(default = "default_true")]
+    pub save_history: bool,
+    /// 首次启动向导(F1)走完 / 跳过了没有。
+    ///
+    /// 默认 false,老配置里也没有这个字段、读出来同样是 false —— 光看它分不出
+    /// 「新用户」和「升级上来的老用户」。所以它只是必要条件:前端还要再看一眼
+    /// 是不是全新安装、或者眼下连不上一个能用的服务,两者都不是(老用户、服务
+    /// 好好的)就不打扰。条件的完整说明在 `App.vue` 的 `decideOnboarding`。
+    #[serde(default)]
+    pub onboarding_done: bool,
+    /// 界面语言:`auto`(跟随系统)、`zh`、`en`。老配置没有这个字段,读出来是 `auto`。
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+/// 把识别结果送进目标窗口的方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputMethod {
+    /// 写剪贴板 → 模拟粘贴 → 把原剪贴板还回去。默认:长文本一次到位,不受输入法
+    /// 影响,换行也不会变成「回车 = 发送」。
+    #[default]
+    Paste,
+    /// 逐字模拟键盘。老行为;少数不接受粘贴的输入框(比如某些密码框、远程桌面)
+    /// 只能用它。注意文本里的换行会被当成回车键。
+    Type,
+    /// 只放进剪贴板,不碰目标窗口,由用户自己粘贴。不需要「辅助功能」权限。
+    Copy,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_language() -> String {
+    "auto".to_string()
+}
+
+fn default_opacity() -> f64 {
+    0.8
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,10 +303,12 @@ impl Default for VoiceInputConfig {
                 port: 6544,
                 mode: ServerMode::default(),
                 local: LocalServerConfig::default(),
+                token: None,
             },
             hotkey: HotkeyConfig {
                 key: "left_ctrl+left_alt".into(),
                 distinguish_left_right: true,
+                toggle: false,
             },
             ui: UiConfig {
                 start_minimized: false,
@@ -210,6 +316,11 @@ impl Default for VoiceInputConfig {
                 use_tray: true,
                 opacity: 0.8,
                 auto_input: false,
+                output_choice_made: false,
+                input_method: InputMethod::default(),
+                save_history: true,
+                onboarding_done: false,
+                language: default_language(),
             },
             audio: AudioConfig {
                 device: None,
@@ -221,18 +332,59 @@ impl Default for VoiceInputConfig {
     }
 }
 
+/// 用户主目录,退回 "." 兜底。判断逻辑(`HOME` → `USERPROFILE`,空串不算)只在
+/// `server_manager::home_dir` 写一份;Windows 上通常没有 `HOME`,以前只读它,
+/// 老配置找不到、兜底目录也落在了当前工作目录里。
+pub fn home_dir() -> PathBuf {
+    crate::server_manager::home_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// 旧版快捷键录制存坏的写法,能修就返回修好的。
+///
+/// 旧录制用 `e.key` 取主键名:空格的 `e.key` 是 `" "`,于是 Ctrl+Space 被存成
+/// `"left_ctrl+ "`。以前解析时空白段被悄悄丢掉,它就成了单按 Ctrl 触发;现在
+/// 解析器会拒绝空段,这种配置启动后快捷键直接不生效。存坏的只可能是空格这一种
+/// (别的键的 `e.key` 都不是空白),所以按空格修回来。
+pub fn repair_legacy_hotkey(key: &str) -> Option<String> {
+    let parts: Vec<&str> = key.split('+').collect();
+    if parts.len() < 2 || !parts.iter().any(|p| !p.is_empty() && p.trim().is_empty()) {
+        return None;
+    }
+    let fixed: Vec<String> = parts
+        .iter()
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            if p.trim().is_empty() {
+                "space".to_string()
+            } else {
+                p.trim().to_string()
+            }
+        })
+        .collect();
+    Some(fixed.join("+"))
+}
+
 impl VoiceInputConfig {
     fn config_path(app: &tauri::AppHandle) -> PathBuf {
-        let dir = app.path().app_data_dir().unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(home).join(".config/voice-input")
-        });
+        let dir = app
+            .path()
+            .app_data_dir()
+            .unwrap_or_else(|_| home_dir().join(".config/voice-input"));
         dir.join("config.json")
     }
 
+    /// 这是不是一次真正的全新安装:磁盘上既没有本应用的 config.json,也没有
+    /// 老 Python 客户端的配置可迁移。必须在 `load` **之前**问——`load` 找不到文件
+    /// 时会立刻用默认值写一份出来。
+    ///
+    /// 配置损坏(文件在、读不懂)和从老客户端迁移过来的都不算:那是老用户,
+    /// 他们的连接方式不能被悄悄改掉。
+    pub fn is_fresh_install(app: &tauri::AppHandle) -> bool {
+        !Self::config_path(app).exists() && !Self::old_config_path().exists()
+    }
+
     fn old_config_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        PathBuf::from(home).join(".voice_input_config.json")
+        home_dir().join(".voice_input_config.json")
     }
 
     pub fn load(app: &tauri::AppHandle) -> Self {
@@ -241,7 +393,20 @@ impl VoiceInputConfig {
         // Try loading Tauri config first
         if let Ok(data) = fs::read_to_string(&path) {
             match serde_json::from_str::<VoiceInputConfig>(&data) {
-                Ok(cfg) => return cfg,
+                Ok(mut cfg) => {
+                    if let Some(fixed) = repair_legacy_hotkey(&cfg.hotkey.key) {
+                        crate::log_info!(
+                            "[config] 快捷键「{}」是旧版录制功能存坏的,已修正为「{}」",
+                            cfg.hotkey.key,
+                            fixed
+                        );
+                        cfg.hotkey.key = fixed;
+                        if let Err(e) = cfg.save(app) {
+                            crate::log_error!("[config] 修正后的快捷键没能写回配置: {}", e);
+                        }
+                    }
+                    return cfg;
+                }
                 // 文件在,但读不懂。以前这里是一句静默的 `if let Ok`,于是所有设置
                 // (仓库路径、端口、快捷键、随应用启动……)悄悄回到出厂值,用户看到的
                 // 是「怎么像刚装上一样」,而下面那条兜底分支紧接着就用默认值把这个
@@ -304,19 +469,30 @@ impl VoiceInputConfig {
     pub fn save(&self, app: &tauri::AppHandle) -> Result<(), String> {
         let path = Self::config_path(app);
         if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
+            fs::create_dir_all(dir).map_err(|e| {
+                tr!(
+                    "创建配置目录失败: {}",
+                    "Couldn't create the config folder: {}",
+                    e
+                )
+            })?;
         }
-        let json =
-            serde_json::to_string_pretty(self).map_err(|e| format!("序列化配置失败: {}", e))?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| tr!("序列化配置失败: {}", "Couldn't serialize the config: {}", e))?;
         // 先写临时文件再 rename 覆盖,而不是直接 `fs::write`。`fs::write` 是
         // 「先截断、再写」:写到一半断电或被强杀,留下的就是一个半截的 config.json,
         // 下次启动解析不了 —— 全部设置作废。rename 在同一个目录内是原子的,
         // 要么是完整的旧文件,要么是完整的新文件,不存在中间态。
         let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, json).map_err(|e| format!("写入配置失败: {}", e))?;
+        fs::write(&tmp, json)
+            .map_err(|e| tr!("写入配置失败: {}", "Couldn't write the config: {}", e))?;
         fs::rename(&tmp, &path).map_err(|e| {
             let _ = fs::remove_file(&tmp);
-            format!("替换配置文件失败: {}", e)
+            tr!(
+                "替换配置文件失败: {}",
+                "Couldn't replace the config file: {}",
+                e
+            )
         })?;
         Ok(())
     }
@@ -333,6 +509,7 @@ impl VoiceInputConfig {
                 // 老 Python 客户端没有「本地管理」概念,迁移过来一律是远程/手动。
                 mode: ServerMode::default(),
                 local: LocalServerConfig::default(),
+                token: None,
             },
             hotkey: HotkeyConfig {
                 key: old
@@ -345,6 +522,7 @@ impl VoiceInputConfig {
                     .as_ref()
                     .and_then(|h| h.distinguish_left_right)
                     .unwrap_or(true),
+                toggle: false,
             },
             ui: UiConfig {
                 start_minimized: old
@@ -360,6 +538,11 @@ impl VoiceInputConfig {
                 use_tray: old.ui.as_ref().and_then(|u| u.use_tray).unwrap_or(true),
                 opacity: old.ui.as_ref().and_then(|u| u.opacity).unwrap_or(0.8),
                 auto_input: false,
+                output_choice_made: false,
+                input_method: InputMethod::default(),
+                save_history: true,
+                onboarding_done: false,
+                language: default_language(),
             },
             audio: AudioConfig {
                 device: old.audio.as_ref().and_then(|a| {
@@ -385,6 +568,22 @@ impl VoiceInputConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_space_hotkey_is_repaired() {
+        use super::repair_legacy_hotkey;
+        assert_eq!(
+            repair_legacy_hotkey("left_ctrl+ ").as_deref(),
+            Some("left_ctrl+space")
+        );
+        assert_eq!(
+            repair_legacy_hotkey("left_ctrl+left_alt+ ").as_deref(),
+            Some("left_ctrl+left_alt+space")
+        );
+        assert_eq!(repair_legacy_hotkey("left_ctrl+left_alt"), None);
+        assert_eq!(repair_legacy_hotkey("left_ctrl+space"), None);
+        assert_eq!(repair_legacy_hotkey(" "), None);
+    }
+
     use super::*;
 
     /// 用户磁盘上真实存在的老配置(只有 `{host, port}`,没有 `mode` / `local`)。
@@ -501,6 +700,111 @@ mod tests {
             back.server.local.repo_path.as_deref(),
             Some("/Users/me/voice-input-framework")
         );
+    }
+
+    fn detected(cfg: &mut VoiceInputConfig, python: bool) {
+        cfg.server.local.repo_path = Some("/Users/me/voice-input-framework".into());
+        if python {
+            cfg.server.local.python_path =
+                Some("/Users/me/voice-input-framework/.venv/bin/python".into());
+        }
+    }
+
+    #[test]
+    fn first_run_with_repo_defaults_to_local_and_auto_start() {
+        let mut cfg = VoiceInputConfig::default();
+        detected(&mut cfg, true);
+        assert!(cfg.server.apply_first_run_defaults(true));
+        assert_eq!(cfg.server.mode, ServerMode::Local);
+        assert!(cfg.server.local.auto_start);
+    }
+
+    /// 有仓库没 venv:切本地(面板会说缺解释器),但不每次启动都去拉一个必败的进程。
+    #[test]
+    fn first_run_without_python_does_not_auto_start() {
+        let mut cfg = VoiceInputConfig::default();
+        detected(&mut cfg, false);
+        assert!(cfg.server.apply_first_run_defaults(true));
+        assert_eq!(cfg.server.mode, ServerMode::Local);
+        assert!(!cfg.server.local.auto_start);
+    }
+
+    #[test]
+    fn first_run_without_repo_stays_remote() {
+        let mut cfg = VoiceInputConfig::default();
+        assert!(!cfg.server.apply_first_run_defaults(true));
+        assert_eq!(cfg.server.mode, ServerMode::Remote);
+        assert!(!cfg.server.local.auto_start);
+    }
+
+    /// 已有配置(哪怕刚探测到仓库)绝不改连接方式:那是向后兼容的底线。
+    #[test]
+    fn existing_config_is_never_switched_to_local() {
+        let mut cfg: VoiceInputConfig = serde_json::from_str(LEGACY_CONFIG).unwrap();
+        detected(&mut cfg, true);
+        assert!(!cfg.server.apply_first_run_defaults(false));
+        assert_eq!(cfg.server.mode, ServerMode::Remote);
+        assert!(!cfg.server.local.auto_start);
+    }
+
+    /// 老配置里没有 `output_choice_made`,读出来是「没选过」;自动输入开着的
+    /// 那份照样保持开着(前端据此不再弹横幅)。
+    #[test]
+    fn legacy_config_has_no_output_choice_yet() {
+        let cfg: VoiceInputConfig = serde_json::from_str(LEGACY_CONFIG).unwrap();
+        assert!(!cfg.ui.output_choice_made);
+        assert!(cfg.ui.auto_input);
+    }
+
+    /// 老配置里没有 `save_history`:读出来是「保存」,和默认值一致。
+    #[test]
+    fn legacy_config_saves_history_by_default() {
+        let cfg: VoiceInputConfig = serde_json::from_str(LEGACY_CONFIG).unwrap();
+        assert!(cfg.ui.save_history);
+        assert!(VoiceInputConfig::default().ui.save_history);
+    }
+
+    /// 没用的三个 UI 字段缺了也要读得出来(将来删掉它们时不至于读坏新配置)。
+    #[test]
+    fn unused_ui_fields_are_optional() {
+        let json = r#"{
+          "server": { "host": "127.0.0.1", "port": 6544 },
+          "hotkey": { "key": "left_ctrl+left_alt", "distinguish_left_right": true },
+          "ui": { "start_minimized": false, "auto_input": false },
+          "audio": { "device": null, "language": "auto" },
+          "llm": { "enabled": true },
+          "_version": "2.0"
+        }"#;
+        let cfg: VoiceInputConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.ui.use_tray);
+        assert!((cfg.ui.opacity - 0.8).abs() < f64::EPSILON);
+    }
+
+    /// 老配置没有 `onboarding_done`:读出来是「没走过向导」,和新装的默认值一致。
+    /// 光凭这一项不会给老用户弹向导(前端还要求全新安装或连不上服务)。
+    #[test]
+    fn onboarding_flag_defaults_to_not_done() {
+        let cfg: VoiceInputConfig = serde_json::from_str(LEGACY_CONFIG).unwrap();
+        assert!(!cfg.ui.onboarding_done);
+        assert!(!VoiceInputConfig::default().ui.onboarding_done);
+    }
+
+    /// 走完向导存下去的 `true` 必须读得回来,否则每次启动都会再弹一次。
+    #[test]
+    fn onboarding_flag_round_trips() {
+        let json = r#"{
+          "server": { "host": "127.0.0.1", "port": 6544 },
+          "hotkey": { "key": "left_ctrl+left_alt", "distinguish_left_right": true },
+          "ui": { "start_minimized": false, "auto_input": true, "onboarding_done": true },
+          "audio": { "device": null, "language": "auto" },
+          "llm": { "enabled": true },
+          "_version": "2.0"
+        }"#;
+        let cfg: VoiceInputConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.ui.onboarding_done);
+        let back: VoiceInputConfig =
+            serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert!(back.ui.onboarding_done);
     }
 
     #[test]

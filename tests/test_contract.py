@@ -33,8 +33,11 @@ class TestHealthContract:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.json()
-        # status 为合法状态之一:loading(模型未加载/加载中)或 ok(已就绪)
-        assert body["status"] in ("loading", "ok")
+        # status 为合法状态之一:loading(模型未加载/加载中)、ok(已就绪)
+        # 或 error(加载失败,原因在 error 字段里)
+        assert body["status"] in ("loading", "ok", "error")
+        if body["status"] == "error":
+            assert body["error"]
         assert body["version"] == "1.1.0"
         assert "uptime_seconds" in body
         assert body["current_model"]  # 非空
@@ -74,10 +77,18 @@ class TestLLMProxyContract:
     def test_llm_enabled_structure(self, client):
         r = client.get("/llm/enabled")
         assert r.status_code == 200
-        # 结构契约:返回 {"enabled": bool}(值由 VIF_LLM_ENABLED/持久化状态决定,环境相关)
+        # 结构契约:{"enabled": bool, "supported": bool, "reason": str|null}
+        # (值由 VIF_LLM_ENABLED/持久化状态/平台决定,环境相关)。F17 加了后两个:
+        # 不支持的平台上客户端据此把开关置灰并说明原因。
         body = r.json()
-        assert set(body) == {"enabled"}
+        assert set(body) == {"enabled", "supported", "reason"}
         assert isinstance(body["enabled"], bool)
+        assert isinstance(body["supported"], bool)
+        if body["supported"]:
+            assert body["reason"] is None
+        else:
+            assert isinstance(body["reason"], str) and body["reason"]
+            assert body["enabled"] is False
 
     def test_llm_proxy_structure(self, client):
         """LLM 转发端点契约(M7):LLM 不可达时返回结构化 ErrorResponse;可达时返回正常数据
@@ -111,10 +122,11 @@ class TestTranscribeContract:
             "/transcribe",
             files={"file": ("t.wav", b"RIFF" + b"\x00" * 100, "audio/wav")},
         )
-        # 环境相关:无模型 → 500;有模型 → 可能 200(引擎容忍)或 400/422(校验拒绝)
+        # 截断的 WAV 头现在在解码这一步就被拒(415,有意变更 R37:以前任何文件都
+        # 被当成 16 kHz PCM,解不了的格式返回 200 + 空文本);其余情况仍环境相关。
         # 契约重点是响应为 JSON 且不崩溃
-        assert r.status_code in (200, 400, 422, 500)
-        if r.status_code in (400, 422, 500):
+        assert r.status_code in (200, 400, 415, 422, 500)
+        if r.status_code in (400, 415, 422, 500):
             assert isinstance(r.json(), dict)
 
 
@@ -164,6 +176,10 @@ class TestWebSocketContract:
             while True:
                 msg = json.loads(ws.receive_text())
                 seen.append(msg["type"])
+                if msg["type"] == "result":
+                    # R8:后处理没做成时的原因;没开或成功时为 null,但字段一定在
+                    assert "llm_error" in msg
+                    assert msg["llm_error"] is None or isinstance(msg["llm_error"], str)
                 if msg["type"] in ("done", "error"):
                     break
             # 已知消息类型集合(无模型:error;有模型:stt_result/result)

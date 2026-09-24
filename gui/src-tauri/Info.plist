@@ -13,9 +13,22 @@
   「输入监控」和「辅助功能」没有对应的 Info.plist key,它们由
   IOHIDRequestAccess / AXIsProcessTrustedWithOptions 在运行时申请,
   见 src/permissions.rs。
+
+  下面的中文说明只是兜底;实际显示哪种语言由 macos/*.lproj/InfoPlist.strings
+  决定(tauri.conf.json 的 bundle.macOS.files 把它们放进 .app 的 Resources)。
+  系统语言既不是中文也不是英文时,按开发语言(英文)显示。繁体中文系统也给中文
+  (用的是同一份简体文案)—— 应用界面对任何 zh* 都显示中文,这里保持一致。
 -->
 <plist version="1.0">
 <dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+		<string>zh-Hant</string>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Voice Input 需要使用麦克风录制你的语音,并将其转写为文字。录音只在你按住快捷键期间进行,音频仅发送到你自己配置的语音识别服务。</string>
 </dict>

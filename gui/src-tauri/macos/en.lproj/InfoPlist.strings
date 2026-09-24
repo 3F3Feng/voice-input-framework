@@ -1,0 +1,2 @@
+/* 英文系统(以及中英文之外的系统语言)看到的麦克风授权说明。见 ../../Info.plist。 */
+"NSMicrophoneUsageDescription" = "Voice Input uses the microphone to record your speech and turn it into text. It only records while you hold the hotkey, and audio is sent only to the speech recognition service you configured.";

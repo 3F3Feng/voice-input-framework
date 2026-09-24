@@ -35,6 +35,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::i18n::t;
+use crate::tr;
+
 /// UI 里回显的最近日志行数上限(同时也是内存环形缓冲的容量)。
 const LOG_TAIL_LINES: usize = 200;
 /// `/health` 探测超时。本地回环,给 1.5s 足够;太长会让「刷新状态」卡住 UI。
@@ -94,7 +97,7 @@ pub enum ServerState {
     Starting,
     /// `/health` 通了。
     Running,
-    /// 子进程退出了(或者压根没起来)。`detail` 里是原因。
+    /// 子进程退出了(或者压根没起来),或者进程活着但模型加载失败。`detail` 里是原因。
     Failed,
 }
 
@@ -204,8 +207,12 @@ impl Slot {
                 Ok(Some(status)) => {
                     if self.exit_note.is_none() {
                         self.exit_note = Some(match status.code() {
-                            Some(code) => format!("进程已退出,退出码 {}", code),
-                            None => "进程被信号终止".to_string(),
+                            Some(code) => {
+                                tr!("进程已退出,退出码 {}", "Process exited with code {}", code)
+                            }
+                            None => {
+                                t("进程被信号终止", "Process was killed by a signal").to_string()
+                            }
                         });
                     }
                     false
@@ -214,7 +221,11 @@ impl Slot {
                 // 查不到状态时按「已退出」处理,总比一直显示运行中好。
                 Err(e) => {
                     if self.exit_note.is_none() {
-                        self.exit_note = Some(format!("无法查询子进程状态: {}", e));
+                        self.exit_note = Some(tr!(
+                            "无法查询子进程状态: {}",
+                            "Couldn't query the child process status: {}",
+                            e
+                        ));
                     }
                     false
                 }
@@ -287,6 +298,7 @@ impl ServerManager {
     ///
     /// 只认领「pid 还活着 **且** 命令行确实是对应模块」的进程——pid 会被系统
     /// 复用,只比对 pid 就可能把无辜进程当成自己的,进而在「停止」时杀错。
+    /// 看不到命令行的平台(Windows)干脆不认领,见 `pid_runs_module`。
     pub fn reclaim_orphans(&mut self) -> Vec<String> {
         let path = self.pid_file();
         let Ok(data) = std::fs::read_to_string(&path) else {
@@ -332,13 +344,18 @@ impl ServerManager {
         let repo = Path::new(&opts.repo_path);
         let python = Path::new(&opts.python_path);
         if !repo.join("services/stt_server.py").exists() {
-            return Err(format!(
+            return Err(tr!(
                 "仓库路径不对:{} 下找不到 services/stt_server.py",
+                "Wrong repository path: services/stt_server.py not found in {}",
                 opts.repo_path
             ));
         }
         if !python.exists() {
-            return Err(format!("Python 解释器不存在:{}", opts.python_path));
+            return Err(tr!(
+                "Python 解释器不存在:{}",
+                "Python interpreter not found: {}",
+                opts.python_path
+            ));
         }
 
         // 下面会整个覆盖掉这个 slot,所以手里如果还攥着一个活的子进程,必须先
@@ -352,8 +369,14 @@ impl ServerManager {
 
         let log_path = self.data_dir.join(kind.log_file_name());
         // 每次启动截断:日志是用来看「这次为什么没起来」的,不是历史档案。
-        let log_file = File::create(&log_path)
-            .map_err(|e| format!("无法创建日志文件 {}: {}", log_path.display(), e))?;
+        let log_file = File::create(&log_path).map_err(|e| {
+            tr!(
+                "无法创建日志文件 {}: {}",
+                "Couldn't create log file {}: {}",
+                log_path.display(),
+                e
+            )
+        })?;
         drop(log_file);
 
         let mut cmd = Command::new(python);
@@ -366,6 +389,13 @@ impl ServerManager {
             // 不加这个,Python 的 stdout 会攒在块缓冲里,日志要等进程退出才出来,
             // 「实时看启动进度」就无从谈起。
             .env("PYTHONUNBUFFERED", "1")
+            // 管道另一头是我们,不是终端。Python 这时按系统区域设置编码输出,
+            // 中文 Windows 上就是 GBK——日志里全是乱码。明确要 UTF-8。
+            .env("PYTHONIOENCODING", "utf-8")
+            // 本地服务只绑回环、客户端在本地模式下也不带令牌(F20)。应用要是从一个设了
+            // VIF_API_TOKEN 的终端里启动,子进程会继承它,于是每个请求都 401。
+            .env_remove("VIF_API_TOKEN")
+            .env("PYTHONUTF8", "1")
             // 只绑回环:本应用连的是 127.0.0.1,没有理由把服务暴露到局域网。
             .env("VIF_STT_HOST", "127.0.0.1")
             .env("VIF_LLM_HOST", "127.0.0.1")
@@ -378,10 +408,18 @@ impl ServerManager {
         if let Some(model) = opts.llm_model.as_deref().filter(|s| !s.trim().is_empty()) {
             cmd.env("VIF_LLM_MODEL", model);
         }
+        if let Some(endpoint) = opts.hf_endpoint.as_deref() {
+            cmd.env("HF_ENDPOINT", endpoint);
+        }
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("启动 {} 服务失败: {}", kind.label(), e))?;
+        let mut child = no_console(&mut cmd).spawn().map_err(|e| {
+            tr!(
+                "启动 {} 服务失败: {}",
+                "Failed to start the {} service: {}",
+                kind.label(),
+                e
+            )
+        })?;
         let pid = child.id();
 
         let logs = Arc::new(Mutex::new(VecDeque::with_capacity(LOG_TAIL_LINES)));
@@ -425,13 +463,19 @@ impl ServerManager {
     ) -> Result<String, String> {
         // 这一句就是「发信号前重新校验」:`identify_external` 每次都现查 lsof + ps。
         let Some(pid) = identify_external(kind, local) else {
-            return Err(format!(
+            return Err(tr!(
                 "{} 服务不是由本应用启动的,也认不出是本项目的服务,无法从这里停止。请到启动它的终端里停。",
+                "The {} service wasn't started by this app and can't be identified as this project's service, so it can't be stopped from here. Stop it in the terminal where it was started.",
                 kind.label()
             ));
         };
         let repo = PathBuf::from(local.repo_path.clone().unwrap_or_default());
-        let stopped = format!("{} 服务(pid {},本项目的外部进程)已停止", kind.label(), pid);
+        let stopped = tr!(
+            "{} 服务(pid {},本项目的外部进程)已停止",
+            "{} service (pid {}, external process from this project) stopped",
+            kind.label(),
+            pid
+        );
 
         terminate(pid);
         let deadline = Instant::now() + TERM_GRACE;
@@ -453,8 +497,9 @@ impl ServerManager {
             return Ok(stopped);
         }
         force_kill(pid);
-        Ok(format!(
+        Ok(tr!(
             "{} 服务(pid {},本项目的外部进程)未响应,已强制结束",
+            "{} service (pid {}, external process from this project) didn't respond and was force-stopped",
             kind.label(),
             pid
         ))
@@ -467,7 +512,12 @@ impl ServerManager {
         let pid = slot.pid;
 
         if !slot.alive() {
-            return Ok(format!("{} 服务(pid {})已经不在运行", kind.label(), pid));
+            return Ok(tr!(
+                "{} 服务(pid {})已经不在运行",
+                "{} service (pid {}) is no longer running",
+                kind.label(),
+                pid
+            ));
         }
 
         // 先 SIGTERM:uvicorn 收到会走正常的 shutdown,释放端口、落盘状态。
@@ -495,9 +545,19 @@ impl ServerManager {
 
         drop(slot);
         Ok(if forced {
-            format!("{} 服务(pid {})未响应,已强制结束", kind.label(), pid)
+            tr!(
+                "{} 服务(pid {})未响应,已强制结束",
+                "{} service (pid {}) didn't respond and was force-stopped",
+                kind.label(),
+                pid
+            )
         } else {
-            format!("{} 服务(pid {})已停止", kind.label(), pid)
+            tr!(
+                "{} 服务(pid {})已停止",
+                "{} service (pid {}) stopped",
+                kind.label(),
+                pid
+            )
         })
     }
 
@@ -546,6 +606,7 @@ struct SpawnOptions {
     llm_port: u16,
     stt_model: Option<String>,
     llm_model: Option<String>,
+    hf_endpoint: Option<String>,
 }
 
 impl SpawnOptions {
@@ -555,12 +616,18 @@ impl SpawnOptions {
             .repo_path
             .clone()
             .filter(|p| !p.trim().is_empty())
-            .ok_or("没有设置仓库路径,且自动探测没找到。请在「服务器」里手动填写。")?;
+            .ok_or(t(
+                "没有设置仓库路径,且自动探测没找到。请在「服务器」里手动填写。",
+                "Repository path isn't set and auto-detect didn't find it. Enter it under Server.",
+            ))?;
         let python_path = local
             .python_path
             .clone()
             .filter(|p| !p.trim().is_empty())
-            .ok_or("没有设置 Python 解释器路径,且自动探测没找到。请在「服务器」里手动填写。")?;
+            .ok_or(t(
+                "没有设置 Python 解释器路径,且自动探测没找到。请在「服务器」里手动填写。",
+                "Python interpreter path isn't set and auto-detect didn't find it. Enter it under Server.",
+            ))?;
         Ok(Self {
             repo_path,
             python_path,
@@ -568,15 +635,72 @@ impl SpawnOptions {
             llm_port: local.llm_port,
             stt_model: local.stt_model.clone(),
             llm_model: local.llm_model.clone(),
+            hf_endpoint: local
+                .hf_endpoint
+                .clone()
+                .map(|e| e.trim().trim_end_matches('/').to_string())
+                .filter(|e| !e.is_empty()),
         })
     }
 }
 
 // ── 日志抽水线程 ──
 
+/// 单行日志的字节上限。一直不换行的输出(比如某个库把整个进度条画在一行里)
+/// 攒到这么长就先切一刀,免得内存里的「半行」无限长大。
+const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
+
+/// 把字节流切成日志行。`\n` 和 `\r` 都算换行。
+///
+/// 以前用的是 `BufRead::lines()`,它有两个问题:
+///
+/// - **遇到一行非 UTF-8 就返回 Err,抽水线程随之 `break` 退出。** 之后再没人读
+///   这根管道,缓冲写满(约 64 KB)后 Python 服务阻塞在 write 上,整个服务卡死,
+///   而界面上看到的只是「一直在加载」。中文 Windows 上 Python 很可能按 GBK 输出,
+///   这不是理论风险。现在一律 `from_utf8_lossy`,坏字节变成 `�`,绝不停止读取。
+/// - **只认 `\n`。** 下载模型时 tqdm 用 `\r` 原地刷新进度条,整个下载过程在它
+///   看来是同一行,内存里攒成一个越来越长的字符串,日志尾巴上也一直看不到进度。
+#[derive(Default)]
+struct LineSplitter {
+    pending: Vec<u8>,
+}
+
+impl LineSplitter {
+    /// 喂一段字节,吐出其中已经完整的行(空行丢掉:`\r\n` 会切出一个空行)。
+    fn feed(&mut self, chunk: &[u8]) -> Vec<String> {
+        let mut out = Vec::new();
+        for &b in chunk {
+            if b == b'\n' || b == b'\r' {
+                self.flush_into(&mut out);
+            } else {
+                self.pending.push(b);
+                if self.pending.len() >= MAX_LOG_LINE_BYTES {
+                    self.flush_into(&mut out);
+                }
+            }
+        }
+        out
+    }
+
+    /// 流结束时剩下的那半行。
+    fn finish(mut self) -> Option<String> {
+        let mut out = Vec::new();
+        self.flush_into(&mut out);
+        out.pop()
+    }
+
+    fn flush_into(&mut self, out: &mut Vec<String>) {
+        if !self.pending.is_empty() {
+            out.push(String::from_utf8_lossy(&self.pending).into_owned());
+            self.pending.clear();
+        }
+    }
+}
+
 /// 把子进程的一个输出流读进环形缓冲 + 追加写日志文件。
 ///
-/// 必须消费掉管道:不读的话管道缓冲写满后子进程会阻塞在 write 上卡死。
+/// 必须消费掉管道:不读的话管道缓冲写满后子进程会阻塞在 write 上卡死。所以
+/// 这个线程只在 EOF(进程退了)或读出错时才退出,内容再怪也照读不误。
 fn pump<R: std::io::Read + Send + 'static>(
     stream: R,
     logs: Arc<Mutex<VecDeque<String>>>,
@@ -587,10 +711,10 @@ fn pump<R: std::io::Read + Send + 'static>(
     let _ = std::thread::Builder::new()
         .name(format!("{}-{}-log", kind.state_key(), tag))
         .spawn(move || {
-            let reader = BufReader::new(stream);
+            let mut reader = BufReader::new(stream);
             let mut file = OpenOptions::new().append(true).open(&log_path).ok();
-            for line in reader.lines() {
-                let Ok(line) = line else { break };
+            let mut splitter = LineSplitter::default();
+            let mut record = |line: String| {
                 if let Some(f) = file.as_mut() {
                     let _ = writeln!(f, "{}", line);
                 }
@@ -600,11 +724,46 @@ fn pump<R: std::io::Read + Send + 'static>(
                     }
                     buf.push_back(line);
                 }
+            };
+            loop {
+                let chunk = match reader.fill_buf() {
+                    Ok([]) => break,
+                    Ok(chunk) => chunk,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                };
+                let n = chunk.len();
+                for line in splitter.feed(chunk) {
+                    record(line);
+                }
+                reader.consume(n);
+            }
+            if let Some(line) = splitter.finish() {
+                record(line);
             }
         });
 }
 
 // ── 进程探测 / 信号(平台相关)──
+
+/// Windows 上 `CreateProcess` 的 `CREATE_NO_WINDOW`。
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// 让子进程不弹控制台窗口。
+///
+/// 本应用是 GUI 子系统程序,自己没有控制台;从它起一个控制台程序(`python.exe`、
+/// `tasklist`、`taskkill`)时,Windows 会给子进程新开一个黑窗口。服务启动时弹一个
+/// 还算看得见原因,状态轮询每 3 秒经 `pid_alive` 跑一次 `tasklist`,就是每 3 秒
+/// 闪一下黑框。其它平台什么都不做。
+pub(crate) fn no_console(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
 
 #[cfg(unix)]
 fn pid_alive(pid: u32) -> bool {
@@ -621,11 +780,33 @@ fn pid_alive(pid: u32) -> bool {
 
 #[cfg(not(unix))]
 fn pid_alive(pid: u32) -> bool {
-    Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {}", pid), "/NH"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
-        .unwrap_or(false)
+    no_console(Command::new("tasklist").args([
+        "/FI",
+        &format!("PID eq {}", pid),
+        "/FO",
+        "CSV",
+        "/NH",
+    ]))
+    .output()
+    .map(|o| tasklist_lists_pid(&String::from_utf8_lossy(&o.stdout), pid))
+    .unwrap_or(false)
+}
+
+/// `tasklist /FO CSV /NH` 的输出里有没有这个 pid。
+///
+/// 以前是对整段输出做 `contains(pid)`:pid 12 会命中 pid 1234 那一行,内存占用
+/// 那一栏(`"12,345 K"`)也能命中——死掉的进程被当成活着,「停止」就会一直等、
+/// 最后对着一个不相干的 pid 发 `/F`。现在只比第二栏(PID)整值相等。没有匹配
+/// 进程时 tasklist 打的是一行「INFO: ...」提示,不带引号,自然不会命中。
+#[cfg_attr(unix, allow(dead_code))]
+fn tasklist_lists_pid(stdout: &str, pid: u32) -> bool {
+    stdout.lines().any(|line| {
+        line.split("\",\"")
+            .nth(1)
+            .map(|field| field.trim_matches('"').trim())
+            .and_then(|field| field.parse::<u32>().ok())
+            == Some(pid)
+    })
 }
 
 /// pid 是否确实在跑指定模块。认领遗孤前的防串号校验。
@@ -638,10 +819,19 @@ fn pid_runs_module(pid: u32, module: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Windows 上一律返回 false,也就是**不认领遗孤**。
+///
+/// 以前这里退化成「进程还在就认领」:`tasklist` 拿不到命令行,只能比 pid。可是
+/// 重启过电脑之后,记账文件里那个 pid 早就被别的程序用上了——认领回来,应用
+/// 退出时 `shutdown_all` 会对它 `taskkill /T`,把一整棵毫不相干的进程树杀掉,
+/// 「停止」按钮同理。
+///
+/// 不认领的代价很小:遗孤如果真还在跑,端口是通的,`start` / `status` 会把它当成
+/// 外部进程采纳(只连接,不碰)。宁可让用户回任务管理器里结束它,也不能凭一个
+/// 可能已经被复用的 pid 去杀进程。等哪天接上 `Win32_Process.CommandLine` 再放开。
 #[cfg(not(unix))]
-fn pid_runs_module(pid: u32, _module: &str) -> bool {
-    // Windows 上 tasklist 拿不到完整命令行,退化成「进程还在就认领」。
-    pid_alive(pid)
+fn pid_runs_module(_pid: u32, _module: &str) -> bool {
+    false
 }
 
 // ── 端口上监听的到底是谁 ──
@@ -763,9 +953,7 @@ fn terminate(pid: u32) {
 
 #[cfg(not(unix))]
 fn terminate(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T"])
-        .status();
+    let _ = no_console(Command::new("taskkill").args(["/PID", &pid.to_string(), "/T"])).status();
 }
 
 #[cfg(unix)]
@@ -778,9 +966,8 @@ fn force_kill(pid: u32) {
 
 #[cfg(not(unix))]
 fn force_kill(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status();
+    let _ =
+        no_console(Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"])).status();
 }
 
 // ── 健康探测 ──
@@ -789,27 +976,95 @@ fn force_kill(pid: u32) {
 struct Health {
     status: String,
     current_model: Option<String>,
+    /// `status == "error"` 时服务端给出的加载失败原因。
+    #[serde(default)]
+    error: Option<String>,
+    /// 加载进度(STT 服务端 `/health.loading`,见 services/stt_engine.py)。
+    #[serde(default)]
+    loading: Option<LoadingProgress>,
 }
 
-/// 打一次 `/health`。通了返回模型名,不通返回 `None`。
-///
-/// 这是「采纳还是拉起」的唯一判据:能应答 `/health` 的就是可用的服务,
-/// 不关心它是谁起的。
+#[derive(Debug, Clone, Deserialize)]
+struct LoadingProgress {
+    #[serde(default)]
+    elapsed_s: f64,
+    #[serde(default)]
+    downloaded_bytes: u64,
+}
+
+/// 「启动中」那一行怎么说。首次用一个模型要下几百 MB 到几 GB,以前全程只有一句
+/// 「正在加载模型...」,看不出是在下载、卡住了还是坏了。
+fn loading_text(progress: Option<&LoadingProgress>) -> String {
+    match progress {
+        Some(p) if p.downloaded_bytes >= 1024 * 1024 => tr!(
+            "正在下载模型… 已下载 {} MB({:.0} 秒)",
+            "Downloading model… {} MB downloaded ({:.0}s)",
+            p.downloaded_bytes / (1024 * 1024),
+            p.elapsed_s
+        ),
+        Some(p) if p.elapsed_s >= 1.0 => tr!(
+            "正在加载模型…({:.0} 秒)",
+            "Loading model… ({:.0}s)",
+            p.elapsed_s
+        ),
+        _ => t("正在加载模型...", "Loading model...").to_string(),
+    }
+}
+
+/// 端口上那个服务说它的模型怎么样了。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Answer {
+    /// `status == "ok"`,能用。
+    Ready,
+    /// 还在加载(或者是个不认识的状态——老服务端只会说 ok / loading)。
+    Loading,
+    /// 加载失败,带原因。服务不会自己好起来。
+    Failed(String),
+}
+
+impl Health {
+    fn answer(&self) -> Answer {
+        match self.status.as_str() {
+            "ok" => Answer::Ready,
+            "error" => Answer::Failed(
+                self.error
+                    .clone()
+                    .filter(|e| !e.trim().is_empty())
+                    .unwrap_or_else(|| t("原因未知,见日志", "Unknown reason; see the log").into()),
+            ),
+            _ => Answer::Loading,
+        }
+    }
+}
+
+/// 打一次 `/health`,只有模型就绪(`status == "ok"`)才算数。线上代码都改用
+/// `probe_raw` 按「端口有应答」和 `Health::answer` 判断了,这个只剩测试在用。
+#[cfg(test)]
 async fn probe(port: u16) -> Option<Health> {
+    probe_raw(port).await.filter(|health| health.status == "ok")
+}
+
+/// 打一次 `/health`,不管 `status` 是什么都原样返回。只有 `status` 能区分
+/// 「还在加载」和「加载失败了」——后者不报出来,界面会永远停在「正在加载模型」。
+async fn probe_raw(port: u16) -> Option<Health> {
     let client = reqwest::Client::builder()
         .timeout(HEALTH_TIMEOUT)
         .build()
         .ok()?;
     let resp = client
         .get(format!("http://127.0.0.1:{}/health", port))
+        // 加载失败的原因(`error`)会显示在服务器面板上,让服务端按界面语言写。
+        .header(
+            reqwest::header::ACCEPT_LANGUAGE,
+            crate::stt::accept_language(),
+        )
         .send()
         .await
         .ok()?;
     if !resp.status().is_success() {
         return None;
     }
-    let health: Health = resp.json().await.ok()?;
-    (health.status == "ok").then_some(health)
+    resp.json().await.ok()
 }
 
 // ── 对外的异步 API ──
@@ -851,7 +1106,20 @@ pub async fn status(
     kind: ServerKind,
 ) -> ServerStatus {
     let port = port_of(kind, &cfg.local);
-    let health = probe(port).await;
+    let raw = probe_raw(port).await;
+    // 端口有应答、但模型还没就绪(加载中 / 加载失败)。下面两类分支都要它:
+    // 自己的进程要分开报「加载中」和「加载失败」,别人的进程也不能当成「未运行」。
+    let pending = raw
+        .as_ref()
+        .map(Health::answer)
+        .filter(|a| *a != Answer::Ready);
+    // 进程活着、端口也应答,但模型加载失败了:得和「还在加载」分开报。
+    let load_error = match &pending {
+        Some(Answer::Failed(reason)) => Some(reason.clone()),
+        _ => None,
+    };
+    let loading = loading_text(raw.as_ref().and_then(|h| h.loading.as_ref()));
+    let health = raw.filter(|h| h.status == "ok");
 
     let snapshot = manager.lock().ok().and_then(|mut m| m.snapshot(kind));
     let paths_ok = SpawnOptions::from_config(&cfg.local).is_ok();
@@ -882,12 +1150,18 @@ pub async fn status(
                 Some(pid) => (
                     ServerOwner::ExternalProject,
                     Some(pid),
-                    "这个服务不是本应用启动的,但确认是本项目的服务,可以从这里停止",
+                    t(
+                        "这个服务不是本应用启动的,但确认是本项目的服务,可以从这里停止",
+                        "Not started by this app, but confirmed as this project's service; it can be stopped from here",
+                    ),
                 ),
                 None => (
                     ServerOwner::ExternalUnknown,
                     None,
-                    "外部进程(不是本应用启动的),只能连接,不能从这里停止",
+                    t(
+                        "外部进程(不是本应用启动的),只能连接,不能从这里停止",
+                        "External process (not started by this app); connect only, it can't be stopped from here",
+                    ),
                 ),
             };
             ServerStatus {
@@ -903,6 +1177,26 @@ pub async fn status(
                 recent_logs: other.map(|s| s.recent_logs).unwrap_or_default(),
             }
         }
+        // 进程还活着,`/health` 明确说模型加载失败了。不能再报「启动中」:
+        // 服务不会自己好起来,等多久都一样。
+        (None, Some(snap)) if snap.alive && snap.port == port && load_error.is_some() => {
+            ServerStatus {
+                kind,
+                state: ServerState::Failed,
+                port,
+                owner: ServerOwner::App,
+                can_stop: ServerOwner::App.can_manage(),
+                pid: Some(snap.pid),
+                current_model: None,
+                detail: Some(tr!(
+                    "模型加载失败:{}",
+                    "Model failed to load: {}",
+                    load_error.unwrap_or_default()
+                )),
+                log_path: Some(snap.log_path),
+                recent_logs: snap.recent_logs,
+            }
+        }
         // 进程还活着但 `/health` 没通 = 正在加载模型(同样要求端口一致)。
         (None, Some(snap)) if snap.alive && snap.port == port => ServerStatus {
             kind,
@@ -912,10 +1206,22 @@ pub async fn status(
             can_stop: ServerOwner::App.can_manage(),
             pid: Some(snap.pid),
             current_model: None,
-            detail: Some("已启动,正在加载模型...".into()),
+            detail: Some(tr!("已启动,{}", "Started. {}", loading)),
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
         },
+        // 端口有应答、模型还没就绪,但应答的**不是**本应用手里那个进程——典型是
+        // 用户在终端里起的服务正在加载模型。以前这里要么落进下面的「未运行」
+        // (用户于是点「启动」,又拉起一个进程去抢端口),要么落进「进程已退出」
+        // (手里还攥着一个早就死掉的旧句柄时)。
+        (None, other) if pending.is_some() => external_pending_status(
+            kind,
+            port,
+            pending.unwrap_or(Answer::Loading),
+            identify_external(kind, &cfg.local),
+            other,
+            &loading,
+        ),
         // 进程没了且端口也不通 = 起失败了,把退出原因和日志尾巴一起给出去。
         (None, Some(snap)) => ServerStatus {
             kind,
@@ -929,12 +1235,15 @@ pub async fn status(
             current_model: None,
             detail: Some(if snap.alive {
                 // 活着但端口对不上:用户改了端口却没重启服务。
-                format!(
+                tr!(
                     "本应用启动的进程在 {} 端口,与当前配置的 {} 端口不一致,请重启服务以应用新端口。",
-                    snap.port, port
+                    "The process started by this app is on port {}, but port {} is configured. Restart the service to use the new port.",
+                    snap.port,
+                    port
                 )
             } else {
-                snap.exit_note.unwrap_or_else(|| "进程已退出".into())
+                snap.exit_note
+                    .unwrap_or_else(|| t("进程已退出", "Process exited").into())
             }),
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
@@ -964,6 +1273,113 @@ pub async fn status(
     }
 }
 
+/// 端口上有别人的服务在应答,但模型还没就绪时的状态。纯函数:身份识别
+/// (`identify_external`,要查 lsof / ps)由调用方做好传进来,这里只管怎么报。
+fn external_pending_status(
+    kind: ServerKind,
+    port: u16,
+    answer: Answer,
+    external_pid: Option<u32>,
+    stale: Option<SlotSnapshot>,
+    loading: &str,
+) -> ServerStatus {
+    let (owner, pid, owner_note) = match external_pid {
+        Some(pid) => (
+            ServerOwner::ExternalProject,
+            Some(pid),
+            t(
+                "不是本应用启动的,但确认是本项目的服务,可以从这里停止",
+                "not started by this app, but confirmed as this project's service; it can be stopped from here",
+            ),
+        ),
+        None => (
+            ServerOwner::ExternalUnknown,
+            None,
+            t(
+                "外部进程(不是本应用启动的),只能连接,不能从这里停止",
+                "external process not started by this app; connect only, it can't be stopped from here",
+            ),
+        ),
+    };
+    let (state, what) = match answer {
+        Answer::Failed(reason) => (
+            ServerState::Failed,
+            tr!("模型加载失败:{}", "Model failed to load: {}", reason),
+        ),
+        _ => (ServerState::Starting, loading.to_string()),
+    };
+    ServerStatus {
+        kind,
+        state,
+        port,
+        owner,
+        can_stop: owner.can_manage(),
+        pid,
+        current_model: None,
+        detail: Some(tr!("{}({})", "{} ({})", what, owner_note)),
+        log_path: stale.as_ref().map(|s| s.log_path.clone()),
+        recent_logs: stale.map(|s| s.recent_logs).unwrap_or_default(),
+    }
+}
+
+/// 端口上已经有服务在应答时,`start` 怎么回答。纯函数,便于单测。
+///
+/// 以前只采纳 `status == "ok"` 的服务:用户在终端里起的服务正在加载模型时点
+/// 「启动」,会再拉一个进程去抢端口——新进程绑不上端口直接退出,界面报失败,
+/// 而终端里那个其实好好的。现在只要端口有应答就不再拉起:
+///
+/// - 就绪 / 加载中:采纳,如实说在干什么;
+/// - 加载失败:返回错误并带上原因。再起一个也绑不上端口,只能先停掉它。
+fn adopt_existing(
+    kind: ServerKind,
+    port: u16,
+    answer: &Answer,
+    ours: bool,
+    external_pid: Option<u32>,
+) -> Result<String, String> {
+    let who = if ours {
+        t("本应用启动", "started by this app").to_string()
+    } else {
+        match external_pid {
+            Some(pid) => tr!(
+                "外部进程 pid {},确认是本项目的服务",
+                "external process pid {}, confirmed as this project's service",
+                pid
+            ),
+            None => t("外部进程", "external process").to_string(),
+        }
+    };
+    match answer {
+        Answer::Ready if ours => Ok(tr!(
+            "{} 服务已在运行(本应用启动)",
+            "{} service is already running (started by this app)",
+            kind.label()
+        )),
+        Answer::Ready => Ok(tr!(
+            "{} 服务已在 {} 端口运行({}),已直接连接,未重复启动",
+            "{} service is already running on port {} ({}); connected to it instead of starting another",
+            kind.label(),
+            port,
+            who
+        )),
+        Answer::Loading => Ok(tr!(
+            "{} 服务已在 {} 端口运行({}),正在加载模型,未重复启动",
+            "{} service is already running on port {} ({}) and loading its model; didn't start another",
+            kind.label(),
+            port,
+            who
+        )),
+        Answer::Failed(reason) => Err(tr!(
+            "{} 服务已在 {} 端口运行({}),但模型加载失败:{}。端口被它占着,再启动一个也起不来——请先停止它,排除原因后再启动",
+            "{} service is already running on port {} ({}), but its model failed to load: {}. It's holding the port, so another instance can't start. Stop it, fix the cause, then start again",
+            kind.label(),
+            port,
+            who,
+            reason
+        )),
+    }
+}
+
 /// 两个服务 + 模式 + 路径可用性,一次性报告。
 pub async fn report(
     manager: &Mutex<ServerManager>,
@@ -986,38 +1402,30 @@ pub async fn start(
 ) -> Result<String, String> {
     let port = port_of(kind, &cfg.local);
 
-    // 关键的一步:端口上已经有健康服务就绝不再 spawn。用户自己在终端跑着的
+    // 关键的一步:端口上已经有服务在应答就绝不再 spawn——不管它的模型是就绪、
+    // 还在加载,还是加载失败了(见 `adopt_existing`)。用户自己在终端跑着的
     // 进程、或者上次会话遗留下来的,都在这里被采纳。
-    if probe(port).await.is_some() {
+    if let Some(health) = probe_raw(port).await {
         let ours = manager
             .lock()
             .ok()
             .and_then(|mut m| m.snapshot(kind))
             .map(|s| s.alive && s.port == port)
             .unwrap_or(false);
-        if ours {
-            return Ok(format!("{} 服务已在运行(本应用启动)", kind.label()));
-        }
-        return Ok(match identify_external(kind, &cfg.local) {
-            Some(pid) => format!(
-                "{} 服务已在 {} 端口运行(外部进程 pid {},确认是本项目的服务),已直接连接,未重复启动",
-                kind.label(),
-                port,
-                pid
-            ),
-            None => format!(
-                "{} 服务已在 {} 端口运行(外部进程),已直接连接,未重复启动",
-                kind.label(),
-                port
-            ),
-        });
+        let external_pid = if ours {
+            None
+        } else {
+            identify_external(kind, &cfg.local)
+        };
+        return adopt_existing(kind, port, &health.answer(), ours, external_pid);
     }
 
     let opts = SpawnOptions::from_config(&cfg.local)?;
     let mut guard = manager.lock().map_err(|e| e.to_string())?;
     let pid = guard.spawn(kind, &opts)?;
-    Ok(format!(
+    Ok(tr!(
         "{} 服务已启动(pid {}),正在加载模型...",
+        "{} service started (pid {}), loading model...",
         kind.label(),
         pid
     ))
@@ -1058,8 +1466,12 @@ pub async fn restart(
 ) -> Result<String, String> {
     // 探测放在加锁之前:`Mutex` 的 guard 不是 Send,跨 await 持有会让整个
     // 命令的 Future 不满足 tauri 的 Send 约束(而且会把别的调用者堵死)。
-    let healthy = probe(port_of(kind, &cfg.local)).await.is_some();
-    // 手里有句柄、或者端口上有健康服务,都得先停掉再拉起。外部进程里认得出
+    //
+    // 看的是「端口有没有应答」,不是「模型是否就绪」:正在加载、或者加载失败的
+    // 外部服务同样占着端口,不先停掉它,后面的 `start` 只会原样采纳它(或者报
+    // 「加载失败」)——「重启」就成了什么都没做。
+    let answering = probe_raw(port_of(kind, &cfg.local)).await.is_some();
+    // 手里有句柄、或者端口上有服务在应答,都得先停掉再拉起。外部进程里认得出
     // 是本项目的那些现在也停得掉;认不出来源的会在这里报错——「重启」在那种
     // 情况下只会变成「又拉起一个」,与其偷偷只做一半,不如直说。
     //
@@ -1070,7 +1482,7 @@ pub async fn restart(
         .map_err(|e| e.to_string())?
         .slot(kind)
         .is_some();
-    if has_slot || healthy {
+    if has_slot || answering {
         stop(manager, cfg, kind)?;
     }
     start(manager, cfg, kind).await
@@ -1108,12 +1520,14 @@ impl LlmShutdownPlan {
     /// 保留了别人的进程时,给用户的解释。UI 直接显示,不要让开关看起来「没生效」。
     pub fn keep_reason(self) -> Option<&'static str> {
         match self {
-            LlmShutdownPlan::KeepForeign(ServerOwner::ExternalProject) => Some(
+            LlmShutdownPlan::KeepForeign(ServerOwner::ExternalProject) => Some(t(
                 "LLM 服务不是本应用启动的(外部/本项目),已保留——你在终端里跑的进程不该因为拨一下开关就消失。要停它请用「服务器」面板上的「停止」。",
-            ),
-            LlmShutdownPlan::KeepForeign(_) => Some(
+                "The LLM service wasn't started by this app (external, from this project), so it was left running: a process you started in a terminal shouldn't disappear because a switch was flipped. To stop it, use Stop in the Server panel.",
+            )),
+            LlmShutdownPlan::KeepForeign(_) => Some(t(
                 "LLM 端口上是认不出来源的外部进程,本应用只连接、不会碰它,已保留。",
-            ),
+                "The LLM port is held by an unidentified external process. This app only connects to it and won't touch it, so it was left running.",
+            )),
             _ => None,
         }
     }
@@ -1122,9 +1536,15 @@ impl LlmShutdownPlan {
 /// 关后处理时该不该动 LLM 服务。
 pub fn plan_llm_shutdown(status: &ServerStatus) -> LlmShutdownPlan {
     // `Starting` 也算在跑:那是自己刚拉起、还在加载模型的进程,不停掉它就等于
-    // 开关关了而内存照占。`Failed` / `Stopped` / `NotConfigured` 都没有活着的
-    // 进程可停。
-    if !matches!(status.state, ServerState::Running | ServerState::Starting) {
+    // 开关关了而内存照占。`Failed` 分两种:进程活着但模型加载失败(`pid` 有值),
+    // 它照样占着端口和内存,得停——打开开关时加载失败要回收的正是它;进程已经
+    // 退出(`pid` 为空)就没什么可停的。`Stopped` / `NotConfigured` 都没有进程。
+    let has_process = match status.state {
+        ServerState::Running | ServerState::Starting => true,
+        ServerState::Failed => status.pid.is_some(),
+        ServerState::Stopped | ServerState::NotConfigured => false,
+    };
+    if !has_process {
         return LlmShutdownPlan::NothingToStop;
     }
     match status.owner {
@@ -1172,23 +1592,40 @@ pub fn plan_llm_reconcile(started_llm: bool, authoritative: bool) -> LlmReconcil
     }
 }
 
-/// 等某个服务的 `/health` 通。超时返回 false(进程可能还活着,只是没加载完)。
+/// `wait_ready` 的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Readiness {
+    /// `/health` 报 `ok`,模型能用了。
+    Ready,
+    /// `/health` 明确说模型加载失败了,带原因。不会自己好起来,不必再等。
+    Failed(String),
+    /// 等到超时还在加载(或者端口一直没应答)。进程可能还活着,只是没加载完。
+    TimedOut,
+}
+
+/// 等某个服务的模型就绪。
 ///
-/// 打开后处理时必须等到这里返回 true 才敢去翻 STT 的标志位:`start` 返回只说明
+/// 打开后处理时必须等到 `Ready` 才敢去翻 STT 的标志位:`start` 返回只说明
 /// spawn 成功,之后还有几秒钟端口是死的,这段时间里 STT 去反代就是撞空。
+///
+/// 以前只返回「通 / 没通」:模型加载失败(比如没装推理库 mlx_lm / llama_cpp)
+/// 和「还在加载」分不开,打开开关要白等满 30 秒,然后说一句「还在加载模型」。
+/// 现在 `/health` 一报 `error` 就立刻返回原因。
 pub async fn wait_ready(
     cfg: &crate::config::ServerConfig,
     kind: ServerKind,
     timeout: Duration,
-) -> bool {
+) -> Readiness {
     let port = port_of(kind, &cfg.local);
     let deadline = Instant::now() + timeout;
     loop {
-        if probe(port).await.is_some() {
-            return true;
+        match probe_raw(port).await.as_ref().map(Health::answer) {
+            Some(Answer::Ready) => return Readiness::Ready,
+            Some(Answer::Failed(reason)) => return Readiness::Failed(reason),
+            _ => {}
         }
         if Instant::now() >= deadline {
-            return false;
+            return Readiness::TimedOut;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
@@ -1197,7 +1634,7 @@ pub async fn wait_ready(
 // ── 路径自动探测 ──
 
 /// 检查一个目录是不是 voice-input-framework 仓库根。
-fn is_repo_root(path: &Path) -> bool {
+pub(crate) fn is_repo_root(path: &Path) -> bool {
     path.join("services/stt_server.py").exists() && path.join("services/llm_server.py").exists()
 }
 
@@ -1216,13 +1653,33 @@ fn find_python(repo: &Path) -> Option<String> {
     None
 }
 
+/// 用户主目录。
+///
+/// 以前只读 `HOME`:Windows 上通常没有这个变量(那边叫 `USERPROFILE`),于是
+/// `~/voice-input-framework` 这些常见位置一个都没去找,自动探测基本必然失败。
+pub fn home_dir() -> Option<PathBuf> {
+    home_from(
+        std::env::var("HOME").ok(),
+        std::env::var("USERPROFILE").ok(),
+    )
+}
+
+/// `home_dir` 的纯逻辑部分:`HOME` 优先,空的不算(Git Bash 之类有时会把它设成空串)。
+fn home_from(home: Option<String>, user_profile: Option<String>) -> Option<PathBuf> {
+    [home, user_profile]
+        .into_iter()
+        .flatten()
+        .find(|p| !p.trim().is_empty())
+        .map(PathBuf::from)
+}
+
 /// 首次运行时自动探测仓库位置。
 ///
 /// 应用装在 `/Applications`,仓库在用户目录某处,两者没有固定关系,所以只能
 /// 猜常见位置 + 从当前工作目录向上找(开发时从 `gui/src-tauri` 里跑)。
 /// 猜不到就返回 `None`,由 UI 明确告诉用户「没探测到,请手动填」。
 pub fn detect_repo() -> Option<String> {
-    let home = std::env::var("HOME").ok().map(PathBuf::from);
+    let home = home_dir();
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if let Some(home) = &home {
@@ -1269,8 +1726,9 @@ pub fn detect() -> DetectResult {
         Some(repo) => {
             let python = find_python(Path::new(&repo));
             let problem = python.is_none().then(|| {
-                format!(
+                tr!(
                     "找到仓库 {},但里面没有 .venv/bin/python。请先创建虚拟环境,或手动指定解释器路径。",
+                    "Found the repository at {}, but it has no .venv/bin/python. Create the virtual environment first, or set the Python interpreter path manually.",
                     repo
                 )
             });
@@ -1284,8 +1742,11 @@ pub fn detect() -> DetectResult {
             repo_path: None,
             python_path: None,
             problem: Some(
-                "没有自动找到 voice-input-framework 仓库(在 ~ 下的常见位置都找过了)。请手动填写仓库路径。"
-                    .into(),
+                t(
+                    "没有自动找到 voice-input-framework 仓库(在 ~ 下的常见位置都找过了)。请手动填写仓库路径。",
+                    "Couldn't find the voice-input-framework repository automatically (checked the usual places under ~). Enter the repository path manually.",
+                )
+                .into(),
             ),
         },
     }
@@ -1305,10 +1766,24 @@ fn path_report(local: &crate::config::LocalServerConfig) -> LocalPathReport {
         .unwrap_or(false);
 
     let problem = match (local.repo_path.as_deref(), local.python_path.as_deref()) {
-        (None, _) | (Some(""), _) => Some("未设置仓库路径".to_string()),
-        (Some(repo), _) if !repo_ok => Some(format!("{} 下找不到 services/stt_server.py", repo)),
-        (_, None) | (_, Some("")) => Some("未设置 Python 解释器路径".to_string()),
-        (_, Some(py)) if !python_ok => Some(format!("解释器不存在:{}", py)),
+        (None, _) | (Some(""), _) => {
+            Some(t("未设置仓库路径", "Repository path not set").to_string())
+        }
+        (Some(repo), _) if !repo_ok => Some(tr!(
+            "{} 下找不到 services/stt_server.py",
+            "services/stt_server.py not found in {}",
+            repo
+        )),
+        (_, None) | (_, Some("")) => Some(
+            t(
+                "未设置 Python 解释器路径",
+                "Python interpreter path not set",
+            )
+            .to_string(),
+        ),
+        (_, Some(py)) if !python_ok => {
+            Some(tr!("解释器不存在:{}", "Interpreter not found: {}", py))
+        }
         _ => None,
     };
 
@@ -1366,6 +1841,32 @@ mod tests {
     fn dead_pid_is_not_claimed() {
         // 0 在 macOS/Linux 上不是普通进程的 pid,`ps -p 0` 不会给出我们的模块名。
         assert!(!pid_runs_module(0, "services.stt_server"));
+    }
+
+    /// 记账文件里的 pid 活着,但已经不是我们的服务了(重启后被复用)——绝不能认领。
+    /// 这里拿测试进程自己的 pid 冒充:它活着,命令行里却没有服务模块名。
+    #[test]
+    fn a_live_but_reused_pid_is_not_reclaimed() {
+        let dir = std::env::temp_dir().join(format!("vif-reclaim-{}", std::process::id()));
+        let mut m = ServerManager::new(dir.clone());
+        let me = std::process::id();
+        std::fs::write(
+            m.pid_file(),
+            format!(
+                r#"{{"stt": {{"pid": {me}, "port": 6544}}, "llm": {{"pid": {me}, "port": 6545}}}}"#
+            ),
+        )
+        .unwrap();
+        assert!(m.reclaim_orphans().is_empty());
+        assert!(m.snapshot(ServerKind::Stt).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Windows 上看不到命令行,任何 pid 都不认领(以前是「活着就认领」)。
+    #[cfg(not(unix))]
+    #[test]
+    fn windows_never_reclaims_by_pid_alone() {
+        assert!(!pid_runs_module(std::process::id(), ""));
     }
 
     /// 三档归属里,只有前两档允许从界面动它。第三档是「认不出身份」的兜底,
@@ -1506,13 +2007,30 @@ mod tests {
             ServerState::Failed,
             ServerState::NotConfigured,
         ] {
+            let mut st = llm_status(state, ServerOwner::App);
+            // 进程已经退出:状态里没有 pid。
+            st.pid = None;
             assert_eq!(
-                plan_llm_shutdown(&llm_status(state, ServerOwner::App)),
+                plan_llm_shutdown(&st),
                 LlmShutdownPlan::NothingToStop,
                 "{:?}",
                 state
             );
         }
+    }
+
+    /// R15:自己拉起的进程活着、但模型加载失败了——照样占着内存和端口,要停。
+    /// 打开开关时加载失败,回收的就是它;以前 `Failed` 一律当成「没什么可停」。
+    #[test]
+    fn a_live_llm_server_whose_model_failed_is_still_stopped() {
+        let st = llm_status(ServerState::Failed, ServerOwner::App);
+        assert_eq!(plan_llm_shutdown(&st), LlmShutdownPlan::Stop);
+        // 别人的进程照旧不碰。
+        let st = llm_status(ServerState::Failed, ServerOwner::ExternalProject);
+        assert_eq!(
+            plan_llm_shutdown(&st),
+            LlmShutdownPlan::KeepForeign(ServerOwner::ExternalProject)
+        );
     }
 
     /// 缓存和权威对账:一致就什么都不做,不一致一律以权威为准。
@@ -1524,6 +2042,191 @@ mod tests {
         assert_eq!(plan_llm_reconcile(false, true), LlmReconcile::StartLlm);
         // 缓存说开、服务端说关:把刚拉起的收回去。
         assert_eq!(plan_llm_reconcile(true, false), LlmReconcile::StopLlm);
+    }
+
+    #[test]
+    fn a_non_utf8_line_does_not_stop_the_log_pump() {
+        // GBK 编码的「加载」后面跟一行正常输出。以前第一行就让读取线程退出了。
+        let mut s = LineSplitter::default();
+        let mut lines = s.feed(b"\xbc\xd3\xd4\xd8\nnext line\n");
+        assert_eq!(lines.len(), 2, "{:?}", lines);
+        assert!(
+            lines[0].contains('\u{FFFD}'),
+            "坏字节应替换成 �: {:?}",
+            lines[0]
+        );
+        assert_eq!(lines.pop().unwrap(), "next line");
+    }
+
+    #[test]
+    fn carriage_returns_split_progress_bars_into_lines() {
+        let mut s = LineSplitter::default();
+        // 跨块到达的半行要拼起来;\r\n 不能多切出一个空行。
+        assert!(s.feed(b" 10%|#").is_empty());
+        assert_eq!(
+            s.feed(b"   |\r 50%|#####|\r\n"),
+            vec![" 10%|#   |", " 50%|#####|"]
+        );
+        assert_eq!(s.feed(b"tail without newline"), Vec::<String>::new());
+        assert_eq!(s.finish().as_deref(), Some("tail without newline"));
+    }
+
+    #[test]
+    fn a_line_that_never_ends_is_cut_instead_of_growing_forever() {
+        let mut s = LineSplitter::default();
+        let lines = s.feed(&vec![b'x'; MAX_LOG_LINE_BYTES * 2 + 10]);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(s.finish().map(|l| l.len()), Some(10));
+    }
+
+    /// 真管道:一行坏字节之后照样能读到后面的内容,而且一直读到 EOF。
+    #[test]
+    fn pump_keeps_draining_after_invalid_utf8() {
+        let dir = std::env::temp_dir().join(format!("vif-pump-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("pump.log");
+        File::create(&log_path).unwrap();
+        let mut data = b"\xff\xfe broken\n".to_vec();
+        for i in 0..2000 {
+            data.extend_from_slice(format!("line {}\n", i).as_bytes());
+        }
+        let logs = Arc::new(Mutex::new(VecDeque::new()));
+        pump(
+            std::io::Cursor::new(data),
+            logs.clone(),
+            log_path.clone(),
+            ServerKind::Stt,
+            "test",
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if logs.lock().unwrap().back().map(String::as_str) == Some("line 1999") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            logs.lock().unwrap().back().map(String::as_str),
+            Some("line 1999")
+        );
+        let text = std::fs::read_to_string(&log_path).unwrap();
+        assert!(text.contains("line 1999"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn health(status: &str, error: Option<&str>) -> Health {
+        Health {
+            status: status.into(),
+            current_model: Some("m".into()),
+            error: error.map(Into::into),
+            loading: None,
+        }
+    }
+
+    #[test]
+    fn health_answer_tells_loading_from_failed() {
+        assert_eq!(health("ok", None).answer(), Answer::Ready);
+        assert_eq!(health("loading", None).answer(), Answer::Loading);
+        assert_eq!(
+            health("error", Some("OOM")).answer(),
+            Answer::Failed("OOM".into())
+        );
+        // 失败却没给原因,也不能报成空串。
+        assert!(
+            matches!(health("error", Some(" ")).answer(), Answer::Failed(r) if !r.trim().is_empty())
+        );
+    }
+
+    /// R14:端口上有应答就不再拉起;加载失败时说清原因,而不是再起一个抢端口的。
+    #[test]
+    fn start_adopts_any_answering_port() {
+        let ok = adopt_existing(ServerKind::Stt, 6544, &Answer::Ready, true, None).unwrap();
+        assert!(ok.contains("本应用启动"), "{}", ok);
+
+        let loading =
+            adopt_existing(ServerKind::Stt, 6544, &Answer::Loading, false, Some(42)).unwrap();
+        assert!(
+            loading.contains("正在加载模型") && loading.contains("pid 42"),
+            "{}",
+            loading
+        );
+        assert!(loading.contains("未重复启动"), "{}", loading);
+
+        let err = adopt_existing(
+            ServerKind::Llm,
+            6545,
+            &Answer::Failed("No module named 'mlx_lm'".into()),
+            false,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("mlx_lm") && err.contains("外部进程"),
+            "{}",
+            err
+        );
+    }
+
+    /// R14:外部服务在加载 → 启动中;加载失败 → 失败并带原因。以前两者都报「未运行」。
+    #[test]
+    fn an_external_server_that_is_not_ready_is_not_reported_as_stopped() {
+        let st = external_pending_status(
+            ServerKind::Stt,
+            6544,
+            Answer::Loading,
+            Some(7),
+            None,
+            "正在加载模型...",
+        );
+        assert_eq!(st.state, ServerState::Starting);
+        assert_eq!(st.owner, ServerOwner::ExternalProject);
+        assert!(st.can_stop);
+        assert_eq!(st.pid, Some(7));
+
+        let st = external_pending_status(
+            ServerKind::Stt,
+            6544,
+            Answer::Failed("OOM".into()),
+            None,
+            None,
+            "正在加载模型...",
+        );
+        assert_eq!(st.state, ServerState::Failed);
+        assert_eq!(st.owner, ServerOwner::ExternalUnknown);
+        assert!(!st.can_stop, "认不出身份的照样不能停");
+        assert!(st.detail.unwrap().contains("OOM"));
+    }
+
+    /// R19:Windows 上通常只有 USERPROFILE。
+    #[test]
+    fn home_falls_back_to_userprofile() {
+        assert_eq!(
+            home_from(None, Some(r"C:\Users\me".into())),
+            Some(PathBuf::from(r"C:\Users\me"))
+        );
+        assert_eq!(
+            home_from(Some(String::new()), Some("/u".into())),
+            Some(PathBuf::from("/u"))
+        );
+        assert_eq!(
+            home_from(Some("/home/me".into()), Some("/u".into())),
+            Some(PathBuf::from("/home/me"))
+        );
+        assert_eq!(home_from(None, None), None);
+    }
+
+    #[test]
+    fn tasklist_pid_match_is_exact() {
+        let out = "\"python.exe\",\"1234\",\"Console\",\"1\",\"12,345 K\"\r\n";
+        assert!(tasklist_lists_pid(out, 1234));
+        // 以前的子串匹配会让这几个都算「活着」。
+        assert!(!tasklist_lists_pid(out, 12));
+        assert!(!tasklist_lists_pid(out, 123));
+        assert!(!tasklist_lists_pid(out, 345));
+        assert!(!tasklist_lists_pid(
+            "INFO: No tasks are running which match the specified criteria.\r\n",
+            1
+        ));
     }
 
     #[test]
@@ -1558,18 +2261,21 @@ mod e2e {
     const TEST_LLM_PORT: u16 = 7545;
 
     /// 假服务:先睡 1.5 秒(模拟加载模型,好让 `Starting` 状态可观测),
-    /// 再在指定端口上应答 `/health`。
+    /// 再在指定端口上应答 `/health`。`FAKE_HEALTH_STATUS` 可以让它一直报
+    /// `loading` / `error`,模拟「模型还在加载」「模型加载失败」。
     fn fake_server_py(port_env: &str) -> String {
         format!(
             r#"
 import http.server, json, os, sys, time
 PORT = int(os.environ["{port_env}"])
+STATUS = os.environ.get("FAKE_HEALTH_STATUS", "ok")
+ERROR = "fake load failure" if STATUS == "error" else None
 print("fake server booting on", PORT, flush=True)
 time.sleep(1.5)
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
-            body = json.dumps({{"status": "ok", "current_model": "fake-model"}}).encode()
+            body = json.dumps({{"status": STATUS, "current_model": "fake-model", "error": ERROR}}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -1623,6 +2329,7 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
                     llm_port: TEST_LLM_PORT,
                     ..Default::default()
                 },
+                token: None,
             }
         }
 
@@ -1760,6 +2467,110 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
 
         let st = status(&manager, &cfg, ServerKind::Stt).await;
         assert_eq!(st.state, ServerState::Stopped);
+    }
+
+    /// 轮询等待端口「有应答」(不管模型状态)变成期望值。
+    async fn wait_answering(port: u16, want: bool, secs: u64) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        while Instant::now() < deadline {
+            if probe_raw(port).await.is_some() == want {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        false
+    }
+
+    /// R14:用户在终端里起的服务还在加载 / 已经加载失败时点「启动」,不能再拉一个
+    /// 进程去抢端口;状态也不能报成「未运行」。
+    #[tokio::test]
+    #[ignore = "会真的拉起子进程并绑 7544 端口"]
+    async fn an_external_server_still_loading_or_failed_is_adopted_not_duplicated() {
+        let repo = FakeRepo::create("pending");
+        let cfg = repo.config();
+        let manager = Mutex::new(ServerManager::new(repo.data_dir()));
+        assert!(probe_raw(TEST_STT_PORT).await.is_none(), "测试端口不干净");
+
+        for (fake_status, want_state) in [
+            ("loading", ServerState::Starting),
+            ("error", ServerState::Failed),
+        ] {
+            let mut external = Command::new(system_python())
+                .arg("-m")
+                .arg("services.stt_server")
+                .current_dir(&repo.root)
+                .env("VIF_STT_PORT", TEST_STT_PORT.to_string())
+                .env("FAKE_HEALTH_STATUS", fake_status)
+                .env("PYTHONUNBUFFERED", "1")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            assert!(
+                wait_answering(TEST_STT_PORT, true, 15).await,
+                "外部假服务没起来"
+            );
+
+            let st = status(&manager, &cfg, ServerKind::Stt).await;
+            assert_eq!(st.state, want_state, "{}: {:?}", fake_status, st);
+            assert_eq!(st.owner, ServerOwner::ExternalProject, "{:?}", st);
+            assert_eq!(st.pid, Some(external.id()));
+
+            let started = start(&manager, &cfg, ServerKind::Stt).await;
+            match fake_status {
+                "loading" => {
+                    let msg = started.unwrap();
+                    assert!(msg.contains("正在加载模型"), "{}", msg);
+                }
+                _ => {
+                    let err = started.unwrap_err();
+                    assert!(err.contains("fake load failure"), "{}", err);
+                    assert!(st.detail.unwrap().contains("fake load failure"));
+                }
+            }
+            assert!(
+                manager.lock().unwrap().snapshot(ServerKind::Stt).is_none(),
+                "不该另拉起一个进程"
+            );
+            assert!(pid_alive(external.id()), "外部进程不该被碰");
+
+            external.kill().ok();
+            external.wait().ok();
+            assert!(wait_answering(TEST_STT_PORT, false, 10).await);
+        }
+    }
+
+    /// R15:模型加载失败时 `wait_ready` 立刻带着原因返回,不再白等到超时。
+    #[tokio::test]
+    #[ignore = "会真的拉起子进程并绑 7545 端口"]
+    async fn wait_ready_returns_the_load_failure_instead_of_timing_out() {
+        let repo = FakeRepo::create("llmfail");
+        let cfg = repo.config();
+        assert!(probe_raw(TEST_LLM_PORT).await.is_none(), "测试端口不干净");
+
+        let mut failing = Command::new(system_python())
+            .arg("-m")
+            .arg("services.llm_server")
+            .current_dir(&repo.root)
+            .env("VIF_LLM_PORT", TEST_LLM_PORT.to_string())
+            .env("FAKE_HEALTH_STATUS", "error")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let started = Instant::now();
+        let r = wait_ready(&cfg, ServerKind::Llm, Duration::from_secs(30)).await;
+        assert_eq!(r, Readiness::Failed("fake load failure".into()));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "不该等到超时: {:?}",
+            started.elapsed()
+        );
+
+        failing.kill().ok();
+        failing.wait().ok();
+        assert!(wait_answering(TEST_LLM_PORT, false, 10).await);
     }
 
     /// 负面用例:端口是健康的,但监听它的**不是**本项目的服务。
@@ -1914,8 +2725,9 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
 
         // ── 1. 自己拉起的:等它就绪,然后开关一关就该停掉 ──
         start(&manager, &cfg, ServerKind::Llm).await.unwrap();
-        assert!(
+        assert_eq!(
             wait_ready(&cfg, ServerKind::Llm, Duration::from_secs(15)).await,
+            Readiness::Ready,
             "wait_ready 没等到 LLM 服务就绪"
         );
 
@@ -1942,8 +2754,9 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        assert!(
+        assert_eq!(
             wait_ready(&cfg, ServerKind::Llm, Duration::from_secs(15)).await,
+            Readiness::Ready,
             "外部假服务没起来"
         );
 
@@ -2027,6 +2840,7 @@ mod real_servers {
                 llm_port: 6545,
                 ..Default::default()
             },
+            token: None,
         };
         let manager = Mutex::new(ServerManager::new(
             std::env::temp_dir().join("vif-real-check"),
@@ -2073,5 +2887,30 @@ mod real_servers {
             );
             assert!(!st.can_stop);
         }
+    }
+}
+
+#[cfg(test)]
+mod loading_text_tests {
+    use super::*;
+
+    #[test]
+    fn download_progress_is_shown_in_mb() {
+        let p = LoadingProgress {
+            elapsed_s: 42.0,
+            downloaded_bytes: 300 * 1024 * 1024,
+        };
+        assert_eq!(loading_text(Some(&p)), "正在下载模型… 已下载 300 MB(42 秒)");
+    }
+
+    #[test]
+    fn loading_without_download_shows_elapsed_time() {
+        let p = LoadingProgress {
+            elapsed_s: 7.4,
+            downloaded_bytes: 0,
+        };
+        assert_eq!(loading_text(Some(&p)), "正在加载模型…(7 秒)");
+        // 老服务端没有 loading 字段:保持原来的说法
+        assert_eq!(loading_text(None), "正在加载模型...");
     }
 }

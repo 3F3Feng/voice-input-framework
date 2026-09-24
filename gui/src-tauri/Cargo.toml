@@ -1,6 +1,6 @@
 [package]
 name = "voice-input"
-version = "2.2.0"
+version = "2.3.0"
 description = "Voice Input Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -18,6 +18,11 @@ tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
+# 双开 = 两套全局快捷键监听,按一次录两遍。第二个实例只负责把第一个的窗口叫出来。
+tauri-plugin-single-instance = "2"
+# 托盘「复制最近一条结果」:窗口藏着时 webview 的 navigator.clipboard 不可靠,
+# 只能从 Rust 侧写剪贴板。
+tauri-plugin-clipboard-manager = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -28,6 +33,8 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 rdev = "0.5"
 base64 = "0.22"
+# 客户端日志的本地时间戳。依赖树里本来就有(serde_with → chrono),不新增下载。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # macOS 专用:CGEventTap 监听快捷键(替代 rdev——rdev 的 macOS 后端在
 # 事件回调里调 TSMGetInputSourceProperty,macOS 15+ 非主线程调用会

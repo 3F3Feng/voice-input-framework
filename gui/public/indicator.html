@@ -10,6 +10,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; u
 .dot.recording { background: #e63946; animation: pulse 0.8s infinite; }
 .dot.processing { background: #fbbf24; animation: spin 1s linear infinite; }
 .dot.done { background: #4ade80; }  /* green, no animation — static for the result display */
+.dot.error { background: #f87171; }  /* 转写失败:红点,静止 */
+.dot.info { background: #9ca3af; }   /* 没听到声音:灰点,不算故障 */
+.warn { color: #fbbf24; }            /* 快到录音时长上限时的倒计时 */
 .text { color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap; min-width: 70px; }
 .level-bar { flex: 1; height: 4px; background: rgba(255,255,255,0.15); border-radius: 2px; overflow: hidden; }
 .level-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #4ade80, #fbbf24, #f87171); border-radius: 2px; transition: width 0.08s ease; }
@@ -20,7 +23,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; u
 <body>
 <div class="indicator">
   <div class="dot recording" id="dot"></div>
-  <span class="text" id="label">🎙️ <span id="timer">0.0s</span></span>
+  <!-- label 与 timer 必须是兄弟节点:以前 timer 嵌在 label 里,脚本一改 label 的
+       textContent(复位、进入识别中)就把 timer 节点一起删了,复用的胶囊从此不再走表。 -->
+  <span class="text"><span id="label">🎙️ </span><span id="timer">0.0s</span></span>
   <div class="level-bar" id="level-bar"><div class="level-fill" id="level"></div></div>
 </div>
 <script>
@@ -34,21 +39,61 @@ const labelEl = document.getElementById('label');
 const invoke = window.__TAURI__?.core?.invoke;
 const listen = window.__TAURI__?.event?.listen;
 
+// 界面语言。这个页面是独立的纯 HTML,用不了 src/i18n.ts:初始语言由 indicator.rs
+// 建窗口时注入(window.__VIF_LANG),之后跟着 ui-language 事件换。
+// 胶囊上的大部分文字(识别中 / 失败原因)由 Rust 按当前语言发过来,这里只管自己的几句。
+let lang = window.__VIF_LANG === 'en' ? 'en' : 'zh';
+function t(zh, en) { return lang === 'en' ? en : zh; }
+if (listen) {
+  listen('ui-language', (event) => {
+    lang = event.payload === 'en' ? 'en' : 'zh';
+    document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+    if (limitDeadline != null && labelEl) labelEl.textContent = t('还剩 ', '');
+  });
+}
+document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+
 // 诊断信号:页面加载成功后改窗口标题(主进程 1s 后读标题判断加载状态)
 try { window.__TAURI__?.window?.getCurrentWindow()?.setTitle('indicator-loaded'); } catch (_) {}
 
-let mode = 'recording'; // 'recording' | 'processing' | 'done'
+let mode = 'recording'; // 'recording' | 'processing' | 'done' | 'failed'
+// 快到录音时长上限时由 indicator-warning 设置:此后计时换成「还剩 N 秒」倒计时。
+let limitDeadline = null;
 
 // Window reused across recordings — reset timer/mode on each show
 if (listen) {
   listen('indicator-reset', () => {
     mode = 'recording';
     start = Date.now();
-    if (labelEl) labelEl.textContent = '🎙️ ';
-    if (timerEl) timerEl.textContent = '0.0s';
+    limitDeadline = null;
+    if (labelEl) { labelEl.textContent = '🎙️ '; labelEl.classList.remove('warn'); }
+    if (timerEl) { timerEl.textContent = '0.0s'; timerEl.classList.remove('warn'); }
     if (levelBar) levelBar.style.display = '';
     if (levelEl) levelEl.style.width = '0%';
-    if (dotEl) { dotEl.classList.remove('processing', 'done'); dotEl.classList.add('recording'); }
+    if (dotEl) { dotEl.classList.remove('processing', 'done', 'error', 'info'); dotEl.classList.add('recording'); }
+  });
+
+  // 录音快到上限:倒计时提醒,到点后端会自动停止并转写(不会丢弃)。
+  listen('indicator-warning', (event) => {
+    const secs = event.payload && event.payload.remaining_secs;
+    if (mode !== 'recording' || secs == null) return;
+    limitDeadline = Date.now() + secs * 1000;
+    if (labelEl) { labelEl.textContent = t('还剩 ', ''); labelEl.classList.add('warn'); }
+    if (timerEl) timerEl.classList.add('warn');
+  });
+
+  // 转写失败 / 没听到声音:停留一会儿(后端负责关窗),让藏着主窗口的用户也能看到。
+  listen('indicator-error', (event) => {
+    const data = event.payload || {};
+    mode = 'failed';
+    limitDeadline = null;
+    if (labelEl) { labelEl.textContent = data.message || t('识别失败', 'Transcription failed'); labelEl.classList.remove('warn'); }
+    if (timerEl) { timerEl.textContent = ''; timerEl.classList.remove('warn'); }
+    if (levelBar) levelBar.style.display = 'none';
+    if (dotEl) {
+      dotEl.classList.remove('recording', 'processing', 'done', 'error', 'info');
+      dotEl.classList.add(data.kind === 'info' ? 'info' : 'error');
+    }
   });
 }
 
@@ -58,7 +103,8 @@ if (listen) {
     const data = event.payload;
     if (data && data.duration_ms != null) {
       mode = 'done';
-      if (labelEl) labelEl.textContent = '';
+      if (labelEl) { labelEl.textContent = ''; labelEl.classList.remove('warn'); }
+      if (timerEl) timerEl.classList.remove('warn');
       if (timerEl) timerEl.textContent = data.duration_ms + 'ms';
       if (levelBar) levelBar.style.display = 'none';
       if (dotEl) { dotEl.classList.remove('recording', 'processing'); dotEl.classList.add('done'); }
@@ -68,8 +114,13 @@ if (listen) {
 
 setInterval(() => {
   if (mode === 'recording') {
-    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-    if (timerEl) timerEl.textContent = elapsed + 's';
+    if (limitDeadline != null) {
+      const left = Math.max(0, Math.ceil((limitDeadline - Date.now()) / 1000));
+      if (timerEl) timerEl.textContent = t(left + ' 秒', left + 's left');
+    } else {
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      if (timerEl) timerEl.textContent = elapsed + 's';
+    }
     if (invoke) {
       invoke('get_audio_level').then(level => {
         if (levelEl && level != null) {
@@ -83,11 +134,11 @@ setInterval(() => {
     if (timerEl) timerEl.textContent = elapsed + 's';
     if (invoke) {
       invoke('get_indicator_status').then(status => {
-        if (status && labelEl) labelEl.textContent = status;
+        if (status && labelEl) labelEl.textContent = status + ' ';
       }).catch(() => {});
     }
   }
-  // mode === 'done': timer already shows ms, no further updates needed
+  // mode === 'done' / 'failed': 内容已经定格,不再更新
 }, 100);
 
 let processingStart = null;
@@ -99,8 +150,9 @@ setInterval(() => {
       if (status && status.length > 0) {
         mode = 'processing';
         processingStart = Date.now();
-        if (labelEl) labelEl.textContent = status;
-        if (timerEl) timerEl.textContent = '0.0s';
+        limitDeadline = null;
+        if (labelEl) { labelEl.textContent = status + ' '; labelEl.classList.remove('warn'); }
+        if (timerEl) { timerEl.textContent = '0.0s'; timerEl.classList.remove('warn'); }
         if (levelEl) levelEl.style.width = '0%';
         if (levelBar) levelBar.style.display = 'none';
         if (dotEl) { dotEl.classList.remove('recording'); dotEl.classList.add('processing'); }

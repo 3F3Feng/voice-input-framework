@@ -105,7 +105,23 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
         else:
             audio_array = self._convert_audio(audio_data, sample_rate)
 
-        # MLX generate 直接在当前线程执行（MLX Metal 是 thread-local）
+        text, detected_lang = self.transcribe_sync(audio_array, language)
+
+        return TranscriptionResult(
+            text=text,
+            confidence=1.0,
+            language=detected_lang or language,
+            is_final=True,
+        )
+
+    def transcribe_sync(
+        self, audio_array: np.ndarray, language: str = "auto", context: str | None = None
+    ) -> tuple[str, str]:
+        """同步转写,返回 (文本, 识别出的语言)。
+
+        必须在加载模型的同一个线程上调用(MLX Metal stream 是线程局部的);
+        STTEngine 把加载和推理都放在同一个专用线程上。
+        """
         lang = None if language == "auto" else language
         result = self._model.generate(
             audio=audio_array,
@@ -113,6 +129,8 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
             temperature=0.2,
             no_repeat_ngram_size=3,
             max_tokens=9999,
+            # Qwen3-ASR 把 system prompt 当作上下文:给了热词会在同音字之间偏向它们。
+            system_prompt=context or None,
         )
         text = result.text
         # MLX 返回的 language 可能是 ['English'] (list)，标准化为字符串
@@ -121,14 +139,7 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
             detected_lang = detected_lang[0] if detected_lang else ""
         if isinstance(detected_lang, str) and detected_lang == "None":
             detected_lang = ""
-        text = text.strip()
-
-        return TranscriptionResult(
-            text=text,
-            confidence=1.0,
-            language=detected_lang or language,
-            is_final=True,
-        )
+        return text.strip(), detected_lang or ""
 
     async def transcribe_stream(
         self,
@@ -147,7 +158,11 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
                 combined = b"".join(buffer)
                 audio_array = self._convert_audio(combined, sample_rate)
                 result = self._model.generate(
-                    audio=audio_array, language=None, temperature=0.2, no_repeat_ngram_size=3, max_tokens=9999
+                    audio=audio_array,
+                    language=None,
+                    temperature=0.2,
+                    no_repeat_ngram_size=3,
+                    max_tokens=9999,
                 )
                 if result and result.text.strip():
                     yield TranscriptionResult(
@@ -163,7 +178,11 @@ class Qwen3ASRMLXNativeEngine(BaseSTTEngine):
             combined = b"".join(buffer)
             audio_array = self._convert_audio(combined, sample_rate)
             result = self._model.generate(
-                audio=audio_array, language=None, temperature=0.2, no_repeat_ngram_size=3, max_tokens=9999
+                audio=audio_array,
+                language=None,
+                temperature=0.2,
+                no_repeat_ngram_size=3,
+                max_tokens=9999,
             )
             if result and result.text.strip():
                 yield TranscriptionResult(

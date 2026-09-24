@@ -1,18 +1,25 @@
 mod audio;
 mod config;
+mod env_check;
+mod heartbeat;
+mod history;
 mod hotkey;
+mod i18n;
 mod indicator;
 mod input;
 mod log;
 mod permissions;
 mod server_manager;
 mod stt;
+mod syslang;
 mod tray;
 mod update;
 
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
+
+use i18n::t;
 
 #[macro_export]
 macro_rules! log_info {
@@ -30,6 +37,16 @@ macro_rules! log_error {
     }};
 }
 
+/// 值得注意、但不是故障的事(比如回落到默认麦克风)。以前这类提示只能用
+/// `log_error!`,日志页里一片红,真正的错误反而不显眼。
+#[macro_export]
+macro_rules! log_warn {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        $crate::log::__log_inner("WARN", &msg);
+    }};
+}
+
 pub struct AppState {
     pub stt: Mutex<stt::SttClient>,
     pub recorder: Mutex<audio::AudioRecorder>,
@@ -37,6 +54,12 @@ pub struct AppState {
     pub indicator_status: std::sync::Arc<Mutex<String>>,
     /// 本地 STT / LLM 子进程的管理器。远程模式下它就是个空壳,不做任何事。
     pub servers: std::sync::Arc<Mutex<server_manager::ServerManager>>,
+    /// 后台心跳最近一次看到的 STT 服务状态(见 `heartbeat`)。开始录音前看它。
+    pub stt_health: Mutex<heartbeat::SttHealth>,
+    /// 这次启动是不是全新安装(见 `VoiceInputConfig::is_fresh_install`)。只能在
+    /// `setup` 里 `load` 之前问一次——`load` 会立刻写出一份默认配置,之后再问
+    /// 永远是 false——所以记在这里给前端的首启向导用。
+    pub fresh_install: bool,
 }
 
 #[tauri::command]
@@ -45,12 +68,17 @@ async fn set_server_host(
     state: State<'_, AppState>,
     host: String,
     port: Option<u16>,
+    token: Option<String>,
 ) -> Result<(), String> {
     let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
     cfg.server.host = host;
     if let Some(port) = port {
         cfg.server.port = port;
     }
+    if let Some(token) = token {
+        cfg.server.token = Some(token.trim().to_string()).filter(|t| !t.is_empty());
+    }
+    stt::set_api_token(cfg.server.active_token());
     // 本地管理模式下这个输入框改的是「远程地址」,只存不用——客户端仍然连
     // 本地端口。切回远程模式时 `set_server_mode` 会重新指向它。
     if cfg.server.mode == config::ServerMode::Remote {
@@ -130,16 +158,33 @@ fn check_microphone_permission() -> Result<(), String> {
         PermissionStatus::Granted => Ok(()),
         PermissionStatus::NotDetermined => {
             permissions::request_microphone();
-            Err("正在申请麦克风权限,请在系统弹窗中点击「允许」,然后重新录音。".to_string())
+            Err(t(
+                "正在申请麦克风权限,请在系统弹窗中点击「允许」,然后重新录音。",
+                "Requesting microphone permission. Click \"Allow\" in the system prompt, then record again.",
+            )
+            .to_string())
         }
-        PermissionStatus::Denied => Err(
-            "未获得麦克风权限。请到「系统设置 → 隐私与安全性 → 麦克风」中勾选 Voice Input。"
-                .to_string(),
-        ),
-        PermissionStatus::Restricted => {
-            Err("麦克风权限被系统策略限制(如屏幕使用时间 / MDM),无法录音。".to_string())
-        }
+        PermissionStatus::Denied => Err(t(
+            "未获得麦克风权限。请到「系统设置 → 隐私与安全性 → 麦克风」中勾选 Voice Input。",
+            "No microphone permission. Turn on Voice Input in System Settings → Privacy & Security → Microphone.",
+        )
+        .to_string()),
+        PermissionStatus::Restricted => Err(t(
+            "麦克风权限被系统策略限制(如屏幕使用时间 / MDM),无法录音。",
+            "Microphone access is restricted by system policy (e.g. Screen Time / MDM), so recording isn't possible.",
+        )
+        .to_string()),
     }
+}
+
+/// 录音相关、不打断流程但必须让用户知道的事(麦克风回落、录音中断开、
+/// 录满 5 分钟自动停止):记进日志,再发给前端弹 toast。
+///
+/// 这些以前要么只 `eprintln`,要么干脆不说 —— 打包后的应用没有终端,
+/// 等于没人看得见。
+pub(crate) fn emit_app_warning(app: &tauri::AppHandle, msg: &str) {
+    log_warn!("{}", msg);
+    let _ = app.emit("app-warning", msg.to_string());
 }
 
 /// Start recording: acquire device, create stream, begin capture, show indicator.
@@ -148,6 +193,19 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
     // 录音是麦克风权限真正被需要的时刻,在这里拦截。缺权限时 cpal 照样能开流,
     // 但只会送来静音——与其转录一段空音频,不如直接报错说清楚原因。
     check_microphone_permission()?;
+
+    // 服务连不上 / 模型还在加载 / 加载失败时不开始录音,直接说原因(R13)。
+    // 以前快捷键路径不看这些,说完一整句才报连不上,这段话白说了。
+    {
+        let url = state
+            .stt
+            .lock()
+            .map(|c| c.stt_url.clone())
+            .unwrap_or_default();
+        if let Ok(health) = state.stt_health.lock() {
+            heartbeat::recording_gate(&health, &url)?;
+        }
+    }
 
     let device;
     {
@@ -163,11 +221,21 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
         // 真实场景:快捷键正按着录音,用户又去设置面板点了一下「录音」,
         // 松手时只剩一句 "No audio captured"。
         if recorder.is_recording() {
-            return Err("正在录音中,请先结束当前录音。".to_string());
+            return Err(t(
+                "正在录音中,请先结束当前录音。",
+                "Already recording. Finish the current recording first.",
+            )
+            .to_string());
         }
-        recorder.create_stream_channel(4096);
-        match recorder.start(device) {
-            Ok(()) => {
+        recorder.create_stream_channel();
+        let warn_app = app.clone();
+        let on_warning: audio::WarningSink =
+            std::sync::Arc::new(move |msg: String| emit_app_warning(&warn_app, &msg));
+        match recorder.start(device, on_warning) {
+            Ok(note) => {
+                if let Some(note) = note {
+                    emit_app_warning(app, &note);
+                }
                 let _ = indicator::show(app);
                 Ok(())
             }
@@ -194,7 +262,7 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
 
     {
         let mut status = state.indicator_status.lock().map_err(|e| e.to_string())?;
-        *status = "识别中...".to_string();
+        *status = t("识别中...", "Transcribing…").to_string();
     }
 
     log_info!(
@@ -240,11 +308,11 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
                 );
                 // Show processing time on indicator for 500ms before hiding
                 indicator::show_result(&app_handle, elapsed_ms);
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 if let Ok(mut status) = indicator_status.lock() {
                     *status = String::new();
                 }
-                let _ = indicator::hide(&app_handle);
+                indicator::hide_later(&app_handle, std::time::Duration::from_millis(500)).await;
+                tray::remember_result(&app_handle, &text);
                 let _ = app_handle.emit("transcribe-done", text);
             }
             Err(e) => {
@@ -252,8 +320,12 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
                 if let Ok(mut status) = indicator_status.lock() {
                     *status = String::new();
                 }
-                let _ = indicator::hide(&app_handle);
+                // 胶囊先停在失败状态(红点 + 一句原因;静音是灰点「没听到声音」)
+                // 再关。以前这里立刻关掉,原因只进主窗口 —— 窗口藏着时用户什么
+                // 都看不到。toast 立刻发,不必等胶囊。
+                indicator::show_failure(&app_handle, &e);
                 let _ = app_handle.emit("transcribe-error", e);
+                indicator::hide_later(&app_handle, indicator::FAILURE_LINGER).await;
             }
         }
     });
@@ -279,7 +351,7 @@ async fn run_transcription(
     indicator_status: &std::sync::Arc<Mutex<String>>,
     host: &str,
     language: &str,
-    chunk_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
+    chunk_rx: Option<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
     fallback_samples: Vec<f32>,
     src_rate: u32,
 ) -> Result<String, String> {
@@ -298,8 +370,17 @@ async fn run_transcription(
             match &event {
                 stt::StreamEvent::LlmStart { .. } | stt::StreamEvent::LlmProgress { .. } => {
                     if let Ok(mut status) = indicator_status_fwd.lock() {
-                        *status = "LLM 处理中...".to_string();
+                        *status = t("LLM 处理中...", "Post-processing…").to_string();
                     }
+                }
+                // 后处理没做成、退回了原文:结果照常输出,但要让用户知道这次没经过
+                // LLM。以前服务端静默吞掉,用户只会觉得「后处理怎么没效果」。
+                stt::StreamEvent::FinalResult {
+                    llm_error: Some(reason),
+                    ..
+                } => {
+                    log_error!("[transcribe] LLM 后处理失败,已使用原文: {}", reason);
+                    let _ = app_fwd.emit("transcribe-warning", reason.clone());
                 }
                 _ => {}
             }
@@ -315,17 +396,19 @@ async fn run_transcription(
             "[transcribe] Using fallback batch mode ({} samples)",
             fallback_samples.len()
         );
-        let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
-        if wav.is_empty() {
-            return Err("No audio captured".to_string());
+        // 以前判的是 `wav.is_empty()`,可 WAV 至少有 44 字节的头,永远不空,
+        // 一个采样都没有也会被送去转写。
+        if fallback_samples.is_empty() {
+            return Err(stt::NO_SPEECH.to_string());
         }
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let wav = audio::encode_wav_resampled(&fallback_samples, src_rate);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let pcm = if wav.len() > 44 && &wav[..4] == b"RIFF" {
             wav[44..].to_vec()
         } else {
             wav
         };
-        let _ = tx.send(pcm).await;
+        let _ = tx.send(pcm);
         drop(tx);
         client.transcribe_stream(rx, language, Some(event_tx)).await
     };
@@ -375,6 +458,20 @@ async fn switch_model(state: State<'_, AppState>, name: String) -> Result<String
         c.stt_url.clone()
     };
     stt::SttClient::new(&host).switch_stt_model(&name).await
+}
+
+/// 某个 STT 模型的加载状态。切换是异步的(服务端立即返回、后台加载),
+/// 前端轮询它,等真正加载完才说「已切换」,加载失败时把原因带回来。
+#[tauri::command]
+async fn get_model_status(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    stt::SttClient::new(&host).get_model_status(&name).await
 }
 
 #[tauri::command]
@@ -444,16 +541,6 @@ async fn update_config(
     Ok(())
 }
 
-#[tauri::command]
-async fn import_old_config(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<config::VoiceInputConfig, String> {
-    let cfg = config::VoiceInputConfig::load(&app);
-    *state.config.lock().map_err(|e| e.to_string())? = cfg.clone();
-    Ok(cfg)
-}
-
 // ── LLM prompt commands ──
 
 #[tauri::command]
@@ -472,6 +559,96 @@ async fn save_llm_prompt(state: State<'_, AppState>, text: String) -> Result<(),
         c.stt_url.clone()
     };
     stt::SttClient::new(&host).save_llm_prompt(&text).await
+}
+
+/// 选一个音频文件转写(F21)。返回 `None` 表示用户取消了选择。
+///
+/// 服务端一直有 `/transcribe`,界面上却没有入口;要转一段录音只能用仓库里另一个
+/// Python 小工具。现在 WAV(任意采样率 / 声道)都能直接转,其它格式服务端会说清楚
+/// 要先转成 WAV。
+#[tauri::command]
+async fn pick_and_transcribe_file(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<serde_json::Value>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title(t("选择要转写的音频", "Choose audio to transcribe"))
+        .add_filter(t("WAV 音频", "WAV audio"), &["wav", "wave"])
+        .add_filter(t("所有文件", "All files"), &["*"])
+        .pick_file(move |picked| {
+            let _ = tx.send(picked);
+        });
+    let Some(picked) = rx.await.map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| {
+        tr!(
+            "读不到选中的文件: {}",
+            "Can't read the selected file: {}",
+            e
+        )
+    })?;
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "audio.wav".into());
+    let meta = std::fs::metadata(&path)
+        .map_err(|e| tr!("读不到 {}: {}", "Can't read {}: {}", file_name, e))?;
+    // 和服务端的上传上限一致(shared/constants.py 的 MAX_UPLOAD_SIZE),免得传半天才被拒。
+    const MAX_UPLOAD: u64 = 100 * 1024 * 1024;
+    if meta.len() > MAX_UPLOAD {
+        return Err(tr!(
+            "{} 超过 100 MB,请先切成小段再转写",
+            "{} is over 100 MB. Split it into shorter pieces first.",
+            file_name
+        ));
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| tr!("读不到 {}: {}", "Can't read {}: {}", file_name, e))?;
+    let (host, language) = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        let cfg = state.config.lock().map_err(|e| e.to_string())?;
+        (c.stt_url.clone(), cfg.audio.language.clone())
+    };
+    let text = stt::SttClient::new(&host)
+        .transcribe_file(bytes, &file_name, &language)
+        .await?;
+    Ok(Some(serde_json::json!({ "file": file_name, "text": text })))
+}
+
+#[tauri::command]
+async fn get_vocabulary(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    stt::SttClient::new(&host).get_vocabulary().await
+}
+
+#[tauri::command]
+async fn save_vocabulary(
+    state: State<'_, AppState>,
+    entries: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    stt::SttClient::new(&host).save_vocabulary(&entries).await
+}
+
+#[tauri::command]
+async fn reset_llm_prompt(state: State<'_, AppState>) -> Result<String, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    stt::SttClient::new(&host).reset_llm_prompt().await
 }
 
 /// 读后处理开关。前端每次连上服务都会调一次(`loadModels`)。
@@ -493,6 +670,24 @@ async fn get_llm_enabled(
     Ok(enabled)
 }
 
+/// 后处理开关的完整状态:开没开、这台服务支不支持、不支持的原因(F17)。
+///
+/// 前端连上服务时调它,不支持的平台上把开关置灰并把原因写在旁边——以前在
+/// Windows / Linux 上照样能拨,拨了之后要等满 30 秒才说「还在加载模型」。
+#[tauri::command]
+async fn get_llm_status(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<stt::LlmStatus, String> {
+    let host = {
+        let c = state.stt.lock().map_err(|e| e.to_string())?;
+        c.stt_url.clone()
+    };
+    let status = stt::SttClient::new(&host).get_llm_status().await?;
+    cache_llm_enabled(&app, &state, status.enabled);
+    Ok(status)
+}
+
 /// 打开后处理时,等 LLM 服务加载完模型的上限。
 ///
 /// 超时不代表「失败了」,只代表「还没好」——进程还在跑,模型还在读。取 30 秒是
@@ -500,6 +695,99 @@ async fn get_llm_enabled(
 /// 与其把开关一直锁着不动,不如放开,让他看着「服务器」面板等它变成「运行中」
 /// 再拨一次(那时 `start` 会直接采纳,一秒就成)。
 const LLM_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 打开后处理时 LLM 超过 `LLM_READY_TIMEOUT` 还没加载完,后台最多再等多久。
+/// 首次使用要下载好几 GB,慢网下十分钟不算离谱。
+const LLM_LATE_READY_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// 「还在加载」这类返回的固定开头,前端据此显示成提示而不是错误。
+/// 前端按两种语言的开头都认(App.vue 的 `toggleLlm`)。
+pub(crate) fn llm_still_loading() -> &'static str {
+    t(
+        "LLM 服务还在加载模型",
+        "LLM service is still loading the model",
+    )
+}
+
+/// 后处理开关的操作代数,见 `set_llm_enabled`。
+static LLM_TOGGLE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 打开后处理超时之后,在后台接着等 LLM 服务。
+///
+/// - 等到了:替用户把后处理开上,通知前端(`llm-enabled-late`)把开关拨上;
+/// - 加载失败 / 等太久:把刚拉起的进程收回去(只收自己拉起的),通知前端原因;
+/// - 用户中途又拨了开关:这一次作废,什么都不做。
+async fn finish_llm_enable_late(
+    app: tauri::AppHandle,
+    servers: std::sync::Arc<Mutex<server_manager::ServerManager>>,
+    cfg: config::ServerConfig,
+    host: String,
+    gen: u64,
+) {
+    let stale = || LLM_TOGGLE_GEN.load(std::sync::atomic::Ordering::SeqCst) != gen;
+    let started = std::time::Instant::now();
+    let outcome = loop {
+        if stale() {
+            return;
+        }
+        match server_manager::wait_ready(
+            &cfg,
+            server_manager::ServerKind::Llm,
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        {
+            server_manager::Readiness::Ready => break Ok(()),
+            server_manager::Readiness::Failed(reason) => {
+                break Err(tr!(
+                    "LLM 模型加载失败:{}",
+                    "LLM model failed to load: {}",
+                    reason
+                ))
+            }
+            server_manager::Readiness::TimedOut if started.elapsed() >= LLM_LATE_READY_LIMIT => {
+                break Err(tr!(
+                    "LLM 服务加载超过 {} 分钟仍未就绪,已停止",
+                    "LLM service still wasn't ready after {} minutes, so it was stopped",
+                    LLM_LATE_READY_LIMIT.as_secs() / 60
+                ))
+            }
+            server_manager::Readiness::TimedOut => {}
+        }
+    };
+    if stale() {
+        return;
+    }
+    let outcome = match outcome {
+        Ok(()) => stt::SttClient::new(&host).set_llm_enabled(true).await,
+        Err(e) => Err(e),
+    };
+    match outcome {
+        Ok(()) => {
+            let state = app.state::<AppState>();
+            cache_llm_enabled(&app, &state, true);
+            log_info!("[llm] LLM 服务加载完成,后处理已自动开启");
+            let _ = app.emit(
+                "llm-enabled-late",
+                serde_json::json!({
+                    "ok": true,
+                    "message": t(
+                        "LLM 服务加载好了,后处理已开启",
+                        "LLM service is ready. LLM post-processing is on."
+                    )
+                }),
+            );
+        }
+        Err(e) => {
+            rollback_llm_start(&servers, &cfg).await;
+            log_error!("[llm] {}", e);
+            let _ = app.emit(
+                "llm-enabled-late",
+                serde_json::json!({ "ok": false, "message": e }),
+            );
+        }
+    }
+}
 
 /// 自动启动后等 STT 就绪的上限,只用于开关对账。MLX 首次加载模型实测 10–30 秒,
 /// 给得宽一点:等不到只是跳过对账,不影响任何别的事。
@@ -578,22 +866,74 @@ async fn set_llm_enabled(
     let local_managed = cfg.mode == config::ServerMode::Local;
     let servers = state.servers.clone();
     let mut notes: Vec<String> = Vec::new();
+    // 每拨一次开关换一代,让还在后台等「晚到的就绪」的上一次操作知道自己作废了。
+    let my_gen = LLM_TOGGLE_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
 
     if enabled {
+        // 不支持的平台先拦下来,别去拉起一个注定加载失败的 LLM 进程(F17)。
+        // 问不到(老服务端 / 暂时不通)就照旧往下走,由后面的步骤报错。
+        if let Ok(st) = stt::SttClient::new(&host).get_llm_status().await {
+            if !st.supported {
+                return Err(st.reason.unwrap_or_else(|| {
+                    t(
+                        "这台机器不支持 LLM 后处理",
+                        "LLM post-processing isn't supported on this machine",
+                    )
+                    .to_string()
+                }));
+            }
+        }
         if local_managed {
             let msg = server_manager::start(&servers, &cfg, server_manager::ServerKind::Llm)
                 .await
-                .map_err(|e| format!("LLM 服务启动失败,后处理未开启:{}", e))?;
+                .map_err(|e| {
+                    tr!(
+                        "LLM 服务启动失败,后处理未开启:{}",
+                        "LLM service failed to start, so LLM post-processing is off: {}",
+                        e
+                    )
+                })?;
             log_info!("[llm] {}", msg);
-            if !server_manager::wait_ready(&cfg, server_manager::ServerKind::Llm, LLM_READY_TIMEOUT)
-                .await
+            match server_manager::wait_ready(
+                &cfg,
+                server_manager::ServerKind::Llm,
+                LLM_READY_TIMEOUT,
+            )
+            .await
             {
-                return Err(format!(
-                    "LLM 服务还在加载模型(已等 {} 秒),后处理暂未开启。等「服务器」面板显示「运行中」后再打开这个开关即可。",
-                    LLM_READY_TIMEOUT.as_secs()
-                ));
+                server_manager::Readiness::Ready => {}
+                // 模型加载失败(没装推理库、下载断了、内存不够)不会自己
+                // 好起来。以前这里分不出失败和加载中,要白等满 30 秒才说「还在加载」,
+                // 并且留下一个永远加载不完的进程。现在立刻把原因说出来,并把刚拉起的
+                // 进程收回去(照样只收自己拉起的)。
+                server_manager::Readiness::Failed(reason) => {
+                    rollback_llm_start(&servers, &cfg).await;
+                    return Err(tr!(
+                        "LLM 模型加载失败,后处理未开启:{}",
+                        "LLM model failed to load, so LLM post-processing is off: {}",
+                        reason
+                    ));
+                }
+                server_manager::Readiness::TimedOut => {
+                    // 以前到这里就撂下不管:开关拨回「关」,进程接着加载,加载完了也没人
+                    // 去开后处理、也没人停它,几个 G 的模型白占到应用退出。现在后台接着等,
+                    // 好了就替用户把后处理开上,失败或等太久就把进程收回去。
+                    tauri::async_runtime::spawn(finish_llm_enable_late(
+                        app.clone(),
+                        servers.clone(),
+                        cfg.clone(),
+                        host.clone(),
+                        my_gen,
+                    ));
+                    return Err(tr!(
+                        "{}(已等 {} 秒),加载好后会自动开启后处理。",
+                        "{} (waited {}s). LLM post-processing will turn on by itself once it's ready.",
+                        llm_still_loading(),
+                        LLM_READY_TIMEOUT.as_secs()
+                    ));
+                }
             }
-            notes.push("LLM 服务已就绪".into());
+            notes.push(t("LLM 服务已就绪", "LLM service is ready").into());
         }
         if let Err(e) = stt::SttClient::new(&host).set_llm_enabled(true).await {
             // 服务已经起来了、模型也加载完了,偏偏最后这一步没成。直接返回错误
@@ -608,10 +948,10 @@ async fn set_llm_enabled(
             }
             return Err(e);
         }
-        notes.push("LLM 后处理已启用".into());
+        notes.push(t("LLM 后处理已启用", "LLM post-processing is on").into());
     } else {
         stt::SttClient::new(&host).set_llm_enabled(false).await?;
-        notes.push("LLM 后处理已禁用".into());
+        notes.push(t("LLM 后处理已禁用", "LLM post-processing is off").into());
         if local_managed {
             let status =
                 server_manager::status(&servers, &cfg, server_manager::ServerKind::Llm).await;
@@ -624,7 +964,11 @@ async fn set_llm_enabled(
                         }
                         // 停不掉不该把「后处理已关」这件已经做成的事翻回去:标志位
                         // 关了,后处理就是关的,只是内存还占着。如实说出来即可。
-                        Err(e) => notes.push(format!("LLM 服务没能停掉:{}", e)),
+                        Err(e) => notes.push(tr!(
+                            "LLM 服务没能停掉:{}",
+                            "Couldn't stop the LLM service: {}",
+                            e
+                        )),
                     }
                 }
                 plan => {
@@ -638,7 +982,7 @@ async fn set_llm_enabled(
     }
 
     cache_llm_enabled(&app, &state, enabled);
-    Ok(notes.join("；"))
+    Ok(notes.join(t("；", "; ")))
 }
 
 /// STT 起来之后,拿服务端的权威标志和启动时用的本地缓存对一次账。
@@ -653,12 +997,18 @@ async fn reconcile_llm_after_start(
     cfg: config::ServerConfig,
     started_llm: bool,
 ) {
-    if !server_manager::wait_ready(&cfg, server_manager::ServerKind::Stt, STT_READY_TIMEOUT).await {
-        log_error!(
-            "[llm] STT 服务没能在 {} 秒内就绪,后处理开关的对账跳过",
-            STT_READY_TIMEOUT.as_secs()
-        );
-        return;
+    // 对账只要 STT 的 HTTP 接口能答话:`/llm/enabled` 不依赖 STT 模型。所以模型
+    // 加载失败也照样对账,只有等到超时(服务压根没起来)才跳过。
+    match server_manager::wait_ready(&cfg, server_manager::ServerKind::Stt, STT_READY_TIMEOUT).await
+    {
+        server_manager::Readiness::Ready | server_manager::Readiness::Failed(_) => {}
+        server_manager::Readiness::TimedOut => {
+            log_error!(
+                "[llm] STT 服务没能在 {} 秒内就绪,后处理开关的对账跳过",
+                STT_READY_TIMEOUT.as_secs()
+            );
+            return;
+        }
     }
     let truth = match stt::SttClient::new(&cfg.effective_stt_url())
         .get_llm_enabled()
@@ -711,13 +1061,67 @@ async fn register_hotkey(
         .lock()
         .map(|c| c.hotkey.distinguish_left_right)
         .unwrap_or(true);
-    if let Some(keys) = hotkey::parse_hotkey(&shortcut, distinguish) {
-        hotkey::start_listener(app.clone(), keys);
-        eprintln!("[hotkey] Re-registered: {}", shortcut);
-        Ok(())
-    } else {
-        Err(format!("Invalid hotkey format: {}", shortcut))
+    // 失败原因原样交给前端显示。以前只回一句英文「Invalid hotkey format」,
+    // 前端再把它吞成「更新失败」——用户不知道是 Cmd 不支持还是自己录错了。
+    let keys = hotkey::parse_hotkey_checked(&shortcut, distinguish)?;
+    hotkey::start_listener(app.clone(), keys);
+    eprintln!("[hotkey] Re-registered: {}", shortcut);
+    wait_listener_started().await
+}
+
+/// 等新监听器报告起没起来(见 `hotkey::start_status`)。
+///
+/// 以前注册只管 spawn:macOS 上缺「输入监控」时 CGEventTap 建不起来,快捷键是哑的,
+/// 可 `register_hotkey` 照样说成功。一秒内没报上来就当作成功(不拿「不知道」去吓用户)。
+async fn wait_listener_started() -> Result<(), String> {
+    let started = std::time::Instant::now();
+    loop {
+        match hotkey::start_status() {
+            Some(Err(e)) => return Err(e),
+            // Linux 的 rdev 只能先乐观报成功,真失败会在几毫秒内改口,多看一小会儿。
+            Some(Ok(())) if !cfg!(target_os = "linux") || started.elapsed().as_millis() >= 300 => {
+                return Ok(())
+            }
+            _ if started.elapsed().as_secs() >= 1 => return Ok(()),
+            _ => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+        }
     }
+}
+
+/// 启动时建的那个快捷键监听器起没起来。前端启动后问一次,起不来就在主界面上说,
+/// 而不是让用户按了快捷键没反应才去日志里找原因。
+#[tauri::command]
+async fn get_hotkey_status() -> Result<(), String> {
+    wait_listener_started().await
+}
+
+/// 只校验、不注册。录制一结束前端就拿它问一次,用的是和注册同一个解析器:
+/// 录得下来却注册不了的组合当场就能说出原因,而不是等用户点了「应用」才失败。
+#[tauri::command]
+fn validate_hotkey(shortcut: String) -> Result<(), String> {
+    // 分不分左右不影响合法性,随便给一个即可。
+    hotkey::parse_hotkey_checked(&shortcut, true).map(|_| ())
+}
+
+/// 切换「按住说话 / 按一下开始、再按一下结束」,立即生效并存进配置。
+#[tauri::command]
+async fn set_hotkey_toggle(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    toggle: bool,
+) -> Result<(), String> {
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    cfg.hotkey.toggle = toggle;
+    cfg.save(&app)?;
+    hotkey::set_toggle_mode(toggle);
+    Ok(())
+}
+
+/// 设置页开始 / 结束录制新快捷键时调用,录制期间旧快捷键不触发录音。
+#[tauri::command]
+async fn set_hotkey_suspended(suspended: bool) -> Result<(), String> {
+    hotkey::set_suspended(suspended);
+    Ok(())
 }
 
 #[tauri::command]
@@ -736,9 +1140,104 @@ async fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), Strin
 
 // ── Diarize commands ──
 
+/// 把文字输入到「用户正在用的那个窗口」。
+///
+/// 主窗口上的「⌨️ 输入」按钮以前直接调 `type_text`:可用户点按钮的那一下,
+/// 焦点就在本应用自己的窗口上,字全敲给了自己(一个没有输入框的界面),
+/// 目标应用里什么都没出现。`hand_back_focus` 为 true 时先把主窗口藏起来、
+/// 把前台还给上一个应用,等焦点落稳再输入。
 #[tauri::command]
-async fn auto_input(text: String) -> Result<(), String> {
-    input::type_text(&text)
+async fn auto_input(
+    app: tauri::AppHandle,
+    text: String,
+    hand_back_focus: Option<bool>,
+) -> Result<(), String> {
+    if hand_back_focus.unwrap_or(false) {
+        if let Some(window) = app.get_webview_window("main") {
+            // 托盘没建成时藏起来就再也找不回来了(R20),最小化同样能把焦点让出去。
+            if tray::available() {
+                let _ = window.hide();
+            } else {
+                let _ = window.minimize();
+            }
+        }
+        // macOS:只藏窗口不够,本应用仍是前台应用;`hide:` 会让系统把前台
+        // 交还给上一个应用。AppKit 只能在主线程调用。
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.run_on_main_thread(|| unsafe {
+                use objc2::runtime::AnyObject;
+                use objc2::{class, msg_send};
+                let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+                if !ns_app.is_null() {
+                    let nil: *mut AnyObject = std::ptr::null_mut();
+                    let _: () = msg_send![ns_app, hide: nil];
+                }
+            });
+        }
+        // 前台切换是异步的,马上敲字会落进半路上的窗口。
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        let result = deliver_text(&app, &text).await;
+        // `hide:` 之后整个应用处于「隐藏」状态,之后悬浮胶囊 orderFront 也出不来。
+        // 输完就解除隐藏,但不抢前台(主窗口本身已经藏起来了)。
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.run_on_main_thread(|| unsafe {
+                use objc2::runtime::AnyObject;
+                use objc2::{class, msg_send};
+                let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+                if !ns_app.is_null() {
+                    let _: () = msg_send![ns_app, unhideWithoutActivation];
+                }
+            });
+        }
+        return result;
+    }
+    deliver_text(&app, &text).await
+}
+
+/// 按配置的方式把文字送进当前焦点窗口。
+///
+/// 粘贴方式是默认的:逐字模拟键盘时,文本里的换行会变成回车键 —— 在聊天软件里
+/// 等于把没说完的话提前发出去;长文本逐字敲也慢,还会被激活的输入法截走。
+async fn deliver_text(app: &tauri::AppHandle, text: &str) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    if text.is_empty() {
+        return Ok(());
+    }
+    let method = app
+        .state::<AppState>()
+        .config
+        .lock()
+        .map(|c| c.ui.input_method)
+        .unwrap_or_default();
+    if method == config::InputMethod::Type {
+        return input::type_text(text);
+    }
+    if method == config::InputMethod::Copy {
+        return app
+            .clipboard()
+            .write_text(text.to_string())
+            .map_err(|e| tr!("写剪贴板失败: {}", "Couldn't write to the clipboard: {}", e));
+    }
+
+    let previous = app.clipboard().read_text().ok();
+    app.clipboard()
+        .write_text(text.to_string())
+        .map_err(|e| tr!("写剪贴板失败: {}", "Couldn't write to the clipboard: {}", e))?;
+    // 剪贴板变更在有的平台上是异步生效的,紧接着粘贴可能贴出旧内容。
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    let pasted = input::press_paste();
+    // 等目标应用把剪贴板读走再还原;还原前确认剪贴板里还是我们写的那段 ——
+    // 这几百毫秒里用户自己复制了别的东西,就别把它覆盖掉。
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    if let Some(prev) = previous {
+        if app.clipboard().read_text().ok().as_deref() == Some(text) {
+            let _ = app.clipboard().write_text(prev);
+        }
+    }
+    pasted
 }
 
 // ── Permission commands (macOS TCC) ──
@@ -768,15 +1267,6 @@ async fn open_permission_settings(permission: permissions::Permission) -> Result
 }
 
 #[tauri::command]
-async fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {
-    hotkey::reset_state();
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
-    Ok(())
-}
-
-#[tauri::command]
 async fn check_update(app: tauri::AppHandle) -> Result<update::UpdateInfo, String> {
     eprintln!("[update] Checking for updates...");
     update::check(&app).await
@@ -786,22 +1276,6 @@ async fn check_update(app: tauri::AppHandle) -> Result<update::UpdateInfo, Strin
 async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
     eprintln!("[update] Starting install...");
     update::download_and_install(&app).await
-}
-
-#[tauri::command]
-async fn transcribe_ws(
-    state: State<'_, AppState>,
-    audio_data: Vec<u8>,
-    language: Option<String>,
-) -> Result<String, String> {
-    let host = {
-        let c = state.stt.lock().map_err(|e| e.to_string())?;
-        c.stt_url.clone()
-    };
-    let lang = language.unwrap_or_else(|| "auto".into());
-    stt::SttClient::new(&host)
-        .transcribe_ws(audio_data, &lang)
-        .await
 }
 
 // ── 本地服务器管理 ──
@@ -882,6 +1356,7 @@ async fn set_server_mode(
     let url = {
         let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
         cfg.server.mode = mode;
+        stt::set_api_token(cfg.server.active_token());
         let url = cfg.server.effective_stt_url();
         cfg.save(&app)?;
         url
@@ -920,15 +1395,111 @@ async fn set_local_server_config(
     Ok(server_manager::report(&servers, &cfg).await.local_paths)
 }
 
+/// 这次启动是不是全新安装。首启向导(F1)要它区分「新用户」和「升级上来、
+/// 配置里还没有 `onboarding_done` 的老用户」。
+#[tauri::command]
+async fn is_fresh_install(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.fresh_install)
+}
+
+/// 心跳最近一次看到的 STT 服务状态。前端启动时先拉一次:`stt-health` 事件只在
+/// 状态变化时才发,webview 起来之前发过的那些它收不到。
+#[tauri::command]
+async fn get_stt_health(state: State<'_, AppState>) -> Result<heartbeat::SttHealth, String> {
+    Ok(state.stt_health.lock().map_err(|e| e.to_string())?.clone())
+}
+
 /// 自动探测仓库 / 解释器路径。探测不到时 `problem` 里是给用户看的原因。
 #[tauri::command]
 async fn detect_local_server() -> Result<server_manager::DetectResult, String> {
     Ok(server_manager::detect())
 }
 
+/// 环境体检(F2):按当前配置的仓库 / 解释器查依赖、版本、加速后端和 uv。
+/// 路径输入框改完即保存(`set_local_server_config`),所以读配置就是界面上看到的值。
+#[tauri::command]
+async fn check_environment(state: State<'_, AppState>) -> Result<env_check::EnvReport, String> {
+    let local = server_config_snapshot(&state)?.local;
+    Ok(env_check::check(&local).await)
+}
+
+// ── 应用外壳:托盘、诊断、退出 ──
+
+/// 前端按连接状态更新托盘里的状态行(已连接 · 模型 / 连接中 / 未连接)。
+/// 状态只有前端知道得全(连接重试循环在那边),所以由它来推。
+#[tauri::command]
+async fn set_tray_status(app: tauri::AppHandle, text: String) -> Result<(), String> {
+    tray::set_status(&app, &text);
+    Ok(())
+}
+
+/// 前端解析出实际界面语言(`zh` / `en`,「跟随系统」在前端解析)后调用:
+/// 之后 Rust 发出的提示用这个语言,托盘菜单换文案,悬浮胶囊跟着换。
+#[tauri::command]
+async fn set_ui_language(app: tauri::AppHandle, lang: String) -> Result<(), String> {
+    i18n::set_resolved(&lang);
+    tray::relabel(&app);
+    let _ = app.emit("ui-language", &lang);
+    Ok(())
+}
+
+/// 托盘有没有建成。建不成时前端要告诉用户:关窗只是最小化,退出在「关于」里。
+#[tauri::command]
+async fn tray_available() -> Result<bool, String> {
+    Ok(tray::available())
+}
+
+/// 从界面退出。托盘建不成(典型:Linux 缺 AppIndicator)时,托盘菜单里那个
+/// 「退出」根本不存在,关窗按钮又只是最小化——没有这个按钮就退不出去。
+#[tauri::command]
+async fn quit_app(app: tauri::AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
+}
+
+/// 「复制诊断信息」的内容:版本、构建、系统、连接方式、日志文件位置和最近的日志。
+/// 用户报问题时一键粘过来,不用我们再一条条问「什么版本、什么系统」。
+#[tauri::command]
+async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
+    let build = BuildInfo::current();
+    let (mode, stt_url) = {
+        let cfg = state.config.lock().map_err(|e| e.to_string())?;
+        (cfg.server.mode, cfg.server.effective_stt_url())
+    };
+    let snap = log::snapshot();
+    let skip = snap.lines.len().saturating_sub(200);
+    let tail: Vec<&str> = snap.lines[skip..].iter().map(|l| l.text.as_str()).collect();
+    Ok(tr!(
+        "Voice Input v{} · build {} · {}\n系统: {} {}\n连接: {:?} {}\n托盘: {}\n日志文件: {}\n\n── 最近 {} 行客户端日志 ──\n{}\n",
+        "Voice Input v{} · build {} · {}\nSystem: {} {}\nConnection: {:?} {}\nTray: {}\nLog file: {}\n\n── Last {} lines of client log ──\n{}\n",
+        build.version,
+        build.build_id,
+        build.built_at,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        mode,
+        stt_url,
+        if tray::available() {
+            t("正常", "OK")
+        } else {
+            t("不可用", "unavailable")
+        },
+        snap.file.as_deref().unwrap_or(t("(未创建)", "(not created)")),
+        tail.len(),
+        tail.join("\n")
+    ))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例必须第一个注册(插件文档的要求:它得赶在别的插件做任何初始化之前
+        // 把第二个进程拦下)。双开的后果是两套全局快捷键监听,按一次录两遍、
+        // 输入两遍;第二个实例现在只负责把第一个的窗口叫出来,然后自己退出。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            log_info!("[app] 应用被再次启动,已把现有窗口调出来(第二个实例直接退出)");
+            show_main_window(app);
+        }))
         // 更新器插件以前只在 Cargo.toml 里挂着,从没注册过:update.rs 自己用
         // reqwest 下载再启动安装器,`latest.json` 里的签名一眼都没看。注册它之后
         // 端点和公钥统一由 tauri.conf.json 的 plugins.updater 提供,签名验不过
@@ -936,6 +1507,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
@@ -950,12 +1522,19 @@ pub fn run() {
             // 且层级提到 25,isOnActiveSpace 在全屏场景下仍然是 false。
             // accessory 应用则不受此限制。
             //
-            // 代价:Dock 图标和应用菜单栏消失。本应用由快捷键 + 托盘驱动
-            // (ui.use_tray 默认开启),主窗口通过托盘菜单打开,因此代价可接受。
+            // 代价:Dock 图标和应用菜单栏消失。本应用由快捷键 + 托盘驱动,
+            // 主窗口通过托盘菜单打开,因此代价可接受。托盘建不成时的退路见下面
+            // `tray::setup` 那一段。
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            // 日志最先初始化:下面读配置时的「解析失败已备份」要能落进日志文件。
+            log::init(app.handle());
+
+            // 必须在 `load` 之前问:找不到配置时 `load` 会立刻写一份默认的出来。
+            let fresh_install = config::VoiceInputConfig::is_fresh_install(app.handle());
             let mut cfg = config::VoiceInputConfig::load(app.handle());
+            i18n::init_from_pref(&cfg.ui.language, syslang::system_is_chinese());
 
             // 首次运行:猜一次仓库 / 解释器位置并存进配置。猜不到就留空——
             // UI 会明确说「没探测到,请手动填」,而不是在启动时静默失败。
@@ -969,6 +1548,12 @@ pub fn run() {
                     );
                     cfg.server.local.repo_path = detected.repo_path;
                     cfg.server.local.python_path = detected.python_path;
+                    if cfg.server.apply_first_run_defaults(fresh_install) {
+                        log_info!(
+                            "[server] 首次启动且仓库就在本机:默认本地管理{}",
+                            if cfg.server.local.auto_start { "并随应用启动服务" } else { "(还没有解释器,先不自动启动)" }
+                        );
+                    }
                     let _ = cfg.save(app.handle());
                 } else if let Some(problem) = detected.problem {
                     log_info!("[server] {}", problem);
@@ -978,16 +1563,20 @@ pub fn run() {
             // 客户端连哪儿由模式决定:远程连 host,本地连 127.0.0.1:stt_port。
             // 老配置没有 mode 字段 → 默认 Remote → 和以前完全一样。
             let stt_url = cfg.server.effective_stt_url();
+            stt::set_api_token(cfg.server.active_token());
             let shortcut = cfg.hotkey.key.clone();
             let distinguish_sides = cfg.hotkey.distinguish_left_right;
+            hotkey::set_toggle_mode(cfg.hotkey.toggle);
             let start_minimized = cfg.ui.start_minimized;
             let local_mode = cfg.server.mode == config::ServerMode::Local;
             let auto_start = local_mode && cfg.server.local.auto_start;
 
             // 子进程日志和 pid 记账放在应用数据目录里,和 config.json 同级。
+            // 兜底路径的主目录也要认 Windows 的 USERPROFILE,以前只读 HOME。
             let data_dir = app.path().app_data_dir().unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                std::path::PathBuf::from(home).join(".config/voice-input")
+                server_manager::home_dir()
+                    .unwrap_or_else(|| ".".into())
+                    .join(".config/voice-input")
             });
             let mut manager = server_manager::ServerManager::new(data_dir);
             // 上次会话如果是被强杀的,子进程还活着;校验后认领回来,
@@ -1003,9 +1592,12 @@ pub fn run() {
                 config: Mutex::new(cfg),
                 indicator_status: std::sync::Arc::new(Mutex::new(String::new())),
                 servers: std::sync::Arc::new(Mutex::new(manager)),
+                stt_health: Mutex::new(heartbeat::SttHealth::unknown(&stt_url)),
+                fresh_install,
             });
 
-            log::init(app.handle());
+            // 连接状态不再只在设置面板开着时才更新(R12):后台每 5 秒看一次服务。
+            heartbeat::spawn(app.handle().clone());
 
             let build = BuildInfo::current();
             log_info!(
@@ -1015,7 +1607,16 @@ pub fn run() {
                 build.built_at
             );
 
-            let _ = tray::setup(app);
+            // 托盘建不成(Linux GNOME 缺 AppIndicator 等)以前被 `let _` 吞掉:
+            // 再加上「启动时最小化」和「关窗只是隐藏」,应用就既看不见也退不出。
+            if let Err(e) = tray::setup(app) {
+                log_error!(
+                    "[tray] 系统托盘创建失败({}):主窗口不会被隐藏,关闭按钮改为最小化;退出请用「设置 → 关于 → 退出应用」",
+                    e
+                );
+            }
+            // 托盘「复制最近一条」接上持久化的历史:重启后不用等说完第一句才能用。
+            history::seed_tray(app.handle());
 
             // 启动时只查询三项权限并记录,不一次性把三个弹窗全甩给用户。
             // 唯一在启动时主动申请的是「输入监控」——全局快捷键监听器马上就要
@@ -1081,7 +1682,7 @@ pub fn run() {
                 }
             }
 
-            if start_minimized {
+            if start_minimized && tray::available() {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
@@ -1092,8 +1693,8 @@ pub fn run() {
                 show_main_window(app.handle());
             }
 
-            // 标题栏上的关闭按钮只藏窗口,不退应用;退出只有托盘菜单里的「退出」
-            // 一条路。
+            // 标题栏上的关闭按钮只藏窗口,不退应用;退出走托盘菜单里的「退出」。
+            // 托盘没建成时藏起来就再也找不回来了,所以改成最小化(任务栏里还在)。
             //
             // `prevent_close()` 这一句是关键:少了它,下面 `hide()` 藏起来的窗口
             // 紧接着还是会被真正关掉,而主窗口一关整个应用就跟着退了——用户点个
@@ -1104,7 +1705,11 @@ pub fn run() {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         hotkey::reset_state();
-                        let _ = win.hide();
+                        if tray::available() {
+                            let _ = win.hide();
+                        } else {
+                            let _ = win.minimize();
+                        }
                     }
                 });
             }
@@ -1119,25 +1724,32 @@ pub fn run() {
             get_audio_devices,
             get_audio_level,
             get_indicator_status,
-            transcribe_ws,
             get_models,
             switch_model,
+            get_model_status,
             get_llm_models,
             get_build_info,
             switch_llm_model,
             get_config,
             update_config,
-            import_old_config,
             get_llm_prompt,
             save_llm_prompt,
+            reset_llm_prompt,
+            get_vocabulary,
+            pick_and_transcribe_file,
+            save_vocabulary,
             get_llm_enabled,
+            get_llm_status,
             set_llm_enabled,
             auto_input,
             get_permissions,
             request_permission,
             open_permission_settings,
-            minimize_to_tray,
             register_hotkey,
+            get_hotkey_status,
+            set_hotkey_suspended,
+            set_hotkey_toggle,
+            validate_hotkey,
             get_autostart,
             set_autostart,
             check_update,
@@ -1149,6 +1761,21 @@ pub fn run() {
             set_server_mode,
             set_local_server_config,
             detect_local_server,
+            check_environment,
+            log::get_gui_logs,
+            log::open_log_dir,
+            get_diagnostics,
+            set_tray_status,
+            set_ui_language,
+            tray_available,
+            quit_app,
+            get_stt_health,
+            is_fresh_install,
+            history::history_list,
+            history::history_add,
+            history::history_delete,
+            history::history_update_text,
+            history::history_clear,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
@@ -1184,8 +1811,20 @@ pub fn run() {
         // `reclaim_orphans` 兜底:核对 pid 与命令行后认领回来,用户仍然能从
         // UI 里停掉;万一认领不成(比如 pid 已被复用),`start` 的健康探测
         // 也会把它当成外部进程直接采纳,绝不会重复拉起。
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
+        .run(|app_handle, event| match event {
+            // macOS:本应用是没有 Dock 图标的 accessory 应用。窗口藏着时从启动台 /
+            // Finder 再点一次,系统不会起第二个进程,而是给正在跑的这个发「reopen」;
+            // 以前没人接,用户看到的是点了没反应。
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => show_main_window(app_handle),
+            // 装完更新重启时不停本地服务:新进程会按 pid 记账认领回来(见 update.rs),
+            // 省得把几个 G 的模型重新加载一遍。只在 unix 上这么做 —— Windows 不认领
+            // 遗留进程(R33),留下来就成了管不着的外部进程;而且 Windows 的更新由
+            // NSIS 安装器负责重启,本来也走不到这里。
+            tauri::RunEvent::Exit
+                if cfg!(unix)
+                    && update::RESTARTING_FOR_UPDATE.load(std::sync::atomic::Ordering::SeqCst) => {}
+            tauri::RunEvent::Exit => {
                 // 先把 Arc 克隆出来:`State` 借的是 `app_handle`,而 guard 的
                 // 析构要排在 `state` 之后,直接锁会活不过这个块。
                 // 先把 Arc 克隆出来(`State` 借的是 `app_handle`),再把锁的结果
@@ -1197,5 +1836,6 @@ pub fn run() {
                     manager.shutdown_all();
                 }
             }
+            _ => {}
         });
 }

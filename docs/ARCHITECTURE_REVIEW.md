@@ -9,7 +9,7 @@
 Voice Input Framework (VIF) 是一个基于大模型的语音识别框架,支持实时流式语音识别与 LLM 后处理。当前处于 **"单体 → STT/LLM 分离服务" 迁移中途**:
 
 - **STT 服务** `services/stt_server.py`(端口 6544):FastAPI,负责音频转写,并**兼任 LLM 代理**(转发 `/llm/*` 请求到 6545)。
-- **LLM 服务** `services/llm_server.py`(端口 6545):独立进程,`mlx_lm` 加载模型做文本后处理,解决 transformers 版本冲突。
+- **LLM 服务** `services/llm_server.py`(端口 6545):独立进程,`mlx_lm`(Apple Silicon)或 llama.cpp(其它平台,GGUF)加载模型做文本后处理,解决 transformers 版本冲突。
 - **两套客户端并存**:Python 客户端(`client/`,PySimpleGUI)与 Tauri GUI(`gui/`,Rust + Vue 3)。
 - **旧单体残留**:`server/` 包(除 `models/` 外)、`vif-run.py`、`client/gui.py`、`shared/protocol.py` 等仍是死代码或失效入口。
 
@@ -49,7 +49,7 @@ server/models/* 引擎(MLX / whisper.cpp / transformers)
 
 ### 2.3 技术栈
 
-- 服务端:FastAPI + uvicorn + pydantic v2 + websockets + httpx;STT 用 mlx-audio / mlx_whisper / whisper.cpp / transformers(torch);LLM 用 mlx-lm。
+- 服务端:FastAPI + uvicorn + pydantic v2 + websockets + httpx;STT 用 mlx-audio / mlx_whisper / whisper.cpp / transformers(torch);LLM 用 mlx-lm(Apple Silicon)或 llama-cpp-python(其它平台)。
 - Python 客户端:PySimpleGUI、pynput、sounddevice、pyautogui、pystray。
 - Rust 客户端:Tauri 2 + tokio-tungstenite + reqwest。
 - 多份 requirements-*.txt 对应独立 conda 环境(vif-stt、mlx-test)。
