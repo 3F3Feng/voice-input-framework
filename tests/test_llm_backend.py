@@ -180,7 +180,7 @@ class TestGGUFModelTable:
 
         monkeypatch.setenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
         backend = srv.LlamaCppBackend()
-        assert srv.resolve_llm_model(backend) == backend.DEFAULT_MODEL
+        assert srv.resolve_llm_model(backend) == backend.default_model()
         # 拼错的名字照旧交给 load 报错,不悄悄吞掉
         monkeypatch.setenv("VIF_LLM_MODEL", "Qwen-typo")
         assert srv.resolve_llm_model(backend) == "Qwen-typo"

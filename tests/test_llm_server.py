@@ -299,7 +299,7 @@ class TestLoadFailureAndModelChoice:
         state_file.write_text('{"llm_model": "gone-model"}')
         monkeypatch.delenv("VIF_LLM_MODEL", raising=False)
         backend = srv.MLXBackend()
-        assert srv.resolve_llm_model(backend) == backend.DEFAULT_MODEL
+        assert srv.resolve_llm_model(backend) == backend.default_model()
 
     def test_select_endpoint_remembers_only_on_success(self, monkeypatch, state_file):
         from fastapi.testclient import TestClient
