@@ -11,6 +11,7 @@ mod log;
 mod permissions;
 mod server_manager;
 mod stt;
+mod syslang;
 mod tray;
 mod update;
 
@@ -1533,7 +1534,7 @@ pub fn run() {
             // 必须在 `load` 之前问:找不到配置时 `load` 会立刻写一份默认的出来。
             let fresh_install = config::VoiceInputConfig::is_fresh_install(app.handle());
             let mut cfg = config::VoiceInputConfig::load(app.handle());
-            i18n::init_from_pref(&cfg.ui.language);
+            i18n::init_from_pref(&cfg.ui.language, syslang::system_is_chinese());
 
             // 首次运行:猜一次仓库 / 解释器位置并存进配置。猜不到就留空——
             // UI 会明确说「没探测到,请手动填」,而不是在启动时静默失败。

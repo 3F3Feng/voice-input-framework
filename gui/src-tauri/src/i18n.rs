@@ -6,8 +6,7 @@
 //! 「跟随系统」由前端解析(`navigator.languages` 在 WebView 里跟着系统语言走,
 //! Rust 这边没有现成可靠的办法,macOS 从 Finder 启动时连 `LANG` 都没有),
 //! 解析完调 `set_ui_language` 告诉这边。在那之前,配置里明确选了语言就用配置的,
-//! 否则先按中文。
-
+//! 否则按 `syslang.rs` 对系统语言的初判。
 //!
 //! 这个文件不依赖 tauri:`stt.rs` 用到它,而 `stt-logic-tests` 用 `#[path]` 复用
 //! `stt.rs` 时也得把它一起带上。
@@ -45,9 +44,18 @@ macro_rules! tr {
     };
 }
 
-/// 启动时按配置里的偏好先定一个语言。`auto` 先按中文,等前端解析完再改。
-pub fn init_from_pref(pref: &str) {
-    ENGLISH.store(pref == "en", Ordering::Relaxed);
+/// 启动时按配置里的偏好先定一个语言。`auto` 按系统语言初判(`system_chinese`),
+/// 等前端解析完再以前端为准。
+pub fn init_from_pref(pref: &str, system_chinese: bool) {
+    ENGLISH.store(english_for(pref, system_chinese), Ordering::Relaxed);
+}
+
+fn english_for(pref: &str, system_chinese: bool) -> bool {
+    match pref {
+        "en" => true,
+        "zh" => false,
+        _ => !system_chinese,
+    }
 }
 
 /// 前端解析出实际语言后调用,`lang` 是 `zh` 或 `en`。
@@ -64,6 +72,16 @@ mod tests {
     fn picks_by_language() {
         assert_eq!(pick(true, "你好", "Hello"), "Hello");
         assert_eq!(pick(false, "你好", "Hello"), "你好");
+    }
+
+    #[test]
+    fn pref_overrides_system_language() {
+        assert!(english_for("en", true));
+        assert!(!english_for("zh", false));
+        assert!(english_for("auto", false));
+        assert!(!english_for("auto", true));
+        // 手改配置写了认不得的值,当「跟随系统」。
+        assert!(!english_for("fr", true));
     }
 
     #[test]
