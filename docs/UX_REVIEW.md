@@ -445,6 +445,7 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
 | 结果编辑写回历史 | 复制 / 输入 / 关闭 / 切换时把改过的字写回那一条 |
 | 转写心跳 | 服务端转写 / 后处理期间每 5 秒发 progress,客户端收到过心跳后 60 秒无动静即判定卡住 |
 | F22 英文界面 | 设置里「界面语言 / Language」:跟随系统 / 中文 / English(`ui.language`),向导欢迎页也能切;主窗口、设置、向导、悬浮胶囊、托盘、Rust 返回的错误与状态、环境体检全部中英两套(就地写成 `t("中文", "English")`);Python 服务按 `Accept-Language` 回中英文提示(模型说明、加载失败、LLM 报错等);macOS 麦克风授权说明按系统语言(`InfoPlist.strings`);Windows 安装器带简体中文;默认提示词和三个预设都有英文正文(没存过自己的提示词时默认的跟着界面语言);「跟随系统」时 Rust 启动那一刻就按系统语言(托盘、快捷键报错不再先出中文);日志仍只有中文 |
+| 默认 LLM 换成 Gemma-4-E2B QAT | 64 例自动检查(`tools/llm_prompt_eval.py`)比了 9 个小模型:MLX 与 llama.cpp 上都只有 1 例不合格,延迟约为旧默认一半,内存相当;旧的 llama.cpp 默认 Qwen3.5-2B 54/64 不合格(基本原样照抄)。默认模型加载失败时退回旧默认;提示词照顾中英混说、写明英文大小写 |
 | LLM 不再翻译 | 实测中文提示词会让模型把英文口述整理成中文、把中英混说里的 deploy / rollback 译掉:包原文的说明加「保持原文的语言,不要翻译」,输出兜底加「换了语言就退回原文」 |
 | F17 长期 | LLM 服务加 llama.cpp 后端(GGUF,默认 Qwen3.5-2B-GGUF):Apple Silicon 用 MLX,其它平台装了 llama-cpp-python 就用 llama.cpp,`VIF_LLM_BACKEND` 可强制;`/llm/enabled` 的 supported 跟着走,没装时提示 `setup-env --llm` |
 
@@ -462,13 +463,19 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
 - hf-mirror 实际下载(境外 IP 会被转回 huggingface.co,只在国内网络下有意义)。
 - F22 英文界面只在浏览器里用假后端看过主窗口、设置、向导(中英切换即时生效);托盘、悬浮胶囊、
   真服务端的英文报错、Windows 安装器的中文都没在真应用里看过。
+- 新默认 LLM(Gemma-4-E2B)只在 M3 Max 上测过;8 GB 内存的 Mac、纯 CPU 的 Windows / Linux 上的
+  速度和内存没量过。老用户升级后首次启动会下载约 4 GB 的新模型。
 - F17 llama.cpp 后端只在本机(M3 Max,Metal 版和 `VIF_LLM_GPU_LAYERS=0` 的纯 CPU)实测过;
   Windows / Linux 上 `setup-env --llm` 现编译 llama-cpp-python、CUDA / Vulkan 版都没验证过。
 
 ### 5.3 后续迭代
 
 1. 录音期间就建 WS、边录边传(现在松手后才一次性上传;有了分块合并,长录音的等待已经缩短)。
-2. CI 的 Python 3.10 矩阵与 `requires-python >=3.11` 不一致 —— 要不要改 CI 由维护者决定。
+   PR #6(已关闭,提交仍可在 PR 里看到)在旧的 Python 客户端上做过一版,可参考思路,代码合不进来。
+2. NVIDIA 机器上跑 Qwen3-ASR(现在非 Apple 平台只有 Whisper,中文不如 Qwen3-ASR):PR #6 的
+   `server/models/qwen3_asr_cuda.py` 用 qwen_asr 包 + bfloat16 + Flash Attention 2,要按现在的
+   `services/stt_engine.py` 重写成一个引擎。
+3. CI 的 Python 3.10 矩阵与 `requires-python >=3.11` 不一致 —— 要不要改 CI 由维护者决定。
 
 ### 5.4 每批合并后的验证清单
 
