@@ -1,5 +1,6 @@
 mod audio;
 mod config;
+mod crash;
 mod env_check;
 mod heartbeat;
 mod history;
@@ -1501,8 +1502,8 @@ async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     let skip = snap.lines.len().saturating_sub(200);
     let tail: Vec<&str> = snap.lines[skip..].iter().map(|l| l.text.as_str()).collect();
     Ok(tr!(
-        "Voice Input v{} · build {} · {}\n系统: {} {}\n连接: {:?} {}\n托盘: {}\n日志文件: {}\n\n── 最近 {} 行客户端日志 ──\n{}\n",
-        "Voice Input v{} · build {} · {}\nSystem: {} {}\nConnection: {:?} {}\nTray: {}\nLog file: {}\n\n── Last {} lines of client log ──\n{}\n",
+        "Voice Input v{} · build {} · {}\n系统: {} {}\n连接: {:?} {}\n托盘: {}\n日志文件: {}\n{}\n── 最近 {} 行客户端日志 ──\n{}\n",
+        "Voice Input v{} · build {} · {}\nSystem: {} {}\nConnection: {:?} {}\nTray: {}\nLog file: {}\n{}\n── Last {} lines of client log ──\n{}\n",
         build.version,
         build.build_id,
         build.built_at,
@@ -1516,6 +1517,7 @@ async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
             t("不可用", "unavailable")
         },
         snap.file.as_deref().unwrap_or(t("(未创建)", "(not created)")),
+        crash::diagnostics_section(),
         tail.len(),
         tail.join("\n")
     ))
@@ -1523,6 +1525,8 @@ async fn get_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 最先装:`setup()` 里、各个后台线程里的 panic 都要进日志文件(见 crash.rs)。
+    crash::install_panic_hook();
     tauri::Builder::default()
         // 单实例必须第一个注册(插件文档的要求:它得赶在别的插件做任何初始化之前
         // 把第二个进程拦下)。双开的后果是两套全局快捷键监听,按一次录两遍、
@@ -1609,6 +1613,8 @@ pub fn run() {
                     .unwrap_or_else(|| ".".into())
                     .join(".config/voice-input")
             });
+            // 会话标记 + 上次有没有异常退出(后台线程里找崩溃报告,见 crash.rs)。
+            crash::start_session(&data_dir, app.handle().clone());
             let mut manager = server_manager::ServerManager::new(data_dir);
             // 上次会话如果是被强杀的,子进程还活着;校验后认领回来,
             // 这样用户还能从 UI 里停掉它们。
@@ -1796,6 +1802,10 @@ pub fn run() {
             log::get_gui_logs,
             log::open_log_dir,
             get_diagnostics,
+            crash::get_last_crash,
+            crash::dismiss_last_crash,
+            crash::get_crash_report_text,
+            crash::reveal_crash_report,
             set_tray_status,
             set_ui_language,
             tray_available,
@@ -1852,10 +1862,17 @@ pub fn run() {
             // 省得把几个 G 的模型重新加载一遍。只在 unix 上这么做 —— Windows 不认领
             // 遗留进程(R33),留下来就成了管不着的外部进程;而且 Windows 的更新由
             // NSIS 安装器负责重启,本来也走不到这里。
+            //
+            // 两条退出路径都要删会话标记:装完更新重启也是正常退出,留着它下次启动就会
+            // 误报「上次异常退出」。`restart()` 是先走完这里、再拉起新进程的。
             tauri::RunEvent::Exit
                 if cfg!(unix)
-                    && update::RESTARTING_FOR_UPDATE.load(std::sync::atomic::Ordering::SeqCst) => {}
+                    && update::RESTARTING_FOR_UPDATE.load(std::sync::atomic::Ordering::SeqCst) =>
+            {
+                crash::end_session();
+            }
             tauri::RunEvent::Exit => {
+                crash::end_session();
                 // 先把 Arc 克隆出来:`State` 借的是 `app_handle`,而 guard 的
                 // 析构要排在 `state` 之后,直接锁会活不过这个块。
                 // 先把 Arc 克隆出来(`State` 借的是 `app_handle`),再把锁的结果

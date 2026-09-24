@@ -499,6 +499,19 @@
         ⚠️ {{ t('全局快捷键不可用:', 'Global hotkey unavailable: ') }}{{ hotkeyProblem }}
       </div>
 
+      <!-- 上次异常退出:系统留了崩溃报告才提示(强制退出、断电之类只记日志)。
+           以前崩了什么都不说,下次启动一切如常,原因只能去翻系统目录。 -->
+      <div v-if="lastCrash" class="crash-banner">
+        <button class="crash-close" :title="t('知道了', 'Dismiss')" @click="dismissCrash">✕</button>
+        <div class="crash-title">⚠️ {{ t('上次异常退出', 'The app quit unexpectedly last time') }}</div>
+        <div class="crash-reason">{{ lastCrash.reason }}</div>
+        <div class="crash-meta">{{ t(`v${lastCrash.version} · 启动于 ${lastCrash.started_at}`, `v${lastCrash.version} · started ${lastCrash.started_at}`) }}</div>
+        <div class="choice-actions">
+          <button class="s-btn" @click="revealCrashReport">{{ t('打开崩溃报告所在位置', 'Show crash report') }}</button>
+          <button class="s-btn" @click="copyCrashInfo">{{ t('复制诊断信息', 'Copy diagnostics') }}</button>
+        </div>
+      </div>
+
       <!-- 首次使用问一次输出方式。「自动输入」默认关，新用户说完话目标窗口里什么都
            没出现，只会以为坏了；可默认打开又会在没授权辅助功能时直接报错。所以问。 -->
       <div v-if="showOutputChoice" class="choice-banner">
@@ -2719,12 +2732,39 @@ watch(sttState, (next, prev) => {
 /** 全局快捷键监听器起不来的原因;正常时为空。 */
 const hotkeyProblem = ref("");
 
+/** 上次异常退出的说明(Rust `crash::CrashNotice`);没有、或用户关掉了就是 null。 */
+interface CrashNotice { reason: string; version: string; started_at: string; report_path: string | null }
+const lastCrash = ref<CrashNotice | null>(null);
+async function initLastCrash() {
+  // 崩溃报告是后台线程找的,系统落盘又要半分钟左右:挂载时可能还没结果,所以先订阅
+  // 事件再拉一次当前状态,两边哪个先到都行。
+  listen<CrashNotice>("last-crash", (event) => { lastCrash.value = event.payload; });
+  try { lastCrash.value = (await invoke<CrashNotice | null>("get_last_crash")) ?? lastCrash.value; }
+  catch (e) { console.error("get_last_crash error:", e); }
+}
+function dismissCrash() {
+  lastCrash.value = null;
+  invoke("dismiss_last_crash").catch(() => {});
+}
+async function revealCrashReport() {
+  try { await invoke("reveal_crash_report"); }
+  catch (e) { toast(`${e}`, "err"); }
+}
+/** 崩溃摘要 + 版本 / 构建 / 系统,报问题时直接粘。 */
+async function copyCrashInfo() {
+  try {
+    await navigator.clipboard.writeText(await invoke<string>("get_crash_report_text"));
+    toast(t("诊断信息已复制，可以直接粘贴到问题反馈里", "Diagnostics copied — paste them into your bug report"), "ok");
+  } catch (e) { toast(t(`复制失败: ${e}`, `Copy failed: ${e}`), "err"); }
+}
+
 onMounted(async () => {
   invoke("get_hotkey_status")
     .then(() => { hotkeyProblem.value = ""; })
     .catch(e => { hotkeyProblem.value = `${e}`; });
   // 最先做：后面每一步的 toast 都要排在启动日志后面，而不是被补拉的缓冲插到前头。
   await initGuiLogs();
+  void initLastCrash();
   try { trayOk.value = await invoke<boolean>("tray_available"); } catch {}
   try { build.value = await invoke<{ version: string; build_id: string; built_at: string }>("get_build_info"); }
   catch (e) { console.error("get_build_info error:", e); }
@@ -3022,6 +3062,12 @@ html, body, #app { height: 100%; }
 .perm-banner:hover { background: rgba(251, 191, 36, 0.2); }
 .choice-banner { width: 100%; max-width: 360px; background: rgba(96, 165, 250, 0.1); border: 1px solid rgba(96, 165, 250, 0.3); border-radius: 8px; padding: 8px 10px; text-align: center; }
 .choice-q { font-size: 0.75rem; color: var(--text); }
+.crash-banner { position: relative; width: 100%; max-width: 360px; background: rgba(248, 113, 113, 0.08); border: 1px solid rgba(248, 113, 113, 0.3); border-radius: 8px; padding: 8px 24px 8px 10px; text-align: center; }
+.crash-title { font-size: 0.75rem; color: var(--red); }
+.crash-reason { font-size: 0.68rem; color: var(--text); margin-top: 3px; line-height: 1.4; word-break: break-word; }
+.crash-meta { font-size: 0.62rem; color: var(--muted); margin-top: 2px; }
+.crash-close { position: absolute; top: 4px; right: 6px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.75rem; padding: 2px 4px; }
+.crash-close:hover { color: var(--text); }
 .choice-actions { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
 
 /* 服务器 */

@@ -1,0 +1,53 @@
+{"app_name":"voice-input","timestamp":"2099-01-01 12:00:30.00 +0000","app_version":"9.9.9","build_version":"9.9.9","platform":1,"bundleID":"com.voiceinput.app","bug_type":"309","os_version":"macOS 99.1 (00X000)","name":"voice-input","incident_id":"00000000-0000-0000-0000-000000000000"}
+{
+  "version" : 2,
+  "osVersion" : {
+    "train" : "macOS 99.1",
+    "build" : "00X000",
+    "releaseType" : "User"
+  },
+  "captureTime" : "2099-01-01 12:00:00.0000 +0000",
+  "pid" : 4242,
+  "procLaunch" : "2099-01-01 11:59:00.0000 +0000",
+  "procName" : "voice-input",
+  "procPath" : "\/Applications\/Voice Input.app\/Contents\/MacOS\/voice-input",
+  "bundleInfo" : {"CFBundleShortVersionString":"9.9.9","CFBundleVersion":"9.9.9","CFBundleIdentifier":"com.voiceinput.app"},
+  "parentProc" : "launchd",
+  "parentPid" : 1,
+  "exception" : {"codes":"0x0000000000000001, 0x0000000000000000","rawCodes":[1,0],"type":"EXC_BREAKPOINT","signal":"SIGTRAP"},
+  "termination" : {"flags":0,"code":5,"namespace":"SIGNAL","indicator":"Trace\/BPT trap: 5","byProc":"exc handler","byPid":4242},
+  "os_fault" : {"process":"voice-input"},
+  "asi" : {"libsystem_c.dylib":["Must only be used from the main thread"]},
+  "faultingThread" : 1,
+  "threads" : [
+    {"id":1,"queue":"com.apple.main-thread","frames":[
+      {"imageOffset":100,"symbol":"mach_msg2_trap","symbolLocation":8,"imageIndex":3},
+      {"imageOffset":200,"symbol":"_RNvNtCsFak3Hash01_15voice_input_lib3app3run","symbolLocation":4,"imageIndex":0}
+    ]},
+    {"triggered":true,"id":2,"name":"tokio-rt-worker","threadState":{},"frames":[
+      {"imageOffset":1000,"symbol":"_dispatch_assert_queue_fail","symbolLocation":120,"imageIndex":1},
+      {"imageOffset":1100,"symbol":"dispatch_assert_queue$V2.cold.1","symbolLocation":116,"imageIndex":1},
+      {"imageOffset":1200,"symbol":"dispatch_assert_queue","symbolLocation":108,"imageIndex":1},
+      {"imageOffset":2000,"symbol":"islGetInputSourceListWithAdditions","symbolLocation":160,"imageIndex":2},
+      {"imageOffset":2100,"symbol":"TSMGetInputSourceProperty","symbolLocation":36,"imageIndex":2},
+      {"imageOffset":3000,"symbol":"_RNvNtNtCsFak3Hash02_5enigo8platform10macos_impl17keycode_to_string","symbolLocation":52,"imageIndex":0},
+      {"imageOffset":3100,"symbol":"_RNvXs1_NtNtCsFak3Hash02_5enigo8platform10macos_implNtB5_5EnigoNtB5_8Keyboard3key","symbolLocation":76,"imageIndex":0},
+      {"imageOffset":4660,"imageIndex":0},
+      {"imageOffset":3300,"symbol":"_RNvXs1_NtNtCsFak3Hash02_5enigo8platform10macos_implINtNtCsFak3Hash03_4core7convert7TryFromNtNtB7_8keycodes3KeyE8try_from","symbolLocation":408,"imageIndex":0},
+      {"imageOffset":3400,"symbol":"_RNvMs_NtNtCsFak3Hash04_5tokio7runtime4taskNtB2_3Raw4poll","symbolLocation":12,"imageIndex":0},
+      {"imageOffset":3500,"symbol":"_RNvNtCsFak3Hash01_15voice_input_lib5input11press_paste","symbolLocation":556,"imageIndex":0},
+      {"imageOffset":3600,"symbol":"_RNCNvCsFak3Hash01_15voice_input_lib12deliver_text0B3_","symbolLocation":468,"imageIndex":0},
+      {"imageOffset":3700,"symbol":"_RNvNtCsFak3Hash01_15voice_input_lib3app3run","symbolLocation":20,"imageIndex":0},
+      {"imageOffset":3800,"symbol":"_RNvNtCsFak3Hash01_15voice_input_lib3app4main","symbolLocation":20,"imageIndex":0},
+      {"imageOffset":500,"symbol":"_pthread_start","symbolLocation":136,"imageIndex":3},
+      {"imageOffset":600,"imageIndex":4}
+    ]}
+  ],
+  "usedImages" : [
+    {"source":"P","arch":"arm64","base":4294967296,"CFBundleIdentifier":"com.voiceinput.app","size":1000000,"name":"voice-input","path":"\/Applications\/Voice Input.app\/Contents\/MacOS\/voice-input"},
+    {"source":"P","arch":"arm64e","base":6000000000,"size":300000,"name":"libdispatch.dylib","path":"\/usr\/lib\/system\/libdispatch.dylib"},
+    {"source":"P","arch":"arm64e","base":6100000000,"size":3000000,"name":"HIToolbox","path":"\/System\/Library\/Frameworks\/Carbon.framework\/Versions\/A\/Frameworks\/HIToolbox.framework\/Versions\/A\/HIToolbox"},
+    {"source":"P","arch":"arm64e","base":6200000000,"size":50000,"name":"libsystem_pthread.dylib","path":"\/usr\/lib\/system\/libsystem_pthread.dylib"},
+    {"size":0,"source":"A","base":0}
+  ]
+}
