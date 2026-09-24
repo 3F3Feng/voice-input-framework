@@ -49,6 +49,7 @@ from services.stt_engine import (
     TranscriptionResult,
 )
 from shared import auth, i18n, llm_backend
+from shared.app_version import APP_VERSION
 from shared.constants import (
     DEFAULT_BIND_HOST,
     DEFAULT_CORS_ORIGINS,
@@ -459,6 +460,7 @@ async def health_check(request: Request):
         or {"status": i18n.t(lang, "模型尚未加载", "Model not loaded yet")},
         error=load_error,
         loading=engine.loading_progress(),
+        app_version=APP_VERSION,
     )
 
 
@@ -908,6 +910,8 @@ async def websocket_stream(websocket: WebSocket):
             "is_loading": engine.is_loading(),
             "llm_enabled": llm_enabled,
             "llm_model": _cached_llm_model() if llm_enabled else None,
+            # 项目版本号,和 /health 的 app_version 一样(见 shared/app_version.py)。
+            "app_version": APP_VERSION,
         }
     )
 
