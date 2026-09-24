@@ -92,7 +92,11 @@ fi
 [[ $WITH_DEV -eq 1 ]] && EXTRAS+=(--extra dev)
 
 say "uv sync ${EXTRAS[*]:-(无额外 extra)}"
-uv sync "${EXTRAS[@]}"
+# 不能直接写 "${EXTRAS[@]}":macOS 自带的 /bin/bash 是 3.2,`set -u` 下展开空数组
+# 会报「EXTRAS[@]: unbound variable」直接退出 —— Apple Silicon 的默认路径(mlx、
+# 不带 --llm / --dev)正好是空数组,一步都走不下去(「更新服务」按钮用的就是系统 bash)。
+# `${arr[@]+"${arr[@]}"}` 在 3.2 和新版 bash 上都成立。
+uv sync ${EXTRAS[@]+"${EXTRAS[@]}"}
 
 # ── 交代清楚装出来的是什么 ────────────────────────────────────────────────
 say "校验..."
