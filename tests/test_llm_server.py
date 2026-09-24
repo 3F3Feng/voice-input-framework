@@ -505,6 +505,28 @@ class TestOutputGuards:
             hit_token_limit=False,
         )
 
+    def test_mixed_speech_unified_into_one_language_is_rejected(self):
+        """中英混说被统一成一种语言(实测「邮件」预设会这样),也算翻译。"""
+        from services.llm_server import reject_reason
+
+        mixed = "我刚刚那个 push 了一个 hotfix 就是说你帮我 check 一下 staging 环境"
+        assert "翻译" in reject_reason(
+            mixed,
+            "I just pushed a hotfix; please check the staging environment.",
+            hit_token_limit=False,
+        )
+        assert "翻译" in reject_reason(
+            "okay so 这个 feature 我们 next sprint 再做吧",
+            "这个功能我们下个迭代再做吧。",
+            hit_token_limit=False,
+        )
+        # 英文句子里夹一个中文日期被译掉:只有两三个汉字,整句占比看不出来。
+        assert "翻译" in reject_reason(
+            "um the deadline is 下周五 so like can you uh update the roadmap",
+            "The deadline is next Friday, so can you update the roadmap?",
+            hit_token_limit=False,
+        )
+
     def test_mixed_language_cleanup_is_accepted(self):
         """中英混说整理后还是中英混说,英文口述整理后还是英文,都不算翻译。"""
         from services.llm_server import reject_reason

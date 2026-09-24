@@ -47,28 +47,59 @@ logger = logging.getLogger("llm-server")
 PROMPT_FILE = Path.home() / ".config" / "voice-input-framework" / "llm_prompt.json"
 PROMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-# 默认提示词
-DEFAULT_PROMPT = """你是一个语音输入后处理助手。
+# 默认提示词。
+#
+# 口述的语言和界面语言无关:中文、英文、中英混说都得照顾到。三条底线 —— 删填充词、
+# 改口只留改口后的、一个词都不翻译 —— 和示例都是在 Qwen3.5-4B 上一轮轮实测调出来的:
+# - 没有「不翻译」和混说示例时,英文口述会被整理成中文,混说里的 check / 下周五 会被译掉;
+# - 规则要紧凑:把「口语 / 书面语」「标点」拆成单独的几条时,模型干脆不删填充词了;
+# - 示例里中文句子用全角标点,模型会照抄示例的标点。
+# 改动后请用中文、英文、两种方向的混说、改口、「帮我写一首诗」这几类输入再测一遍。
+DEFAULT_PROMPT = """你是一个语音输入后处理助手。用户可能说中文、英文，或者中英混说。
 
-将用户的语音转文字进行优化：
-1. 移除填充词（"那个啥"、"就是吧"等）
-2. 保持原意
-3. 添加标点符号
-4. 输出简洁版本
+整理规则：
+1. 删掉填充词和重复的词：中文如「嗯」「那个」「就是说」「然后」，英文如 um、uh、like、you know、so basically
+2. 口头改口（「三点不对是四点」「three no wait four」）只保留改口后的说法
+3. 一个词都不要翻译：中文部分保持中文，英文部分保持英文，原样照抄。中英混说时输出也照样混说，不要统一成一种语言
+4. 加标点，不改变原意，不补充内容
 
-只返回优化后的文本，不要额外解释。"""
+示例：
+输入：嗯那个我们明天就是说要开会
+输出：我们明天要开会。
+输入：so uh I think we we should ship it you know
+输出：I think we should ship it.
+输入：那个 bug 我 fix 了然后你 review 一下
+输出：bug 我 fix 了，你 review 一下。
+输入：um the demo is 周四 so like can you uh prepare the slides
+输出：The demo is 周四, so can you prepare the slides?
+输入：我刚买了那个 iPad 就是说想用来记笔记
+输出：我刚买了 iPad，想用来记笔记。
 
-# 英文界面的默认提示词。用户没存过自己的提示词时,默认的那份跟着界面语言走:
-# 设置里看得懂,整理英文口述时也更顺手。存过的就是用户自己的,不管界面语言。
-DEFAULT_PROMPT_EN = """You are a post-processing assistant for voice input.
+只输出整理后的文字，不要解释。"""
 
-Clean up the user's speech-to-text transcript:
-1. Remove filler words ("um", "uh", "like", "you know", repeated words)
-2. Keep the original meaning
-3. Add punctuation
-4. Keep it concise
+# 英文界面的默认提示词,规则和示例与中文那份相同。没存过自己的提示词时,默认的那份
+# 跟着界面语言走(设置里看得懂);存过的就是用户自己的,不管界面语言。
+DEFAULT_PROMPT_EN = """You are a post-processing assistant for voice input. The user may speak Chinese, English, or a mix of both.
 
-Return only the cleaned-up text, with no extra explanation."""
+Rules:
+1. Remove filler words and repeated words: English such as um, uh, like, you know, so basically; Chinese such as 嗯, 那个, 就是说, 然后
+2. For self-corrections ("three no wait four", 「三点不对是四点」) keep only the corrected version
+3. Never translate a single word: Chinese parts stay Chinese, English parts stay English, copied as spoken. Mixed speech stays mixed; don't turn it into one language
+4. Add punctuation; don't change the meaning or add anything
+
+Examples:
+Input: 嗯那个我们明天就是说要开会
+Output: 我们明天要开会。
+Input: so uh I think we we should ship it you know
+Output: I think we should ship it.
+Input: 那个 bug 我 fix 了然后你 review 一下
+Output: bug 我 fix 了，你 review 一下。
+Input: um the demo is 周四 so like can you uh prepare the slides
+Output: The demo is 周四, so can you prepare the slides?
+Input: 我刚买了那个 iPad 就是说想用来记笔记
+Output: 我刚买了 iPad，想用来记笔记。
+
+Return only the cleaned-up text, with no explanation."""
 
 
 def default_prompt(lang: str = i18n.ZH) -> str:
@@ -232,6 +263,17 @@ def output_token_budget(input_tokens: int) -> int:
     return max(128, int(input_tokens * 1.5) + 64)
 
 
+def _script_counts(text: str) -> tuple[int, int]:
+    """(汉字 / 假名个数, 英文单词个数)。"""
+    cjk = sum(
+        1
+        for ch in text
+        if "\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf" or "\u3040" <= ch <= "\u30ff"
+    )
+    words = len(re.findall(r"[A-Za-z]+", text))
+    return cjk, words
+
+
 def cjk_share(text: str) -> float:
     """字母类字符里汉字(含日文假名)占多少。没有字母类字符时为 0。
 
@@ -246,6 +288,22 @@ def cjk_share(text: str) -> float:
             latin += 1
     total = cjk + latin
     return cjk / total if total else 0.0
+
+
+def translated(original: str, cleaned: str) -> bool:
+    """整理结果是不是换了语言(翻译了),而不是整理。
+
+    两种情形:整段换了文字(英文口述整理成中文,或反过来);中英混说被统一成了
+    一种语言 —— 原文里有好几个汉字、输出一个都不剩,或者原文里有好几个英文词、
+    输出一个都不剩(实测「邮件」类提示词会把「我刚刚那个 push 了一个 hotfix…」
+    整理成一整句英文)。
+    """
+    before, after = cjk_share(original), cjk_share(cleaned)
+    if (before < 0.2 and after > 0.5) or (before > 0.5 and after < 0.1):
+        return True
+    cjk_before, words_before = _script_counts(original)
+    cjk_after, words_after = _script_counts(cleaned)
+    return (cjk_before >= 3 and cjk_after == 0) or (words_before >= 3 and words_after == 0)
 
 
 def reject_reason(original: str, cleaned: str, hit_token_limit: bool) -> str | None:
@@ -263,8 +321,7 @@ def reject_reason(original: str, cleaned: str, hit_token_limit: bool) -> str | N
     n = len(original.strip())
     # 换了文字:英文口述整理出一段中文(或反过来),就是翻译了,不是整理。
     # 要先于长短判断:同样的意思,中文和英文的字数差一两倍。
-    before, after = cjk_share(original), cjk_share(cleaned)
-    if (before < 0.2 and after > 0.5) or (before > 0.5 and after < 0.1):
+    if translated(original, cleaned):
         return bi(
             "LLM 把原文翻译成了另一种语言",
             "LLM translated the text into another language",
