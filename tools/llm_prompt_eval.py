@@ -50,7 +50,7 @@ CASES = [
         ["下周五", "deadline", "roadmap"],
         ["um ", " uh "],
     ),
-    ("明天上午十点不对是十一点开会", ["十一点", "开会"], ["十点不对", "不对"]),
+    ("明天上午十点不对是十一点开会", ["十一点|11点|11 点", "开会"], ["十点不对", "不对"]),
     (
         "那个 PR 的 review 我看完了然后有两个 comment 你改一下再 merge",
         ["PR", "review", "comment", "merge", "我看完了"],
@@ -88,7 +88,7 @@ CHAT_CASES = [
         ["PR", "review", "comment", "merge"],
         ["那个 PR"],
     ),
-    ("我刚到家累死了今天加班到十点你吃饭了吗", ["十点", "吃饭"], []),
+    ("我刚到家累死了今天加班到十点你吃饭了吗", ["十点|10点|10 点", "吃饭"], []),
 ]
 MID_PUNCT = re.compile(r"[，,？?！!；;：:、]")
 
@@ -151,7 +151,10 @@ def main() -> int:
                 problems = []
                 if not d.get("success"):
                     problems.append(f"rejected: {d.get('error')}")
-                problems += [f"lost '{k}'" for k in keep if k.lower() not in low]
+                # 「a|b」:写成哪一种都算对(提示词要求数字写成阿拉伯数字,「十一点」→「11点」)
+                problems += [
+                    f"lost '{k}'" for k in keep if not any(o.lower() in low for o in k.split("|"))
+                ]
                 if d.get("success"):
                     problems += [f"kept '{x.strip()}'" for x in drop if x.lower() in low]
                 if len(out) > len(text) * 1.6 + 10:

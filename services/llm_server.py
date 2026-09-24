@@ -57,15 +57,20 @@ PROMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
 # - 示例里中文句子用全角标点,模型会照抄示例的标点;
 # - 要写明英文大小写(Gemma 不写就常常整段小写),但英文版里得限定「只管英文部分」,
 #   否则模型会把中英混说统一成英文;
-# - 填充词举例里不要放 so basically:模型会把「so basically we did three things」整句删掉。
+# - 填充词举例里不要放 so basically:模型会把「so basically we did three things」整句删掉;
+# - 格式整理(对标 Typeless:列举 → 编号列表、换话题分段、金额百分比写数字)也写进第 4 条,
+#   配带换行输出的示例 —— 没有示例时一个列表都不出(0/6);示例里要有「一串东西」和
+#   「另外……」分段的样子,否则这两类学不会;「我刚买了那个 iPad 就是说……」和
+#   「The demo is 周二」两个示例不能省,省了之后小模型留着句中的「就是说」、把英文开头的
+#   混说整句译掉(E2B 从 3/64 退到 10/64)。改完用 tools/llm_format_eval.py 再跑一遍。
 # 改动后用 tools/llm_prompt_eval.py 对真模型跑一遍(默认提示词和前端三个预设 × 8 类输入)。
-DEFAULT_PROMPT = """你是一个语音输入后处理助手。用户可能说中文、英文，或者中英混说。
+DEFAULT_PROMPT = """你是一个语音输入后处理助手，把语音转写整理成可以直接用的文字。用户可能说中文、英文，或者中英混说。
 
 整理规则：
-1. 删掉填充词和重复的词：中文如「嗯」「那个」「就是说」「然后」，英文如 um、uh、like、you know
-2. 口头改口（「三点不对是四点」「three no wait four」）只保留改口后的说法
+1. 删掉填充词和重复的词：中文如「嗯」「那个」「就是说」「然后」，英文如 um、uh、like、you know；口吃重复（「我我我」「这个这个」）只留一个
+2. 口头改口只保留最后的说法，前面说错的整个删掉：「周二不对周三」→ 周三，「三点哦不对是四点」→ 四点，「tuesday no wait wednesday」→ Wednesday，「two I mean three」→ three
 3. 一个词都不要翻译：中文部分保持中文，英文部分保持英文，原样照抄。中英混说时输出也照样混说，不要统一成一种语言
-4. 加标点和正常的英文大小写（句首、I、星期、专有名词大写），不改变原意，不补充内容
+4. 整理格式：列举几件事、几点意见、一串东西，或者说操作步骤（「先……然后……最后……」）时，写成一项一行的编号列表（1. 2. 3.），引导语单独一行放在前面，列表只有一层、不要嵌套；内容很长、中间换了话题（「另外」「还有一件事」「说到……」）时从那里另起一段，段落之间空一行；其余情况照常写成一段话，只是提到「第一个方案」这类说法不算列举。加标点；英文句子用正常的大小写（句首、I、星期、专有名词大写），中文句子里夹的英文词保持原样、不要改大小写；金额、百分比、电话号码写成阿拉伯数字（两万三千五百块 → 23500 元，百分之十五 → 15%）；不改变原意，不补充内容
 
 示例：
 输入：嗯那个我们明天就是说要开会
@@ -74,22 +79,47 @@ DEFAULT_PROMPT = """你是一个语音输入后处理助手。用户可能说中
 输出：I think we should ship it.
 输入：那个 bug 我 fix 了然后你 review 一下
 输出：bug 我 fix 了，你 review 一下。
-输入：um the demo is 周四 so like can you uh prepare the slides
-输出：The demo is 周四, so can you prepare the slides?
+输入：我这周要做三件事第一是写周报第二是约一下客户然后第三是把报销交了
+输出：
+我这周要做三件事：
+1. 写周报
+2. 约一下客户
+3. 把报销交了
+输入：明天出门要带的东西有充电器雨伞还有两本书
+输出：
+明天出门要带的东西：
+1. 充电器
+2. 雨伞
+3. 两本书
+输入：你先把电脑重启一下然后打开设置再把蓝牙关掉最后重新打开试试
+输出：
+1. 先把电脑重启一下
+2. 打开设置
+3. 把蓝牙关掉
+4. 重新打开试试
+输入：项目这边基本都弄完了测试也过了下周一就能上线另外跟你说一下周五我请假要去办护照有事发消息给我
+输出：
+项目这边基本都弄完了，测试也过了，下周一就能上线。
+
+另外跟你说一下，周五我请假，要去办护照，有事发消息给我。
+输入：the demo is 周一 no wait 周二 so can you uh prepare the slides
+输出：The demo is 周二, so can you prepare the slides?
 输入：我刚买了那个 iPad 就是说想用来记笔记
 输出：我刚买了 iPad，想用来记笔记。
+输入：我觉得第二个方案好一点比较省钱
+输出：我觉得第二个方案好一点，比较省钱。
 
 只输出整理后的文字，不要解释。"""
 
 # 英文界面的默认提示词,规则和示例与中文那份相同。没存过自己的提示词时,默认的那份
 # 跟着界面语言走(设置里看得懂);存过的就是用户自己的,不管界面语言。
-DEFAULT_PROMPT_EN = """You are a post-processing assistant for voice input. The user may speak Chinese, English, or a mix of both.
+DEFAULT_PROMPT_EN = """You are a post-processing assistant for voice input: turn the speech-to-text transcript into text that is ready to use. The user may speak Chinese, English, or a mix of both.
 
 Rules:
-1. Remove filler words and repeated words: English such as um, uh, like, you know; Chinese such as 嗯, 那个, 就是说, 然后
-2. For self-corrections ("three no wait four", 「三点不对是四点」) keep only the corrected version
+1. Remove filler words and repeated words: English such as um, uh, like, you know; Chinese such as 嗯, 那个, 就是说, 然后; for stutters (「我我我」, "the the") keep one
+2. For self-corrections keep only the final version and drop what was said before it: "tuesday no wait wednesday" → Wednesday, "two I mean three" → three, 「周二不对周三」→ 周三, 「三点哦不对是四点」→ 四点
 3. Never translate a single word: Chinese parts stay Chinese, English parts stay English, copied as spoken. Mixed speech stays mixed; don't turn it into one language
-4. Add punctuation (capitalize the English parts normally: sentence starts, I, weekdays; the Chinese parts stay Chinese); don't change the meaning or add anything
+4. Formatting: when the speaker lists several things, points, items, or steps ("first … then … finally …"), write a numbered list with one item per line (1. 2. 3.), with the lead-in sentence on its own line before it; lists have one level only, no nesting. When a long passage changes topic ("also", "another thing", "by the way", 「另外」, 「还有一件事」, 「说到……」), start a new paragraph there, with a blank line between paragraphs. Otherwise write one normal paragraph; just mentioning "the first option" is not a list. Add punctuation; English sentences use normal capitalization (sentence starts, I, weekdays, proper nouns), English words inside Chinese sentences stay as spoken; write amounts, percentages and phone numbers as digits (「两万三千五百块」→ 23500 元, "fifteen percent" → 15%); don't change the meaning or add anything
 
 Examples:
 Input: 嗯那个我们明天就是说要开会
@@ -98,10 +128,35 @@ Input: so uh I think we we should ship it you know
 Output: I think we should ship it.
 Input: 那个 bug 我 fix 了然后你 review 一下
 Output: bug 我 fix 了，你 review 一下。
-Input: um the demo is 周四 so like can you uh prepare the slides
-Output: The demo is 周四, so can you prepare the slides?
+Input: 我这周要做三件事第一是写周报第二是约一下客户然后第三是把报销交了
+Output:
+我这周要做三件事：
+1. 写周报
+2. 约一下客户
+3. 把报销交了
+Input: 明天出门要带的东西有充电器雨伞还有两本书
+Output:
+明天出门要带的东西：
+1. 充电器
+2. 雨伞
+3. 两本书
+Input: 你先把电脑重启一下然后打开设置再把蓝牙关掉最后重新打开试试
+Output:
+1. 先把电脑重启一下
+2. 打开设置
+3. 把蓝牙关掉
+4. 重新打开试试
+Input: 项目这边基本都弄完了测试也过了下周一就能上线另外跟你说一下周五我请假要去办护照有事发消息给我
+Output:
+项目这边基本都弄完了，测试也过了，下周一就能上线。
+
+另外跟你说一下，周五我请假，要去办护照，有事发消息给我。
+Input: the demo is 周一 no wait 周二 so can you uh prepare the slides
+Output: The demo is 周二, so can you prepare the slides?
 Input: 我刚买了那个 iPad 就是说想用来记笔记
 Output: 我刚买了 iPad，想用来记笔记。
+Input: 我觉得第二个方案好一点比较省钱
+Output: 我觉得第二个方案好一点，比较省钱。
 
 Return only the cleaned-up text, with no explanation."""
 
@@ -398,13 +453,31 @@ class MLXBackend:
     #: 长口述(近 400 字中文、1100 字符英文、580 字混说)三种都完整、不丢句子,
     #: 英文大小写正确,混说保持混说,延迟约 2.8 秒(旧默认约 4 秒,且留着不少填充词)。
     #: 需要 mlx-lm >= 0.31.2(更早的版本不认 gemma4)。
-    DEFAULT_MODEL = "Gemma-4-E2B"
-    #: 默认模型加载失败时(mlx-lm 太旧、没网而新模型还没下载)退回的模型:旧默认,
-    #: 老用户多半已经下载过。见 `startup_load`。
-    FALLBACK_MODEL = "Qwen3.5-4B-OptiQ"
+    #:
+    #: 2026-09 又对「格式整理」(对标 Typeless:口述列举 → 编号列表、换话题分段、连环改口、
+    #: 金额百分比写成数字,以及短句不许乱拆)跑了 tools/llm_format_eval.py 的 18 例:
+    #:
+    #: | 模型                     | 格式整理 | 短句延迟 | 长口述(~400 字)| 内存   |
+    #: |--------------------------|----------|----------|------------------|--------|
+    #: | Gemma-4-E4B(QAT 4bit)  | 18/18    | 1.0 s    | ~6 s             | 6.4 GB |
+    #: | Gemma-4-E2B(QAT 4bit)  | 16/18    | 0.5 s    | ~3 s             | 4.0 GB |
+    #: | Qwen3.5-9B(4bit)       | 16–17/18 | 1.9 s    | 更慢             | 5.8 GB |
+    #:
+    #: E2B 的两处失败里有一处改了意思:「鸡蛋 牛奶 两斤苹果 一瓶酱油」整理成「鸡蛋两斤、
+    #: 牛奶两斤、苹果一瓶」。9B 更慢也不更好。所以内存够的机器默认用 E4B,小内存机器
+    #: (应用常驻 ASR 模型,8 GB 的 Mac 放不下 E4B)仍用 E2B,见 `default_model`。
+    DEFAULT_MODEL = "Gemma-4-E4B"
+    #: 内存不够 `LARGE_MODEL_MIN_RAM_GB` 时的默认。
+    SMALL_MODEL = "Gemma-4-E2B"
+    #: 16 GB 的 Mac 报出来可能略少于 16,门槛放在 15。
+    LARGE_MODEL_MIN_RAM_GB = 15.0
+    #: 默认模型加载失败时(mlx-lm 太旧、没网而新模型还没下载)依次退回的模型:先试小一号
+    #: 的 Gemma(多半已经下载过),再试旧默认 Qwen(更老的 mlx-lm 也认)。见 `startup_load`。
+    FALLBACK_MODELS = ["Gemma-4-E2B", "Qwen3.5-4B-OptiQ"]
 
     AVAILABLE_MODELS = [
-        "Gemma-4-E2B",  # ⭐ 默认:~4GB 内存,最快、中英混说最稳
+        "Gemma-4-E4B",  # ⭐ 默认(内存 ≥16 GB):~6.4GB 内存,格式整理最好
+        "Gemma-4-E2B",  # ⭐ 默认(内存 <16 GB):~4GB 内存,最快
         "Qwen3.5-4B-OptiQ",  # 旧默认,~4GB 内存
         "Qwen3.5-4B-MLX",  # 同一模型的普通 4bit 量化,~3GB 内存,质量接近
         "Qwen3.5-2B-OptiQ",  # ~2GB 内存;实测多数句子原样照抄,不推荐
@@ -413,6 +486,7 @@ class MLXBackend:
     ]
 
     MODEL_IDS = {
+        "Gemma-4-E4B": "mlx-community/gemma-4-E4B-it-qat-4bit",
         "Gemma-4-E2B": "mlx-community/gemma-4-E2B-it-qat-4bit",
         "Qwen3.5-4B-OptiQ": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
         "Qwen3.5-2B-OptiQ": "mlx-community/Qwen3.5-2B-OptiQ-4bit",
@@ -420,6 +494,14 @@ class MLXBackend:
         "Qwen3-0.6B": "mlx-community/Qwen3-0.6B-4bit",
         "Qwen3-1.7B": "mlx-community/Qwen3-1.7B-4bit",
     }
+
+    def default_model(self, ram_gb: float | None = None) -> str:
+        """这台机器上的默认模型:内存够就用格式整理更好的 E4B。读不到内存时按小内存算。"""
+        if ram_gb is None:
+            from services.device import total_ram_gb
+
+            ram_gb = total_ram_gb()
+        return self.DEFAULT_MODEL if ram_gb >= self.LARGE_MODEL_MIN_RAM_GB else self.SMALL_MODEL
 
     def __init__(self, unavailable: str | None = None):
         #: 这台机器上用不了这个后端的原因(None = 能用)。加载时才抛出来,好让
@@ -566,7 +648,7 @@ class LlamaCppBackend:
     DEFAULT_MODEL = "Gemma-4-E2B-GGUF"
     #: 默认模型加载失败时(llama-cpp-python 太旧不认 gemma4、没网而新模型还没下载)
     #: 退回旧默认,见 `startup_load`。
-    FALLBACK_MODEL = "Qwen3.5-2B-GGUF"
+    FALLBACK_MODELS = ["Qwen3.5-2B-GGUF"]
 
     #: 名字 → `<HF 仓库>/<GGUF 文件名>`。只下一个量化文件,而不是整个仓库
     #: (一个 GGUF 仓库里各种量化加起来有十几 GB)。Qwen 官方没发 Qwen3.5 的
@@ -593,6 +675,10 @@ class LlamaCppBackend:
 
     def __init__(self, unavailable: str | None = None):
         self.unavailable = unavailable
+
+    def default_model(self, ram_gb: float | None = None) -> str:
+        # llama.cpp 这边还没对 E4B 跑过格式整理和纯 CPU 上的速度,先不按内存分档。
+        return self.DEFAULT_MODEL
 
     @staticmethod
     def split_ref(model_id: str) -> tuple[str, str]:
@@ -669,7 +755,7 @@ class LLMEngine:
         #: 当前后端的模型表。/models 只列这些:另一个后端的模型在这台机器上加载不了。
         self.MODEL_IDS = self.backend.MODEL_IDS
         self.AVAILABLE_MODELS = self.backend.AVAILABLE_MODELS
-        self.default_model = default_model or self.backend.DEFAULT_MODEL
+        self.default_model = default_model or self.backend.default_model()
         self.current_model_name = self.default_model
         self._model = None
         self._tokenizer = None
@@ -940,7 +1026,7 @@ def resolve_llm_model(backend=None) -> str:
         return saved
     if saved:
         logger.warning(f"Saved LLM model '{saved}' not available, using default")
-    return backend.DEFAULT_MODEL
+    return backend.default_model()
 
 
 BACKEND = make_backend()
@@ -956,7 +1042,7 @@ engine = LLMEngine(default_model=LLM_MODEL, backend=BACKEND)
 
 
 async def startup_load(eng=None, backend=None) -> bool:
-    """启动时加载模型。加载的是**默认**模型却失败了,就退回后端的 FALLBACK_MODEL。
+    """启动时加载模型。加载的是**默认**模型却失败了,就依次退回后端的 FALLBACK_MODELS。
 
     默认模型换过(见 MLXBackend.DEFAULT_MODEL 上的实测表)。老用户的 Python 环境里
     mlx-lm 可能还不认新模型,或者此刻没网、新模型还没下载 —— 不能因此让 LLM 后处理
@@ -966,15 +1052,16 @@ async def startup_load(eng=None, backend=None) -> bool:
     backend = backend or BACKEND
     if await eng.load():
         return True
-    fallback = getattr(backend, "FALLBACK_MODEL", None)
-    if (
-        not fallback
-        or eng.default_model != backend.DEFAULT_MODEL
-        or fallback == backend.DEFAULT_MODEL
-    ):
+    default = backend.default_model()
+    if eng.default_model != default:
         return False
-    logger.warning(f"默认模型 {backend.DEFAULT_MODEL} 加载失败({eng.load_error()}),改用 {fallback}")
-    return await eng.load(fallback)
+    for fallback in getattr(backend, "FALLBACK_MODELS", []):
+        if fallback == default:
+            continue
+        logger.warning(f"默认模型 {default} 加载失败({eng.load_error()}),改用 {fallback}")
+        if await eng.load(fallback):
+            return True
+    return False
 
 
 @asynccontextmanager

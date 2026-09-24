@@ -54,7 +54,8 @@ MLX 后端（Apple Silicon）：
 
 | 模型 | 内存占用 | 特点 |
 |------|----------|------|
-| Gemma-4-E2B | ~4GB | **默认**，Google QAT 4bit 量化；最快，中文、英文、中英混说都稳 |
+| Gemma-4-E4B | ~6.4GB | **默认(内存 ≥16GB)**,Google QAT 4bit;格式整理最好(口述列举 → 编号列表、换话题分段、数字) |
+| Gemma-4-E2B | ~4GB | **默认(内存 <16GB)**,Google QAT 4bit;最快,中文、英文、中英混说都稳 |
 | Qwen3.5-4B-OptiQ | ~4GB | 旧默认；默认模型加载失败时自动退回它 |
 | Qwen3.5-4B-MLX | ~3GB | 同一模型的普通 4bit 量化，内存更省 |
 | Qwen3.5-2B-OptiQ / Qwen3-0.6B / Qwen3-1.7B | ~2GB / ~0.5GB / ~1.5GB | 更小，但实测多数句子原样照抄，不推荐 |
