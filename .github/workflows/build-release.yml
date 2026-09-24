@@ -278,13 +278,22 @@ jobs:
           if echo "$req" | grep -q 'cdhash'; then
             echo "::error::designated requirement 还是 cdhash,每次发版身份都会变"; exit 1
           fi
-          codesign -d --entitlements - --xml "$app" 2>/dev/null | grep -q 'com.apple.security.device.audio-input' \
+          ents="$(codesign -d --entitlements - --xml "$app" 2>/dev/null || true)"
+          echo "$ents" | grep -q 'com.apple.security.device.audio-input' \
             || { echo "::error::签名里没有 device.audio-input entitlement,hardened runtime 下麦克风会被直接拒绝"; exit 1; }
           # 更新器装的是 .app.tar.gz,确认里面的也是签过名的那一份。
+          # 注意输出先整个抓进变量再 grep:`codesign ... | grep -q` 在 pipefail 下,
+          # grep 匹配到就退出,codesign 收到 SIGPIPE 返回非零,整条管道算失败(实测)。
           tmp="$(mktemp -d)"
           tar -xzf "$(dirname "$app")/Voice Input.app.tar.gz" -C "$tmp"
-          codesign -dv "$tmp/Voice Input.app" 2>&1 | grep -q '^Authority=' \
-            || { echo "::error::.app.tar.gz 里的 app 没有证书签名"; exit 1; }
+          echo "tarball contents:"; ls -la "$tmp"
+          inner="$(find "$tmp" -maxdepth 2 -name '*.app' -type d | head -1)"
+          [ -n "$inner" ] || { echo "::error::.app.tar.gz 里没有 .app"; exit 1; }
+          inner_info="$(codesign -dv --verbose=2 "$inner" 2>&1 || true)"
+          echo "$inner_info" | grep -q '^Authority=' \
+            || { echo "::error::.app.tar.gz 里的 app 没有证书签名"; echo "$inner_info"; exit 1; }
+          echo "$inner_info" | grep -q '^Identifier=com.voiceinput.app$' \
+            || { echo "::error::.app.tar.gz 里的 app identifier 不对"; echo "$inner_info"; exit 1; }
 
       # 这里原本有一步从 tauri.conf.json 里正则抠 version,抠不到就退回 "0.0.0"。
       # 版本号现在只写在 gui/src-tauri/Cargo.toml 里(Tauri 缺省回落到它),
