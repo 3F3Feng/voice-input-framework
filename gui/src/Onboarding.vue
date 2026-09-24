@@ -152,7 +152,7 @@
           </div>
         </div>
         <div v-if="permMsg" class="s-tip srv-problem">{{ permMsg }}</div>
-        <div class="s-tip" style="margin-top:6px">{{ t('已拒绝的项系统不会再弹窗,要在「系统设置 → 隐私与安全性」里手动勾上;回到这里会自动刷新。', "macOS won't ask again for denied items; turn them on in System Settings → Privacy & Security. This page refreshes when you come back.") }}</div>
+        <div class="s-tip" style="margin-top:6px">{{ t('已拒绝的项系统不会再弹窗,要在「系统设置 → 隐私与安全性」里手动勾上;回到这里会自动刷新。系统设置里开关明明开着、这里却显示「已拒绝」:多半是应用更新后签名身份变了,在那个列表里选中 Voice Input 点「−」删掉,再重新添加。', "macOS won't ask again for denied items; turn them on in System Settings → Privacy & Security. This page refreshes when you come back. If the switch in System Settings is already on but this shows Denied, the app’s signature probably changed with an update: select Voice Input in that list, remove it with “−”, then add it again.") }}</div>
       </template>
 
       <!-- ④ 输出方式 + 快捷键 + 试一下 -->
