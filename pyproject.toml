@@ -47,7 +47,7 @@ dependencies = [
     # requirements-stt.txt 以前无条件列了 mlx / mlx-audio,所以照着 README
     # 在 Linux 上建环境,建出来就是坏的。
     "mlx>=0.31.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    "mlx-lm>=0.31.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm>=0.31.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-audio>=0.4.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # whisper_mlx* 这组模型走的是 mlx-whisper,不是 mlx-audio。以前从没列进依赖
     # (老环境是手工装的),换成 uv 建环境后就没了:选 whisper_mlx 会在加载时报
@@ -93,10 +93,11 @@ xpu = [
 ]
 # 非 Apple 机器上的 LLM 后处理后端。MLX 只有 Apple Silicon 能跑,
 # 别的平台用 llama.cpp 跑 GGUF(CPU 可用,也能编译出 CUDA/ROCm/Vulkan 版)。
-# 0.3.17 起才认 Qwen3.5(qwen35 架构),默认的 GGUF 模型就是它;更早的版本加载时
-# 报 unknown model architecture。模板渲染用的 jinja2 是 llama-cpp-python 自带的依赖。
+# 0.3.25 起才认 Gemma 4(默认的 GGUF 模型);更早的版本加载时报 unknown model
+# architecture(那时服务会退回 Qwen3.5-2B,它要 0.3.17 以上)。模板渲染用的 jinja2
+# 是 llama-cpp-python 自带的依赖。
 llm-cpp = [
-    "llama-cpp-python>=0.3.17",
+    "llama-cpp-python>=0.3.25",
     "huggingface-hub>=0.24.0",
 ]
 dev = [

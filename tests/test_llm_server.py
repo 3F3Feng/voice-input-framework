@@ -117,7 +117,7 @@ class TestLLMEngine:
     def test_init(self):
         """Test engine initialization"""
         engine = mlx_engine()
-        assert engine.default_model == "Qwen3.5-4B-OptiQ"
+        assert engine.default_model == "Gemma-4-E2B"
         assert not engine._is_loaded
         assert not engine._loading
 
@@ -125,13 +125,18 @@ class TestLLMEngine:
         """Test available models list"""
         from services.llm_server import MLXBackend
 
+        assert "Gemma-4-E2B" in MLXBackend.AVAILABLE_MODELS
         assert "Qwen3.5-4B-OptiQ" in MLXBackend.AVAILABLE_MODELS
         assert "Qwen3.5-2B-OptiQ" in MLXBackend.AVAILABLE_MODELS
+        # 默认和退回用的模型都得在表里,否则启动时直接「未知的 LLM 模型」
+        assert MLXBackend.DEFAULT_MODEL in MLXBackend.AVAILABLE_MODELS
+        assert MLXBackend.FALLBACK_MODEL in MLXBackend.AVAILABLE_MODELS
 
     def test_model_ids_mapping(self):
         """Test model IDs mapping"""
         from services.llm_server import MLXBackend
 
+        assert MLXBackend.MODEL_IDS["Gemma-4-E2B"] == "mlx-community/gemma-4-E2B-it-qat-4bit"
         assert MLXBackend.MODEL_IDS["Qwen3.5-4B-OptiQ"] == "mlx-community/Qwen3.5-4B-OptiQ-4bit"
         assert MLXBackend.MODEL_IDS["Qwen3.5-2B-OptiQ"] == "mlx-community/Qwen3.5-2B-OptiQ-4bit"
 

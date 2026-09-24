@@ -54,21 +54,25 @@ MLX 后端（Apple Silicon）：
 
 | 模型 | 内存占用 | 特点 |
 |------|----------|------|
-| Qwen3.5-4B-OptiQ | ~3GB | **默认**，中文能力强，速度与精度平衡 |
-| Qwen3.5-2B-OptiQ | ~2GB | 速度更快 |
-| Qwen3.5-4B-MLX | ~4GB | 4B 标准量化 |
-| Qwen3-0.6B / Qwen3-1.7B | ~0.5GB / ~1.5GB | 更小更快 |
-| Gemma-4-E4B-DECKARD | — | Google 模型，中文较弱 |
+| Gemma-4-E2B | ~4GB | **默认**，Google QAT 4bit 量化；最快，中文、英文、中英混说都稳 |
+| Qwen3.5-4B-OptiQ | ~4GB | 旧默认；默认模型加载失败时自动退回它 |
+| Qwen3.5-4B-MLX | ~3GB | 同一模型的普通 4bit 量化，内存更省 |
+| Qwen3.5-2B-OptiQ / Qwen3-0.6B / Qwen3-1.7B | ~2GB / ~0.5GB / ~1.5GB | 更小，但实测多数句子原样照抄，不推荐 |
 
-llama.cpp 后端（其它平台，Q4_K_M 量化，首次使用时下载到 HuggingFace 缓存）：
+llama.cpp 后端（其它平台，4bit 量化，首次使用时下载到 HuggingFace 缓存）：
 
 | 模型 | 下载大小 | 特点 |
 |------|----------|------|
-| Qwen3.5-2B-GGUF | ~1.3GB | **默认**，改口、填充词都能整理对 |
-| Qwen3.5-0.8B-GGUF | ~0.5GB | 最快，但短句里的填充词和改口常常原样留着 |
-| Qwen3.5-4B-GGUF | ~2.7GB | 最准，纯 CPU 上一段长文要等十几秒以上 |
+| Gemma-4-E2B-GGUF | ~3.4GB | **默认**，Google 官方 QAT q4_0；中文、英文、中英混说都稳 |
+| Qwen3.5-2B-GGUF | ~1.3GB | 旧默认；实测多数句子原样照抄，默认模型加载失败时退回它 |
+| Qwen3.5-0.8B-GGUF | ~0.5GB | 最快，但填充词和改口常常原样留着 |
+| Qwen3.5-4B-GGUF | ~2.7GB | 纯 CPU 上一段长文要等十几秒以上 |
 
-`llama-cpp-python` 要 0.3.17 以上（更早的版本不认 Qwen3.5）。PyPI 上只有源码包，
+两个后端的默认模型是这样选的：用中文、英文、两种方向的中英混说、改口、夹术语、
+「帮我写一首诗」等 8 类输入 × 默认提示词和三个预设共 64 例自动检查，再量延迟和内存。
+Gemma-4-E2B 的 QAT 版在 MLX 和 llama.cpp 上都只有 1 例不合格，延迟约为旧默认的一半。
+
+`llama-cpp-python` 要 0.3.25 以上（更早的版本不认 Gemma 4）。PyPI 上只有源码包，
 装的时候要现编译：需要 CMake 和 C/C++ 编译器（Windows 上是 Visual Studio Build Tools）。
 
 ## 🚀 快速开始
@@ -286,7 +290,7 @@ npm run tauri build
 | `VIF_LLM_PORT` | 6545 | LLM 服务端口 |
 | `VIF_LLM_HOST` | 127.0.0.1 | LLM 服务监听地址;在 STT 服务里是转发目标地址 |
 | `VIF_LLM_ENABLED` | true | 是否启用 LLM 后处理 |
-| `VIF_LLM_MODEL` | Qwen3.5-4B-OptiQ(MLX)/ Qwen3.5-2B-GGUF(llama.cpp) | 默认 LLM 模型;填了另一个后端的模型名时忽略 |
+| `VIF_LLM_MODEL` | Gemma-4-E2B(MLX)/ Gemma-4-E2B-GGUF(llama.cpp) | 默认 LLM 模型;填了另一个后端的模型名时忽略 |
 | `VIF_LLM_BACKEND` | 自动 | LLM 推理后端:`mlx` 或 `llamacpp`。不设时 Apple Silicon 用 MLX,其它平台用 llama.cpp |
 | `VIF_LLM_CTX` | 8192 | llama.cpp 后端的上下文窗口(token) |
 | `VIF_LLM_GPU_LAYERS` | -1 | llama.cpp 后端放到 GPU 上的层数,-1 为全部;CPU 版 llama.cpp 忽略它 |

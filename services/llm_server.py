@@ -53,15 +53,18 @@ PROMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
 # 改口只留改口后的、一个词都不翻译 —— 和示例都是在 Qwen3.5-4B 上一轮轮实测调出来的:
 # - 没有「不翻译」和混说示例时,英文口述会被整理成中文,混说里的 check / 下周五 会被译掉;
 # - 规则要紧凑:把「口语 / 书面语」「标点」拆成单独的几条时,模型干脆不删填充词了;
-# - 示例里中文句子用全角标点,模型会照抄示例的标点。
-# 改动后请用中文、英文、两种方向的混说、改口、「帮我写一首诗」这几类输入再测一遍。
+# - 示例里中文句子用全角标点,模型会照抄示例的标点;
+# - 要写明英文大小写(Gemma 不写就常常整段小写),但英文版里得限定「只管英文部分」,
+#   否则模型会把中英混说统一成英文;
+# - 填充词举例里不要放 so basically:模型会把「so basically we did three things」整句删掉。
+# 改动后用 tools/llm_prompt_eval.py 对真模型跑一遍(默认提示词和前端三个预设 × 8 类输入)。
 DEFAULT_PROMPT = """你是一个语音输入后处理助手。用户可能说中文、英文，或者中英混说。
 
 整理规则：
-1. 删掉填充词和重复的词：中文如「嗯」「那个」「就是说」「然后」，英文如 um、uh、like、you know、so basically
+1. 删掉填充词和重复的词：中文如「嗯」「那个」「就是说」「然后」，英文如 um、uh、like、you know
 2. 口头改口（「三点不对是四点」「three no wait four」）只保留改口后的说法
 3. 一个词都不要翻译：中文部分保持中文，英文部分保持英文，原样照抄。中英混说时输出也照样混说，不要统一成一种语言
-4. 加标点，不改变原意，不补充内容
+4. 加标点和正常的英文大小写（句首、I、星期、专有名词大写），不改变原意，不补充内容
 
 示例：
 输入：嗯那个我们明天就是说要开会
@@ -82,10 +85,10 @@ DEFAULT_PROMPT = """你是一个语音输入后处理助手。用户可能说中
 DEFAULT_PROMPT_EN = """You are a post-processing assistant for voice input. The user may speak Chinese, English, or a mix of both.
 
 Rules:
-1. Remove filler words and repeated words: English such as um, uh, like, you know, so basically; Chinese such as 嗯, 那个, 就是说, 然后
+1. Remove filler words and repeated words: English such as um, uh, like, you know; Chinese such as 嗯, 那个, 就是说, 然后
 2. For self-corrections ("three no wait four", 「三点不对是四点」) keep only the corrected version
 3. Never translate a single word: Chinese parts stay Chinese, English parts stay English, copied as spoken. Mixed speech stays mixed; don't turn it into one language
-4. Add punctuation; don't change the meaning or add anything
+4. Add punctuation (capitalize the English parts normally: sentence starts, I, weekdays; the Chinese parts stay Chinese); don't change the meaning or add anything
 
 Examples:
 Input: 嗯那个我们明天就是说要开会
@@ -359,30 +362,43 @@ class MLXBackend:
     name = llm_backend.MLX
     #: llm_state.json 里记模型选择的键。沿用老键名,已有用户的选择不丢。
     state_key = "llm_model"
-    DEFAULT_MODEL = "Qwen3.5-4B-OptiQ"
+    #: 默认模型的选法:在 Apple Silicon 上对候选模型跑 tools/llm_prompt_eval.py(中文、英文、
+    #: 中英混说两个方向、改口、夹术语、「帮我写一首诗」× 默认提示词和三个预设,
+    #: 共 64 例)并量延迟和内存(phys_footprint)。2026-09 实测(M3 Max):
+    #:
+    #: | 模型                     | 不合格 | 延迟中位数 | 内存   |
+    #: |--------------------------|--------|-----------|--------|
+    #: | Gemma-4-E2B(QAT 4bit)  | 1/64   | 0.39 s    | 4.0 GB |
+    #: | Qwen3.5-4B-OptiQ(旧默认)| 11/64  | 0.84 s    | 3.8 GB |
+    #: | Qwen3.5-4B-MLX           | 10/64  | 0.77 s    | 3.0 GB |
+    #: | Qwen3.5-2B-OptiQ         | 49/64  | 0.45 s    | 2.1 GB |(基本原样照抄)
+    #: | Qwen3.5-0.8B             | 55/64  | 0.28 s    | 1.4 GB |
+    #:
+    #: Gemma 选的是 Google 的 QAT(量化感知训练)版:同一模型的普通 4bit 量化是 6/64。
+    #: 长口述(近 400 字中文、1100 字符英文、580 字混说)三种都完整、不丢句子,
+    #: 英文大小写正确,混说保持混说,延迟约 2.8 秒(旧默认约 4 秒,且留着不少填充词)。
+    #: 需要 mlx-lm >= 0.31.2(更早的版本不认 gemma4)。
+    DEFAULT_MODEL = "Gemma-4-E2B"
+    #: 默认模型加载失败时(mlx-lm 太旧、没网而新模型还没下载)退回的模型:旧默认,
+    #: 老用户多半已经下载过。见 `startup_load`。
+    FALLBACK_MODEL = "Qwen3.5-4B-OptiQ"
 
     AVAILABLE_MODELS = [
-        # Qwen3.5 MLX 量化模型 (推荐，中文最强)
-        "Qwen3.5-4B-OptiQ",  # 4B OptiQ 量化，~3GB 内存 (⭐ 推荐，平衡速度和精度)
-        "Qwen3.5-2B-OptiQ",  # 速度与质量平衡，~2GB 内存
-        "Qwen3.5-4B-MLX",  # 4B MLX 标准量化，~4GB 内存
-        # Qwen3 MLX 量化模型 (成熟稳定)
-        "Qwen3-0.6B",  # 最小 Qwen3 模型，~0.5GB 内存
-        "Qwen3-1.7B",  # Qwen3 中等模型，~1.5GB 内存
-        # Gemma 4 MLX (Google, 中文较弱)
-        "Gemma-4-E4B-DECKARD",  # Gemma 4 4B 定制版
+        "Gemma-4-E2B",  # ⭐ 默认:~4GB 内存,最快、中英混说最稳
+        "Qwen3.5-4B-OptiQ",  # 旧默认,~4GB 内存
+        "Qwen3.5-4B-MLX",  # 同一模型的普通 4bit 量化,~3GB 内存,质量接近
+        "Qwen3.5-2B-OptiQ",  # ~2GB 内存;实测多数句子原样照抄,不推荐
+        "Qwen3-0.6B",  # ~0.5GB 内存;质量更差
+        "Qwen3-1.7B",  # ~1.5GB 内存;实测原样照抄
     ]
 
     MODEL_IDS = {
-        # Qwen3.5 MLX 量化
+        "Gemma-4-E2B": "mlx-community/gemma-4-E2B-it-qat-4bit",
         "Qwen3.5-4B-OptiQ": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
         "Qwen3.5-2B-OptiQ": "mlx-community/Qwen3.5-2B-OptiQ-4bit",
         "Qwen3.5-4B-MLX": "mlx-community/Qwen3.5-4B-MLX-4bit",
-        # Qwen3 MLX 量化
         "Qwen3-0.6B": "mlx-community/Qwen3-0.6B-4bit",
         "Qwen3-1.7B": "mlx-community/Qwen3-1.7B-4bit",
-        # Gemma 4
-        "Gemma-4-E4B-DECKARD": "nightmedia/gemma-4-E4B-it-The-DECKARD-V2-Strong-HERETIC-UNCENSORED-Instruct-mxfp8-mlx",
     }
 
     def __init__(self, unavailable: str | None = None):
@@ -521,26 +537,32 @@ class LlamaCppBackend:
     #: 和 MLX 分开记:在 Mac 上用 VIF_LLM_BACKEND 试一下 llama.cpp,不该把
     #: 用户平时的 MLX 选择冲掉。
     state_key = "llm_model_llamacpp"
-    DEFAULT_MODEL = "Qwen3.5-2B-GGUF"
+    #: 默认是 Google 官方的 Gemma-4-E2B QAT q4_0(量化感知训练,专为 4bit 做的)。
+    #: 和 MLX 那边用同一套 64 例自动检查(见 MLXBackend.DEFAULT_MODEL 上的说明),
+    #: 本机 Metal 实测:Gemma-4-E2B QAT 1/64 不合格、延迟中位数 0.22 秒;旧默认
+    #: Qwen3.5-2B 54/64 不合格 —— 绝大多数句子原样照抄,填充词、改口都不动。
+    #: 纯 CPU 上会慢几倍,但仍是同档里最准的。
+    #: Gemma 4 要 llama-cpp-python >= 0.3.25(实测 0.3.35)。
+    DEFAULT_MODEL = "Gemma-4-E2B-GGUF"
+    #: 默认模型加载失败时(llama-cpp-python 太旧不认 gemma4、没网而新模型还没下载)
+    #: 退回旧默认,见 `startup_load`。
+    FALLBACK_MODEL = "Qwen3.5-2B-GGUF"
 
     #: 名字 → `<HF 仓库>/<GGUF 文件名>`。只下一个量化文件,而不是整个仓库
     #: (一个 GGUF 仓库里各种量化加起来有十几 GB)。Qwen 官方没发 Qwen3.5 的
     #: GGUF,用的是 unsloth 转的。
-    #:
-    #: 挑 Qwen3.5 而不是更老的 Qwen3 / Qwen2.5,是本机实测(M3 Max,Metal)的结果:
-    #: 「嗯那个就是说我们明天下午三点不对是两点半开会」,Qwen3.5-2B 整理成
-    #: 「明天下午两点半开会。」;Qwen3-1.7B 原样照抄一字不改;Qwen2.5-1.5B 整理成
-    #: 「明天下午三点开会」——把改口改反了,比不整理还糟。
     #: Qwen3.5 要 llama-cpp-python >= 0.3.17(更早的版本不认 qwen35 架构)。
     MODEL_IDS = {
+        "Gemma-4-E2B-GGUF": "google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf",
         "Qwen3.5-2B-GGUF": "unsloth/Qwen3.5-2B-GGUF/Qwen3.5-2B-Q4_K_M.gguf",
         "Qwen3.5-0.8B-GGUF": "unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q4_K_M.gguf",
         "Qwen3.5-4B-GGUF": "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf",
     }
     AVAILABLE_MODELS = [
-        "Qwen3.5-2B-GGUF",  # ~1.3GB,默认:短句改口整理得对,长文不丢内容
-        "Qwen3.5-0.8B-GGUF",  # ~0.5GB,最快,短句里的填充词和改口常常留着不动
-        "Qwen3.5-4B-GGUF",  # ~2.7GB,最准,纯 CPU 上一段长文要等很久
+        "Gemma-4-E2B-GGUF",  # ~3.4GB,默认:中文、英文、中英混说都稳
+        "Qwen3.5-2B-GGUF",  # ~1.3GB,旧默认;实测多数句子原样照抄
+        "Qwen3.5-0.8B-GGUF",  # ~0.5GB,最快,填充词和改口常常留着不动
+        "Qwen3.5-4B-GGUF",  # ~2.7GB,纯 CPU 上一段长文要等很久
     ]
 
     #: 上下文窗口(token)。要装下系统提示 + 原文 + 1.5 倍的输出预算;
@@ -913,13 +935,35 @@ CORS_ORIGINS = [
 engine = LLMEngine(default_model=LLM_MODEL, backend=BACKEND)
 
 
+async def startup_load(eng=None, backend=None) -> bool:
+    """启动时加载模型。加载的是**默认**模型却失败了,就退回后端的 FALLBACK_MODEL。
+
+    默认模型换过(见 MLXBackend.DEFAULT_MODEL 上的实测表)。老用户的 Python 环境里
+    mlx-lm 可能还不认新模型,或者此刻没网、新模型还没下载 —— 不能因此让 LLM 后处理
+    整个不可用。用户明确选过的模型(环境变量 / 切换记录)失败时不替他换,照常报错。
+    """
+    eng = eng or engine
+    backend = backend or BACKEND
+    if await eng.load():
+        return True
+    fallback = getattr(backend, "FALLBACK_MODEL", None)
+    if (
+        not fallback
+        or eng.default_model != backend.DEFAULT_MODEL
+        or fallback == backend.DEFAULT_MODEL
+    ):
+        return False
+    logger.warning(f"默认模型 {backend.DEFAULT_MODEL} 加载失败({eng.load_error()}),改用 {fallback}")
+    return await eng.load(fallback)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期:启动时后台加载模型,关闭时清理(FastAPI 推荐用法)"""
     logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
     logger.info(f"Backend: {BACKEND.name}, default model: {LLM_MODEL}")
     # 后台加载模型(非阻塞)
-    asyncio.create_task(engine.load())
+    asyncio.create_task(startup_load())
     yield
     logger.info("LLM Service shutting down")
 

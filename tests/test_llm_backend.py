@@ -194,6 +194,45 @@ class TestGGUFModelTable:
         assert "另一个推理后端" in engine.load_error()
 
 
+class TestStartupFallback:
+    """默认模型加载失败(mlx-lm 太旧不认新模型、没网而新模型还没下载)时退回旧默认。"""
+
+    @staticmethod
+    def _engine(srv, fail: set[str]):
+        engine = srv.LLMEngine(backend=srv.MLXBackend())
+        tried = []
+
+        def fake_load_sync(model_id):
+            tried.append(model_id)
+            if model_id in fail:
+                raise ValueError("Model type gemma4 not supported.")
+            engine._model, engine._tokenizer = object(), object()
+
+        engine._load_sync = fake_load_sync
+        return engine, tried
+
+    @pytest.mark.asyncio
+    async def test_default_failure_falls_back_to_previous_default(self):
+        import services.llm_server as srv
+
+        b = srv.MLXBackend
+        engine, tried = self._engine(srv, fail={b.MODEL_IDS[b.DEFAULT_MODEL]})
+        assert await srv.startup_load(engine, srv.MLXBackend()) is True
+        assert tried == [b.MODEL_IDS[b.DEFAULT_MODEL], b.MODEL_IDS[b.FALLBACK_MODEL]]
+        assert engine.current_model_name == b.FALLBACK_MODEL
+
+    @pytest.mark.asyncio
+    async def test_explicit_choice_is_not_replaced(self):
+        """用户明确选的模型失败了照常报错,不替他换成别的。"""
+        import services.llm_server as srv
+
+        b = srv.MLXBackend
+        engine, tried = self._engine(srv, fail={b.MODEL_IDS["Qwen3.5-4B-MLX"]})
+        engine.default_model = "Qwen3.5-4B-MLX"
+        assert await srv.startup_load(engine, srv.MLXBackend()) is False
+        assert tried == [b.MODEL_IDS["Qwen3.5-4B-MLX"]]
+
+
 # ============== 假的 llama.cpp ==============
 
 # Qwen3 模板里和思考模式有关的那部分:enable_thinking=False 时补一个空 think 块

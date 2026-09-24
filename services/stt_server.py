@@ -110,7 +110,8 @@ LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 
 # LLM Processing Toggle
 LLM_ENABLED = os.getenv("VIF_LLM_ENABLED", "true").lower() == "true"
-LLM_MODEL = os.getenv("VIF_LLM_MODEL", "Qwen3.5-4B-OptiQ")
+# 只用来记日志;真正加载哪个模型由 LLM 服务自己决定(见 llm_server.resolve_llm_model)。
+LLM_MODEL = os.getenv("VIF_LLM_MODEL", "(LLM 服务的默认)")
 
 # ============== State Persistence ==============
 """
