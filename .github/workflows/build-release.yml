@@ -194,6 +194,34 @@ jobs:
             exit 1
           fi
 
+      # 证书导进我们自己建的钥匙串,整个 job 都在。
+      #
+      # 不能让 Tauri 自己导(给它 APPLE_CERTIFICATE):它签完 .app 就把临时钥匙串
+      # 删了,紧接着打 .dmg 时 bundle_dmg.sh 要用同一个身份签 dmg,找不到证书,
+      # 整个构建失败(实测)。这里导好之后只告诉 Tauri 身份名(APPLE_SIGNING_IDENTITY)。
+      - name: Import macOS signing certificate
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/vif-signing.keychain-db"
+          keychain_pw="$(openssl rand -hex 24)"
+          cert="$RUNNER_TEMP/vif-signing.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert"
+          security create-keychain -p "$keychain_pw" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_pw" "$keychain"
+          security import "$cert" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$cert"
+          # 不设分区列表的话,codesign 每次取私钥都要弹「允许访问钥匙串」,CI 上没人点。
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_pw" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+
       - name: Build Tauri app
         working-directory: gui
         # 签名密钥必须传进来。少了它 `createUpdaterArtifacts: true` 会直接让构建
@@ -205,19 +233,20 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # 只有 macOS 用得上:Tauri 把证书导进一个临时钥匙串再签名(其它平台忽略)。
+          # 只有 macOS 用得上:证书已经在上一步导进钥匙串,这里只给身份名。
           # 没设 APPLE_ID 等公证用的变量,所以不会去公证。
-          APPLE_CERTIFICATE: ${{ matrix.os == 'macos-latest' && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
           APPLE_SIGNING_IDENTITY: ${{ matrix.os == 'macos-latest' && secrets.APPLE_SIGNING_IDENTITY || '' }}
         run: |
           set -o pipefail
-          # 空字符串的 APPLE_* 也算「设了」,Tauri 会拿空证书去导入然后失败。
-          # 非 macOS 上把它们清掉。
-          if [ "${{ matrix.os }}" != "macos-latest" ]; then
-            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
+          verbose=""
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            # --verbose 才会把 bundle_dmg.sh 等打包脚本的输出打出来,出错时有线索。
+            verbose="--verbose"
+          else
+            # 空字符串的 APPLE_SIGNING_IDENTITY 也算「设了」,清掉。
+            unset APPLE_SIGNING_IDENTITY
           fi
-          npx tauri build --target ${{ matrix.target }} 2>&1 | tee build.log
+          npx tauri build --target ${{ matrix.target }} $verbose 2>&1 | tee build.log
 
           # 私钥和配置里的 pubkey 对不上时,tauri 只**警告**一句就照常出包:
           #   "The updater secret key from `TAURI_SIGNING_PRIVATE_KEY` does not
