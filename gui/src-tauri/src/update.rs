@@ -83,9 +83,22 @@ pub static RESTARTING_FOR_UPDATE: std::sync::atomic::AtomicBool =
 ///
 /// 签名验不过时插件会在这里返回错误,**不会**装上去——这正是要它的原因。
 pub async fn download_and_install(app: &tauri::AppHandle) -> Result<String, String> {
-    let updater = app
-        .updater()
-        .map_err(|e| tr!("更新器不可用: {}", "Updater unavailable: {}", e))?;
+    // Windows 上插件拉起安装器后直接 `process::exit(0)`,不经过 `RunEvent::Exit`:
+    // 不在这里删会话标记,装完更新后第一次启动就会误报「上次异常退出」。
+    // 插件自己的钩子(`cleanup_before_exit`)会被这里覆盖,所以照样调一次。
+    #[cfg(windows)]
+    let updater = {
+        let handle = app.clone();
+        app.updater_builder()
+            .on_before_exit(move || {
+                crate::crash::end_session();
+                handle.cleanup_before_exit();
+            })
+            .build()
+    };
+    #[cfg(not(windows))]
+    let updater = app.updater();
+    let updater = updater.map_err(|e| tr!("更新器不可用: {}", "Updater unavailable: {}", e))?;
 
     let update = match updater.check().await {
         Ok(Some(u)) => u,
