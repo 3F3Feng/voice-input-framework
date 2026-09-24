@@ -117,7 +117,8 @@ class TestLLMEngine:
     def test_init(self):
         """Test engine initialization"""
         engine = mlx_engine()
-        assert engine.default_model == "Gemma-4-E2B"
+        # 默认模型按这台机器的内存挑,见 test_default_model_follows_ram
+        assert engine.default_model in ("Gemma-4-E4B", "Gemma-4-E2B")
         assert not engine._is_loaded
         assert not engine._loading
 
@@ -129,8 +130,21 @@ class TestLLMEngine:
         assert "Qwen3.5-4B-OptiQ" in MLXBackend.AVAILABLE_MODELS
         assert "Qwen3.5-2B-OptiQ" in MLXBackend.AVAILABLE_MODELS
         # 默认和退回用的模型都得在表里,否则启动时直接「未知的 LLM 模型」
-        assert MLXBackend.DEFAULT_MODEL in MLXBackend.AVAILABLE_MODELS
-        assert MLXBackend.FALLBACK_MODEL in MLXBackend.AVAILABLE_MODELS
+        for name in [MLXBackend.DEFAULT_MODEL, MLXBackend.SMALL_MODEL, *MLXBackend.FALLBACK_MODELS]:
+            assert name in MLXBackend.AVAILABLE_MODELS
+            assert name in MLXBackend.MODEL_IDS
+
+    def test_default_model_follows_ram(self):
+        """内存够就用格式整理更好的 E4B;8 GB 的 Mac、读不到内存时用 E2B。"""
+        from services.llm_server import LlamaCppBackend, MLXBackend
+
+        b = MLXBackend()
+        assert b.default_model(ram_gb=36) == "Gemma-4-E4B"
+        assert b.default_model(ram_gb=16) == "Gemma-4-E4B"
+        assert b.default_model(ram_gb=15.9) == "Gemma-4-E4B"  # 16 GB 的机器报出来可能略少
+        assert b.default_model(ram_gb=8) == "Gemma-4-E2B"
+        assert b.default_model(ram_gb=0) == "Gemma-4-E2B"  # 读不到
+        assert LlamaCppBackend().default_model(ram_gb=64) == LlamaCppBackend.DEFAULT_MODEL
 
     def test_model_ids_mapping(self):
         """Test model IDs mapping"""

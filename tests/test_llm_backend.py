@@ -217,9 +217,29 @@ class TestStartupFallback:
 
         b = srv.MLXBackend
         engine, tried = self._engine(srv, fail={b.MODEL_IDS[b.DEFAULT_MODEL]})
-        assert await srv.startup_load(engine, srv.MLXBackend()) is True
-        assert tried == [b.MODEL_IDS[b.DEFAULT_MODEL], b.MODEL_IDS[b.FALLBACK_MODEL]]
-        assert engine.current_model_name == b.FALLBACK_MODEL
+        engine.default_model = b.DEFAULT_MODEL
+        backend = srv.MLXBackend()
+        backend.default_model = lambda ram_gb=None: b.DEFAULT_MODEL
+        assert await srv.startup_load(engine, backend) is True
+        # 先退小一号的 Gemma
+        assert tried == [b.MODEL_IDS["Gemma-4-E4B"], b.MODEL_IDS["Gemma-4-E2B"]]
+        assert engine.current_model_name == "Gemma-4-E2B"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_down_the_chain(self):
+        """mlx-lm 太旧、两个 Gemma 都不认时,退到旧默认 Qwen。"""
+        import services.llm_server as srv
+
+        b = srv.MLXBackend
+        engine, tried = self._engine(
+            srv, fail={b.MODEL_IDS["Gemma-4-E4B"], b.MODEL_IDS["Gemma-4-E2B"]}
+        )
+        engine.default_model = b.DEFAULT_MODEL
+        backend = srv.MLXBackend()
+        backend.default_model = lambda ram_gb=None: b.DEFAULT_MODEL
+        assert await srv.startup_load(engine, backend) is True
+        assert tried[-1] == b.MODEL_IDS["Qwen3.5-4B-OptiQ"]
+        assert engine.current_model_name == "Qwen3.5-4B-OptiQ"
 
     @pytest.mark.asyncio
     async def test_explicit_choice_is_not_replaced(self):
