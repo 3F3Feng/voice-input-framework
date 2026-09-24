@@ -37,6 +37,33 @@
             <span class="s-tip" style="margin:0;flex:1">{{ t('不想一项项手动配?向导会带你走一遍:服务、权限、输出方式、试说一句。', 'Rather not set things up one by one? The wizard walks you through the service, permissions, output method and a test phrase.') }}</span>
             <button class="s-btn" @click="openWizard">{{ t('打开设置向导', 'Open setup wizard') }}</button>
           </div>
+          <!-- 服务版本:应用内更新只换客户端,仓库里的服务可能还是旧的(见 service_update.rs)。
+               只在版本对不上、或者正在 / 刚刚更新过时出现。 -->
+          <div v-if="showVersionSection" class="s-section">
+            <div class="s-title">{{ t('服务版本', 'Service version') }}</div>
+            <template v-if="versionReport?.services_older">
+              <div class="s-tip srv-problem" style="margin-top:0">⚠ {{ t(`服务是 ${olderServicesText},应用是 v${clientVersion}。`, `The services are ${olderServicesText}; the app is v${clientVersion}.`) }}</div>
+              <div v-if="serverMode === 'local'" class="s-tip">{{ t('应用内更新只更新客户端;STT / LLM 服务跑的是本机仓库里的代码,要单独更新。不更新的话,新版客户端用到的功能会对着旧服务失效,新版要求的依赖(比如新默认 LLM 需要的 mlx-lm 0.31.2)也不会装上。', "In-app updates only update the client; the STT / LLM services run the code in your local repository and must be updated separately. Otherwise features the new client relies on fail against the old services, and dependencies the new release needs (e.g. mlx-lm 0.31.2 for the new default LLM) are never installed.") }}</div>
+              <div v-else class="s-tip">{{ t('远程服务器上的服务比应用旧,新版客户端用到的部分功能可能用不了。请在那台机器的仓库里运行 git pull --ff-only 和 scripts/setup-env.sh(Windows 用 setup-env.ps1),再重启服务。', 'The services on the remote server are older than the app, so some features of the new client may not work. On that machine, run git pull --ff-only and scripts/setup-env.sh (setup-env.ps1 on Windows) in the repository, then restart the services.') }}</div>
+            </template>
+            <div v-else-if="versionReport?.services_newer" class="s-row" style="margin-top:0">
+              <span class="s-tip" style="margin:0;flex:1">{{ t(`服务(${newerServicesText})比应用 v${clientVersion} 新,建议检查一下应用更新。`, `The services (${newerServicesText}) are newer than the app (v${clientVersion}); consider checking for an app update.`) }}</span>
+              <button class="s-btn" @click="tab = 'about'">{{ t('检查更新', 'Check for updates') }}</button>
+            </div>
+            <template v-if="serverMode === 'local' && (versionReport?.services_older || svcUpdating || svcUpdateResult)">
+              <div v-if="versionReport?.services_older || svcUpdating" class="s-row" style="margin-top:6px">
+                <span class="s-tip" style="margin:0;flex:1">{{ t('一键更新:在仓库里 git pull --ff-only、重跑建环境脚本,再重启本应用启动的服务。仓库有未提交的改动、分支分叉,或者有不是本应用启动的服务在跑时,会停下来并告诉你怎么手动做。', "One-click update: git pull --ff-only in the repository, rerun the setup script, then restart the services this app started. If the repository has uncommitted changes, the branch has diverged, or a service not started by this app is running, it stops and tells you how to do it by hand.") }}</span>
+                <button class="s-btn" @click="updateServices" :disabled="svcUpdating">{{ svcUpdating ? t('更新中…', 'Updating…') : t('更新服务', 'Update services') }}</button>
+              </div>
+              <div v-if="svcUpdating" class="s-tip srv-problem">{{ svcStageText }}</div>
+              <div v-if="svcUpdating && svcUpdateLine" class="s-tip svc-line" :title="svcUpdateLine">{{ svcUpdateLine }}</div>
+              <div v-if="svcUpdateResult" :class="['s-tip', 'svc-result', svcUpdateResult.ok ? 'svc-ok' : 's-err']">{{ svcUpdateResult.msg }}</div>
+              <div v-if="svcUpdating || svcUpdateResult" class="s-row" style="margin-top:4px">
+                <button class="s-btn" @click="openLog('client')">{{ t('查看完整输出', 'View full output') }}</button>
+                <button v-if="svcUpdateResult && !svcUpdateResult.ok" class="s-btn" @click="copySvcUpdateResult">{{ t('复制说明', 'Copy details') }}</button>
+              </div>
+            </template>
+          </div>
           <!-- 服务器 -->
           <div class="s-section">
             <div class="s-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -508,6 +535,14 @@
           <button class="s-btn" @click="chooseOutput(false)">{{ t('只显示在这里', 'Just show it here') }}</button>
         </div>
         <div class="s-tip">{{ t('之后随时可以在 ⚙ → 常规 →「自动输入到窗口」里改。', 'You can change this anytime in ⚙ → General → “Auto-insert into window”.') }}</div>
+      </div>
+
+      <!-- 服务比应用旧:应用内更新只换了客户端。不挡操作,可以关掉;同一对版本本次会话不再出现。 -->
+      <div v-if="showVersionBanner" class="perm-banner version-banner" @click="openVersionSection">
+        <span>⚠️ {{ serverMode === 'local'
+          ? t(`本机服务(${olderServicesText})比应用 v${clientVersion} 旧,新功能可能用不了 · 点击更新服务`, `Local services (${olderServicesText}) are older than the app (v${clientVersion}); new features may not work · Click to update them`)
+          : t(`远程服务(${olderServicesText})比应用 v${clientVersion} 旧,部分新功能可能用不了 · 点击查看`, `Remote services (${olderServicesText}) are older than the app (v${clientVersion}); some new features may not work · Click for details`) }}</span>
+        <button class="banner-close" @click.stop="dismissVersionBanner" :title="t('这次不再提示', 'Dismiss for this session')">✕</button>
       </div>
 
       <!-- Record Button -->
@@ -1500,6 +1535,130 @@ async function openPermSettings(key: PermissionKey) {
     await invoke("open_permission_settings", { permission: key });
     toast(t("已打开系统设置，勾选后请点「刷新」", "Opened System Settings — turn it on, then click Refresh"), "info");
   } catch (e) { toast(t(`打开系统设置失败: ${e}`, `Couldn't open System Settings: ${e}`), "err"); }
+}
+
+// ── 服务版本对账 ──
+// 应用内更新只换客户端;STT / LLM 服务跑的是本机仓库里的代码,可能还是旧的,新功能
+// 就对着旧服务悄无声息地失效(见 src-tauri/src/service_update.rs)。服务在 /health 里
+// 报 app_version,后端拿它和客户端比;老服务端没有这个字段,按「旧」算。
+type VersionRelation = "same" | "older" | "newer" | "unknown";
+interface ServiceVersion { kind: ServerKind; reachable: boolean; app_version: string | null; relation: VersionRelation | null; }
+interface VersionReport {
+  client_version: string;
+  mode: ServerMode;
+  services: ServiceVersion[];
+  services_older: boolean;
+  services_newer: boolean;
+  can_update: boolean;
+  update_running: boolean;
+}
+const versionReport = ref<VersionReport | null>(null);
+/** 本次会话里关掉过的提示,按「客户端版本 + 各服务版本」记:同一对版本不再提示,
+ *  换了版本(比如更新了一半、或者又装了新版应用)才会再出现。不落盘——重启应用后再提一次。 */
+const dismissedVersionKeys = ref<string[]>([]);
+const svcUpdating = ref(false);
+const svcUpdateStage = ref("");
+const svcUpdateLine = ref("");
+const svcUpdateResult = ref<{ ok: boolean; msg: string } | null>(null);
+let versionTimer: ReturnType<typeof setInterval> | null = null;
+const clientVersion = computed(() => versionReport.value?.client_version || build.value.version);
+
+async function refreshVersions() {
+  try {
+    const r = await invoke<VersionReport>("get_service_versions");
+    const prev = versionReport.value;
+    // 这一次没答话的服务沿用上一次的结论:一次较长的转写期间 /health 可能超时,
+    // 不能因此让提示消失又冒出来。换了模式就不沿用了(说的已经不是同一组服务)。
+    const services = r.services.map(s => {
+      if (s.reachable || !prev || prev.mode !== r.mode) return s;
+      return prev.services.find(p => p.kind === s.kind && p.reachable) ?? s;
+    });
+    const older = services.some(s => s.relation === "older" || s.relation === "unknown");
+    versionReport.value = {
+      ...r,
+      services,
+      services_older: older,
+      services_newer: !older && services.some(s => s.relation === "newer"),
+    };
+    if (r.update_running) svcUpdating.value = true;
+  } catch (e) { console.error("get_service_versions failed:", e); }
+}
+
+function svcVersionText(s: ServiceVersion): string {
+  return s.app_version ? `v${s.app_version}` : t("没报版本号的旧版", "an old release without a version");
+}
+/** 「STT / LLM v2.3.2」:版本相同的服务并在一起说,不同的分开说。 */
+function servicesText(pick: (r: VersionRelation | null) => boolean): string {
+  const groups = new Map<string, string[]>();
+  for (const s of versionReport.value?.services ?? []) {
+    if (!pick(s.relation)) continue;
+    const v = svcVersionText(s);
+    groups.set(v, [...(groups.get(v) ?? []), s.kind.toUpperCase()]);
+  }
+  return [...groups].map(([v, kinds]) => `${kinds.join(" / ")} ${v}`).join(t("、", ", "));
+}
+const olderServicesText = computed(() => servicesText(r => r === "older" || r === "unknown"));
+const newerServicesText = computed(() => servicesText(r => r === "newer"));
+const versionKey = computed(() => {
+  const r = versionReport.value;
+  if (!r) return "";
+  return [r.client_version, ...r.services.filter(s => s.reachable).map(s => `${s.kind}:${s.app_version ?? "none"}`)].join("|");
+});
+const showVersionBanner = computed(() =>
+  !!versionReport.value?.services_older && !svcUpdating.value && !dismissedVersionKeys.value.includes(versionKey.value));
+const showVersionSection = computed(() =>
+  !!versionReport.value?.services_older || !!versionReport.value?.services_newer || svcUpdating.value || !!svcUpdateResult.value);
+function dismissVersionBanner() {
+  if (versionKey.value && !dismissedVersionKeys.value.includes(versionKey.value)) dismissedVersionKeys.value.push(versionKey.value);
+}
+function openVersionSection() { showSettings.value = true; tab.value = "service"; }
+
+const SVC_STAGE_LABEL: Record<string, () => string> = {
+  checking: () => t("检查仓库和服务…", "Checking the repository and services…"),
+  fetching: () => t("从远端拉取…", "Fetching from the remote…"),
+  pulling: () => t("拉取新代码…", "Pulling the new code…"),
+  setup: () => t("重建环境(要装新依赖时可能要几分钟)…", "Rebuilding the environment (may take a few minutes if there are new dependencies)…"),
+  restarting: () => t("重启服务…", "Restarting the services…"),
+};
+const svcStageText = computed(() => SVC_STAGE_LABEL[svcUpdateStage.value]?.() ?? t("更新中…", "Updating…"));
+
+/** `service-update` 事件:阶段切换,或者某一阶段的一行输出。完整输出在客户端日志里。 */
+function onServiceUpdateProgress(p: { stage: string; line: string | null }) {
+  if (p.stage === "progress") { if (p.line) svcUpdateLine.value = p.line; return; }
+  // 结果以命令的返回值为准(updateServices 里处理),这里只管进度。
+  if (p.stage === "done" || p.stage === "failed") return;
+  svcUpdating.value = true;
+  svcUpdateStage.value = p.stage;
+  svcUpdateLine.value = p.line ?? "";
+}
+
+async function updateServices() {
+  if (svcUpdating.value) return;
+  svcUpdating.value = true;
+  svcUpdateResult.value = null;
+  svcUpdateStage.value = "checking";
+  svcUpdateLine.value = "";
+  let ok = false;
+  try {
+    const msg = await invoke<string>("update_services");
+    svcUpdateResult.value = { ok: true, msg };
+    ok = true;
+    toast(t("服务已更新", "Services updated"), "ok", false);
+  } catch (e) {
+    svcUpdateResult.value = { ok: false, msg: `${e}` };
+    toast(t("服务没有更新,原因见「服务」页", "Services weren't updated; see the Service tab"), "err", false);
+  } finally {
+    svcUpdating.value = false;
+    // 成功后服务在重启、重新加载模型,这一刻多半还没答话:丢掉旧结论,别让
+    // 「沿用上一次」把刚更新掉的旧版本又显示出来。
+    if (ok) versionReport.value = null;
+    await refreshServers();
+    await refreshVersions();
+  }
+}
+async function copySvcUpdateResult() {
+  try { await navigator.clipboard.writeText(svcUpdateResult.value?.msg ?? ""); toast(t("已复制", "Copied"), "ok"); }
+  catch (e) { toast(t(`复制失败: ${e}`, `Copy failed: ${e}`), "err"); }
 }
 
 // ── 服务器管理 ──
@@ -2741,6 +2900,17 @@ onMounted(async () => {
   try { applySttHealth(await invoke<SttHealth>("get_stt_health")); }
   catch (e) { console.error("get_stt_health error:", e); }
 
+  // 服务版本对账:STT 状态一变(刚起来、重启过、换了地址)、LLM 起来了、换了模式时
+  // 各问一次;另外每分钟问一次,兜住「用户自己在终端里更新并重启了服务」。
+  listen<{ stage: string; line: string | null }>("service-update", e => onServiceUpdateProgress(e.payload));
+  watch(() => `${sttHealth.value?.state}|${sttHealth.value?.url}`, () => {
+    if (sttHealth.value?.reachable) void refreshVersions();
+  });
+  watch(() => serverReport.value?.llm.state, s => { if (s === "running") void refreshVersions(); });
+  watch(serverMode, () => { versionReport.value = null; void refreshVersions(); });
+  void refreshVersions();
+  versionTimer = setInterval(refreshVersions, 60_000);
+
   // 启动时这一次连接**不能 await**：下面还要注册快捷键 / 转录的事件监听，
   // 而本地模式下这个循环可能要等几十秒。以前它是一次性的所以看不出来。
   //
@@ -2889,6 +3059,7 @@ onUnmounted(() => {
   if (levelInterval) clearInterval(levelInterval);
   if (processingTimerInterval) clearInterval(processingTimerInterval);
   if (serverPollTimer) clearInterval(serverPollTimer);
+  if (versionTimer) clearInterval(versionTimer);
   if (hotkeyHandler) {
     document.removeEventListener('keydown', hotkeyHandler);
     document.removeEventListener('keyup', hotkeyHandler);
@@ -3020,6 +3191,13 @@ html, body, #app { height: 100%; }
 .perm-state.muted { color: var(--muted); background: rgba(113, 113, 122, 0.12); border-color: rgba(113, 113, 122, 0.3); }
 .perm-banner { width: 100%; max-width: 360px; background: rgba(251, 191, 36, 0.12); border: 1px solid rgba(251, 191, 36, 0.3); color: var(--yellow); border-radius: 8px; padding: 8px 10px; font-size: 0.7rem; line-height: 1.4; text-align: center; cursor: pointer; }
 .perm-banner:hover { background: rgba(251, 191, 36, 0.2); }
+.version-banner { display: flex; align-items: flex-start; gap: 6px; text-align: left; }
+.version-banner > span { flex: 1; }
+.banner-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.75rem; padding: 0 2px; opacity: 0.7; line-height: 1.4; }
+.banner-close:hover { opacity: 1; }
+.svc-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.svc-result { white-space: pre-wrap; word-break: break-word; user-select: text; -webkit-user-select: text; }
+.svc-result.svc-ok { color: var(--green); }
 .choice-banner { width: 100%; max-width: 360px; background: rgba(96, 165, 250, 0.1); border: 1px solid rgba(96, 165, 250, 0.3); border-radius: 8px; padding: 8px 10px; text-align: center; }
 .choice-q { font-size: 0.75rem; color: var(--text); }
 .choice-actions { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
