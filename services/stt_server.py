@@ -39,7 +39,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from services.diarize_engine import DIARIZE_ENABLED, DiarizationEngine
-from services import model_catalog, vocabulary
+from services import model_catalog, segmenter, vocabulary
 from services.audio_io import UnsupportedAudio, decode_to_pcm16k
 from services.stt_engine import (
     HealthStatus,
@@ -910,6 +910,10 @@ async def websocket_stream(websocket: WebSocket):
             "is_loading": engine.is_loading(),
             "llm_enabled": llm_enabled,
             "llm_model": _cached_llm_model() if llm_enabled else None,
+            # 边录边识别(services/segmenter.py)。客户端看到它,才会在 config 里带
+            # `incremental: true`、按下就开始传;老服务端没有这个字段,新客户端就照旧
+            # 松手后一次性上传。老客户端不认它,忽略即可。
+            "incremental": True,
             # 项目版本号,和 /health 的 app_version 一样(见 shared/app_version.py)。
             "app_version": APP_VERSION,
         }
@@ -920,6 +924,25 @@ async def websocket_stream(websocket: WebSocket):
     language = "auto"
     received_bytes = 0
     size_error = None
+    #: 客户端在 config 里要了边录边识别时才有;否则和以前一样收齐再整段转写。
+    segments: segmenter.SegmentedTranscriber | None = None
+    #: 客户端说了放弃(Esc)或者没发 end 就断开了:这段音频没人要了,不转写。
+    abandoned = False
+    #: 分段模式下最近一段识别出的语言(result 里报给客户端,和整段转写时一样)。
+    detected_language: str | None = None
+
+    async def transcribe_segment(pcm: bytes, context: str | None) -> str:
+        nonlocal detected_language
+        result = await engine.transcribe(pcm, language=language, context=context)
+        if result.text.strip():
+            detected_language = result.language
+        return result.text
+
+    async def report_segment(index: int, text: str, audio_s: float) -> None:
+        # 只是进度:客户端不靠它拼结果(最终文本在 result 里),老客户端也不会收到。
+        await _safe_send(
+            {"type": "segment", "index": index, "text": text, "audio_s": round(audio_s, 2)}
+        )
 
     # ── 异步生成器：从 queue 读取音频块供 transcribe_stream ──
     async def audio_stream_generator():
@@ -937,7 +960,7 @@ async def websocket_stream(websocket: WebSocket):
 
     # ── 接收循环（投递到 queue）──
     async def receive_loop():
-        nonlocal stream_error, language, received_bytes, size_error
+        nonlocal stream_error, language, received_bytes, size_error, segments, abandoned
         try:
             while True:
                 message = await asyncio.wait_for(websocket.receive_text(), timeout=120.0)
@@ -964,16 +987,35 @@ async def websocket_stream(websocket: WebSocket):
                             )
                             await audio_queue.put(None)
                             break
-                        await audio_queue.put(chunk)
+                        if segments is not None:
+                            segments.feed(chunk)
+                        else:
+                            await audio_queue.put(chunk)
 
                 elif msg_type == "config":
                     language = data.get("language", "auto")
+                    # 只在还没收到音频时才能切到分段模式:半路切换,前面排在 queue 里
+                    # 的音频就没人管了。
+                    if data.get("incremental") and segments is None and not received_bytes:
+                        segments = segmenter.SegmentedTranscriber(
+                            transcribe_segment,
+                            hotwords=vocabulary.context_text(VOCABULARY),
+                            on_segment=report_segment,
+                        )
+                        logger.info("Incremental (segmented) transcription enabled")
                     await _safe_send(
                         {
                             "type": "config_ack",
                             "language": language,
+                            "incremental": segments is not None,
                         }
                     )
+
+                elif msg_type == "cancel":
+                    # 录音被放弃(Esc):已经转好的段、正在转的段一律作废,不回结果。
+                    abandoned = True
+                    await audio_queue.put(None)
+                    break
 
                 elif msg_type in ("end", "stop"):
                     await audio_queue.put(None)  # 通知 stream 结束
@@ -981,6 +1023,9 @@ async def websocket_stream(websocket: WebSocket):
         except TimeoutError:
             stream_error = "WebSocket receive timeout"
         except WebSocketDisconnect:
+            # 没发 end 就断开:客户端已经不在了(放弃录音、应用退出、网络断了),
+            # 转出来也没人收。以前照样把收到的音频整段转一遍,白占模型线程。
+            abandoned = True
             await audio_queue.put(None)
         except Exception as e:
             stream_error = str(e)
@@ -991,6 +1036,18 @@ async def websocket_stream(websocket: WebSocket):
 
     # ── 等待音频接收完成，一次性转写 ──
     await receive_task
+
+    if segments is not None and (size_error or abandoned):
+        segments.cancel()
+
+    if abandoned:
+        logger.info("Client abandoned the recording; nothing to transcribe")
+        try:
+            await websocket.close()
+        except Exception as e:
+            logger.debug(f"WebSocket close failed (already closed?): {e}")
+        engine.decrement_connections()
+        return
 
     # 超出体积上限:丢弃已收音频并直接返回错误(终态,不再发 done)
     if size_error:
@@ -1016,21 +1073,41 @@ async def websocket_stream(websocket: WebSocket):
         if chunk is not None:
             all_audio.extend(chunk)
 
-    if all_audio:
+    has_audio = bool(all_audio) or (segments is not None and received_bytes > 0)
+    if has_audio:
         error_sent = False
         try:
-            result = await asyncio.wait_for(
-                _with_keepalive(
-                    engine.transcribe(
-                        bytes(all_audio),
-                        language=language,
-                        context=vocabulary.context_text(VOCABULARY),
+            if segments is not None:
+                # 录音期间已经转好了前面的段,这里只剩最后一段(外加可能正在转的那段)。
+                stt_started = time.time()
+                full_text = await asyncio.wait_for(
+                    _with_keepalive(segments.finish(), "stt", _safe_send), timeout=600.0
+                )
+                result = TranscriptionResult(
+                    text=full_text,
+                    language=detected_language or language,
+                    # 松手之后等 STT 的时间,也就是用户实际多等的那一段。
+                    stt_latency_ms=(time.time() - stt_started) * 1000,
+                    model=engine.current_model_name,
+                )
+                logger.info(
+                    f"Segmented transcription: {segments.segmented_s:.1f}s done while "
+                    f"recording, {received_bytes / 32000 - segments.segmented_s:.1f}s after end, "
+                    f"{result.stt_latency_ms:.0f}ms after end"
+                )
+            else:
+                result = await asyncio.wait_for(
+                    _with_keepalive(
+                        engine.transcribe(
+                            bytes(all_audio),
+                            language=language,
+                            context=vocabulary.context_text(VOCABULARY),
+                        ),
+                        "stt",
+                        _safe_send,
                     ),
-                    "stt",
-                    _safe_send,
-                ),
-                timeout=600.0,
-            )
+                    timeout=600.0,
+                )
             # 个人词库的替换规则:识别完就换,LLM 拿到的已经是改好的写法。
             result.text = vocabulary.apply_rules(result.text, VOCABULARY)
 
@@ -1105,7 +1182,7 @@ async def websocket_stream(websocket: WebSocket):
 
     # 已发送 error 视为终态,不再发 done(避免客户端断开后 send 报错);
     # all_audio 为空时也照常发 done(与旧行为一致)
-    if not (all_audio and error_sent):
+    if not (has_audio and error_sent):
         await _safe_send({"type": "done"})
 
     try:

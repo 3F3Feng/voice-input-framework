@@ -478,8 +478,11 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
 
 ### 5.3 后续迭代
 
-1. 录音期间就建 WS、边录边传(现在松手后才一次性上传;有了分块合并,长录音的等待已经缩短)。
-   PR #6(已关闭,提交仍可在 PR 里看到)在旧的 Python 客户端上做过一版,可参考思路,代码合不进来。
+1. ~~录音期间就建 WS、边录边传~~ 已做:按下就连(`stt::LiveSession`),服务端 `ready` 带
+   `incremental: true` 时才在 config 里要分段模式,录音期间按 18–28 秒、切在能量最低处分段转写
+   (`services/segmenter.py`),松手只转最后一段;老服务端、连不上、中途断线都退回松手后整段上传。
+   实测(M3 Max,Qwen3-ASR-1.7B):101 秒 / 217 秒录音松手到结果从 3.3 / 7.8 秒降到约 0.8 秒,
+   字与整段转写一致,只有段边界附近少数标点不同。真麦克风 + 真应用里还没点过。
 2. NVIDIA 机器上跑 Qwen3-ASR(现在非 Apple 平台只有 Whisper,中文不如 Qwen3-ASR):PR #6 的
    `server/models/qwen3_asr_cuda.py` 用 qwen_asr 包 + bfloat16 + Flash Attention 2,要按现在的
    `services/stt_engine.py` 重写成一个引擎。

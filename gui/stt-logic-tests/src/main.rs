@@ -10,6 +10,8 @@ mod stt;
 #[allow(dead_code)]
 mod i18n;
 
+mod live;
+
 use stt::{SttClient, StreamEvent};
 
 // ── SttClient::new URL 构造(纯逻辑)──

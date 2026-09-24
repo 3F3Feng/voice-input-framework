@@ -198,22 +198,19 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
 
     // 服务连不上 / 模型还在加载 / 加载失败时不开始录音,直接说原因(R13)。
     // 以前快捷键路径不看这些,说完一整句才报连不上,这段话白说了。
-    {
-        let url = state
-            .stt
-            .lock()
-            .map(|c| c.stt_url.clone())
-            .unwrap_or_default();
-        if let Ok(health) = state.stt_health.lock() {
-            heartbeat::recording_gate(&health, &url)?;
-        }
+    let url = state
+        .stt
+        .lock()
+        .map(|c| c.stt_url.clone())
+        .unwrap_or_default();
+    if let Ok(health) = state.stt_health.lock() {
+        heartbeat::recording_gate(&health, &url)?;
     }
 
-    let device;
-    {
+    let (device, language) = {
         let cfg = state.config.lock().map_err(|e| e.to_string())?;
-        device = cfg.audio.device.clone();
-    }
+        (cfg.audio.device.clone(), cfg.audio.language.clone())
+    };
     {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
         // 已经在录了就原地拒绝,一个字节的状态都别动。
@@ -238,6 +235,16 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
                 if let Some(note) = note {
                     emit_app_warning(app, &note);
                 }
+                // 按下就连、边录边传(见 `stt::LiveSession`)。连接在后台建,不挡录音;
+                // 连不上或服务端太老时,松手后照以前的办法一次性上传。
+                if let Some(chunk_rx) = recorder.take_chunk_receiver() {
+                    let (session, task) = stt::LiveSession::start(&url, chunk_rx, &language);
+                    tauri::async_runtime::spawn(task);
+                    // 换下来的旧会话(理论上不该有)随之丢掉,等于告诉服务端作废。
+                    if let Ok(mut live) = LIVE_SESSION.lock() {
+                        *live = Some(session);
+                    }
+                }
                 let _ = indicator::show(app);
                 Ok(())
             }
@@ -246,6 +253,17 @@ pub fn start_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Res
                 Err(e)
             }
         }
+    }
+}
+
+/// 正在进行的边录边传会话(见 `stt::LiveSession`)。按下时建,松手时交给转写。
+/// 丢掉它(Esc 放弃、下一次按下时替换)就是告诉服务端这段不要了。
+static LIVE_SESSION: Mutex<Option<stt::LiveSession>> = Mutex::new(None);
+
+/// 放弃这段录音时调用:服务端录音期间已经转好 / 正在转的段一律作废,连接关掉。
+pub(crate) fn cancel_live_transcription() {
+    if let Ok(mut live) = LIVE_SESSION.lock() {
+        live.take();
     }
 }
 
@@ -258,6 +276,14 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
         let (samples, rate) = recorder.stop()?;
         (chunk_rx, samples, rate)
     };
+    // 必须在 `recorder.stop()` 之后取:stop 放掉了采集端的 sender,会话才知道音频到头了。
+    let live = LIVE_SESSION.lock().ok().and_then(|mut l| l.take());
+    let live_mode = live.is_some();
+    let stream = match (live, chunk_rx) {
+        (Some(session), _) => Some(AudioStream::Live(session)),
+        (None, Some(rx)) => Some(AudioStream::Chunks(rx)),
+        (None, None) => None,
+    };
 
     let has_window = app.get_webview_window(indicator::INDICATOR_LABEL).is_some();
     eprintln!("[stop] indicator window exists: {}", has_window);
@@ -268,8 +294,9 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
     }
 
     log_info!(
-        "[stop] chunks={}, fallback_samples={}, src_rate={}",
-        chunk_rx.is_some(),
+        "[stop] live={}, stream={}, fallback_samples={}, src_rate={}",
+        live_mode,
+        stream.is_some(),
         fallback_samples.len(),
         src_rate
     );
@@ -294,7 +321,7 @@ pub fn stop_recording_internal(app: &tauri::AppHandle, state: &AppState) -> Resu
             &indicator_status,
             &host,
             &language,
-            chunk_rx,
+            stream,
             fallback_samples,
             src_rate,
         )
@@ -348,12 +375,20 @@ async fn stop_recording(
     stop_recording_internal(&app, &state)
 }
 
+/// 松手时手里的音频流。
+enum AudioStream {
+    /// 边录边传的会话(正常情况):音频大多已经在服务端,只差最后一小段。
+    Live(stt::LiveSession),
+    /// 没有会话时(按下时没拿到分块通道之类):还没消费的分块,松手后一次性上传。
+    Chunks(tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>),
+}
+
 async fn run_transcription(
     app_handle: &tauri::AppHandle,
     indicator_status: &std::sync::Arc<Mutex<String>>,
     host: &str,
     language: &str,
-    chunk_rx: Option<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
+    stream: Option<AudioStream>,
     fallback_samples: Vec<f32>,
     src_rate: u32,
 ) -> Result<String, String> {
@@ -390,7 +425,10 @@ async fn run_transcription(
         }
     });
 
-    let result = if let Some(rx) = chunk_rx {
+    let result = if let Some(AudioStream::Live(live)) = stream {
+        eprintln!("[transcribe] Using live mode (streamed while recording)");
+        live.finish(Some(event_tx)).await
+    } else if let Some(AudioStream::Chunks(rx)) = stream {
         eprintln!("[transcribe] Using streaming mode");
         client.transcribe_stream(rx, language, Some(event_tx)).await
     } else {

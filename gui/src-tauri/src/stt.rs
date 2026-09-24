@@ -3,7 +3,6 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
@@ -352,12 +351,8 @@ impl SttClient {
 
     // ── WebSocket streaming transcription (real-time) ──
 
-    pub async fn transcribe_stream(
-        &self,
-        mut chunk_rx: mpsc::UnboundedReceiver<Vec<u8>>,
-        language: &str,
-        event_tx: Option<mpsc::UnboundedSender<StreamEvent>>,
-    ) -> Result<String, String> {
+    /// 连上 `/ws/stream` 并等到 `ready`。返回连接和 `ready` 消息本身。
+    async fn open_ws(&self) -> Result<(WsStream, Value), String> {
         let url = format!("{}/ws/stream", ws_base(&self.stt_url));
 
         let mut request = url.as_str().into_client_request().map_err(|e| {
@@ -416,22 +411,30 @@ impl SttClient {
                     ));
                 }
                 eprintln!("[stt] Server ready, model: {}", data["model"]);
+                Ok((ws, data))
             }
-            Err(_) => {
-                return Err(tr!(
-                    "{}:服务没有应答(等待就绪消息超时)",
-                    "{}: no response from the service (timed out waiting for the ready message)",
-                    err_unreachable()
-                ))
-            }
-            _ => {
-                return Err(tr!(
-                    "{}:服务没有发来就绪消息",
-                    "{}: the service didn't send a ready message",
-                    err_unreachable()
-                ))
-            }
+            Err(_) => Err(tr!(
+                "{}:服务没有应答(等待就绪消息超时)",
+                "{}: no response from the service (timed out waiting for the ready message)",
+                err_unreachable()
+            )),
+            _ => Err(tr!(
+                "{}:服务没有发来就绪消息",
+                "{}: the service didn't send a ready message",
+                err_unreachable()
+            )),
         }
+    }
+
+    /// 松手之后一次性上传、再等结果:老服务端(不支持边录边识别)和边录边传
+    /// 半路断掉之后的回退都走这里。
+    pub async fn transcribe_stream(
+        &self,
+        mut chunk_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+        language: &str,
+        event_tx: Option<mpsc::UnboundedSender<StreamEvent>>,
+    ) -> Result<String, String> {
+        let (mut ws, _ready) = self.open_ws().await?;
 
         let lang_msg = serde_json::json!({"type": "config", "language": language});
         SinkExt::send(&mut ws, Message::Text(lang_msg.to_string()))
@@ -444,174 +447,56 @@ impl SttClient {
                 )
             })?;
 
-        // Spawn task to stream audio chunks
-        let (audio_done_tx, audio_done_rx) = tokio::sync::oneshot::channel::<()>();
-        let ws_sender = Arc::new(tokio::sync::Mutex::new(ws));
-
-        let ws_clone = ws_sender.clone();
-        let stream_task = tokio::spawn(async move {
-            let mut chunk_count: u64 = 0;
-            let mut byte_count: u64 = 0;
-            while let Some(first) = chunk_rx.recv().await {
-                let chunk = coalesce_chunks(first, &mut chunk_rx, MAX_AUDIO_FRAME_BYTES);
-                chunk_count += 1;
-                byte_count += chunk.len() as u64;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&chunk);
-                let audio_msg = serde_json::json!({"type": "audio", "data": b64});
-                let mut ws = ws_clone.lock().await;
-                if let Err(e) = SinkExt::send(&mut *ws, Message::Text(audio_msg.to_string())).await
-                {
-                    eprintln!("[stt] Failed to send audio chunk: {}", e);
-                    break;
-                }
-            }
-            eprintln!(
-                "[stt] Streaming complete: {} frames, {} bytes",
-                chunk_count, byte_count
-            );
-            let _ = audio_done_tx.send(());
-        });
-
-        // Wait for streaming to finish, then send end signal
-        let _ = audio_done_rx.await;
-        {
-            let mut ws = ws_sender.lock().await;
-            SinkExt::send(&mut *ws, Message::Text(r#"{"type":"end"}"#.into()))
-                .await
-                .map_err(|e| {
-                    tr!(
-                        "发送结束信号失败: {}",
-                        "Couldn't send the end-of-audio signal: {}",
-                        e
-                    )
-                })?;
-        }
-
-        // Receive result(s)
-        let mut final_text = String::new();
-        let ws_recv = ws_sender.clone();
-        // 服务端转写 / 后处理期间每 5 秒发一条 progress(stt_server.py 的
-        // `_with_keepalive`)。收到过心跳就知道它在干活,之后 60 秒没动静就是真挂了;
-        // 老服务端不发心跳,只能照旧等满上限。
-        let mut saw_keepalive = false;
-        loop {
-            let wait = result_wait(saw_keepalive);
-            let msg_result = {
-                let mut ws = ws_recv.lock().await;
-                tokio::time::timeout(wait, (*ws).next()).await
-            };
-
-            let msg = match msg_result {
-                Ok(Some(Ok(m))) => m,
-                Ok(Some(Err(e))) => {
-                    return Err(tr!(
-                        "读取识别结果失败: {}",
-                        "Couldn't read the transcription result: {}",
-                        e
-                    ))
-                }
-                Ok(None) => break,
-                Err(_) => {
-                    let _ = stream_task.await;
-                    return Err(if saw_keepalive {
-                        tr!(
-                            "{}:识别服务 {} 秒没有动静,可能已经卡住",
-                            "{}: the STT service has been silent for {}s and may be stuck",
-                            err_result_timeout(),
-                            wait.as_secs()
-                        )
-                    } else {
-                        tr!("{}(5 分钟)", "{} (5 minutes)", err_result_timeout())
-                    });
-                }
-            };
-
-            match msg {
-                Message::Text(json) => {
-                    let data: Value = serde_json::from_str(&json).map_err(|e| {
-                        tr!(
-                            "服务端消息解析失败: {}",
-                            "Couldn't parse the server message: {}",
-                            e
-                        )
-                    })?;
-                    let msg_type = data["type"].as_str().unwrap_or("");
-                    match msg_type {
-                        "stt_result" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            if !text.is_empty() {
-                                final_text = text.to_string();
-                                if let Some(ref tx) = event_tx {
-                                    let _ = tx.send(StreamEvent::SttResult {
-                                        text: text.to_string(),
-                                    });
-                                }
-                            }
-                        }
-                        "result" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            let llm_ms = data["llm_latency_ms"].as_f64();
-                            if !text.is_empty() {
-                                final_text = text.to_string();
-                            }
-                            if let Some(ref tx) = event_tx {
-                                let _ = tx.send(StreamEvent::FinalResult {
-                                    text: final_text.clone(),
-                                    llm_latency_ms: llm_ms,
-                                    llm_error: llm_error_of(&data),
-                                });
-                            }
-                            let _ = stream_task.await;
-                            return require_speech(final_text);
-                        }
-                        "llm_start" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            if let Some(ref tx) = event_tx {
-                                let _ = tx.send(StreamEvent::LlmStart {
-                                    text: text.to_string(),
-                                });
-                            }
-                        }
-                        "progress" => saw_keepalive = true,
-                        "llm_progress" => {
-                            let text = data["text"].as_str().unwrap_or("");
-                            if let Some(ref tx) = event_tx {
-                                let _ = tx.send(StreamEvent::LlmProgress {
-                                    text: text.to_string(),
-                                });
-                            }
-                        }
-                        "done" => {
-                            let _ = stream_task.await;
-                            return require_speech(final_text);
-                        }
-                        "error" => {
-                            let _ = stream_task.await;
-                            let msg = server_message(&data);
-                            return Err(if msg.is_empty() {
-                                t("未知错误", "Unknown error").to_string()
-                            } else {
-                                msg.to_string()
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                Message::Close(_) => break,
-                _ => {}
+        let mut chunk_count: u64 = 0;
+        let mut byte_count: u64 = 0;
+        while let Some(first) = chunk_rx.recv().await {
+            let chunk = coalesce_chunks(first, &mut chunk_rx, MAX_AUDIO_FRAME_BYTES);
+            chunk_count += 1;
+            byte_count += chunk.len() as u64;
+            if let Err(e) = SinkExt::send(&mut ws, audio_message(&chunk)).await {
+                eprintln!("[stt] Failed to send audio chunk: {}", e);
+                break;
             }
         }
+        eprintln!(
+            "[stt] Streaming complete: {} frames, {} bytes",
+            chunk_count, byte_count
+        );
 
-        let _ = stream_task.await;
-        if final_text.is_empty() {
-            Err(t(
-                "服务在返回结果前断开了连接",
-                "The service disconnected before returning a result",
-            )
-            .to_string())
-        } else {
-            Ok(final_text)
+        SinkExt::send(&mut ws, Message::Text(r#"{"type":"end"}"#.into()))
+            .await
+            .map_err(|e| {
+                tr!(
+                    "发送结束信号失败: {}",
+                    "Couldn't send the end-of-audio signal: {}",
+                    e
+                )
+            })?;
+
+        receive_results(&mut ws, &event_tx).await.map_err(|e| e.msg)
+    }
+
+    /// 按下就连:连上、确认服务端支持边录边识别、发出 config。
+    ///
+    /// 老服务端(`ready` 里没有 `incremental`)返回 `Ok(None)` 并关掉连接 —— 它不会
+    /// 在录音期间转写,那就和以前一样松手再一次性上传,一点不变。
+    async fn open_live(&self, language: &str) -> Result<Option<WsStream>, String> {
+        let (mut ws, ready) = self.open_ws().await?;
+        if !supports_incremental(&ready) {
+            let _ = tokio::time::timeout(CLOSE_TIMEOUT, ws.close(None)).await;
+            return Ok(None);
         }
+        let cfg = serde_json::json!({"type": "config", "language": language, "incremental": true});
+        SinkExt::send(&mut ws, Message::Text(cfg.to_string()))
+            .await
+            .map_err(|e| {
+                tr!(
+                    "发送识别配置失败: {}",
+                    "Couldn't send the recognition settings: {}",
+                    e
+                )
+            })?;
+        Ok(Some(ws))
     }
 
     // ── HTTP endpoints ──
@@ -840,4 +725,397 @@ impl SttClient {
         .await
         .map(|_| ())
     }
+}
+
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// 关连接时最多等这么久(对面没反应也不能卡住)。
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+/// 录音期间攒够这么多字节(约 0.25 秒)才发一条,免得每个采集回调(几十毫秒)一条消息。
+pub const LIVE_FRAME_BYTES: usize = 8 * 1024;
+/// 松手后等采集端放掉 sender 的上限,见 `live_run`。
+const STOP_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+/// 录音期间单条音频消息发不出去的上限。远程服务被丢包时 send 会一直挂着,
+/// 超过它就当连接坏了、改成松手后重发(音频都还在本地)。
+const LIVE_SEND_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn audio_message(pcm: &[u8]) -> Message {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(pcm);
+    Message::Text(serde_json::json!({"type": "audio", "data": b64}).to_string())
+}
+
+/// 服务端支不支持边录边识别:`ready` 里带 `incremental: true`(services/segmenter.py)。
+/// 老服务端没有这个字段 —— 用户的服务可能是比应用旧的本地代码。
+pub fn supports_incremental(ready: &Value) -> bool {
+    ready["incremental"].as_bool() == Some(true)
+}
+
+/// 等结果时出的错。`transport` 为真表示连接本身断了(读失败 / 对面没给结果就关了),
+/// 这种情况下音频还在本地,边录边传可以换一条连接重发一次;其余(服务端明确回了
+/// error、超时、没听到声音)重发也没用。
+#[derive(Debug)]
+pub struct RecvError {
+    pub msg: String,
+    pub transport: bool,
+}
+
+impl RecvError {
+    fn fatal(msg: String) -> Self {
+        Self {
+            msg,
+            transport: false,
+        }
+    }
+    fn transport(msg: String) -> Self {
+        Self {
+            msg,
+            transport: true,
+        }
+    }
+}
+
+/// 发完 `end` 之后收结果:stt_result / llm_start / progress(心跳)/ result / done / error。
+async fn receive_results(
+    ws: &mut WsStream,
+    event_tx: &Option<mpsc::UnboundedSender<StreamEvent>>,
+) -> Result<String, RecvError> {
+    let mut final_text = String::new();
+    // 服务端转写 / 后处理期间每 5 秒发一条 progress(stt_server.py 的
+    // `_with_keepalive`)。收到过心跳就知道它在干活,之后 60 秒没动静就是真挂了;
+    // 老服务端不发心跳,只能照旧等满上限。
+    let mut saw_keepalive = false;
+    loop {
+        let wait = result_wait(saw_keepalive);
+        let msg = match tokio::time::timeout(wait, ws.next()).await {
+            Ok(Some(Ok(m))) => m,
+            Ok(Some(Err(e))) => {
+                return Err(RecvError::transport(tr!(
+                    "读取识别结果失败: {}",
+                    "Couldn't read the transcription result: {}",
+                    e
+                )))
+            }
+            Ok(None) => break,
+            Err(_) => {
+                return Err(RecvError::fatal(if saw_keepalive {
+                    tr!(
+                        "{}:识别服务 {} 秒没有动静,可能已经卡住",
+                        "{}: the STT service has been silent for {}s and may be stuck",
+                        err_result_timeout(),
+                        wait.as_secs()
+                    )
+                } else {
+                    tr!("{}(5 分钟)", "{} (5 minutes)", err_result_timeout())
+                }));
+            }
+        };
+
+        match msg {
+            Message::Text(json) => {
+                let data: Value = serde_json::from_str(&json).map_err(|e| {
+                    RecvError::fatal(tr!(
+                        "服务端消息解析失败: {}",
+                        "Couldn't parse the server message: {}",
+                        e
+                    ))
+                })?;
+                let msg_type = data["type"].as_str().unwrap_or("");
+                match msg_type {
+                    "stt_result" => {
+                        let text = data["text"].as_str().unwrap_or("");
+                        if !text.is_empty() {
+                            final_text = text.to_string();
+                            if let Some(ref tx) = event_tx {
+                                let _ = tx.send(StreamEvent::SttResult {
+                                    text: text.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    "result" => {
+                        let text = data["text"].as_str().unwrap_or("");
+                        let llm_ms = data["llm_latency_ms"].as_f64();
+                        if !text.is_empty() {
+                            final_text = text.to_string();
+                        }
+                        if let Some(ref tx) = event_tx {
+                            let _ = tx.send(StreamEvent::FinalResult {
+                                text: final_text.clone(),
+                                llm_latency_ms: llm_ms,
+                                llm_error: llm_error_of(&data),
+                            });
+                        }
+                        return require_speech(final_text).map_err(RecvError::fatal);
+                    }
+                    "llm_start" => {
+                        let text = data["text"].as_str().unwrap_or("");
+                        if let Some(ref tx) = event_tx {
+                            let _ = tx.send(StreamEvent::LlmStart {
+                                text: text.to_string(),
+                            });
+                        }
+                    }
+                    "progress" => saw_keepalive = true,
+                    "llm_progress" => {
+                        let text = data["text"].as_str().unwrap_or("");
+                        if let Some(ref tx) = event_tx {
+                            let _ = tx.send(StreamEvent::LlmProgress {
+                                text: text.to_string(),
+                            });
+                        }
+                    }
+                    "done" => return require_speech(final_text).map_err(RecvError::fatal),
+                    "error" => {
+                        let msg = server_message(&data);
+                        return Err(RecvError::fatal(if msg.is_empty() {
+                            t("未知错误", "Unknown error").to_string()
+                        } else {
+                            msg.to_string()
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    if final_text.is_empty() {
+        Err(RecvError::transport(
+            t(
+                "服务在返回结果前断开了连接",
+                "The service disconnected before returning a result",
+            )
+            .to_string(),
+        ))
+    } else {
+        Ok(final_text)
+    }
+}
+
+/// 录音期间读服务端的消息。连接没建好(或已经坏了)时永远等下去,
+/// 好让 `select!` 里这一支不起作用。
+async fn next_server_msg(
+    ws: &mut Option<WsStream>,
+) -> Option<Result<Message, tokio_tungstenite::tungstenite::Error>> {
+    match ws {
+        Some(w) => w.next().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// 把 `pcm` 按 [`MAX_AUDIO_FRAME_BYTES`] 切成若干条消息发出去。
+async fn send_audio(ws: &mut WsStream, pcm: &[u8]) -> Result<(), String> {
+    for piece in pcm.chunks(MAX_AUDIO_FRAME_BYTES) {
+        match tokio::time::timeout(LIVE_SEND_TIMEOUT, SinkExt::send(ws, audio_message(piece))).await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e.to_string()),
+            Err(_) => return Err("send timed out".into()),
+        }
+    }
+    Ok(())
+}
+
+/// 松手时交给会话的东西:转写进度发到哪儿。
+type FinishSignal = Option<mpsc::UnboundedSender<StreamEvent>>;
+
+/// 边录边传的一次会话(服务端见 services/segmenter.py)。
+///
+/// 以前松手才建 WS、一次性上传,服务端收齐再整段转写:说 3 分钟,松手还要等整段
+/// 3 分钟音频的推理。现在按下就连、边录边传,服务端录音期间就一段段转掉,松手时
+/// 只剩最后一小段。
+///
+/// - 松手:[`LiveSession::finish`],等结果;
+/// - 放弃(Esc):直接丢掉这个值 —— 后台任务看到后告诉服务端 `cancel` 并关连接,
+///   服务端已经转好 / 正在转的段一律作废;
+/// - 连不上、服务端太老、录音中连接断了:录到的音频一直在本地攒着,松手时照以前
+///   的办法换一条连接一次性上传,一个字节都不丢。
+pub struct LiveSession {
+    finish_tx: Option<tokio::sync::oneshot::Sender<FinishSignal>>,
+    done_rx: tokio::sync::oneshot::Receiver<Result<String, String>>,
+}
+
+impl LiveSession {
+    /// 建一个会话。返回的 future 要由调用方放到运行时上跑(本文件不依赖 tauri;
+    /// 快捷键线程里调用时没有当前 tokio 运行时,由 lib.rs 用 tauri 的运行时 spawn)。
+    pub fn start(
+        stt_url: &str,
+        chunk_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+        language: &str,
+    ) -> (Self, impl std::future::Future<Output = ()> + Send + 'static) {
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let client = SttClient::new(stt_url);
+        let language = language.to_string();
+        let task = async move {
+            let result = live_run(client, chunk_rx, language, finish_rx).await;
+            let _ = done_tx.send(result);
+        };
+        (
+            Self {
+                finish_tx: Some(finish_tx),
+                done_rx,
+            },
+            task,
+        )
+    }
+
+    /// 录音已经停了(采集端的 sender 已经放掉):发完剩下的音频、等结果。
+    pub async fn finish(
+        mut self,
+        event_tx: Option<mpsc::UnboundedSender<StreamEvent>>,
+    ) -> Result<String, String> {
+        if let Some(tx) = self.finish_tx.take() {
+            let _ = tx.send(event_tx);
+        }
+        match (&mut self.done_rx).await {
+            Ok(result) => result,
+            Err(_) => Err(t(
+                "识别任务意外结束",
+                "The transcription task ended unexpectedly",
+            )
+            .to_string()),
+        }
+    }
+}
+
+/// 边录边传的后台任务。见 [`LiveSession`]。
+async fn live_run(
+    client: SttClient,
+    mut chunk_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    language: String,
+    mut finish_rx: tokio::sync::oneshot::Receiver<FinishSignal>,
+) -> Result<String, String> {
+    // 录到的全部音频。连接中途坏了、或者服务端不支持边录边识别时,松手后靠它重发;
+    // 5 分钟的 16 kHz i16 单声道不到 10 MB。
+    let mut audio: Vec<u8> = Vec::new();
+    // `audio` 里已经发给服务端的字节数。
+    let mut sent = 0usize;
+    let mut ws: Option<WsStream> = None;
+    // 连接在后台建,不挡录音:服务端连不上时,录音照样开始,松手时再按以前的办法报错。
+    let connect = client.open_live(&language);
+    tokio::pin!(connect);
+    let mut connecting = true;
+    let mut recording = true;
+    let mut finish: Option<FinishSignal> = None;
+    // 松手后最多等这么久让采集端放掉 sender。正常情况下 `recorder.stop()` 返回时
+    // 它已经放掉了;万一没有,也不能让转写永远卡在这里。
+    let drain_deadline = tokio::time::sleep(Duration::from_secs(3600));
+    tokio::pin!(drain_deadline);
+
+    loop {
+        let finishing = finish.is_some();
+        if let Some(w) = ws.as_mut() {
+            let unsent = audio.len() - sent;
+            if unsent >= LIVE_FRAME_BYTES || (finishing && !recording && unsent > 0) {
+                match send_audio(w, &audio[sent..]).await {
+                    Ok(()) => sent = audio.len(),
+                    Err(e) => {
+                        eprintln!(
+                            "[stt] live: sending audio failed, will resend after stop: {}",
+                            e
+                        );
+                        ws = None;
+                    }
+                }
+            }
+        }
+        if finishing && !recording && !connecting {
+            break;
+        }
+        tokio::select! {
+            r = &mut connect, if connecting => {
+                connecting = false;
+                match r {
+                    Ok(Some(w)) => {
+                        eprintln!("[stt] live: connected, streaming while recording");
+                        ws = Some(w);
+                    }
+                    Ok(None) => eprintln!("[stt] live: server has no incremental support, uploading after stop"),
+                    Err(e) => eprintln!("[stt] live: connect failed, will retry after stop: {}", e),
+                }
+            }
+            chunk = chunk_rx.recv(), if recording => match chunk {
+                Some(c) => {
+                    audio.extend_from_slice(&c);
+                    while let Ok(c) = chunk_rx.try_recv() {
+                        audio.extend_from_slice(&c);
+                    }
+                }
+                // 采集端放掉了 sender:录音停了(或被 reset)。是松手还是放弃,看 finish_rx。
+                None => recording = false,
+            },
+            _ = &mut drain_deadline, if finishing && recording => {
+                eprintln!("[stt] live: audio channel still open after stop; going on without it");
+                while let Ok(c) = chunk_rx.try_recv() {
+                    audio.extend_from_slice(&c);
+                }
+                recording = false;
+            }
+            f = &mut finish_rx, if !finishing => match f {
+                Ok(tx) => {
+                    finish = Some(tx);
+                    drain_deadline
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + STOP_DRAIN_TIMEOUT);
+                }
+                Err(_) => {
+                    // 会话被丢掉 = 用户放弃了这段录音。告诉服务端别转了,别留着连接。
+                    if let Some(mut w) = ws.take() {
+                        let _ = tokio::time::timeout(
+                            CLOSE_TIMEOUT,
+                            SinkExt::send(&mut w, Message::Text(r#"{"type":"cancel"}"#.into())),
+                        )
+                        .await;
+                        let _ = tokio::time::timeout(CLOSE_TIMEOUT, w.close(None)).await;
+                    }
+                    eprintln!("[stt] live: recording cancelled, {} bytes discarded", audio.len());
+                    return Err(t("录音已取消", "Recording cancelled").to_string());
+                }
+            },
+            // 录音期间也得读:WS 的 ping 要靠读才会回 pong(服务端 20 秒 ping 一次,
+            // 不回就断),服务端中途报错 / 关连接也要及时知道。
+            m = next_server_msg(&mut ws) => match m {
+                Some(Ok(Message::Text(json))) => {
+                    let data: Value = serde_json::from_str(&json).unwrap_or(Value::Null);
+                    if data["type"] == "error" {
+                        eprintln!("[stt] live: server error while recording: {}", server_message(&data));
+                        ws = None;
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
+                    eprintln!("[stt] live: connection lost while recording, will resend after stop");
+                    ws = None;
+                }
+                Some(Ok(_)) => {}
+            },
+        }
+    }
+
+    let event_tx = finish.flatten();
+    if let Some(mut w) = ws.take() {
+        match SinkExt::send(&mut w, Message::Text(r#"{"type":"end"}"#.into())).await {
+            Ok(()) => match receive_results(&mut w, &event_tx).await {
+                Ok(text) => return Ok(text),
+                Err(e) if !e.transport => return Err(e.msg),
+                Err(e) => eprintln!("[stt] live: {}; resending the whole recording", e.msg),
+            },
+            Err(e) => eprintln!("[stt] live: sending end failed ({}); resending", e),
+        }
+    }
+
+    // 回退:和以前一样,松手后一次性上传整段。
+    eprintln!(
+        "[stt] live: uploading {} bytes after stop (fallback)",
+        audio.len()
+    );
+    let (tx, rx) = mpsc::unbounded_channel();
+    for piece in audio.chunks(MAX_AUDIO_FRAME_BYTES) {
+        let _ = tx.send(piece.to_vec());
+    }
+    drop(tx);
+    client.transcribe_stream(rx, &language, event_tx).await
 }

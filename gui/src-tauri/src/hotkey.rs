@@ -68,6 +68,8 @@ fn cancels_recording(key: HotkeyKey, keys: &[KeySpec]) -> bool {
 /// 取消当前录音:丢掉录到的音频、收起胶囊、告诉前端。不转写。
 fn cancel_recording(app: &tauri::AppHandle) {
     crate::log_info!("[hotkey] 录音已取消(Esc)");
+    // 边录边传的连接也要收掉,不然服务端还在接着转这段没人要的录音。
+    crate::cancel_live_transcription();
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let state = app.state::<crate::AppState>();
         let result = state.recorder.lock();
