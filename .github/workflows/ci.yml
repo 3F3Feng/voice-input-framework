@@ -10,13 +10,16 @@ on:
 
 jobs:
   test:
-    name: Test on ${{ matrix.os }}
+    name: Test on ${{ matrix.os }} (Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        # 和 pyproject.toml 的 requires-python(>=3.11,<3.13)一致。以前还测 3.10,
+        # 可 3.10 上根本装不上这个项目(shared/version_check.py 也会直接拒绝),
+        # 为它保持兼容只是白费力气;要改支持范围就两处一起改。
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
