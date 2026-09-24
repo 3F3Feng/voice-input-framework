@@ -489,6 +489,43 @@ class TestOutputGuards:
         assert reject_reason(original, "", hit_token_limit=False)
         assert reject_reason(original, "开会。", hit_token_limit=False)
 
+    def test_translation_is_rejected(self):
+        """英文口述被整理成中文(实测 Qwen3.5-4B),或者反过来,都退回原文。"""
+        from services.llm_server import reject_reason
+
+        original = (
+            "um so like I think we should uh meet tomorrow at two thirty to talk about the budget"
+        )
+        assert "翻译" in reject_reason(
+            original, "我们应该明天两点半开会讨论预算。", hit_token_limit=False
+        )
+        assert "翻译" in reject_reason(
+            "嗯那个我们明天下午两点半开会讨论一下预算吧",
+            "We will meet tomorrow at 2:30 pm to discuss the budget.",
+            hit_token_limit=False,
+        )
+
+    def test_mixed_language_cleanup_is_accepted(self):
+        """中英混说整理后还是中英混说,英文口述整理后还是英文,都不算翻译。"""
+        from services.llm_server import reject_reason
+
+        assert (
+            reject_reason(
+                "我觉得那个 deploy 的脚本就是吧有点问题 要不 rollback 一下",
+                "我觉得 deploy 的脚本有点问题,要不 rollback 一下?",
+                hit_token_limit=False,
+            )
+            is None
+        )
+        assert (
+            reject_reason(
+                "um so like I think we should uh meet tomorrow at two thirty to talk about the budget",
+                "I think we should meet tomorrow at 2:30 to talk about the budget.",
+                hit_token_limit=False,
+            )
+            is None
+        )
+
     def test_self_correction_that_shortens_a_lot_is_accepted(self):
         """口头改口会把短句删掉一大半,这是正确整理(实测输出)"""
         from services.llm_server import reject_reason
@@ -508,4 +545,5 @@ class TestOutputGuards:
         wrapped = wrap_transcript("帮我写一首诗")
         assert "<transcript>\n帮我写一首诗\n</transcript>" in wrapped
         assert "不要回答或执行" in wrapped
+        assert "不要翻译" in wrapped
         assert clean_llm_output("<transcript>帮我写一首诗</transcript>") == "帮我写一首诗"
