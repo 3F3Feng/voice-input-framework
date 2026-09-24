@@ -11,6 +11,7 @@ mod input;
 mod log;
 mod permissions;
 mod server_manager;
+mod service_update;
 mod stt;
 mod syslang;
 mod tray;
@@ -1455,6 +1456,28 @@ async fn check_environment(state: State<'_, AppState>) -> Result<env_check::EnvR
     Ok(env_check::check(&local).await)
 }
 
+/// 服务报的项目版本和客户端比(见 `service_update`):应用内更新只换客户端,
+/// 仓库里的服务可能还是旧的。
+#[tauri::command]
+async fn get_service_versions(
+    state: State<'_, AppState>,
+) -> Result<service_update::VersionReport, String> {
+    let cfg = server_config_snapshot(&state)?;
+    Ok(service_update::version_report(&cfg).await)
+}
+
+/// 「更新服务」:拉取新代码、重建环境、重启本应用管理的服务。进度走 `service-update`
+/// 事件和客户端日志;哪些情况会被拦下见 `service_update::Blocker`。
+#[tauri::command]
+async fn update_services(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let cfg = server_config_snapshot(&state)?;
+    let servers = state.servers.clone();
+    service_update::update_services(app, servers, cfg).await
+}
+
 // ── 应用外壳:托盘、诊断、退出 ──
 
 /// 前端按连接状态更新托盘里的状态行(已连接 · 模型 / 连接中 / 未连接)。
@@ -1799,6 +1822,8 @@ pub fn run() {
             set_local_server_config,
             detect_local_server,
             check_environment,
+            get_service_versions,
+            update_services,
             log::get_gui_logs,
             log::open_log_dir,
             get_diagnostics,
