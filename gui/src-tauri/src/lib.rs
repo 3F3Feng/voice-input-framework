@@ -1196,6 +1196,35 @@ async fn auto_input(
     deliver_text(&app, &text).await
 }
 
+/// 在主线程上跑一段键盘模拟,等它跑完再拿结果。
+///
+/// enigo 在 macOS 上模拟 `Key::Unicode('v')` 这类按键时,要按**当前键盘布局**查键码,
+/// 走的是 `TSMGetInputSourceProperty` —— 这个系统调用只许在主线程上调。以前是在
+/// tokio 工作线程上直接调的,macOS 当场断言失败(SIGTRAP),整个应用被带走:v2.3.1 上
+/// 两份崩溃报告,栈都是 `deliver_text → press_paste → enigo … → TSMGetInputSourceProperty
+/// → dispatch_assert_queue_fail`。平时不崩是因为 enigo 缓存了布局,切过输入法之后才会
+/// 重新查,所以是「偶尔」在识别完、贴字那一下崩。
+///
+/// 其它平台上主线程同样安全,不单独区分。
+async fn on_main_thread<T: Send + 'static>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f());
+    })
+    .map_err(|e| {
+        tr!(
+            "切到主线程失败: {}",
+            "Couldn't switch to the main thread: {}",
+            e
+        )
+    })?;
+    rx.await
+        .map_err(|_| t("键盘模拟没有执行完", "Keyboard simulation didn't finish").to_string())?
+}
+
 /// 按配置的方式把文字送进当前焦点窗口。
 ///
 /// 粘贴方式是默认的:逐字模拟键盘时,文本里的换行会变成回车键 —— 在聊天软件里
@@ -1213,7 +1242,8 @@ async fn deliver_text(app: &tauri::AppHandle, text: &str) -> Result<(), String> 
         .map(|c| c.ui.input_method)
         .unwrap_or_default();
     if method == config::InputMethod::Type {
-        return input::type_text(text);
+        let text = text.to_string();
+        return on_main_thread(app, move || input::type_text(&text)).await;
     }
     if method == config::InputMethod::Copy {
         return app
@@ -1228,7 +1258,8 @@ async fn deliver_text(app: &tauri::AppHandle, text: &str) -> Result<(), String> 
         .map_err(|e| tr!("写剪贴板失败: {}", "Couldn't write to the clipboard: {}", e))?;
     // 剪贴板变更在有的平台上是异步生效的,紧接着粘贴可能贴出旧内容。
     tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-    let pasted = input::press_paste();
+    // 必须在主线程上模拟按键,见 `on_main_thread`。
+    let pasted = on_main_thread(app, input::press_paste).await;
     // 等目标应用把剪贴板读走再还原;还原前确认剪贴板里还是我们写的那段 ——
     // 这几百毫秒里用户自己复制了别的东西,就别把它覆盖掉。
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
