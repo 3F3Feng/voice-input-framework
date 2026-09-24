@@ -38,9 +38,20 @@
             <button class="s-btn" @click="openWizard">{{ t('打开设置向导', 'Open setup wizard') }}</button>
           </div>
           <!-- 服务版本:应用内更新只换客户端,仓库里的服务可能还是旧的(见 service_update.rs)。
-               只在版本对不上、或者正在 / 刚刚更新过时出现。 -->
+               本地模式下一直显示(能随时检查、随时更新);远程模式只在版本对不上时出现。 -->
           <div v-if="showVersionSection" class="s-section">
             <div class="s-title">{{ t('服务版本', 'Service version') }}</div>
+            <!-- 服务代码和上游比:版本号只在发版时变,两次发版之间的修复只能靠这里看出来。 -->
+            <template v-if="serverMode === 'local'">
+              <div class="s-row" style="margin-top:0">
+                <span class="s-tip" style="margin:0;flex:1">{{ codeStatusText }}</span>
+                <button class="s-btn" @click="checkServiceCode(true)" :disabled="codeChecking || svcUpdating">{{ codeChecking ? t('检查中…', 'Checking…') : t('检查服务更新', 'Check for service updates') }}</button>
+              </div>
+              <div v-if="codeStatus?.new_commits?.length" class="s-tip svc-commits">
+                <div v-for="c in codeStatus.new_commits" :key="c">· {{ c }}</div>
+                <div v-if="codeStatus.behind > codeStatus.new_commits.length">{{ t(`……共 ${codeStatus.behind} 个`, `…${codeStatus.behind} in total`) }}</div>
+              </div>
+            </template>
             <template v-if="versionReport?.services_older">
               <div class="s-tip srv-problem" style="margin-top:0">⚠ {{ t(`服务是 ${olderServicesText},应用是 v${clientVersion}。`, `The services are ${olderServicesText}; the app is v${clientVersion}.`) }}</div>
               <div v-if="serverMode === 'local'" class="s-tip">{{ t('应用内更新只更新客户端;STT / LLM 服务跑的是本机仓库里的代码,要单独更新。不更新的话,新版客户端用到的功能会对着旧服务失效,新版要求的依赖(比如新默认 LLM 需要的 mlx-lm 0.31.2)也不会装上。', "In-app updates only update the client; the STT / LLM services run the code in your local repository and must be updated separately. Otherwise features the new client relies on fail against the old services, and dependencies the new release needs (e.g. mlx-lm 0.31.2 for the new default LLM) are never installed.") }}</div>
@@ -50,8 +61,8 @@
               <span class="s-tip" style="margin:0;flex:1">{{ t(`服务(${newerServicesText})比应用 v${clientVersion} 新,建议检查一下应用更新。`, `The services (${newerServicesText}) are newer than the app (v${clientVersion}); consider checking for an app update.`) }}</span>
               <button class="s-btn" @click="tab = 'about'">{{ t('检查更新', 'Check for updates') }}</button>
             </div>
-            <template v-if="serverMode === 'local' && (versionReport?.services_older || svcUpdating || svcUpdateResult)">
-              <div v-if="versionReport?.services_older || svcUpdating" class="s-row" style="margin-top:6px">
+            <template v-if="serverMode === 'local'">
+              <div class="s-row" style="margin-top:6px">
                 <span class="s-tip" style="margin:0;flex:1">{{ t('一键更新:在仓库里 git pull --ff-only、重跑建环境脚本,再重启本应用启动的服务。仓库有未提交的改动、分支分叉,或者有不是本应用启动的服务在跑时,会停下来并告诉你怎么手动做。', "One-click update: git pull --ff-only in the repository, rerun the setup script, then restart the services this app started. If the repository has uncommitted changes, the branch has diverged, or a service not started by this app is running, it stops and tells you how to do it by hand.") }}</span>
                 <button class="s-btn" @click="updateServices" :disabled="svcUpdating">{{ svcUpdating ? t('更新中…', 'Updating…') : t('更新服务', 'Update services') }}</button>
               </div>
@@ -556,6 +567,12 @@
           ? t(`本机服务(${olderServicesText})比应用 v${clientVersion} 旧,新功能可能用不了 · 点击更新服务`, `Local services (${olderServicesText}) are older than the app (v${clientVersion}); new features may not work · Click to update them`)
           : t(`远程服务(${olderServicesText})比应用 v${clientVersion} 旧,部分新功能可能用不了 · 点击查看`, `Remote services (${olderServicesText}) are older than the app (v${clientVersion}); some new features may not work · Click for details`) }}</span>
         <button class="banner-close" @click.stop="dismissVersionBanner" :title="t('这次不再提示', 'Dismiss for this session')">✕</button>
+      </div>
+
+      <!-- 服务代码有新提交(版本号没变时也会有):和上面的版本提示二选一,别叠两条。 -->
+      <div v-if="showCodeBanner" class="perm-banner version-banner" @click="openVersionSection">
+        <span>⬆️ {{ t(`本机服务有 ${codeStatus?.behind} 个新提交可以更新 · 点击查看`, `${codeStatus?.behind} new commit(s) are available for the local services · Click to review`) }}</span>
+        <button class="banner-close" @click.stop="dismissCodeBanner" :title="t('这次不再提示', 'Dismiss for this session')">✕</button>
       </div>
 
       <!-- Record Button -->
@@ -1620,7 +1637,59 @@ const versionKey = computed(() => {
 const showVersionBanner = computed(() =>
   !!versionReport.value?.services_older && !svcUpdating.value && !dismissedVersionKeys.value.includes(versionKey.value));
 const showVersionSection = computed(() =>
+  serverMode.value === "local" ||
   !!versionReport.value?.services_older || !!versionReport.value?.services_newer || svcUpdating.value || !!svcUpdateResult.value);
+
+// ── 服务代码有没有更新 ──
+// 版本号只在发版时变:两次发版之间合进 main 的服务端修复(建环境脚本、默认提示词……)
+// 只比版本号是看不出来的,以前版本一样时连「更新服务」按钮都没有,用户没法主动检查。
+// 这里让后端 git fetch 一下,看本地分支落后上游几个提交(只读,不 pull)。
+interface CodeStatus {
+  checked: boolean; branch: string | null; upstream: string | null; head: string | null;
+  ahead: number; behind: number; new_commits: string[]; error: string | null;
+}
+const codeStatus = ref<CodeStatus | null>(null);
+const codeChecking = ref(false);
+let lastCodeCheck = 0;
+const dismissedCodeKeys = ref<string[]>([]);
+const CODE_CHECK_MIN_INTERVAL_MS = 5 * 60_000;
+
+async function checkServiceCode(manual = false) {
+  if (serverMode.value !== "local" || codeChecking.value) return;
+  if (!manual && Date.now() - lastCodeCheck < CODE_CHECK_MIN_INTERVAL_MS) return;
+  codeChecking.value = true;
+  try {
+    const st = await invoke<CodeStatus>("check_service_updates");
+    codeStatus.value = st;
+    lastCodeCheck = Date.now();
+    if (manual) {
+      if (st.error) toast(st.error, "err");
+      else if (st.behind > 0) toast(t(`有 ${st.behind} 个新提交可以更新`, `${st.behind} new commit(s) available`), "info");
+      else toast(t("服务代码已是最新", "The service code is up to date"), "ok");
+    }
+  } catch (e) {
+    if (manual) toast(`${e}`, "err");
+  } finally {
+    codeChecking.value = false;
+  }
+}
+const codeStatusText = computed(() => {
+  const st = codeStatus.value;
+  if (codeChecking.value && !st) return t("正在检查服务代码…", "Checking the service code…");
+  if (!st) return t("还没检查过服务代码有没有更新。", "The service code hasn't been checked for updates yet.");
+  const where = st.branch ? `${st.branch}${st.head ? ` @ ${st.head}` : ""}` : (st.head ?? "");
+  if (st.error) return t(`服务代码 ${where}:没法检查(${st.error})`, `Service code ${where}: can't check (${st.error})`);
+  if (st.behind > 0) return t(`服务代码 ${where}:落后 ${st.upstream} ${st.behind} 个提交,可以更新。`, `Service code ${where}: ${st.behind} commit(s) behind ${st.upstream}; an update is available.`);
+  if (st.ahead > 0) return t(`服务代码 ${where}:比 ${st.upstream} 多 ${st.ahead} 个本地提交,没有可拉取的更新。`, `Service code ${where}: ${st.ahead} local commit(s) ahead of ${st.upstream}; nothing to pull.`);
+  return t(`服务代码 ${where}:已是最新。`, `Service code ${where}: up to date.`);
+});
+const codeKey = computed(() => `${codeStatus.value?.head ?? ""}|${codeStatus.value?.behind ?? 0}`);
+const showCodeBanner = computed(() =>
+  serverMode.value === "local" && (codeStatus.value?.behind ?? 0) > 0 && !svcUpdating.value &&
+  !showVersionBanner.value && !dismissedCodeKeys.value.includes(codeKey.value));
+function dismissCodeBanner() {
+  if (!dismissedCodeKeys.value.includes(codeKey.value)) dismissedCodeKeys.value.push(codeKey.value);
+}
 function dismissVersionBanner() {
   if (versionKey.value && !dismissedVersionKeys.value.includes(versionKey.value)) dismissedVersionKeys.value.push(versionKey.value);
 }
@@ -1667,6 +1736,7 @@ async function updateServices() {
     if (ok) versionReport.value = null;
     await refreshServers();
     await refreshVersions();
+    if (ok) void checkServiceCode(true);
   }
 }
 async function copySvcUpdateResult() {
@@ -2950,6 +3020,10 @@ onMounted(async () => {
   watch(serverMode, () => { versionReport.value = null; void refreshVersions(); });
   void refreshVersions();
   versionTimer = setInterval(refreshVersions, 60_000);
+  // 服务代码:启动后稍等一下(别和拉起服务、加载模型抢),再在打开「服务」页时查(最多 5 分钟一次)。
+  setTimeout(() => void checkServiceCode(), 15_000);
+  watch(() => showSettings.value && tab.value === "service", open => { if (open) void checkServiceCode(); });
+  watch(serverMode, m => { codeStatus.value = null; if (m === "local") void checkServiceCode(true); });
 
   // 启动时这一次连接**不能 await**：下面还要注册快捷键 / 转录的事件监听，
   // 而本地模式下这个循环可能要等几十秒。以前它是一次性的所以看不出来。
@@ -3235,6 +3309,7 @@ html, body, #app { height: 100%; }
 .version-banner > span { flex: 1; }
 .banner-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.75rem; padding: 0 2px; opacity: 0.7; line-height: 1.4; }
 .banner-close:hover { opacity: 1; }
+.svc-commits { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5; }
 .svc-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .svc-result { white-space: pre-wrap; word-break: break-word; user-select: text; -webkit-user-select: text; }
 .svc-result.svc-ok { color: var(--green); }

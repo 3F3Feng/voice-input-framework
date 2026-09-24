@@ -1504,6 +1504,15 @@ async fn get_service_versions(
     Ok(service_update::version_report(&cfg).await)
 }
 
+/// 「检查服务更新」:fetch 一下,看本机服务的代码落后上游几个提交。只读。
+#[tauri::command]
+async fn check_service_updates(
+    state: State<'_, AppState>,
+) -> Result<service_update::CodeStatus, String> {
+    let cfg = server_config_snapshot(&state)?;
+    Ok(service_update::check_code(&cfg).await)
+}
+
 /// 「更新服务」:拉取新代码、重建环境、重启本应用管理的服务。进度走 `service-update`
 /// 事件和客户端日志;哪些情况会被拦下见 `service_update::Blocker`。
 #[tauri::command]
@@ -1861,6 +1870,7 @@ pub fn run() {
             detect_local_server,
             check_environment,
             get_service_versions,
+            check_service_updates,
             update_services,
             log::get_gui_logs,
             log::open_log_dir,

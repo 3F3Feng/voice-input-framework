@@ -670,6 +670,121 @@ pub fn ahead_behind(git: &Path, repo: &Path) -> Option<(u32, u32)> {
     Some((it.next()??, it.next()??))
 }
 
+// ── 检查服务代码有没有更新 ──
+
+/// 本机服务的代码和上游比,落后多少。
+///
+/// 版本号只在发版时才变,可两次发版之间 main 上照样会合进服务端的修复(比如建环境脚本、
+/// 默认提示词)。只比版本号的话,版本一样时界面上连「更新服务」都看不到,用户没法主动
+/// 检查。这里直接问 git:fetch 一下,看本地分支落后上游几个提交。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CodeStatus {
+    /// fetch 成功、比较出了结果。
+    pub checked: bool,
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    /// 本地当前提交(短哈希)。
+    pub head: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    /// 上游比本地多出来的提交(最多 5 条,「短哈希 标题」)。
+    pub new_commits: Vec<String>,
+    /// 没法检查的原因(不是本地模式、没有仓库、没有 git、fetch 失败……)。
+    pub error: Option<String>,
+}
+
+/// 只读:`git fetch` 只更新远端跟踪分支,不动工作区和本地分支。
+pub async fn check_code(cfg: &ServerConfig) -> CodeStatus {
+    let fail = |e: String| CodeStatus {
+        error: Some(e),
+        ..Default::default()
+    };
+    if cfg.mode != ServerMode::Local {
+        return fail(Blocker::NotLocal.message());
+    }
+    let Some(repo) = cfg
+        .local
+        .repo_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+    else {
+        return fail(Blocker::NoRepo.message());
+    };
+    if !server_manager::is_repo_root(&repo) {
+        return fail(Blocker::NoRepo.message());
+    }
+    let Some(git) = locate_git() else {
+        return fail(Blocker::GitMissing.message());
+    };
+    let facts = {
+        let (git, repo) = (git.clone(), repo.clone());
+        tokio::task::spawn_blocking(move || gather_git_facts(&git, &repo))
+            .await
+            .unwrap_or_default()
+    };
+    let mut status = CodeStatus {
+        branch: facts.branch.clone(),
+        upstream: facts.upstream.clone(),
+        ..Default::default()
+    };
+    if facts.upstream.is_none() {
+        status.error = Some(if facts.branch.is_none() {
+            Blocker::DetachedHead.message()
+        } else {
+            Blocker::NoUpstream(facts.branch.clone().unwrap_or_default()).message()
+        });
+        return status;
+    }
+    let mut fetch = git_std(&git, &repo);
+    fetch.arg("fetch");
+    if let Err(e) = run_streamed(fetch, GIT_NET_TIMEOUT, &mut |_| {}).await {
+        status.error = Some(Blocker::FetchFailed(e).message());
+        return status;
+    }
+    let (git2, repo2) = (git.clone(), repo.clone());
+    let (head, counts, log) = tokio::task::spawn_blocking(move || {
+        (
+            git_query(&git2, &repo2, &["rev-parse", "--short", "HEAD"]),
+            ahead_behind(&git2, &repo2),
+            git_query(
+                &git2,
+                &repo2,
+                &[
+                    "log",
+                    "--no-merges",
+                    "--format=%h %s",
+                    "-n",
+                    "5",
+                    "HEAD..@{u}",
+                ],
+            ),
+        )
+    })
+    .await
+    .unwrap_or((None, None, None));
+    status.head = head;
+    match counts {
+        Some((ahead, behind)) => {
+            status.checked = true;
+            status.ahead = ahead;
+            status.behind = behind;
+            status.new_commits = log
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(str::to_string)
+                .collect();
+        }
+        None => {
+            status.error =
+                Some(t("比较本地和上游失败", "Couldn't compare local and upstream").into())
+        }
+    }
+    status
+}
+
 // ── 带实时输出地跑一条命令 ──
 
 /// 去掉 ANSI 颜色码:建环境脚本给 `==>` 上了色,原样进日志框就是一串 `[1;36m`。
@@ -1597,6 +1712,65 @@ mod tests {
             check_git(&gather_git_facts(&sb.git, &sb.work())),
             Err(Blocker::Dirty(_))
         ));
+    }
+
+    fn local_cfg(repo: &Path) -> ServerConfig {
+        ServerConfig {
+            host: "localhost".into(),
+            port: 6544,
+            mode: ServerMode::Local,
+            local: crate::config::LocalServerConfig {
+                repo_path: Some(repo.display().to_string()),
+                ..Default::default()
+            },
+            token: None,
+        }
+    }
+
+    /// 「检查服务更新」:版本号一样时也能看出上游有新提交,且只读 —— 工作区和本地分支不动。
+    #[tokio::test]
+    async fn check_code_reports_new_upstream_commits_without_touching_the_repo() {
+        let Some(sb) = Sandbox::new("check-code") else {
+            return;
+        };
+        std::fs::create_dir_all(sb.work().join("services")).unwrap();
+        std::fs::write(sb.work().join("services/stt_server.py"), "# stub\n").unwrap();
+        std::fs::write(sb.work().join("services/llm_server.py"), "# stub\n").unwrap();
+        sb.commit(&sb.work(), "services");
+        sb.run(&sb.work(), &["push", "-q", "origin", "HEAD:main"]);
+        sb.run(&sb.other(), &["pull", "-q", "--ff-only"]);
+        let cfg = local_cfg(&sb.work());
+
+        let st = check_code(&cfg).await;
+        assert!(st.checked, "{:?}", st.error);
+        assert_eq!((st.ahead, st.behind), (0, 0));
+        assert!(st.new_commits.is_empty());
+
+        sb.push_upstream_change("fix-setup-script.txt");
+        let head_before = sb.run(&sb.work(), &["rev-parse", "HEAD"]);
+        let st = check_code(&cfg).await;
+        assert!(st.checked, "{:?}", st.error);
+        assert_eq!(st.behind, 1);
+        assert_eq!(st.new_commits.len(), 1);
+        assert!(
+            st.new_commits[0].ends_with("fix-setup-script.txt"),
+            "{:?}",
+            st.new_commits
+        );
+        assert_eq!(st.branch.as_deref(), Some("main"));
+        // 只 fetch,不 pull
+        assert_eq!(sb.run(&sb.work(), &["rev-parse", "HEAD"]), head_before);
+        assert!(!sb.work().join("fix-setup-script.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn check_code_explains_why_it_cannot_check() {
+        let mut cfg = local_cfg(Path::new("/definitely/not/a/repo"));
+        let st = check_code(&cfg).await;
+        assert!(!st.checked && st.error.is_some());
+        cfg.mode = ServerMode::Remote;
+        let st = check_code(&cfg).await;
+        assert!(!st.checked && st.error.is_some());
     }
 
     #[tokio::test]
