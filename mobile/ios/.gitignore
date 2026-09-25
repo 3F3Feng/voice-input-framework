@@ -1,0 +1,5 @@
+# 由 project.yml 生成
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+build/

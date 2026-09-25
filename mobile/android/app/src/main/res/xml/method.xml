@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  imeSubtypeMode="voice":声明成语音输入法。支持的键盘(AOSP 键盘、HeliBoard、FlorisBoard 等)
+  上的麦克风键会找系统里的语音输入法,就能一键切过来,说完再切回去。
+  不绑定语言:识别语言在应用里设,服务端也能自动检测。
+-->
+<input-method xmlns:android="http://schemas.android.com/apk/res/android"
+    android:settingsActivity="com.voiceinput.ime.SettingsActivity"
+    android:supportsSwitchingToNextInputMethod="true">
+    <subtype
+        android:imeSubtypeMode="voice"
+        android:label="@string/ime_name"
+        android:languageTag="und" />
+</input-method>

@@ -14,6 +14,7 @@
 - 🧠 **LLM 后处理** - 自动优化识别结果（去噪、加标点、格式化）
 - 🔌 **分离架构**：STT 和 LLM 独立服务，解决 transformers 版本冲突
 - 🖥️ **跨平台客户端**：Tauri GUI（Windows/macOS/Linux）；旧的 Python 客户端已不推荐使用，见下文
+- 📱 **手机输入法**（初版）：Android 输入法、iOS 键盘，连你电脑上的 STT / LLM 服务，见 [mobile/README.md](mobile/README.md)
 
 ## 📦 支持的模型
 
@@ -141,6 +142,12 @@ cd gui
 npm install
 npm run tauri dev
 ```
+
+### 手机输入法（Android / iOS）
+
+在手机上切到「语音输入」键盘，点麦克风说话，识别和整理都在你电脑上的服务里做。
+服务端要设 `VIF_STT_HOST=0.0.0.0` 和 `VIF_API_TOKEN`，出门在外推荐用 Tailscale。
+构建、启用和 iOS 上的限制见 [mobile/README.md](mobile/README.md)。
 
 ### Python 客户端（legacy，不推荐）
 
