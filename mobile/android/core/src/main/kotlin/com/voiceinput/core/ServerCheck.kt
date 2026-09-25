@@ -84,7 +84,7 @@ object ServerCheck {
             .apply { if (withToken) config.token?.let { header("Authorization", "Bearer $it") } }
             .build()
         http.newCall(request).execute().use { resp ->
-            return resp.code to (resp.body.string())
+            return resp.code to (resp.body?.string().orEmpty())
         }
     }
 }

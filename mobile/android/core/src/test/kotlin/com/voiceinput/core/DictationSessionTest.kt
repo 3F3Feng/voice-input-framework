@@ -1,10 +1,10 @@
 package com.voiceinput.core
 
-import mockwebserver3.MockResponse
-import mockwebserver3.MockWebServer
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
@@ -36,7 +36,7 @@ class DictationSessionTest {
 
     @After
     fun tearDown() {
-        server.close()
+        server.shutdown()
     }
 
     /** 一条 WS 连接上服务端的剧本。 */
@@ -74,15 +74,27 @@ class DictationSessionTest {
                 "config" -> webSocket.send("""{"type":"config_ack"}""")
                 "audio" -> {
                     synchronized(audio) { audio.write(Base64.getDecoder().decode(msg.getString("data"))) }
-                    if (dropAfterBytes != null && audio.size() >= dropAfterBytes) webSocket.cancel()
+                    if (dropAfterBytes != null && audio.size() >= dropAfterBytes) drop(webSocket)
                 }
-                "end" -> if (dropAfterEnd) webSocket.cancel() else replies.forEach { webSocket.send(it) }
+                "end" -> if (dropAfterEnd) drop(webSocket) else replies.forEach { webSocket.send(it) }
                 "cancel" -> webSocket.close(1000, null)
             }
         }
 
+        /**
+         * 服务端这头断开连接(服务重启、网络切换)。MockWebServer 4 里服务端的 WebSocket
+         * 没有 Call,`cancel()` 断不掉,只能发 close 帧;客户端走的是同一条「连接没了」的路。
+         */
+        private fun drop(webSocket: WebSocket) {
+            webSocket.close(1001, "going away")
+        }
+
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             webSocket.close(1000, null)
+            closed.countDown()
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             closed.countDown()
         }
 
@@ -123,7 +135,7 @@ class DictationSessionTest {
     }
 
     private fun enqueue(conn: FakeConnection) =
-        server.enqueue(MockResponse.Builder().webSocketUpgrade(conn).build())
+        server.enqueue(MockResponse().withWebSocketUpgrade(conn))
 
     private fun session(rec: Recorder, token: String? = null) = DictationSession(
         ServerConfig(server.url("/").toString(), token = token, language = "zh"),
@@ -161,7 +173,7 @@ class DictationSessionTest {
         assertEquals("zh", conn.config().getString("language"))
         assertTrue(conn.config().getBoolean("incremental"))
         assertEquals("end", conn.types().last())
-        assertEquals("Bearer secret", server.takeRequest().headers["Authorization"])
+        assertEquals("Bearer secret", server.takeRequest().getHeader("Authorization"))
         assertTrue(DictationSession.Stage.POLISHING in rec.stages)
     }
 
@@ -258,7 +270,7 @@ class DictationSessionTest {
     @Test
     fun wrongTokenIsReportedWithoutRetry() {
         // 服务端令牌不对时在 accept 之前 close(4401),到客户端是握手 403。
-        server.enqueue(MockResponse.Builder().code(403).build())
+        server.enqueue(MockResponse().setResponseCode(403))
         val rec = Recorder()
         val s = session(rec, token = "wrong")
         s.start()
@@ -342,7 +354,7 @@ class DictationSessionTest {
 
     @Test
     fun unreachableServerFailsAfterStop() {
-        server.close()
+        server.shutdown()
         val rec = Recorder()
         val s = DictationSession(ServerConfig(server.url("/").toString()), http, rec)
         s.start()
@@ -356,7 +368,7 @@ class DictationSessionTest {
     fun longUploadDoesNotOverflowOkHttpQueue() {
         // 12 分钟的录音 base64 后约 30 MB,一口气塞进 OkHttp 会超过它 16 MB 的发送队列、被关连接。
         val upload = FakeConnection(incremental = false)
-        server.enqueue(MockResponse.Builder().code(500).build()) // 边录边传那条连不上
+        server.enqueue(MockResponse().setResponseCode(500)) // 边录边传那条连不上
         enqueue(upload)
         val rec = Recorder()
         val s = session(rec)

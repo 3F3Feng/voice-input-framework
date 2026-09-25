@@ -15,13 +15,14 @@ kotlin {
 }
 
 dependencies {
-    api("com.squareup.okhttp3:okhttp:5.5.0")
+    // 别升到 5.x:5.x 的 Android 版要求 compileSdk 37,还会带进 AndroidX。
+    api("com.squareup.okhttp3:okhttp:4.12.0")
     // Android 自带 org.json;打进 APK 会和系统类冲突,所以只编译期依赖,测试时再带上。
     compileOnly("org.json:json:20250517")
 
     testImplementation("org.json:json:20250517")
     testImplementation("junit:junit:4.13.2")
-    testImplementation("com.squareup.okhttp3:mockwebserver3:5.5.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 tasks.test {
