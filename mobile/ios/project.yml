@@ -1,0 +1,50 @@
+# Xcode 工程由 XcodeGen 生成:brew install xcodegen && xcodegen generate
+# 生成的 VoiceInput.xcodeproj 不入库。
+name: VoiceInput
+options:
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    # ── 改成你自己的 ──
+    # 开发者团队 ID(Xcode → Settings → Accounts 里能看到;免费的个人团队也行)。
+    DEVELOPMENT_TEAM: ""
+    # Bundle ID 全球唯一,别人用过的注册不了。键盘扩展是 $(BUNDLE_ID_PREFIX).keyboard。
+    BUNDLE_ID_PREFIX: com.example.voiceinput
+    # App Group:应用和键盘靠它共享数据。必须以 group. 开头。
+    APP_GROUP_ID: group.com.example.voiceinput
+    # ──
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1"
+    GENERATE_INFOPLIST_FILE: NO
+targets:
+  VoiceInput:
+    type: application
+    platform: iOS
+    sources:
+      - VoiceInput
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX)
+        INFOPLIST_FILE: VoiceInput/Info.plist
+        CODE_SIGN_ENTITLEMENTS: VoiceInput/VoiceInput.entitlements
+    dependencies:
+      - target: VoiceKeyboard
+    scheme: {}
+  VoiceKeyboard:
+    type: app-extension
+    platform: iOS
+    sources:
+      - VoiceKeyboard
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).keyboard
+        INFOPLIST_FILE: VoiceKeyboard/Info.plist
+        CODE_SIGN_ENTITLEMENTS: VoiceKeyboard/VoiceKeyboard.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES

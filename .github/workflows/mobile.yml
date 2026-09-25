@@ -1,0 +1,85 @@
+name: Mobile
+
+# 手机端的输入法(mobile/)。只在动到它、或者动到它依赖的 /ws/stream 协议时跑。
+# 不限定分支:macOS 的 iOS 构建是唯一能验证 Swift 代码编得过的地方。
+on:
+  push:
+    paths:
+      - 'mobile/**'
+      - 'services/stt_server.py'
+      - 'services/segmenter.py'
+      - 'shared/auth.py'
+      - '.github/workflows/mobile.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - 'services/stt_server.py'
+      - 'services/segmenter.py'
+      - 'shared/auth.py'
+      - '.github/workflows/mobile.yml'
+  workflow_dispatch:
+
+jobs:
+  android:
+    name: Android (core tests + debug APK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Start the STT server with a fake model
+        run: |
+          pip install fastapi 'uvicorn[standard]' httpx python-multipart pydantic 'numpy<2' scipy
+          python mobile/tools/fake_stt_server.py --port 16544 --token secret > fake-server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:16544/health && break; sleep 1; done
+
+      - name: Core tests (unit + against the real /ws/stream)
+        working-directory: mobile/android
+        env:
+          VIF_TEST_SERVER: http://127.0.0.1:16544
+          VIF_TEST_TOKEN: secret
+        run: ./gradlew --no-daemon :core:test
+
+      - name: Build debug APK
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-input-android-debug
+          path: mobile/android/app/build/outputs/apk/debug/*.apk
+
+      - name: Server log
+        if: failure()
+        run: cat fake-server.log
+
+  ios:
+    name: iOS (app + keyboard, simulator build)
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate the Xcode project
+        working-directory: mobile/ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build
+        working-directory: mobile/ios
+        run: |
+          xcodebuild -project VoiceInput.xcodeproj -scheme VoiceInput \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build

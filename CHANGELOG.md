@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **手机输入法(初版,`mobile/`)**:在手机上用自己电脑上的 STT + LLM 服务打字。
+  - **Android**:语音输入法。点一下开始、再点一下结束,或者按住说话;结果直接插进输入框。
+    也声明成了语音输入法,AOSP 键盘、HeliBoard 等键盘上的麦克风键能一键切过来。
+  - **iOS**:键盘扩展 + 应用。iOS 不让键盘用麦克风,所以和 Typeless、Wispr Flow 一样由应用
+    开一个后台音频会话替键盘录音,键盘只发开始 / 结束、收结果。
+  - 协议和桌面客户端一样走 `/ws/stream` 边录边传;连接中途断了,说完后整段重发,不丢字。
+    只连 STT 服务,LLM 服务不用暴露出来。服务端不需要改动,要设 `VIF_STT_HOST=0.0.0.0`
+    和 `VIF_API_TOKEN`;出门在外推荐 Tailscale。
+  - `mobile/tools/fake_stt_server.py`:不用模型的 STT 服务(跑的是真的 `stt_server.py`,
+    只把转写和 LLM 换成假的),给手机端开发和集成测试用。
+  - CI 新增 `Mobile` 工作流:Android 协议测试(含对真实 `/ws/stream` 的集成测试)、
+    debug APK(作为 artifact 上传)、iOS 模拟器构建。
+
 ## [2.5.0] - 2026-09-24
 
 > **升级须知**:格式整理和新的默认模型在服务端。更新应用后到「设置 → 服务」,

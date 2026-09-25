@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  STT 服务是用户自己的电脑,地址是用户填的局域网 IP、.local 或 Tailscale 地址,
+  事先不知道是哪个,所以放行明文 http。能用 https 时(tailscale serve、反向代理)请用 https:
+  访问令牌走 http 时在同一个 Wi-Fi 里是明文。
+  另外信任用户自己装的 CA,方便自签证书的 https。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -324,6 +324,9 @@ client/
 
 #### 3.2 移动平台支持
 
+> 已有初版:Android 输入法和 iOS 键盘(连用户自己的 STT 服务),见 [mobile/README.md](../mobile/README.md)。
+> 下面是最初的规划。
+
 **iOS 客户端**：
 - 技术方案：Swift + SwiftUI
 - 音频采集：AVAudioEngine
