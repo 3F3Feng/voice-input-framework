@@ -9,6 +9,7 @@ mod i18n;
 mod indicator;
 mod input;
 mod log;
+mod mobile_pairing;
 mod permissions;
 mod server_manager;
 mod service_update;
@@ -563,6 +564,33 @@ impl BuildInfo {
 #[tauri::command]
 async fn get_build_info() -> Result<BuildInfo, String> {
     Ok(BuildInfo::current())
+}
+
+/// 手机配对页要用的:本地模式的 STT 端口,以及是不是本地模式。
+fn pairing_target(state: &State<'_, AppState>) -> Result<(bool, u16), String> {
+    let c = state.config.lock().map_err(|e| e.to_string())?;
+    Ok((
+        c.server.mode == config::ServerMode::Local,
+        c.server.local.stt_port,
+    ))
+}
+
+/// 读出手机配对的当前状态(只读,不改 Tailscale 的任何配置)。
+#[tauri::command]
+async fn get_mobile_pairing(
+    state: State<'_, AppState>,
+) -> Result<mobile_pairing::PairingInfo, String> {
+    let (local, port) = pairing_target(&state)?;
+    Ok(mobile_pairing::gather(local, port).await)
+}
+
+/// 用户点了「开启手机访问」:执行 `tailscale serve`,把 STT 服务转成 tailnet 内的 HTTPS。
+#[tauri::command]
+async fn enable_mobile_pairing(
+    state: State<'_, AppState>,
+) -> Result<mobile_pairing::PairingInfo, String> {
+    let (local, port) = pairing_target(&state)?;
+    Ok(mobile_pairing::enable(local, port).await)
 }
 
 #[tauri::command]
@@ -1836,6 +1864,8 @@ pub fn run() {
             get_model_status,
             get_llm_models,
             get_build_info,
+            get_mobile_pairing,
+            enable_mobile_pairing,
             switch_llm_model,
             get_config,
             update_config,

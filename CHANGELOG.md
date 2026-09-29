@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **手机输入法(初版,`mobile/`)**:在手机上用自己电脑上的 STT + LLM 服务打字。
+  - **Android**:语音输入法。点一下开始、再点一下结束,或者按住说话;结果直接插进输入框。
+    也声明成了语音输入法,AOSP 键盘、HeliBoard 等键盘上的麦克风键能一键切过来。
+  - **iOS**:键盘扩展 + 应用。iOS 不让键盘用麦克风,所以和 Typeless、Wispr Flow 一样由应用
+    开一个后台音频会话替键盘录音,键盘只发开始 / 结束、收结果。
+  - 协议和桌面客户端一样走 `/ws/stream` 边录边传;连接中途断了,说完后整段重发,不丢字。
+    只连 STT 服务,LLM 服务不用暴露出来。服务端不需要改动,要设 `VIF_STT_HOST=0.0.0.0`
+    和 `VIF_API_TOKEN`;出门在外推荐 Tailscale。
+  - `mobile/tools/fake_stt_server.py`:不用模型的 STT 服务(跑的是真的 `stt_server.py`,
+    只把转写和 LLM 换成假的),给手机端开发和集成测试用。
+  - CI 新增 `Mobile` 工作流:Android 协议测试(含对真实 `/ws/stream` 的集成测试)、
+    debug APK(作为 artifact 上传)、iOS 模拟器构建。
+- **手机配对(桌面客户端 + iOS)**:不用在手机上手打服务地址。
+  - 桌面客户端「设置 → 服务 → 配对手机」(本地管理模式)显示二维码;手机相机扫一下,
+    「语音输入」App 弹窗确认后自动填好地址并测试连接。没把 STT 服务转成 HTTPS 时,
+    点「开启手机访问」才会执行 `tailscale serve --bg --https=8443 …`(只在 tailnet 内可见),
+    不会在用户不知道时改 Tailscale 的配置。
+  - 没有桌面客户端时用 `swift mobile/tools/pair.swift`,在终端里打印同样的二维码。
+  - 配对链接只认 `https://`,并且手机端一定先弹窗让用户确认地址,链接本身不会直接改设置。
+  - iOS 端还可以「从 Tailscale 查找」:用一个只读的 OAuth 凭证(`devices:core:read`,存在钥匙串里)
+    列出 tailnet 里的设备并探测 HTTPS 的 `/health`。
+- **补上 `LICENSE` 文件(MIT)**:README 和 `pyproject.toml` 早就写了 MIT,但仓库根目录一直没有许可证文件。
+- **Android 免费分发**:推 `mobile-vX.Y.Z` 标签会用发布密钥构建并签名 APK(先验签),
+  挂到 GitHub Release,并附 SHA-256。IzzyOnDroid 可以自动从 Release 拉取,用户也能用 Obtainium 跟着更新。
+  PR 的 CI 里多了一步未签名的 release 构建,平时就能发现发版配置坏了。
+  签名密钥的生成和 GitHub secrets 的设置见 `mobile/README.md` 的「发布」一节。
+- **iOS 键盘换成液态玻璃界面**(iOS 26;更老的系统退回毛玻璃):顶部加了主要识别语言选择
+  (自动 / 中 / EN / 粤 / 日 / 한,和应用里的「识别语言」互相同步),录音时麦克风键变红、
+  里面是随音量起伏的波形,「取消」「重插」改成文字标签。新增应用图标。
+
 ## [2.5.0] - 2026-09-24
 
 > **升级须知**:格式整理和新的默认模型在服务端。更新应用后到「设置 → 服务」,
