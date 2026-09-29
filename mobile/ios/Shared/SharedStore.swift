@@ -59,6 +59,12 @@ struct KeyboardState: Codable {
     var lastInserted: String?
 }
 
+/// 键盘和应用共用的设置。目前只有主要识别语言:键盘顶部选,应用里的「识别语言」同步。
+struct SharedSettings: Codable {
+    /// `auto` / `zh` / `en` / `yue` / `ja` / `ko`,和桌面端一样。
+    var language: String = "auto"
+}
+
 enum SharedStore {
     /// App Group 的 id 写在两个 target 的 Info.plist 里(`VIFAppGroup`),来自 project.yml 的
     /// `APP_GROUP_ID`,和 entitlements 用的是同一个值。
@@ -72,6 +78,10 @@ enum SharedStore {
 
     static func readAppState() -> AppState { read("app-state.json") ?? AppState() }
     static func writeAppState(_ s: AppState) { write(s, "app-state.json") }
+
+    /// 还没人设置过(或拿不到共享容器)时返回 nil。
+    static func readSettings() -> SharedSettings? { read("settings.json") }
+    static func writeSettings(_ s: SharedSettings) { write(s, "settings.json") }
 
     static func readCommand() -> Command? { read("command.json") }
     static func writeCommand(_ c: Command) { write(c, "command.json") }
@@ -98,6 +108,8 @@ enum DarwinNote: String {
     case command = "com.voiceinput.command"
     /// 应用的状态变了(开始录音、出了结果……)。
     case state = "com.voiceinput.state"
+    /// 设置变了(键盘或应用改了识别语言)。
+    case settings = "com.voiceinput.settings"
 
     func post() {
         CFNotificationCenterPostNotification(

@@ -29,8 +29,15 @@ final class DictationController: ObservableObject {
     @Published var token: String = UserDefaults.standard.string(forKey: "token") ?? "" {
         didSet { UserDefaults.standard.set(token, forKey: "token") }
     }
-    @Published var language: String = UserDefaults.standard.string(forKey: "language") ?? "auto" {
-        didSet { UserDefaults.standard.set(language, forKey: "language") }
+    /// 主要识别语言。键盘顶部也能改,两边靠共享容器里的 settings.json 同步。
+    @Published var language: String =
+        SharedStore.readSettings()?.language ?? UserDefaults.standard.string(forKey: "language") ?? "auto" {
+        didSet {
+            UserDefaults.standard.set(language, forKey: "language")
+            guard SharedStore.readSettings()?.language != language else { return }
+            SharedStore.writeSettings(SharedSettings(language: language))
+            DarwinNote.settings.post()
+        }
     }
     @Published var sessionMinutes: Int = UserDefaults.standard.object(forKey: "sessionMinutes") as? Int ?? 5 {
         didSet {
@@ -58,6 +65,7 @@ final class DictationController: ObservableObject {
     /// 录音时给键盘的音量条刷新得勤一点(心跳一秒一次太慢)。
     private var levelTimer: Timer?
     private var commandObserver: DarwinObserver?
+    private var settingsObserver: DarwinObserver?
     private var lastCommandAt: Double = 0
     private var state = AppState()
     private var observers: [NSObjectProtocol] = []
@@ -65,6 +73,13 @@ final class DictationController: ObservableObject {
     private init() {
         commandObserver = DarwinObserver(.command) { [weak self] in
             Task { @MainActor in self?.handleCommand() }
+        }
+        settingsObserver = DarwinObserver(.settings) { [weak self] in
+            Task { @MainActor in
+                // 键盘改了语言:同步到这里(相同就不动,免得来回通知)。
+                guard let self, let l = SharedStore.readSettings()?.language, l != self.language else { return }
+                self.language = l
+            }
         }
         let center = NotificationCenter.default
         observers.append(center.addObserver(
@@ -86,8 +101,19 @@ final class DictationController: ObservableObject {
 
     // MARK: 键盘来的请求
 
+    /// 待用户确认的配对请求(`voiceinput://setup?url=…&token=…`)。链接谁都能打开,
+    /// 所以只是先记下来弹窗问,用户点了「使用」才真的改设置。
+    struct PendingSetup: Identifiable {
+        let id = UUID()
+        let url: String
+        let token: String?
+    }
+    @Published var pendingSetup: PendingSetup?
+
     /// 键盘拉起应用:`voiceinput://dictate?id=<uuid>`。开会话,马上开始录。
+    /// Mac 上的配对脚本生成:`voiceinput://setup?url=<https 地址>&token=<可选>`。
     func handle(url: URL) {
+        if url.host == "setup" { return handleSetup(url) }
         guard url.host == "dictate" else { return }
         let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "id" }?.value ?? UUID().uuidString
@@ -95,6 +121,17 @@ final class DictationController: ObservableObject {
             guard await startSession() else { return }
             startDictation(id: id)
         }
+    }
+
+    private func handleSetup(_ url: URL) {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard let raw = items.first(where: { $0.name == "url" })?.value,
+              let normalized = ServerConfig.normalizeUrl(raw),
+              // 配对只认 HTTPS:明文地址不该经一个链接就写进设置。
+              normalized.hasPrefix("https://") else { return }
+        let token = items.first(where: { $0.name == "token" })?.value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingSetup = PendingSetup(url: normalized, token: (token?.isEmpty ?? true) ? nil : token)
     }
 
     private func handleCommand() {

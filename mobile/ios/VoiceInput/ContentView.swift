@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var urlField = ""
     @State private var checkResult = ""
     @State private var checking = false
+    @State private var showTailscale = false
 
     var body: some View {
         NavigationStack {
@@ -20,6 +21,29 @@ struct ContentView: View {
             }
             .navigationTitle(L.t("语音输入", "Voice Input"))
             .onAppear { urlField = c.serverUrl }
+            .alert(
+                L.t("使用这个服务?", "Use this server?"),
+                isPresented: Binding(get: { c.pendingSetup != nil }, set: { if !$0 { c.pendingSetup = nil } }),
+                presenting: c.pendingSetup
+            ) { setup in
+                Button(L.t("使用", "Use")) {
+                    if let token = setup.token { c.token = token }
+                    urlField = setup.url
+                    saveAndTest()
+                }
+                Button(L.t("取消", "Cancel"), role: .cancel) {}
+            } message: { setup in
+                Text(setup.url.replacingOccurrences(of: "https://", with: "")
+                     + "\n\n"
+                     + L.t("之后的语音会发到这个地址。只在这是你自己的电脑时选「使用」。", "Your dictation will be sent to this address. Only choose Use if it's your own computer.")
+                     + (setup.token != nil ? "\n" + L.t("链接里带了访问令牌,会一并保存。", "The link includes an access token, which will be saved too.") : ""))
+            }
+            .sheet(isPresented: $showTailscale) {
+                TailscaleView { url in
+                    urlField = url
+                    saveAndTest()
+                }
+            }
         }
     }
 
@@ -31,8 +55,8 @@ struct ContentView: View {
                     .font(.headline)
                     .foregroundStyle(.red)
                 Text(L.t(
-                    "说吧。说完回到刚才的应用(点左上角的「◀」),在键盘上点 ■ 结束。",
-                    "Go ahead and talk. When you're done, go back to the previous app (tap ◀ in the top-left corner) and tap ■ on the keyboard."
+                    "说吧。说完回到刚才的应用(点左上角的「◀」),在键盘上再点一下结束。",
+                    "Go ahead and talk. When you're done, go back to the previous app (tap ◀ in the top-left corner) and tap the button on the keyboard again to finish."
                 ))
                 .font(.subheadline)
             }
@@ -83,6 +107,11 @@ struct ContentView: View {
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+            Button {
+                showTailscale = true
+            } label: {
+                Label(L.t("从 Tailscale 查找", "Find via Tailscale"), systemImage: "network")
+            }
             SecureField(L.t("访问令牌(服务端没设就留空)", "Access token (empty if not set)"), text: $c.token)
             Picker(L.t("识别语言", "Language"), selection: $c.language) {
                 ForEach(ServerConfig.languages, id: \.self) { Text(languageName($0)).tag($0) }
