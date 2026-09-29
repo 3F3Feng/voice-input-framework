@@ -205,6 +205,34 @@
             </template>
           </div>
 
+          <!-- 手机配对:手机上的「语音输入」扫码就把服务地址填好。只在本地管理模式下有意义。 -->
+          <div v-if="serverMode === 'local'" class="s-section">
+            <div class="s-title">{{ t('配对手机', 'Pair a phone') }}</div>
+            <div class="s-row" style="margin-top:0">
+              <span class="s-tip" style="margin:0;flex:1">{{ t('手机上的「语音输入」App 扫一下二维码,就自动填好这台电脑的服务地址,不用手打。走 Tailscale,只有你 tailnet 里的设备能连。', "Scan a QR code with the Voice Input app on your phone to fill in this computer's service address, no typing. Goes through Tailscale; only devices in your tailnet can connect.") }}</span>
+              <button class="s-btn" @click="loadPairing" :disabled="pairingBusy">{{ pairingBusy ? '...' : (pairing?.status === 'ready' ? t('刷新', 'Refresh') : t('显示二维码', 'Show QR code')) }}</button>
+            </div>
+            <template v-if="pairing">
+              <template v-if="pairing.status === 'ready'">
+                <div v-if="pairing.qr_svg" class="pair-qr" v-html="pairing.qr_svg"></div>
+                <div class="s-tip pair-steps">{{ t('用手机相机扫上面的二维码,选「在 语音输入 中打开」,再点「使用」。', 'Scan the code with your phone camera, choose "Open in Voice Input", then tap Use.') }}</div>
+                <div class="s-row" style="margin-top:4px">
+                  <span class="s-tip pair-address" style="margin:0;flex:1" :title="pairing.address ?? ''">{{ pairing.address }}</span>
+                  <button class="s-btn" @click="copyPairingLink">{{ t('复制链接', 'Copy link') }}</button>
+                </div>
+              </template>
+              <template v-else>
+                <div class="s-tip srv-problem">{{ pairing.message }}</div>
+                <div v-if="pairing.status === 'needs_serve' && pairing.command" class="s-row" style="margin-top:4px">
+                  <code class="pair-cmd" style="flex:1">{{ pairing.command }}</code>
+                  <button class="s-btn" @click="enablePairing" :disabled="pairingBusy">{{ pairingBusy ? t('开启中…', 'Enabling…') : t('开启手机访问', 'Enable phone access') }}</button>
+                </div>
+              </template>
+              <div v-if="pairing.status === 'ready' && pairing.message" class="s-tip srv-problem">{{ pairing.message }}</div>
+            </template>
+            <div v-if="pairingError" class="s-tip s-err">{{ pairingError }}</div>
+          </div>
+
           <!-- Models -->
           <div class="s-section">
             <div class="s-title">{{ t('STT 模型', 'STT model') }}</div>
@@ -837,6 +865,43 @@ const serverHost = ref("localhost");
 /** 远程服务的访问令牌(F20)。 */
 const serverToken = ref("");
 const serverPort = ref(6544);
+
+// ── 手机配对 ──
+// 状态和文案都由后端(mobile_pairing.rs)按当前界面语言给出;这里只负责显示和转发点击。
+interface PairingInfo {
+  status: "ready" | "needs_serve" | "no_tailscale" | "not_running" | "not_local";
+  address: string | null;
+  link: string | null;
+  /** 后端自己画的 SVG 二维码,可信。 */
+  qr_svg: string | null;
+  message: string | null;
+  /** needs_serve 时点按钮会执行的命令,展示给用户看。 */
+  command: string | null;
+}
+const pairing = ref<PairingInfo | null>(null);
+const pairingBusy = ref(false);
+const pairingError = ref("");
+async function runPairing(cmd: "get_mobile_pairing" | "enable_mobile_pairing") {
+  if (pairingBusy.value) return;
+  pairingBusy.value = true;
+  pairingError.value = "";
+  try {
+    pairing.value = await invoke<PairingInfo>(cmd);
+  } catch (e) {
+    pairingError.value = String(e);
+  } finally {
+    pairingBusy.value = false;
+  }
+}
+const loadPairing = () => runPairing("get_mobile_pairing");
+const enablePairing = () => runPairing("enable_mobile_pairing");
+async function copyPairingLink() {
+  if (!pairing.value?.link) return;
+  try {
+    await navigator.clipboard.writeText(pairing.value.link);
+    toast(t("配对链接已复制,发到手机上打开", "Pairing link copied — send it to your phone and open it"), "ok");
+  } catch { toast(t("复制失败", "Copy failed"), "err"); }
+}
 
 // 服务器管理
 const serverMode = ref<ServerMode>("remote");
@@ -3419,6 +3484,12 @@ html, body, #app { height: 100%; }
 /* 开关生效中(本地模式下是在等 LLM 加载模型):换个颜色,别让这几秒看起来像卡死 */
 .s-label.llm-busy { color: var(--yellow); }
 .s-tip { font-size: 0.68rem; color: var(--muted); margin-top: 4px; }
+/* 配对二维码:不管什么主题都得是黑码白底,否则手机扫不出来。 */
+.pair-qr { background: #fff; border-radius: 8px; padding: 6px; width: 200px; height: 200px; margin: 8px auto 0; box-sizing: border-box; }
+.pair-qr svg { width: 100%; height: 100%; display: block; }
+.pair-steps { text-align: center; }
+.pair-address { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pair-cmd { font-size: 0.66rem; color: var(--muted); word-break: break-all; }
 .s-tip.s-err { color: var(--red); }
 .s-textarea { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 0.75rem; width: 100%; resize: vertical; font-family: inherit; outline: none; }
 .s-textarea:focus { border-color: var(--blue); }
