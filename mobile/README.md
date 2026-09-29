@@ -78,10 +78,14 @@ CI 每次构建都会把 debug APK 作为 artifact 上传(Actions → Mobile →
 
 **构建**:
 
-1. 装 XcodeGen:`brew install xcodegen`
-2. 改 `mobile/ios/project.yml` 顶部三个值:`DEVELOPMENT_TEAM`(你的团队 ID)、
-   `BUNDLE_ID_PREFIX`(别人没用过的 Bundle ID)、`APP_GROUP_ID`(`group.` 开头)
-3. `cd mobile/ios && xcodegen generate && open VoiceInput.xcodeproj`,选你的 iPhone,运行
+1. 打开 Xcode → Settings → Accounts,点「+」登录 Apple ID(免费的就行)
+2. 运行 `mobile/ios/setup.sh`:自动装 XcodeGen、找到你的 Team ID、起好 Bundle ID
+   (默认 `io.github.<仓库所有者>.voiceinput`)和 App Group,填进 `project.yml`,生成工程并打开 Xcode
+3. 连上 iPhone,在 Xcode 顶部选它,按 ⌘R 运行(第一次要在 iPhone 上打开「开发者模式」)
+
+想手动来也行:改 `mobile/ios/project.yml` 顶部的 `DEVELOPMENT_TEAM`(团队 ID)、
+`BUNDLE_ID_PREFIX`(别人没用过的 Bundle ID)、`APP_GROUP_ID`(`group.` 开头),
+再 `cd mobile/ios && xcodegen generate && open VoiceInput.xcodeproj`。
 
 **启用**:
 
@@ -131,4 +135,5 @@ iOS 的 `VoiceInput/DictationSession.swift` 是 `core/DictationSession.kt` 的�
 | `ios/Shared/` | 应用和键盘共用:共享容器里的状态 / 命令、Darwin 通知 |
 | `ios/VoiceInput/` | 应用:音频会话、协议客户端、设置界面 |
 | `ios/VoiceKeyboard/` | 键盘扩展 |
+| `ios/setup.sh` | 一键填好签名设置、生成并打开 Xcode 工程 |
 | `tools/fake_stt_server.py` | 不用模型的 STT 服务 |
