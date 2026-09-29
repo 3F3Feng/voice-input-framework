@@ -25,6 +25,11 @@
   - 配对链接只认 `https://`,并且手机端一定先弹窗让用户确认地址,链接本身不会直接改设置。
   - iOS 端还可以「从 Tailscale 查找」:用一个只读的 OAuth 凭证(`devices:core:read`,存在钥匙串里)
     列出 tailnet 里的设备并探测 HTTPS 的 `/health`。
+- **补上 `LICENSE` 文件(MIT)**:README 和 `pyproject.toml` 早就写了 MIT,但仓库根目录一直没有许可证文件。
+- **Android 免费分发**:推 `mobile-vX.Y.Z` 标签会用发布密钥构建并签名 APK(先验签),
+  挂到 GitHub Release,并附 SHA-256。IzzyOnDroid 可以自动从 Release 拉取,用户也能用 Obtainium 跟着更新。
+  PR 的 CI 里多了一步未签名的 release 构建,平时就能发现发版配置坏了。
+  签名密钥的生成和 GitHub secrets 的设置见 `mobile/README.md` 的「发布」一节。
 - **iOS 键盘换成液态玻璃界面**(iOS 26;更老的系统退回毛玻璃):顶部加了主要识别语言选择
   (自动 / 中 / EN / 粤 / 日 / 한,和应用里的「识别语言」互相同步),录音时麦克风键变红、
   里面是随音量起伏的波形,「取消」「重插」改成文字标签。新增应用图标。

@@ -55,6 +55,10 @@ uv run python -m services.stt_server
 
 **要求**:Android 10 及以上。
 
+**安装(不用应用商店,免费)**:发版后 APK 挂在仓库的 [Releases](../../releases)(标签 `mobile-v*`)上,
+用发布密钥签名。可以直接下载安装,也可以用 [Obtainium](https://github.com/ImranR98/Obtainium)
+填上本仓库地址,之后新版本由它自动提示更新。
+
 **构建**:用 Android Studio 打开 `mobile/android`,运行 `app`;或者命令行:
 
 ```bash
@@ -116,6 +120,43 @@ swift mobile/tools/pair.swift
   公开 API 做不到,商业语音键盘都这么做;将来的 iOS 版本可能会改。只自己装着用没有审核问题,
   要上架 App Store 需要自己评估。
 - 会话期间状态栏一直有橙色麦克风点。不用时可以在应用里点「结束」。
+
+## 发布(维护者)
+
+**Android**:推一个 `mobile-vX.Y.Z` 标签,`.github/workflows/android-release.yml` 会构建、用发布密钥签名、
+验签,然后把 APK 和它的 SHA-256 挂到这个标签的 GitHub Release 上。发版前:
+
+1. 改 `android/app/build.gradle.kts` 里的 `versionName` 和 `versionCode`。**标签里的版本必须和
+   `versionName` 一致**,不一致工作流会直接失败,免得发出去的包和标签对不上。
+2. 第一次发版要生成一个发布密钥,并设四个 GitHub secrets(仓库 Settings → Secrets and variables → Actions):
+
+   ```bash
+   keytool -genkeypair -v -keystore release.jks -alias voiceinput \
+       -keyalg RSA -keysize 4096 -validity 10000
+   base64 -i release.jks | pbcopy        # macOS;Linux 用 base64 -w0 release.jks
+   ```
+
+   | secret | 内容 |
+   |---|---|
+   | `ANDROID_KEYSTORE_BASE64` | 上面 base64 的输出 |
+   | `ANDROID_KEYSTORE_PASSWORD` | 密钥库密码 |
+   | `ANDROID_KEY_ALIAS` | 别名(上面是 `voiceinput`) |
+   | `ANDROID_KEY_PASSWORD` | 密钥密码 |
+
+3. `git tag mobile-v0.1.0 && git push origin mobile-v0.1.0`
+
+**这个密钥库要自己另外备份(密码管理器、加密的 U 盘都行),并且不要提交进仓库。** Android 只认
+同一个密钥签的更新:丢了它,已经装了的用户就没法升级,只能卸载重装。
+
+想进 [IzzyOnDroid](https://izzyondroid.org/docs/general/AppInclusionPolicy/)(免费的第三方 F-Droid 源,
+自动从 GitHub Release 拉 APK):APK 要用发布密钥签名、不能带 debuggable、源码公开,这几条上面的工作流
+都已经满足;提交收录申请是往它们的仓库开一个 issue,和本仓库无关。
+
+**iOS**:没有免费的公开分发渠道(TestFlight / App Store 都要付费开发者账号)。目前的方式是用户
+按上面「构建」一节自己从源码装,用自己的免费 Apple ID 签名,7 天过期后重装一次。
+AltStore Classic(全球可用,美国、加拿大也行;AltStore PAL 只在欧盟等地区)可以让用户自己续签,
+但我们是「应用 + 键盘扩展」两个包并且靠 App Group 通信,重新签名后是否还能正常工作**还没有实测**,
+测过之前不要对外承诺支持。
 
 ## 开发
 

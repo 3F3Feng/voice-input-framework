@@ -369,4 +369,4 @@ Rust 客户端人工验证清单见 `docs/rust-client-verification.md`。
 
 ## 📄 许可证
 
-MIT License
+MIT License,见 [LICENSE](LICENSE)。

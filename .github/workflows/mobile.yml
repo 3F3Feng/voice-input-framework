@@ -59,6 +59,12 @@ jobs:
           name: voice-input-android-debug
           path: mobile/android/app/build/outputs/apk/debug/*.apk
 
+      # 发版用的 release 配置(签名、依赖清单块)平时没人跑,坏了要到发版那天才发现。
+      # 这里没有密钥,出来的是未签名的 APK,只用来确认这份配置能构建。
+      - name: Build release APK (unsigned, config check)
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon :app:assembleRelease
+
       - name: Server log
         if: failure()
         run: cat fake-server.log
