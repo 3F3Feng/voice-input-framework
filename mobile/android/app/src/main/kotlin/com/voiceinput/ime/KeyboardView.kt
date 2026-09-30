@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
@@ -20,6 +21,7 @@ import android.view.WindowInsets
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.voiceinput.core.ServerConfig
 
 /**
  * 输入法的界面:一个大麦克风键,外加切换输入法、放弃 / 重新插入、空格、退格、回车。
@@ -38,6 +40,9 @@ class KeyboardView(context: Context, private val actions: Actions) : LinearLayou
         fun onBackspace()
         fun onEnter()
         fun onOpenSettings()
+
+        /** 用户在键盘顶部点了一个识别语言(`auto` / `zh` / `en` / `yue` / `ja` / `ko`)。 */
+        fun onLanguageSelected(code: String)
     }
 
     enum class Mode { IDLE, RECORDING, PROCESSING }
@@ -57,6 +62,7 @@ class KeyboardView(context: Context, private val actions: Actions) : LinearLayou
     private val cancelKey: TextView
     private val enterKey: TextView
     private val handler = Handler(Looper.getMainLooper())
+    private val languageChips = LinkedHashMap<String, TextView>()
 
     private var mode = Mode.IDLE
     private var reinsertAvailable = false
@@ -84,10 +90,33 @@ class KeyboardView(context: Context, private val actions: Actions) : LinearLayou
         )
         addView(top, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
+        // 识别语言:一排小按钮,选中的高亮。改的是全局设置,下一次听写就用它。
+        val languageRow = LinearLayout(context).apply { orientation = HORIZONTAL }
+        for (code in ServerConfig.LANGUAGES) {
+            val chip = TextView(context).apply {
+                text = L.languageShort(code)
+                gravity = Gravity.CENTER
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                isClickable = true
+                contentDescription = L.languageName(code)
+                setOnClickListener {
+                    it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    actions.onLanguageSelected(code)
+                }
+            }
+            languageChips[code] = chip
+            languageRow.addView(chip, LayoutParams(0, dp(30), 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
+        }
+        addView(
+            languageRow,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) },
+        )
+        setLanguage("auto")
+
         // 中间:麦克风
         val micBox = FrameLayout(context)
-        micBox.addView(mic, FrameLayout.LayoutParams(dp(132), dp(132), Gravity.CENTER))
-        addView(micBox, LayoutParams(LayoutParams.MATCH_PARENT, dp(140)))
+        micBox.addView(mic, FrameLayout.LayoutParams(dp(112), dp(112), Gravity.CENTER))
+        addView(micBox, LayoutParams(LayoutParams.MATCH_PARENT, dp(120)))
         mic.setOnTouchListener { v, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -109,15 +138,15 @@ class KeyboardView(context: Context, private val actions: Actions) : LinearLayou
         switchKey = key("🌐") { actions.onSwitchKeyboard() }
         switchKey.setOnLongClickListener { actions.onPickKeyboard(); true }
         switchKey.contentDescription = L.t("切换输入法", "Switch keyboard")
-        cancelKey = key("✕") {
+        cancelKey = key(L.t("重插", "Reinsert")) {
             if (mode == Mode.IDLE) actions.onReinsert() else actions.onCancel()
-        }
+        }.apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f) }
         val space = key(L.t("空格", "space")) { actions.onSpace() }
         val backspace = key("⌫") {}
         backspace.contentDescription = L.t("删除", "Delete")
         repeatWhileHeld(backspace) { actions.onBackspace() }
-        enterKey = key("⏎") { actions.onEnter() }
-        for ((v, weight) in listOf(switchKey to 1f, cancelKey to 1f, space to 3f, backspace to 1f, enterKey to 1.3f)) {
+        enterKey = key("⏎") { actions.onEnter() }.apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f) }
+        for ((v, weight) in listOf(switchKey to 1f, cancelKey to 1.6f, space to 2.6f, backspace to 1f, enterKey to 1.4f)) {
             row.addView(v, LayoutParams(0, dp(46), weight).apply { setMargins(dp(3), 0, dp(3), 0) })
         }
         addView(row, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
@@ -141,7 +170,8 @@ class KeyboardView(context: Context, private val actions: Actions) : LinearLayou
         status.text = message
         mic.mode = mode
         if (mode != Mode.RECORDING) mic.level = 0f
-        cancelKey.text = if (mode == Mode.IDLE) "↺" else "✕"
+        cancelKey.text = if (mode == Mode.IDLE) L.t("重插", "Reinsert") else L.t("取消", "Cancel")
+        cancelKey.setTextColor(if (mode == Mode.IDLE) fg else recording)
         cancelKey.contentDescription = if (mode == Mode.IDLE) {
             L.t("再插入一次上一条结果", "Insert the last result again")
         } else {
@@ -155,6 +185,18 @@ class KeyboardView(context: Context, private val actions: Actions) : LinearLayou
 
     fun setStatus(message: String) {
         status.text = message
+    }
+
+    /** 高亮当前的识别语言。 */
+    fun setLanguage(code: String) {
+        for ((c, chip) in languageChips) {
+            val on = c == code
+            chip.setTextColor(if (on) Color.WHITE else fg)
+            chip.background = GradientDrawable().apply {
+                cornerRadius = dp(15).toFloat()
+                setColor(if (on) accent else keyBg)
+            }
+        }
     }
 
     fun setLevel(level: Float) {
@@ -221,15 +263,21 @@ class KeyboardView(context: Context, private val actions: Actions) : LinearLayou
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    /** 圆形麦克风键;录音时外面一圈随音量变大。 */
+    /**
+     * 圆形麦克风键;录音时外面一圈随音量变大。图标自己画(麦克风 / 波形 / 圆点),
+     * 不用 emoji:各家系统字体画出来的样子和大小都不一样。
+     */
     private inner class MicButton(context: Context) : View(context) {
         var mode = Mode.IDLE
         var level = 0f
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val glyph = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textAlign = Paint.Align.CENTER
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
         }
+        private val rect = RectF()
 
         override fun onDraw(canvas: Canvas) {
             val cx = width / 2f
@@ -248,13 +296,44 @@ class KeyboardView(context: Context, private val actions: Actions) : LinearLayou
             paint.color = color
             paint.alpha = 255
             canvas.drawCircle(cx, cy, r, paint)
-            glyph.textSize = r * 0.8f
-            val text = when (mode) {
-                Mode.IDLE -> "🎤"
-                Mode.RECORDING -> "■"
-                Mode.PROCESSING -> "…"
+            when (mode) {
+                Mode.IDLE -> drawMicrophone(canvas, cx, cy, r)
+                Mode.RECORDING -> drawBars(canvas, cx, cy, r)
+                Mode.PROCESSING -> drawDots(canvas, cx, cy, r)
             }
-            canvas.drawText(text, cx, cy - (glyph.descent() + glyph.ascent()) / 2, glyph)
+        }
+
+        /** 胶囊形的话筒头 + U 形支架 + 立杆和底座。整体略微上移,视觉上居中。 */
+        private fun drawMicrophone(canvas: Canvas, cx: Float, cy0: Float, r: Float) {
+            val cy = cy0 - r * 0.06f
+            rect.set(cx - r * 0.2f, cy - r * 0.5f, cx + r * 0.2f, cy + r * 0.1f)
+            canvas.drawRoundRect(rect, r * 0.2f, r * 0.2f, fill)
+            stroke.strokeWidth = r * 0.09f
+            rect.set(cx - r * 0.36f, cy - r * 0.28f, cx + r * 0.36f, cy + r * 0.44f)
+            canvas.drawArc(rect, 0f, 180f, false, stroke)
+            canvas.drawLine(cx, cy + r * 0.44f, cx, cy + r * 0.62f, stroke)
+            canvas.drawLine(cx - r * 0.2f, cy + r * 0.62f, cx + r * 0.2f, cy + r * 0.62f, stroke)
+        }
+
+        /** 五根竖条,中间最高;整体高度跟着音量走,说话时能看出在听。 */
+        private fun drawBars(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+            val barWidth = r * 0.12f
+            val gap = r * 0.1f
+            val shape = floatArrayOf(0.35f, 0.6f, 1f, 0.6f, 0.35f)
+            val maxHeight = r * (0.45f + 0.55f * minOf(1f, level * 1.5f))
+            val startX = cx - (5 * barWidth + 4 * gap) / 2f
+            for (i in shape.indices) {
+                val h = maxOf(barWidth, maxHeight * shape[i])
+                val left = startX + i * (barWidth + gap)
+                rect.set(left, cy - h / 2f, left + barWidth, cy + h / 2f)
+                canvas.drawRoundRect(rect, barWidth / 2f, barWidth / 2f, fill)
+            }
+        }
+
+        private fun drawDots(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+            for (dx in floatArrayOf(-0.3f, 0f, 0.3f)) {
+                canvas.drawCircle(cx + dx * r, cy, r * 0.09f, fill)
+            }
         }
     }
 }

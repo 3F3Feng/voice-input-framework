@@ -14,7 +14,26 @@
 - 🧠 **LLM 后处理** - 自动优化识别结果（去噪、加标点、格式化）
 - 🔌 **分离架构**：STT 和 LLM 独立服务，解决 transformers 版本冲突
 - 🖥️ **跨平台客户端**：Tauri GUI（Windows/macOS/Linux）；旧的 Python 客户端已不推荐使用，见下文
-- 📱 **手机输入法**（初版）：Android 输入法、iOS 键盘，连你电脑上的 STT / LLM 服务，见 [mobile/README.md](mobile/README.md)
+- 📱 **手机输入法**（初版）：Android 输入法、iOS 键盘，连你电脑上的 STT / LLM 服务；桌面客户端能生成二维码，手机扫一下就填好服务地址，见 [mobile/README.md](mobile/README.md)
+- 🔒 **数据不出你的设备**：识别和整理都在你自己的电脑上完成，没有云端后端，见下文「隐私」
+
+## 📸 界面
+
+iOS 键盘（iOS 26 液态玻璃；顶部选识别语言，点一下说话、再点一下结束）：
+
+| 待机 | 录音中 |
+|:---:|:---:|
+| <img src="docs/images/ios-keyboard-idle.jpg" width="300" alt="iOS 键盘:待机"> | <img src="docs/images/ios-keyboard-recording.jpg" width="300" alt="iOS 键盘:录音中"> |
+
+## 我该看哪份文档
+
+| 我想…… | 看这里 |
+|---|---|
+| 在电脑上用（装客户端 + 建服务） | 下面「[快速开始](#-快速开始)」 |
+| 帮忙测试 Windows / Android，自己搭服务自己连 | [docs/testing.md](docs/testing.md) |
+| 在手机上用（Android / iOS） | [mobile/README.md](mobile/README.md) |
+| 自己编译 / 改代码 | 下面「构建」「测试」两节，以及 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
+| 报 bug / 提建议 | [Issues](https://github.com/3F3Feng/voice-input-framework/issues/new/choose) |
 
 ## 📦 支持的模型
 
@@ -82,6 +101,10 @@ Gemma-4-E2B 的 QAT 版在 MLX 和 llama.cpp 上都只有 1 例不合格，延�
 分两部分：**客户端**（桌面应用）和**服务端**（跑模型的 Python 服务）。
 服务端可以和客户端在同一台机器上，也可以放在另一台有显卡的机器上。
 
+**不想折腾的最短路径**：下载客户端 → 克隆仓库并运行 `scripts/setup-env.sh`（Windows 用
+`scripts\setup-env.ps1`）→ 客户端里「设置 → 服务」选「本地管理」→「自动探测」→「启动」→
+按住 `Ctrl+Alt` 说话。第一次启动要下载模型，需要一点时间。
+
 ### 从 Releases 安装客户端 + 本地建服务端（推荐）
 
 1. 到 [Releases](https://github.com/3F3Feng/voice-input-framework/releases/latest) 下载对应平台的客户端：
@@ -92,6 +115,8 @@ Gemma-4-E2B 的 QAT 版在 MLX 和 llama.cpp 上都只有 1 例不合格，延�
    > macOS 上的发布包没有 Developer ID 签名，浏览器下载后打开可能提示「已损坏」。
    > 文件本身是好的，执行 `xattr -dr com.apple.quarantine "/Applications/Voice Input.app"`
    > 后再打开即可，详见 [docs/macos-signed-build.md](docs/macos-signed-build.md)。
+   >
+   > Windows 上没有代码签名时会弹 SmartScreen「已保护你的电脑」：点「更多信息」→「仍要运行」。
 
 2. 克隆仓库，一键建服务端环境（见下面「服务端」）。
 
@@ -145,9 +170,17 @@ npm run tauri dev
 
 ### 手机输入法（Android / iOS）
 
-在手机上切到「语音输入」键盘，点麦克风说话，识别和整理都在你电脑上的服务里做。
-服务端要设 `VIF_STT_HOST=0.0.0.0` 和 `VIF_API_TOKEN`，出门在外推荐用 Tailscale。
-构建、启用和 iOS 上的限制见 [mobile/README.md](mobile/README.md)。
+在手机上切到「语音输入」键盘，点一下麦克风说话、再点一下结束（Android 也可以按住说话），
+识别和整理都在你电脑上的服务里做。键盘顶部可以选识别语言。
+
+- **让手机连上你的服务**：服务端要设 `VIF_STT_HOST=0.0.0.0` 和 `VIF_API_TOKEN`（桌面客户端「本地管理」
+  拉起的服务只监听本机，手机连不上，要自己在终端里起一个，见 [docs/testing.md](docs/testing.md)）。
+  出门在外推荐用 [Tailscale](https://tailscale.com/)。
+- **免手打地址（走 Tailscale 时）**：桌面客户端「设置 → 服务 → 配对手机」显示二维码，手机相机扫一下、
+  点「使用」就填好了。只认 `https://` 地址，并且手机上一定会先让你确认。
+- **Android**：到 [Releases](https://github.com/3F3Feng/voice-input-framework/releases) 下载 `mobile-v*` 版本里的 APK 安装。
+- **iOS**：没有免费的公开分发渠道，需要自己从源码构建，用自己的（免费）Apple ID 签名，见
+  [mobile/README.md](mobile/README.md)。
 
 ### Python 客户端（legacy，不推荐）
 
@@ -366,6 +399,20 @@ cd gui/src-tauri && cargo check && cargo test
 ```
 
 Rust 客户端人工验证清单见 `docs/rust-client-verification.md`。
+
+## 💬 反馈与测试
+
+遇到问题或想提建议，请到 [Issues](https://github.com/3F3Feng/voice-input-framework/issues/new/choose) 新建一个。
+帮忙测试的话，[docs/testing.md](docs/testing.md) 有完整步骤、检查清单和需要附上的信息。
+桌面客户端的「设置 → 日志 → 复制诊断信息」能一键复制版本、系统和最近的日志。
+
+## 🔒 隐私
+
+- 音频只会发到**你自己运行的**服务，识别和 LLM 整理都在你的电脑上完成；本项目没有云端后端，代码里也没有遥测、统计之类的上传。
+- 服务默认只监听本机（`127.0.0.1`）。对局域网开放（`VIF_STT_HOST=0.0.0.0`）时**务必设置 `VIF_API_TOKEN`**，
+  并且**不要**把端口映射到公网；出门在外用 Tailscale 这类加密隧道。
+- 访问令牌以明文保存在你自己设备的应用私有目录里（手机上其它应用读不到）。
+- 模型第一次使用时会从 HuggingFace（或你选的镜像）下载；另一个对外的网络请求是客户端检查 GitHub Releases 上的更新。
 
 ## 📄 许可证
 

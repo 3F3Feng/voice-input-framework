@@ -19,6 +19,17 @@ object L {
         "ko" -> "한국어"
         else -> code
     }
+
+    /** 键盘顶部小按钮上的简称。 */
+    fun languageShort(code: String): String = when (code) {
+        "auto" -> t("自动", "Auto")
+        "zh" -> "中"
+        "en" -> "EN"
+        "yue" -> "粤"
+        "ja" -> "日"
+        "ko" -> "한"
+        else -> code
+    }
 }
 
 /**

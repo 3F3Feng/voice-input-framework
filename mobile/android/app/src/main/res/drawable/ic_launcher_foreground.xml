@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  五根白色圆角竖条,中间最高(和键盘录音时的波形一致)。画在 108dp 画布正中的 66dp 安全区里,
+  用粗线 + 圆头来画:线段长度 = 条高 - 线宽。Android 13 的主题图标也用它(只看形状)。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group>
+        <path
+            android:pathData="M34,48.85L34,59.15"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="5.9" />
+        <path
+            android:pathData="M44,43.2L44,64.8"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="5.9" />
+        <path
+            android:pathData="M54,37.2L54,70.8"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="5.9" />
+        <path
+            android:pathData="M64,43.2L64,64.8"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="5.9" />
+        <path
+            android:pathData="M74,48.85L74,59.15"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="5.9" />
+    </group>
+</vector>
