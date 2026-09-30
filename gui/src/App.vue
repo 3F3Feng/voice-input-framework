@@ -205,6 +205,43 @@
             </template>
           </div>
 
+          <!-- 手机直连(局域网):不用在终端里设环境变量、手动生成令牌。只在本地管理模式下有意义。 -->
+          <div v-if="serverMode === 'local'" class="s-section">
+            <div class="s-title">{{ t('手机直连(局域网)', 'Phone access (same network)') }}</div>
+            <div class="s-row" style="margin-top:0">
+              <label class="toggle"><input type="checkbox" :checked="lanShare?.enabled ?? false" @change="toggleLanShare(($event.target as HTMLInputElement).checked)" :disabled="lanBusy || !lanShare" /><span class="slider"></span></label>
+              <span class="s-label">{{ t('允许手机通过局域网连接', 'Allow phones on my network to connect') }}</span>
+            </div>
+            <div class="s-tip">{{ t('打开后,STT 服务会监听局域网,并要求访问令牌(自动生成)。改动会重启本应用启动的服务。只有同一个网络里、知道令牌的设备才能用;不要把这个端口映射到公网。', "When on, the STT service listens on your network and requires an access token (generated for you). Changing it restarts the services this app started. Only devices on the same network that know the token can use it; don't forward this port to the internet.") }}</div>
+            <template v-if="lanShare?.enabled">
+              <div class="s-row">
+                <span class="s-tip lan-label">{{ t('地址', 'Address') }}</span>
+                <code v-if="lanShare.address" class="lan-value" :title="lanShare.address">{{ lanShare.address }}</code>
+                <span v-else class="s-tip srv-problem" style="flex:1;margin:0">{{ t('没找到这台电脑的局域网地址,请自己查(Windows 用 ipconfig),地址形如 http://<局域网 IP>:', "Couldn't find this computer's network address; look it up yourself (ipconfig on Windows). It looks like http://<LAN IP>:") }}{{ lanShare.port }}</span>
+                <button v-if="lanShare.address" class="s-btn" @click="copyText(lanShare.address, t('地址已复制', 'Address copied'))">{{ t('复制', 'Copy') }}</button>
+              </div>
+              <div class="s-row" style="margin-top:4px">
+                <span class="s-tip lan-label">{{ t('令牌', 'Token') }}</span>
+                <code class="lan-value" :title="lanShare.token ?? ''">{{ lanShare.token }}</code>
+                <button class="s-btn" @click="copyText(lanShare.token ?? '', t('令牌已复制', 'Token copied'))">{{ t('复制', 'Copy') }}</button>
+              </div>
+              <div class="s-row" style="margin-top:4px">
+                <button class="s-btn" @click="copyText(lanPhoneText, t('已复制,发到手机上', 'Copied — send it to your phone'))">{{ t('复制手机要填的信息', 'Copy what the phone needs') }}</button>
+                <button class="s-btn" @click="regenerateLanToken" :disabled="lanBusy">{{ t('重新生成令牌', 'New token') }}</button>
+              </div>
+              <div class="s-tip">{{ t('手机上的「语音输入」里:服务地址填上面的地址,访问令牌填上面的令牌,点「保存并测试连接」。手机要和这台电脑在同一个 Wi-Fi。', "In the phone's Voice Input app: enter the address and token above and tap Save & test connection. The phone must be on the same Wi-Fi as this computer.") }}</div>
+              <div v-if="lanShare.firewall_command" class="s-tip">
+                {{ t('Windows 第一次会弹出防火墙提示,选「专用网络」并允许。没弹、或手机还是连不上时,用管理员 PowerShell 执行:', 'Windows shows a firewall prompt the first time: choose Private networks and allow. If it does not, or the phone still cannot connect, run this in an administrator PowerShell:') }}
+                <div class="s-row" style="margin-top:4px">
+                  <code class="pair-cmd" style="flex:1">{{ lanShare.firewall_command }}</code>
+                  <button class="s-btn" @click="copyText(lanShare.firewall_command ?? '', t('命令已复制', 'Command copied'))">{{ t('复制', 'Copy') }}</button>
+                </div>
+              </div>
+            </template>
+            <div v-if="lanNote" class="s-tip srv-problem">{{ lanNote }}</div>
+            <div v-if="lanError" class="s-tip s-err">{{ lanError }}</div>
+          </div>
+
           <!-- 手机配对:手机上的「语音输入」扫码就把服务地址填好。只在本地管理模式下有意义。 -->
           <div v-if="serverMode === 'local'" class="s-section">
             <div class="s-title">{{ t('配对手机', 'Pair a phone') }}</div>
@@ -866,6 +903,64 @@ const serverHost = ref("localhost");
 const serverToken = ref("");
 const serverPort = ref(6544);
 
+// ── 手机直连(局域网) ──
+// 状态由后端(lan_share.rs)给:开没开、手机里该填的地址和令牌。令牌是后端生成的,这里不生成。
+interface LanShareInfo {
+  enabled: boolean;
+  token: string | null;
+  port: number;
+  /** 手机里要填的服务地址;找不到局域网地址时是 null。 */
+  address: string | null;
+  /** Windows 上放行端口的命令;别的系统是 null。 */
+  firewall_command: string | null;
+}
+const lanShare = ref<LanShareInfo | null>(null);
+const lanBusy = ref(false);
+const lanNote = ref("");
+const lanError = ref("");
+const lanPhoneText = computed(() => {
+  const s = lanShare.value;
+  if (!s?.enabled) return "";
+  return `${t("服务地址", "Server address")}: ${s.address ?? `http://<${t("局域网 IP", "LAN IP")}>:${s.port}`}\n${t("访问令牌", "Access token")}: ${s.token ?? ""}`;
+});
+async function loadLanShare() {
+  try { lanShare.value = await invoke<LanShareInfo>("get_lan_share"); }
+  catch (e) { console.error("get_lan_share failed:", e); }
+}
+/** 设置变了,本应用拉起的服务要重启才会按新的监听地址和令牌来;用户自己起的不碰,只提醒。 */
+async function restartOwnServicesForLan() {
+  await refreshServers();
+  const report = serverReport.value;
+  if (!report) return;
+  const foreign: string[] = [];
+  // 和「更新服务」同样的顺序:先 LLM 再 STT。
+  for (const kind of ["llm", "stt"] as const) {
+    const s = report[kind];
+    if (s.state !== "running" && s.state !== "starting") continue;
+    if (s.owner === "app") await restartSrv(kind);
+    else foreign.push(kind.toUpperCase());
+  }
+  lanNote.value = foreign.length
+    ? t(`${foreign.join("、")} 服务不是本应用启动的,请自己重启它,新设置才会生效。`, `The ${foreign.join(" and ")} service wasn't started by this app; restart it yourself for the new settings to take effect.`)
+    : "";
+}
+async function runLanChange(run: () => Promise<LanShareInfo>) {
+  if (lanBusy.value) return;
+  lanBusy.value = true;
+  lanError.value = "";
+  lanNote.value = "";
+  try {
+    lanShare.value = await run();
+    await restartOwnServicesForLan();
+  } catch (e) {
+    lanError.value = String(e);
+    await loadLanShare();
+  } finally {
+    lanBusy.value = false;
+  }
+}
+const toggleLanShare = (enabled: boolean) => runLanChange(() => invoke<LanShareInfo>("set_lan_share", { enabled }));
+const regenerateLanToken = () => runLanChange(() => invoke<LanShareInfo>("regenerate_lan_token"));
 // ── 手机配对 ──
 // 状态和文案都由后端(mobile_pairing.rs)按当前界面语言给出;这里只负责显示和转发点击。
 interface PairingInfo {
@@ -3103,12 +3198,12 @@ function useOriginal() {
   result.value = resultOriginal.value;
   resultView.value = "final";
 }
-async function copyText(text: string): Promise<boolean> {
+async function copyText(text: string, okMsg?: string): Promise<boolean> {
   if (!text.trim()) return false;
   // 以前不等结果,写剪贴板失败也显示「已复制」。
   try { await navigator.clipboard.writeText(text); }
   catch (e) { toast(t(`复制失败: ${e}`, `Copy failed: ${e}`), "err"); return false; }
-  toast(t("已复制", "Copied"), "ok");
+  toast(okMsg ?? t("已复制", "Copied"), "ok");
   return true;
 }
 async function insertText(text: string) {
@@ -3133,6 +3228,7 @@ function clearResult() { resetResult(); }
 // ── Lifecycle ──
 // 打开设置面板时重新查一次:用户可能刚在系统设置里改过授权
 watch(showSettings, open => { if (open) refreshPermissions(); });
+watch([showSettings, serverMode], ([open, mode]) => { if (open && mode === "local") loadLanShare(); });
 
 // 托盘里的状态行跟着头部走。窗口藏着的时候，托盘是用户唯一能看状态的地方。
 // 托盘状态行和头部说同一件事(含「模型加载中」「模型加载失败」),都来自 connView。
@@ -3488,6 +3584,8 @@ html, body, #app { height: 100%; }
 .pair-qr { background: #fff; border-radius: 8px; padding: 6px; width: 200px; height: 200px; margin: 8px auto 0; box-sizing: border-box; }
 .pair-qr svg { width: 100%; height: 100%; display: block; }
 .pair-steps { text-align: center; }
+.lan-label { width: 2.6em; flex-shrink: 0; margin: 0; }
+.lan-value { flex: 1; min-width: 0; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; }
 .pair-address { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pair-cmd { font-size: 0.66rem; color: var(--muted); word-break: break-all; }
 .s-tip.s-err { color: var(--red); }

@@ -77,6 +77,16 @@ pub struct LocalServerConfig {
     /// MB 到几 GB,连不上就只能看着「正在加载模型」直到超时失败。
     #[serde(default)]
     pub hf_endpoint: Option<String>,
+    /// 允许手机(或别的设备)通过局域网直连本机的 STT 服务。
+    ///
+    /// 默认关:服务只绑回环、不设令牌。打开后 STT 服务改绑 `0.0.0.0`,并且**两个服务都设上
+    /// `lan_token` 作为 `VIF_API_TOKEN`**(STT 转发给 LLM 时用的是同一个令牌,见 `shared/auth.py`)。
+    /// 没有令牌就不会对局域网开放。
+    #[serde(default)]
+    pub lan_share: bool,
+    /// 局域网共享的访问令牌。关掉共享时也留着,下次打开手机上不用重填;想换就重新生成。
+    #[serde(default)]
+    pub lan_token: Option<String>,
 }
 
 fn default_stt_port() -> u16 {
@@ -98,17 +108,37 @@ impl Default for LocalServerConfig {
             llm_model: None,
             auto_start: false,
             hf_endpoint: None,
+            lan_share: false,
+            lan_token: None,
         }
     }
 }
 
+/// 本地服务该用的局域网令牌:共享开着、并且令牌不是空的才算。
+/// 令牌为空时**不能**当成「共享开着但不设令牌」,那样服务会无鉴权地暴露到局域网。
+pub fn lan_token_of(local: &LocalServerConfig) -> Option<String> {
+    if !local.lan_share {
+        return None;
+    }
+    local.lan_token.clone().filter(|t| !t.trim().is_empty())
+}
+
 impl ServerConfig {
-    /// 当前该带的令牌:只有远程模式带。本应用拉起的本地服务不设令牌。
+    /// 当前该带的令牌。
+    ///
+    /// - 远程模式:用户填的令牌。
+    /// - 本地管理:平时本应用拉起的服务不设令牌;只有打开了「局域网共享」才有,
+    ///   那时服务是带着 `lan_token` 起的,客户端连自己也得带上它。
     pub fn active_token(&self) -> Option<String> {
         match self.mode {
             ServerMode::Remote => self.token.clone().filter(|t| !t.trim().is_empty()),
-            ServerMode::Local => None,
+            ServerMode::Local => self.lan_token_in_use(),
         }
+    }
+
+    /// 见 [`lan_token_of`]。
+    pub fn lan_token_in_use(&self) -> Option<String> {
+        lan_token_of(&self.local)
     }
 
     /// 首次启动、并且探测到了仓库时的出厂设置:本地管理 + 随应用启动。
@@ -666,6 +696,51 @@ mod tests {
         cfg.server.host = "https://stt.example.com".into();
         cfg.server.mode = ServerMode::Local;
         assert_eq!(cfg.server.effective_stt_url(), "http://127.0.0.1:6544");
+    }
+
+    /// 老配置文件里没有局域网共享的两个字段:读出来必须是「关、无令牌」,行为和以前一模一样。
+    #[test]
+    fn old_config_without_lan_fields_keeps_sharing_off() {
+        let json = r#"{"host":"localhost","port":6544,"mode":"local","local":{"stt_port":6544}}"#;
+        let server: ServerConfig = serde_json::from_str(json).unwrap();
+        assert!(!server.local.lan_share);
+        assert_eq!(server.local.lan_token, None);
+        assert_eq!(server.active_token(), None);
+    }
+
+    /// 本地模式平时不带令牌;打开共享后带的是生成的局域网令牌。
+    #[test]
+    fn local_mode_token_only_when_lan_sharing_is_on() {
+        let mut cfg = VoiceInputConfig::default().server;
+        cfg.mode = ServerMode::Local;
+        cfg.local.lan_token = Some("tok123".into());
+        assert_eq!(cfg.active_token(), None, "共享没开时令牌不生效");
+        cfg.local.lan_share = true;
+        assert_eq!(cfg.active_token().as_deref(), Some("tok123"));
+    }
+
+    /// 共享开着但令牌是空的:不能返回 Some(""),更不能让服务无鉴权地开放。
+    #[test]
+    fn empty_lan_token_never_counts() {
+        let mut cfg = VoiceInputConfig::default().server;
+        cfg.mode = ServerMode::Local;
+        cfg.local.lan_share = true;
+        for t in [None, Some(String::new()), Some("  ".to_string())] {
+            cfg.local.lan_token = t;
+            assert_eq!(cfg.active_token(), None);
+            assert_eq!(lan_token_of(&cfg.local), None);
+        }
+    }
+
+    /// 远程模式带的永远是用户在「远程连接」里填的令牌,和局域网共享无关。
+    #[test]
+    fn remote_mode_ignores_the_lan_token() {
+        let mut cfg = VoiceInputConfig::default().server;
+        cfg.mode = ServerMode::Remote;
+        cfg.token = Some("remote-tok".into());
+        cfg.local.lan_share = true;
+        cfg.local.lan_token = Some("lan-tok".into());
+        assert_eq!(cfg.active_token().as_deref(), Some("remote-tok"));
     }
 
     /// 本地模式跟的是 `local.stt_port`,不是 `server.port`。
