@@ -90,7 +90,11 @@ jobs:
           flags=""
           # 0.x 是初版,标成预发布。
           case "${{ steps.version.outputs.version }}" in 0.*) flags="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" $flags \
+          # 手机版的 Release 永远不能成为仓库的「最新 Release」:桌面客户端的自动更新读的是
+          # releases/latest/download/latest.json(见 gui/src-tauri/tauri.conf.json),
+          # 「最新」一旦落到没有 latest.json 的 Release 上,所有桌面用户的更新检查都会失效。
+          # 预发布本来就不会成为「最新」,但将来版本号到 1.0 就不再是预发布了,所以这里显式关掉。
+          gh release create "$GITHUB_REF_NAME" $flags --latest=false \
             --title "Android 输入法 ${{ steps.version.outputs.version }}" \
             --notes "语音输入 Android 输入法 ${{ steps.version.outputs.version }}。用发布密钥签名的 APK;SHA-256 见同名 .sha256 文件。安装和使用见 mobile/README.md。" \
             "${{ steps.apk.outputs.file }}" "${{ steps.apk.outputs.file }}.sha256"
