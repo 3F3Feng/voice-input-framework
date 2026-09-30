@@ -2,6 +2,7 @@ package com.voiceinput.ime
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -24,6 +25,8 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import com.voiceinput.core.DictationSession
+import com.voiceinput.core.PairingLink
+import com.voiceinput.core.PairingRequest
 import com.voiceinput.core.ServerCheck
 import com.voiceinput.core.ServerConfig
 
@@ -70,8 +73,8 @@ class SettingsActivity : Activity() {
         root.addView(
             body(
                 L.t(
-                    "填运行 STT 服务(services/stt_server.py,默认端口 6544)那台电脑的地址。服务端要设 VIF_STT_HOST=0.0.0.0 才能从手机连;建议同时设 VIF_API_TOKEN,并在下面填同一个令牌。出门在外也想用,推荐 Tailscale。",
-                    "Enter the address of the computer running the STT service (services/stt_server.py, port 6544 by default). The server needs VIF_STT_HOST=0.0.0.0 to accept connections from the phone; also set VIF_API_TOKEN and enter the same token below. For use away from home, Tailscale is recommended.",
+                    "填运行 STT 服务(services/stt_server.py,默认端口 6544)那台电脑的地址。服务端要设 VIF_STT_HOST=0.0.0.0 才能从手机连;建议同时设 VIF_API_TOKEN,并在下面填同一个令牌。出门在外也想用,推荐 Tailscale。桌面客户端的「设置 → 服务 → 配对手机」可以生成二维码,用相机扫一下就自动填好(只适用于 Tailscale 给的 https 地址)。",
+                    "Enter the address of the computer running the STT service (services/stt_server.py, port 6544 by default). The server needs VIF_STT_HOST=0.0.0.0 to accept connections from the phone; also set VIF_API_TOKEN and enter the same token below. For use away from home, Tailscale is recommended. The desktop app's Settings → Service → Pair a phone shows a QR code; scan it with your camera to fill this in automatically (only for https addresses from Tailscale).",
                 ),
             ),
         )
@@ -140,6 +143,51 @@ class SettingsActivity : Activity() {
             insets
         }
         setContentView(scroll)
+
+        // 被旋转屏幕之类重建时 intent 还是最初那个,不重复弹窗。
+        if (savedInstanceState == null) handleLink(intent)
+    }
+
+    /** 已经开着时又扫了一次码:`singleTop` 让这次链接送到这里,而不是再开一个界面。 */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLink(intent)
+    }
+
+    // ── 配对 ──
+
+    /**
+     * `voiceinput://setup?url=…`:桌面客户端 / pair.swift 的二维码。链接谁都能构造,
+     * 所以只是弹窗让用户确认地址,点了「使用」才真的改设置。只认 https(见 [PairingLink])。
+     */
+    private fun handleLink(intent: Intent?) {
+        val link = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data?.toString() ?: return
+        val request = PairingLink.parse(link) ?: return
+        confirmPairing(request)
+    }
+
+    private fun confirmPairing(request: PairingRequest) {
+        val message = request.url.removePrefix("https://") + "\n\n" +
+            L.t(
+                "之后的语音会发到这个地址。只在这是你自己的电脑时选「使用」。",
+                "Your dictation will be sent to this address. Only choose Use if it's your own computer.",
+            ) +
+            if (request.token != null) {
+                "\n" + L.t("链接里带了访问令牌,会一并保存。", "The link includes an access token, which will be saved too.")
+            } else {
+                ""
+            }
+        AlertDialog.Builder(this)
+            .setTitle(L.t("使用这个服务?", "Use this server?"))
+            .setMessage(message)
+            .setPositiveButton(L.t("使用", "Use")) { _, _ ->
+                urlField.setText(request.url)
+                request.token?.let { tokenField.setText(it) }
+                saveAndTest()
+            }
+            .setNegativeButton(L.t("取消", "Cancel"), null)
+            .show()
     }
 
     override fun onResume() {

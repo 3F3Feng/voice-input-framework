@@ -62,6 +62,7 @@ class VoiceKeyboardService : InputMethodService() {
     override fun onCreateInputView(): View {
         val v = KeyboardView(this, actions)
         view = v
+        v.setLanguage(settings.language)
         v.setReinsertAvailable(lastResult != null)
         return v
     }
@@ -69,6 +70,8 @@ class VoiceKeyboardService : InputMethodService() {
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         val v = view ?: return
+        // 应用设置页里可能改过识别语言,键盘每次弹出来都对一下。
+        v.setLanguage(settings.language)
         v.setSwitchKeyVisible(shouldOfferSwitchingToNextInputMethod())
         v.setEnterLabel(enterLabel(info))
         if (mode == KeyboardView.Mode.IDLE) v.setMode(KeyboardView.Mode.IDLE, idleHint())
@@ -143,6 +146,12 @@ class VoiceKeyboardService : InputMethodService() {
             } else {
                 sendKeyChar('\n')
             }
+        }
+
+        override fun onLanguageSelected(code: String) {
+            // 只影响之后的听写:正在录的这一段已经用旧的语言连上服务了。
+            settings.language = code
+            view?.setLanguage(code)
         }
 
         override fun onOpenSettings() {
