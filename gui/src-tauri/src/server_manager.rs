@@ -379,6 +379,7 @@ impl ServerManager {
         })?;
         drop(log_file);
 
+        let (stt_host, api_token) = network_settings(opts.lan_token.as_deref());
         let mut cmd = Command::new(python);
         cmd.arg("-m")
             .arg(kind.module())
@@ -392,12 +393,13 @@ impl ServerManager {
             // 管道另一头是我们,不是终端。Python 这时按系统区域设置编码输出,
             // 中文 Windows 上就是 GBK——日志里全是乱码。明确要 UTF-8。
             .env("PYTHONIOENCODING", "utf-8")
-            // 本地服务只绑回环、客户端在本地模式下也不带令牌(F20)。应用要是从一个设了
-            // VIF_API_TOKEN 的终端里启动,子进程会继承它,于是每个请求都 401。
+            // 先清掉继承来的令牌:应用要是从一个设了 VIF_API_TOKEN 的终端里启动,子进程
+            // 会继承它,于是每个请求都 401。下面按局域网共享的设置再决定设不设(F20)。
             .env_remove("VIF_API_TOKEN")
             .env("PYTHONUTF8", "1")
-            // 只绑回环:本应用连的是 127.0.0.1,没有理由把服务暴露到局域网。
-            .env("VIF_STT_HOST", "127.0.0.1")
+            // 默认只绑回环;局域网共享开着时 STT 绑 0.0.0.0 并带令牌,见 network_settings。
+            // LLM 服务始终只绑回环。
+            .env("VIF_STT_HOST", stt_host)
             .env("VIF_LLM_HOST", "127.0.0.1")
             .env("VIF_STT_PORT", opts.stt_port.to_string())
             // STT 服务要反代到 LLM 服务,所以两个端口都得告诉它。
@@ -410,6 +412,9 @@ impl ServerManager {
         }
         if let Some(endpoint) = opts.hf_endpoint.as_deref() {
             cmd.env("HF_ENDPOINT", endpoint);
+        }
+        if let Some(token) = api_token {
+            cmd.env("VIF_API_TOKEN", token);
         }
 
         let mut child = no_console(&mut cmd).spawn().map_err(|e| {
@@ -607,6 +612,23 @@ struct SpawnOptions {
     stt_model: Option<String>,
     llm_model: Option<String>,
     hf_endpoint: Option<String>,
+    /// 局域网共享的令牌:`Some` 时 STT 服务绑 `0.0.0.0` 且两个服务都设上它(见 [`network_settings`])。
+    lan_token: Option<String>,
+}
+
+/// 服务的网络设置:(STT 监听地址, `VIF_API_TOKEN`)。
+///
+/// - 平时:只绑回环、不设令牌。本应用连的是 127.0.0.1,没有理由把服务暴露到局域网。
+/// - 局域网共享开着:STT 绑 `0.0.0.0` 让手机连得上,**并且一定带令牌**。两个服务用同一个
+///   令牌,因为 STT 转发给 LLM 时带的就是它(`shared/auth.py` 的 `outgoing_headers`)。
+///   LLM 服务始终只绑回环,手机不直接连它。
+///
+/// 令牌是 `None` 就是回环 + 无令牌:没有令牌绝不对局域网开放。
+fn network_settings(lan_token: Option<&str>) -> (&'static str, Option<&str>) {
+    match lan_token {
+        Some(token) => ("0.0.0.0", Some(token)),
+        None => ("127.0.0.1", None),
+    }
 }
 
 impl SpawnOptions {
@@ -640,6 +662,8 @@ impl SpawnOptions {
                 .clone()
                 .map(|e| e.trim().trim_end_matches('/').to_string())
                 .filter(|e| !e.is_empty()),
+            // 共享开着但令牌是空的:当成没开(回环、无令牌),宁可连不上也不无鉴权地暴露。
+            lan_token: crate::config::lan_token_of(local),
         })
     }
 }
@@ -1815,6 +1839,50 @@ mod tests {
         );
     }
 
+    /// 平时只绑回环、不设令牌。
+    #[test]
+    fn network_defaults_to_loopback_without_a_token() {
+        assert_eq!(network_settings(None), ("127.0.0.1", None));
+    }
+
+    /// 局域网共享:STT 绑全部网卡,并且一定带令牌。
+    #[test]
+    fn lan_sharing_binds_all_interfaces_and_carries_the_token() {
+        assert_eq!(network_settings(Some("abc")), ("0.0.0.0", Some("abc")));
+    }
+
+    /// 令牌只在「共享开着并且令牌非空」时才进 SpawnOptions;否则一律回环 + 无令牌。
+    #[test]
+    fn spawn_options_carry_the_lan_token_only_when_sharing_is_on() {
+        let mut local = LocalServerConfig {
+            repo_path: Some("/r".into()),
+            python_path: Some("/p".into()),
+            lan_token: Some("tok".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            SpawnOptions::from_config(&local).unwrap().lan_token,
+            None,
+            "共享没开"
+        );
+        local.lan_share = true;
+        assert_eq!(
+            SpawnOptions::from_config(&local)
+                .unwrap()
+                .lan_token
+                .as_deref(),
+            Some("tok")
+        );
+        for empty in [None, Some(String::new()), Some("  ".to_string())] {
+            local.lan_token = empty;
+            assert_eq!(
+                SpawnOptions::from_config(&local).unwrap().lan_token,
+                None,
+                "空令牌不能让服务无鉴权地开放"
+            );
+        }
+    }
+
     /// 路径没配时必须给出可显示的原因,而不是静默失败。
     #[test]
     fn missing_paths_produce_a_readable_problem() {
@@ -2317,6 +2385,43 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             Self { root }
         }
 
+        /// 假服务一启动就把它**实际收到**的监听地址和令牌写进 `<kind>-env.json`,然后睡着。
+        /// 用来验证环境变量真的传到了子进程,而不只是 `network_settings` 算得对。
+        fn create_env_dump(tag: &str) -> Self {
+            let repo = Self::create(tag);
+            let services = repo.root.join("services");
+            for (file, out) in [
+                ("stt_server.py", "stt-env.json"),
+                ("llm_server.py", "llm-env.json"),
+            ] {
+                let script = format!(
+                    r#"
+import json, os, time
+json.dump({{"stt_host": os.environ.get("VIF_STT_HOST"),
+           "llm_host": os.environ.get("VIF_LLM_HOST"),
+           "token": os.environ.get("VIF_API_TOKEN")}}, open(r"{}", "w"))
+time.sleep(60)
+"#,
+                    repo.root.join(out).display()
+                );
+                std::fs::write(services.join(file), script).unwrap();
+            }
+            repo
+        }
+
+        fn read_env_dump(&self, file: &str) -> serde_json::Value {
+            let path = self.root.join(file);
+            for _ in 0..50 {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    if let Ok(v) = serde_json::from_str(&text) {
+                        return v;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            panic!("子进程没有写出 {}", path.display());
+        }
+
         fn config(&self) -> ServerConfig {
             ServerConfig {
                 host: "127.0.0.1".into(),
@@ -2363,6 +2468,42 @@ http.server.HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
         false
+    }
+
+    /// 局域网共享关着 / 开着时,子进程**实际收到**的监听地址和令牌。
+    #[tokio::test]
+    #[ignore = "会真的拉起子进程(需要系统 python3)"]
+    async fn lan_sharing_reaches_the_child_processes() {
+        let repo = FakeRepo::create_env_dump("lan");
+        let manager = Mutex::new(ServerManager::new(repo.data_dir()));
+
+        // 关着:回环、没有令牌。
+        let mut cfg = repo.config();
+        start(&manager, &cfg, ServerKind::Stt).await.unwrap();
+        let env = repo.read_env_dump("stt-env.json");
+        assert_eq!(env["stt_host"], "127.0.0.1");
+        assert_eq!(env["llm_host"], "127.0.0.1");
+        assert!(env["token"].is_null(), "共享没开不能带令牌: {env}");
+        stop(&manager, &cfg, ServerKind::Stt).unwrap();
+        std::fs::remove_file(repo.root.join("stt-env.json")).unwrap();
+
+        // 开着:STT 绑全部网卡、LLM 仍只绑回环,两个服务用同一个令牌。
+        cfg.local.lan_share = true;
+        cfg.local.lan_token = Some("lan-secret-123".into());
+        start(&manager, &cfg, ServerKind::Stt).await.unwrap();
+        start(&manager, &cfg, ServerKind::Llm).await.unwrap();
+        let stt = repo.read_env_dump("stt-env.json");
+        let llm = repo.read_env_dump("llm-env.json");
+        assert_eq!(stt["stt_host"], "0.0.0.0");
+        assert_eq!(stt["llm_host"], "127.0.0.1", "LLM 服务不能对局域网开放");
+        assert_eq!(stt["token"], "lan-secret-123");
+        assert_eq!(llm["llm_host"], "127.0.0.1");
+        assert_eq!(
+            llm["token"], "lan-secret-123",
+            "STT 转发给 LLM 时带的是同一个令牌"
+        );
+        stop(&manager, &cfg, ServerKind::Stt).unwrap();
+        stop(&manager, &cfg, ServerKind::Llm).unwrap();
     }
 
     #[tokio::test]

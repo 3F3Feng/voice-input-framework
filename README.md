@@ -19,7 +19,17 @@
 
 ## 📸 界面
 
-iOS 键盘（iOS 26 液态玻璃；顶部选识别语言，点一下说话、再点一下结束）：
+**桌面客户端**（窗口默认 400×500；截图里的地址、令牌和识别记录都是示例数据）：
+
+| 主界面 | 设置 → 服务 |
+|:---:|:---:|
+| <img src="docs/images/desktop-main.jpg" width="340" alt="桌面客户端:主界面"> | <img src="docs/images/desktop-settings-service.jpg" width="340" alt="桌面客户端:设置 → 服务"> |
+| **设置 → 常规** | **手机直连（局域网）** |
+| <img src="docs/images/desktop-settings-general.jpg" width="340" alt="桌面客户端:设置 → 常规"> | <img src="docs/images/desktop-lan-share.jpg" width="340" alt="桌面客户端:手机直连"> |
+| **配对手机** | |
+| <img src="docs/images/desktop-pair-phone.jpg" width="340" alt="桌面客户端:配对手机二维码"> | |
+
+**iOS 键盘**（iOS 26 液态玻璃；顶部选识别语言，点一下说话、再点一下结束）：
 
 | 待机 | 录音中 |
 |:---:|:---:|
@@ -173,8 +183,9 @@ npm run tauri dev
 在手机上切到「语音输入」键盘，点一下麦克风说话、再点一下结束（Android 也可以按住说话），
 识别和整理都在你电脑上的服务里做。键盘顶部可以选识别语言。
 
-- **让手机连上你的服务**：服务端要设 `VIF_STT_HOST=0.0.0.0` 和 `VIF_API_TOKEN`（桌面客户端「本地管理」
-  拉起的服务只监听本机，手机连不上，要自己在终端里起一个，见 [docs/testing.md](docs/testing.md)）。
+- **让手机连上你的服务（同一个 Wi-Fi）**：桌面客户端「设置 → 服务 → 手机直连（局域网）」打开开关即可——
+  它会让 STT 服务监听局域网、自动生成访问令牌、重启服务，并显示手机里要填的地址和令牌。
+  自己管服务的话，要设 `VIF_STT_HOST=0.0.0.0` 和 `VIF_API_TOKEN`，见 [docs/testing.md](docs/testing.md)。
   出门在外推荐用 [Tailscale](https://tailscale.com/)。
 - **免手打地址（走 Tailscale 时）**：桌面客户端「设置 → 服务 → 配对手机」显示二维码，手机相机扫一下、
   点「使用」就填好了。只认 `https://` 地址，并且手机上一定会先让你确认。

@@ -8,6 +8,7 @@ mod hotkey;
 mod i18n;
 mod indicator;
 mod input;
+mod lan_share;
 mod log;
 mod mobile_pairing;
 mod permissions;
@@ -591,6 +592,64 @@ async fn enable_mobile_pairing(
 ) -> Result<mobile_pairing::PairingInfo, String> {
     let (local, port) = pairing_target(&state)?;
     Ok(mobile_pairing::enable(local, port).await)
+}
+
+// ── 局域网共享(手机直连) ──
+
+fn lan_info(local: &config::LocalServerConfig) -> lan_share::LanShareInfo {
+    lan_share::info(local, lan_share::primary_lan_ip(), cfg!(windows))
+}
+
+/// 当前的局域网共享状态:开没开、手机里该填的地址和令牌。
+#[tauri::command]
+async fn get_lan_share(state: State<'_, AppState>) -> Result<lan_share::LanShareInfo, String> {
+    let cfg = state.config.lock().map_err(|e| e.to_string())?;
+    Ok(lan_info(&cfg.server.local))
+}
+
+/// 开 / 关局域网共享。打开时没有令牌就先生成一个(关掉时令牌留着,下次手机上不用重填)。
+///
+/// 只改配置和客户端带的令牌;**已经在跑的服务要重启才会按新设置监听**,前端在这之后会重启
+/// 本应用拉起的 STT / LLM 服务。
+#[tauri::command]
+async fn set_lan_share(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<lan_share::LanShareInfo, String> {
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    if enabled
+        && cfg
+            .server
+            .local
+            .lan_token
+            .as_deref()
+            .is_none_or(|t| t.trim().is_empty())
+    {
+        cfg.server.local.lan_token = Some(lan_share::generate_token()?);
+    }
+    cfg.server.local.lan_share = enabled;
+    cfg.save(&app)?;
+    stt::set_api_token(cfg.server.active_token());
+    log_info!(
+        "[lan] 局域网共享{}",
+        if enabled { "已开启" } else { "已关闭" }
+    );
+    Ok(lan_info(&cfg.server.local))
+}
+
+/// 换一个新令牌(怀疑令牌泄露、或想让之前配过的手机失效时用)。手机里要重填。
+#[tauri::command]
+async fn regenerate_lan_token(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<lan_share::LanShareInfo, String> {
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    cfg.server.local.lan_token = Some(lan_share::generate_token()?);
+    cfg.save(&app)?;
+    stt::set_api_token(cfg.server.active_token());
+    log_info!("[lan] 已重新生成局域网令牌");
+    Ok(lan_info(&cfg.server.local))
 }
 
 #[tauri::command]
@@ -1866,6 +1925,9 @@ pub fn run() {
             get_build_info,
             get_mobile_pairing,
             enable_mobile_pairing,
+            get_lan_share,
+            set_lan_share,
+            regenerate_lan_token,
             switch_llm_model,
             get_config,
             update_config,
