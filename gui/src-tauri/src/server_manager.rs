@@ -302,7 +302,7 @@ impl ServerManager {
     ///
     /// 只认领「pid 还活着 **且** 命令行确实是对应模块」的进程——pid 会被系统
     /// 复用,只比对 pid 就可能把无辜进程当成自己的,进而在「停止」时杀错。
-    /// 看不到命令行的平台(Windows)干脆不认领,见 `pid_runs_module`。
+    /// Windows 上命令行要起 PowerShell 问 CIM,见 `pid_runs_module`。
     pub fn reclaim_orphans(&mut self) -> Vec<String> {
         let path = self.pid_file();
         let Ok(data) = std::fs::read_to_string(&path) else {
@@ -479,6 +479,16 @@ impl ServerManager {
             ));
         };
         let repo = PathBuf::from(local.repo_path.clone().unwrap_or_default());
+        // 发信号之前现问一遍身份。Windows 上 `identify_external` 的结论是缓存过的
+        // (见 `win_identify_cached`),十几秒里这个 pid 可能已经换了主人。
+        if !pid_is_project_server(pid, kind.module(), &repo) {
+            return Err(tr!(
+                "{} 服务(pid {})刚刚已经不在了,或者换成了别的进程,没有动它。",
+                "The {} service (pid {}) is already gone or has been replaced by another process; nothing was touched.",
+                kind.label(),
+                pid
+            ));
+        }
         let stopped = tr!(
             "{} 服务(pid {},本项目的外部进程)已停止",
             "{} service (pid {}, external process from this project) stopped",
@@ -847,19 +857,199 @@ fn pid_runs_module(pid: u32, module: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Windows 上一律返回 false,也就是**不认领遗孤**。
+/// Windows 版:问 CIM 要这个 pid 的命令行(见 [`win_proc`]),和 unix 上看 `ps` 是同一条规则。
 ///
-/// 以前这里退化成「进程还在就认领」:`tasklist` 拿不到命令行,只能比 pid。可是
-/// 重启过电脑之后,记账文件里那个 pid 早就被别的程序用上了——认领回来,应用
-/// 退出时 `shutdown_all` 会对它 `taskkill /T`,把一整棵毫不相干的进程树杀掉,
-/// 「停止」按钮同理。
-///
-/// 不认领的代价很小:遗孤如果真还在跑,端口是通的,`start` / `status` 会把它当成
-/// 外部进程采纳(只连接,不碰)。宁可让用户回任务管理器里结束它,也不能凭一个
-/// 可能已经被复用的 pid 去杀进程。等哪天接上 `Win32_Process.CommandLine` 再放开。
+/// 以前这里一律返回 false,也就是**不认领遗孤**——`tasklist` 拿不到命令行,而只比 pid
+/// 会在重启电脑、pid 被别的程序用上之后杀错进程。代价是:应用内更新时(安装器直接结束
+/// 旧进程,两个服务还活着)新版客户端认不回自己的服务,只能把它们当成「外部进程」:
+/// 停不了、重启不了、「更新服务」也被拦下,用户只能去任务管理器里结束 python
+/// (2.7.0 实测)。现在看得到命令行了,和 macOS 一样认领回来。
 #[cfg(not(unix))]
-fn pid_runs_module(_pid: u32, _module: &str) -> bool {
-    false
+fn pid_runs_module(pid: u32, module: &str) -> bool {
+    // 先用便宜的 tasklist 排掉已经不在的 pid,省一次 PowerShell。
+    !module.is_empty()
+        && pid_alive(pid)
+        && win_proc(pid).is_some_and(|p| win_runs_module(&p, module))
+}
+
+// ── Windows 上一个进程是谁 ──
+//
+// `tasklist` 只有映像名和 pid。完整的命令行、可执行文件路径、父进程要问 CIM
+// (`Win32_Process`),而不引新依赖的问法就是起一个 PowerShell(Windows 自带 5.1)。
+// 一次大约几百毫秒到一秒,所以只在两处用:启动时认领遗孤(每个记账的 pid 一次),
+// 和「端口上那个没句柄的服务是不是本项目的」(结果缓存十几秒,见 `identify_external`)。
+//
+// 解析和判断是纯函数,三个平台的单测都跑;真去起 PowerShell 的那几个只在 Windows 上编译,
+// 由 Windows 的 CI 对着真进程测。
+
+/// 一个进程的身份信息。字段名就是 PowerShell 那边输出的 JSON 的键。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+#[cfg_attr(unix, allow(dead_code))]
+struct WinProc {
+    pid: u32,
+    /// 完整命令行。读不到(权限不够、进程刚退出)时为空。
+    cmd: Option<String>,
+    /// 可执行文件的完整路径。
+    exe: Option<String>,
+    /// 父进程的可执行文件路径。虚拟环境里的 `python.exe` 是个转发壳,真正干活(也是
+    /// 真正监听端口)的是它拉起的基础解释器,那个解释器的路径在仓库外面——要认出
+    /// 「这是从仓库的 .venv 里起的」,得看父进程。
+    parent_exe: Option<String>,
+}
+
+/// PowerShell 那边把 JSON 按 UTF-8 转成十六进制再输出(原因见 `WIN_PROC_QUERY`)。这里取
+/// 输出里最后一行纯十六进制的,解回字符串;没有这样的行(脚本没跑完)返回 None。
+#[cfg_attr(unix, allow(dead_code))]
+fn decode_hex_output(stdout: &str) -> Option<String> {
+    let line = stdout
+        .lines()
+        .map(|l| l.trim().trim_start_matches('\u{feff}'))
+        .rev()
+        .find(|l| !l.is_empty() && l.len() % 2 == 0 && l.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    let bytes: Option<Vec<u8>> = (0..line.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&line[i..i + 2], 16).ok())
+        .collect();
+    String::from_utf8(bytes?).ok()
+}
+
+/// JSON → 进程信息。可能是一个对象、一个数组,前后也可能夹着别的字。
+#[cfg_attr(unix, allow(dead_code))]
+fn parse_win_procs(stdout: &str) -> Vec<WinProc> {
+    let text = stdout.trim().trim_start_matches('\u{feff}');
+    let Some(start) = text.find(['{', '[']) else {
+        return Vec::new();
+    };
+    let json = &text[start..];
+    if json.starts_with('[') {
+        serde_json::from_str::<Vec<WinProc>>(json).unwrap_or_default()
+    } else {
+        serde_json::from_str::<WinProc>(json)
+            .map(|p| vec![p])
+            .unwrap_or_default()
+    }
+}
+
+#[cfg_attr(unix, allow(dead_code))]
+fn win_runs_module(p: &WinProc, module: &str) -> bool {
+    !module.is_empty() && p.cmd.as_deref().is_some_and(|c| c.contains(module))
+}
+
+/// Windows 路径 `path` 是不是在目录 `dir` 里面。大小写不敏感,正反斜杠、`\\?\` 前缀、
+/// 结尾的分隔符都抹平再比;按整段路径比,`C:\vif2\x` 不算在 `C:\vif` 里。
+#[cfg_attr(unix, allow(dead_code))]
+fn win_path_inside(path: &str, dir: &str) -> bool {
+    fn norm(p: &str) -> String {
+        let p = p.trim().trim_matches('"').replace('/', "\\");
+        let p = p.strip_prefix("\\\\?\\").unwrap_or(&p).to_string();
+        p.trim_end_matches('\\').to_lowercase()
+    }
+    let (path, dir) = (norm(path), norm(dir));
+    !dir.is_empty()
+        && path.len() > dir.len()
+        && path.starts_with(&dir)
+        && path[dir.len()..].starts_with('\\')
+}
+
+/// 这个进程是不是「本项目的 `module` 服务」(Windows 版的判据)。
+///
+/// unix 上的第二道关卡是工作目录(见 `pid_is_project_server`);CIM 给不出工作目录,
+/// 这里换成同样说明问题的另一个锚点:**解释器是从这个仓库里起的**——进程自己的可执行
+/// 文件、或者它父进程的(转发壳),在仓库目录里面。本应用起的服务用的是
+/// `<仓库>\.venv\Scripts\python.exe`,用户在仓库里敲 `uv run python -m ...` 也是它。
+/// 用系统 python、conda 起的认不出来——那就停在「外部进程」,不碰,和以前一样。
+#[cfg_attr(unix, allow(dead_code))]
+fn win_is_project_process(p: &WinProc, module: &str, repo: &str) -> bool {
+    win_runs_module(p, module)
+        && [p.exe.as_deref(), p.parent_exe.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|exe| win_path_inside(exe, repo))
+}
+
+/// 问一个进程 / 一个端口上的监听者是谁的 PowerShell 脚本。`$ids` 由调用处给出。
+///
+/// 两处写法是故意的:
+/// - **整段脚本里没有双引号**。脚本是当成一个命令行参数传给 powershell.exe 的,双引号要
+///   经过两层转义规则,出过错就是整段脚本解析失败;全用单引号加拼接就没有这个问题。
+/// - **输出是十六进制**(JSON 的 UTF-8 字节)。Windows PowerShell 5.1 往管道里写的是系统
+///   代码页(中文系统是 GBK),用户名、仓库路径里有中文时读回来就是乱码,路径一比就对不上;
+///   而本应用起它的时候不带控制台,`[Console]::OutputEncoding` 设不上。纯 ASCII 的输出
+///   不受代码页影响。
+#[cfg(windows)]
+const WIN_PROC_QUERY: &str = "$ErrorActionPreference='SilentlyContinue';\
+$out=@();\
+foreach($id in $ids){\
+$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$id);\
+if($p){\
+$q=Get-CimInstance Win32_Process -Filter ('ProcessId='+$p.ParentProcessId);\
+$out+=[pscustomobject]@{pid=[int]$p.ProcessId;cmd=$p.CommandLine;exe=$p.ExecutablePath;parent_exe=$q.ExecutablePath}\
+}};\
+$j=ConvertTo-Json -Compress -InputObject @($out);\
+-join([Text.Encoding]::UTF8.GetBytes([string]$j)|ForEach-Object{$_.ToString('x2')})";
+
+/// 起一个 PowerShell 跑脚本,返回它的标准输出。超时(卡在 WMI 上)就杀掉,当成问不到。
+#[cfg(windows)]
+fn powershell(script: &str) -> Option<String> {
+    const LIMIT: Duration = Duration::from_secs(10);
+    let mut cmd = Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
+    no_console(&mut cmd);
+    let mut child = cmd.spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    // 另起线程读:输出不读走,子进程会卡在写管道上,下面的超时就成了必然。
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < LIMIT => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let bytes = reader.join().ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// 一个 pid 的身份信息;进程不在、问不到时为空。
+#[cfg(windows)]
+fn win_proc(pid: u32) -> Option<WinProc> {
+    let out = powershell(&format!("$ids=@({pid});{WIN_PROC_QUERY}"))?;
+    parse_win_procs(&decode_hex_output(&out)?)
+        .into_iter()
+        .find(|p| p.pid == pid)
+}
+
+/// 正在监听某个 TCP 端口的那些进程的身份信息(一次 PowerShell 问完)。
+#[cfg(windows)]
+fn win_port_listeners(port: u16) -> Vec<WinProc> {
+    let script = format!(
+        "$ids=@((Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue).OwningProcess | Sort-Object -Unique);{WIN_PROC_QUERY}"
+    );
+    powershell(&script)
+        .and_then(|out| decode_hex_output(&out))
+        .map(|json| parse_win_procs(&json))
+        .unwrap_or_default()
 }
 
 // ── 端口上监听的到底是谁 ──
@@ -956,19 +1146,20 @@ fn pid_is_project_server(pid: u32, module: &str, repo: &Path) -> bool {
     }
 }
 
-/// Windows 上没有 `lsof`,`tasklist` 既给不出完整命令行也给不出工作目录,拿不到
-/// 任何能把端口上的进程和本项目对上号的证据。所以这里一律返回 false:所有
-/// 「端口健康但手里没句柄」的情况都停在 `ExternalUnknown`,功能上退回改动之前
-/// (用户仍需回终端停自己的服务),但绝不会误杀无关进程。等哪天接上 WMI 的
-/// `Win32_Process.CommandLine` 再放开。
+/// Windows 版:命令行里有这个模块,而且解释器是从这个仓库里起的(见 `win_is_project_process`)。
+/// 问不到(进程刚退出、PowerShell 起不来)一律 false:宁可让用户回任务管理器去停,
+/// 也不能凭猜测结束进程。
 #[cfg(not(unix))]
-fn pid_is_project_server(_pid: u32, _module: &str, _repo: &Path) -> bool {
-    false
+fn pid_is_project_server(pid: u32, module: &str, repo: &Path) -> bool {
+    win_proc(pid).is_some_and(|p| win_is_project_process(&p, module, &repo.display().to_string()))
 }
 
 #[cfg(not(unix))]
-fn port_listener_pids(_port: u16) -> Vec<u32> {
-    Vec::new()
+fn port_listener_pids(port: u16) -> Vec<u32> {
+    win_port_listeners(port)
+        .into_iter()
+        .map(|p| p.pid)
+        .collect()
 }
 
 #[cfg(unix)]
@@ -1123,11 +1314,49 @@ fn identify_external(kind: ServerKind, local: &crate::config::LocalServerConfig)
         .as_deref()
         .map(str::trim)
         .filter(|p| !p.is_empty())?;
-    let repo = Path::new(repo);
     let module = kind.module();
-    port_listener_pids(port_of(kind, local))
+    let port = port_of(kind, local);
+    #[cfg(unix)]
+    {
+        let repo = Path::new(repo);
+        port_listener_pids(port)
+            .into_iter()
+            .find(|&pid| pid_is_project_server(pid, module, repo))
+    }
+    #[cfg(not(unix))]
+    {
+        win_identify_cached(port, module, repo)
+    }
+}
+
+/// Windows 上问一次要起一个 PowerShell(几百毫秒到一秒),而状态面板每 3 秒问一遍。
+/// 同一个(端口, 模块, 仓库)的结论缓存一小会儿。
+///
+/// 缓存只给**显示**用。真要去停进程的那条路(`stop_external`)拿到 pid 之后会再用
+/// `pid_is_project_server` 现问一遍,不看缓存——十几秒里 pid 被别的进程顶替的话,
+/// 那里会拦下来。
+#[cfg(not(unix))]
+fn win_identify_cached(port: u16, module: &str, repo: &str) -> Option<u32> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    const TTL: Duration = Duration::from_secs(15);
+    type Key = (u16, String, String);
+    static CACHE: OnceLock<Mutex<HashMap<Key, (Instant, Option<u32>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (port, module.to_string(), repo.to_string());
+    if let Some((at, found)) = cache.lock().ok().and_then(|c| c.get(&key).copied()) {
+        if at.elapsed() < TTL {
+            return found;
+        }
+    }
+    let found = win_port_listeners(port)
         .into_iter()
-        .find(|&pid| pid_is_project_server(pid, module, repo))
+        .find(|p| win_is_project_process(p, module, repo))
+        .map(|p| p.pid);
+    if let Ok(mut c) = cache.lock() {
+        c.insert(key, (Instant::now(), found));
+    }
+    found
 }
 
 /// 单个服务的状态。
@@ -1944,11 +2173,210 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// Windows 上看不到命令行,任何 pid 都不认领(以前是「活着就认领」)。
-    #[cfg(not(unix))]
+    // ── Windows 上认进程(解析和判据是纯函数,三个平台都测)──
+
+    fn win(cmd: &str, exe: &str, parent_exe: &str) -> WinProc {
+        WinProc {
+            pid: 4242,
+            cmd: (!cmd.is_empty()).then(|| cmd.to_string()),
+            exe: (!exe.is_empty()).then(|| exe.to_string()),
+            parent_exe: (!parent_exe.is_empty()).then(|| parent_exe.to_string()),
+        }
+    }
+
     #[test]
-    fn windows_never_reclaims_by_pid_alone() {
-        assert!(!pid_runs_module(std::process::id(), ""));
+    fn powershell_output_is_parsed_whether_object_array_or_noisy() {
+        let one = r#"{"pid":4242,"cmd":"python.exe -m services.stt_server","exe":"C:\\py\\python.exe","parent_exe":null}"#;
+        let got = parse_win_procs(one);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].pid, 4242);
+        assert_eq!(got[0].exe.as_deref(), Some(r"C:\py\python.exe"));
+        assert_eq!(got[0].parent_exe, None);
+        // 数组;前面带 BOM 和一行别的输出。
+        let many = format!(
+            "{}WARNING: something\r\n[{one},{{\"pid\":7}}]\r\n",
+            '\u{feff}'
+        );
+        let got = parse_win_procs(&many);
+        assert_eq!(got.iter().map(|p| p.pid).collect::<Vec<_>>(), vec![4242, 7]);
+        assert_eq!(got[1].cmd, None);
+        // 没有这个进程时脚本输出空数组;问不到时什么都没有。
+        assert!(parse_win_procs("[]").is_empty());
+        assert!(parse_win_procs("").is_empty());
+        assert!(parse_win_procs("Get-CimInstance : Access denied").is_empty());
+    }
+
+    #[test]
+    fn hex_output_survives_any_code_page() {
+        let json = r#"[{"pid":7,"exe":"C:\\Users\\石枫\\vif\\.venv\\Scripts\\python.exe"}]"#;
+        let hex: String = json.bytes().map(|b| format!("{b:02x}")).collect();
+        // 前面可能有别的输出行,行尾是 CRLF。
+        let out = format!("some warning\r\n{hex}\r\n");
+        let decoded = decode_hex_output(&out).expect("hex line");
+        assert_eq!(decoded, json);
+        let procs = parse_win_procs(&decoded);
+        assert_eq!(
+            procs[0].exe.as_deref(),
+            Some(r"C:\Users\石枫\vif\.venv\Scripts\python.exe")
+        );
+        // 空数组、没有十六进制行、坏的 UTF-8。
+        assert_eq!(decode_hex_output("5b5d").as_deref(), Some("[]"));
+        assert_eq!(decode_hex_output("Get-CimInstance : denied"), None);
+        assert_eq!(decode_hex_output(""), None);
+        assert_eq!(decode_hex_output("ff"), None);
+    }
+
+    #[test]
+    fn windows_paths_compare_case_insensitively_and_by_whole_segments() {
+        let repo = r"C:\Users\石枫\voice-input-framework";
+        assert!(win_path_inside(
+            r"c:\users\石枫\VOICE-INPUT-FRAMEWORK\.venv\Scripts\python.exe",
+            repo
+        ));
+        // 正斜杠、`\\?\` 前缀、引号、结尾的分隔符都不影响。
+        assert!(win_path_inside(
+            r#""\\?\C:/Users/石枫/voice-input-framework/.venv/Scripts/python.exe""#,
+            &format!(r"{repo}\")
+        ));
+        // 名字只是前缀相同的另一个目录不算在里面;目录自己也不算。
+        assert!(!win_path_inside(
+            r"C:\Users\石枫\voice-input-framework-old\.venv\Scripts\python.exe",
+            repo
+        ));
+        assert!(!win_path_inside(repo, repo));
+        assert!(!win_path_inside(r"C:\Python312\python.exe", repo));
+        assert!(!win_path_inside(r"C:\x\python.exe", ""));
+    }
+
+    #[test]
+    fn a_windows_process_is_ours_only_with_the_module_and_an_interpreter_from_the_repo() {
+        let repo = r"C:\vif";
+        let module = "services.stt_server";
+        let venv = r"C:\vif\.venv\Scripts\python.exe";
+        let base = r"C:\Users\me\AppData\Roaming\uv\python\cpython-3.12\python.exe";
+        let cmd = r"C:\vif\.venv\Scripts\python.exe -m services.stt_server";
+        // 转发壳自己(本应用记下的 pid 就是它)。
+        assert!(win_is_project_process(
+            &win(cmd, venv, r"C:\Program Files\Voice Input\voice-input.exe"),
+            module,
+            repo
+        ));
+        // 真正监听端口的基础解释器:自己的路径在仓库外面,父进程是仓库里的转发壳。
+        assert!(win_is_project_process(&win(cmd, base, venv), module, repo));
+        // 模块对、但解释器和父进程都和这个仓库没关系(另一个 checkout、系统 python):不认。
+        assert!(!win_is_project_process(
+            &win(cmd, base, r"C:\other\.venv\Scripts\python.exe"),
+            module,
+            repo
+        ));
+        assert!(!win_is_project_process(&win(cmd, base, ""), module, repo));
+        // 解释器是仓库里的,跑的却是别的东西(另一个服务、pip):不认。
+        assert!(!win_is_project_process(
+            &win(r"python.exe -m services.llm_server", base, venv),
+            module,
+            repo
+        ));
+        assert!(!win_is_project_process(
+            &win(r"python.exe -m pip list", venv, ""),
+            module,
+            repo
+        ));
+        // 读不到命令行(权限不够):不认。
+        assert!(!win_is_project_process(&win("", venv, ""), module, repo));
+        assert!(!win_runs_module(&win(cmd, venv, ""), ""));
+    }
+
+    /// 真进程(只在 Windows 上):在一个现建的「仓库」里用它的 venv 起一个假服务,
+    /// 然后把应用内更新之后新客户端要做的事走一遍——按记下的 pid 认领回来、
+    /// 端口上的监听者认得出是本项目的、能把它停掉。
+    #[cfg(windows)]
+    #[test]
+    fn windows_reclaims_and_identifies_a_real_server_started_from_the_repo_venv() {
+        let root = std::env::temp_dir().join(format!("vif-win-proc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let services = root.join("services");
+        std::fs::create_dir_all(&services).unwrap();
+        std::fs::write(services.join("__init__.py"), "").unwrap();
+        let port: u16 = 59_711;
+        std::fs::write(
+            services.join("stt_server.py"),
+            format!(
+                "import http.server\nhttp.server.HTTPServer(('127.0.0.1', {port}), http.server.BaseHTTPRequestHandler).serve_forever()\n"
+            ),
+        )
+        .unwrap();
+        // 和真环境一样:`.venv\Scripts\python.exe` 是个转发壳,真正的解释器是它的子进程。
+        let made = Command::new("python")
+            .args(["-m", "venv", "--without-pip"])
+            .arg(root.join(".venv"))
+            .status()
+            .expect("python on PATH");
+        assert!(made.success(), "python -m venv failed");
+        let python = root.join(".venv").join("Scripts").join("python.exe");
+        let mut child = Command::new(&python)
+            .args(["-m", "services.stt_server"])
+            .current_dir(&root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn fake server");
+        let pid = child.id();
+        // 等它真的监听上。
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(Instant::now() < deadline, "fake server never listened");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let module = ServerKind::Stt.module();
+
+        // 记下的 pid:命令行对得上才认;别的模块、别的进程不认。
+        assert!(pid_runs_module(pid, module), "{:?}", win_proc(pid));
+        assert!(!pid_runs_module(pid, ServerKind::Llm.module()));
+        assert!(!pid_runs_module(std::process::id(), module));
+        assert!(!pid_runs_module(pid, ""));
+
+        // 端口上的监听者(可能是转发壳的子进程)认得出是这个仓库的,换个仓库就认不出。
+        let listeners = port_listener_pids(port);
+        assert!(!listeners.is_empty(), "no listener found on {port}");
+        let other = std::env::temp_dir().join("vif-some-other-checkout");
+        for &l in &listeners {
+            assert!(pid_is_project_server(l, module, &root), "{:?}", win_proc(l));
+            assert!(!pid_is_project_server(l, module, &other));
+        }
+        let local = crate::config::LocalServerConfig {
+            repo_path: Some(root.display().to_string()),
+            stt_port: port,
+            ..Default::default()
+        };
+        assert!(listeners.contains(&identify_external(ServerKind::Stt, &local).unwrap()));
+
+        // 应用内更新之后:新进程按记账文件认领,之后能从界面上停掉它。
+        let data = root.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let mut m = ServerManager::new(data);
+        std::fs::write(
+            m.pid_file(),
+            serde_json::json!({ ServerKind::Stt.state_key(): { "pid": pid, "port": port } })
+                .to_string(),
+        )
+        .unwrap();
+        let claimed = m.reclaim_orphans();
+        assert_eq!(claimed.len(), 1, "{claimed:?}");
+        assert_eq!(m.snapshot(ServerKind::Stt).map(|s| s.pid), Some(pid));
+
+        force_kill(pid);
+        let _ = child.wait();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            assert!(
+                Instant::now() < deadline,
+                "the server tree survived taskkill /T /F"
+            );
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        assert!(!pid_runs_module(pid, module));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 三档归属里,只有前两档允许从界面动它。第三档是「认不出身份」的兜底,
