@@ -83,6 +83,46 @@ jobs:
           # F 类真实错误严格(无 || true);风格规则为既有债务
           ruff check client/ server/ shared/ tests/ services/ --select F
 
+  setup-env:
+    # 建环境脚本本身没人测过:Windows 的 .ps1 在开发机(macOS)上根本跑不了,
+    # `-Llm` 在没有 C++ 工具链的 Windows 上必失败这件事,是用户实测才发现的。
+    # 这里在干净的 runner 上真跑一遍(CPU 版 torch + 预编译的 llama-cpp-python),
+    # 再确认装出来的环境里 LLM 后处理的后端确实可用。
+    name: setup-env on ${{ matrix.os }} (with LLM deps)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run setup-env.sh
+        if: runner.os != 'Windows'
+        run: scripts/setup-env.sh --backend cpu --llm
+
+      - name: Run setup-env.ps1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -Backend cpu -Llm
+
+      - name: LLM backend is usable in the environment it built
+        shell: bash
+        run: |
+          # 脚本在 LLM 依赖装不上时会退回「不带它再装一遍」并以 0 退出,所以光看
+          # 退出码不够,要确认 llama_cpp 真的能 import、后端选得出来。
+          if [ -x .venv/Scripts/python.exe ]; then PY=.venv/Scripts/python.exe; else PY=.venv/bin/python; fi
+          "$PY" - <<'PY'
+          import llama_cpp, torch
+          from shared import llm_backend
+
+          backend, why = llm_backend.choose_backend(False)
+          assert (backend, why) == ("llamacpp", None), (backend, why)
+          print("llama_cpp", llama_cpp.__version__, "| torch", torch.__version__)
+          print(llama_cpp.llama_print_system_info().decode(errors="replace"))
+          PY
+
   rust-logic:
     name: Rust STT client logic tests
     runs-on: ubuntu-latest

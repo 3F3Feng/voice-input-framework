@@ -411,8 +411,12 @@ async fn run_inner(
         Some(py) => service_update::probe_env(py, &repo).await,
         None => None,
     };
+    let env = env.unwrap_or_default();
+    // 这一次会给**已有的环境**新装上 llama.cpp:STT 服务是启动时查的「本机能不能跑
+    // LLM 后处理」,不重启它,开关会一直灰着。
+    let llm_newly_installed = llm && !APPLE_SILICON && existing_python.is_some() && !env.llama_cpp;
     let args = with_llm(
-        service_update::setup_args(&env.unwrap_or_default(), windows),
+        service_update::setup_args(&env, windows),
         llm,
         APPLE_SILICON,
         windows,
@@ -513,9 +517,28 @@ async fn run_inner(
             repo.display()
         )
     };
-    if !stopped.is_empty() {
+    // Windows 上是建环境前停掉的那几个,拉起来;别的平台服务一直在跑,只有新装了
+    // llama.cpp 时才需要重启(见上)。有不是本应用启动的服务在跑就不动它,说一声。
+    let (kinds, restart) = if !stopped.is_empty() {
+        (stopped, false)
+    } else if llm_newly_installed && !windows {
+        let report = server_manager::report(servers, cfg).await;
+        match service_update::plan_restart(&[&report.stt, &report.llm]) {
+            Ok(kinds) => (kinds, true),
+            Err(_) => {
+                message.push_str(t(
+                    "\nLLM 后处理的依赖装好了;STT 服务不是本应用启动的,请手动重启它,开关才会亮起来。",
+                    "\nThe LLM post-processing dependencies are installed; the STT service wasn't started by this app, so restart it yourself for the switch to become available.",
+                ));
+                (Vec::new(), false)
+            }
+        }
+    } else {
+        (Vec::new(), false)
+    };
+    if !kinds.is_empty() {
         emit("restarting", None);
-        for r in service_update::restart_all(servers, cfg, &stopped, false).await {
+        for r in service_update::restart_all(servers, cfg, &kinds, restart).await {
             message.push('\n');
             message.push_str(&r);
         }

@@ -28,19 +28,23 @@
         </div>
       </template>
     </template>
+    <template v-else-if="llmOnly">
+      <div class="s-label">{{ t('LLM 后处理的依赖还没装', "The LLM post-processing dependencies aren't installed") }}</div>
+      <div class="s-tip">{{ t('在这里装上 llama.cpp(预编译包,约几十 MB,不需要编译器),装完会重启本应用启动的服务。模型要等打开开关时才下载。', 'Install llama.cpp here (prebuilt, a few dozen MB, no compiler needed); services started by this app are restarted afterwards. The model is only downloaded when you turn the switch on.') }}</div>
+    </template>
     <template v-else>
       <div class="s-label">{{ status.python_path ? t('依赖没装全?在这里重建环境', 'Dependencies incomplete? Rebuild the environment here') : t('代码在了,还没有 Python 环境', 'The code is here, but there is no Python environment yet') }}</div>
       <div class="s-tip">{{ t('会在仓库里运行建环境脚本(scripts/setup-env),装好的部分不会重下。', "Runs the project's setup script (scripts/setup-env) in the repository; what's already installed isn't downloaded again.") }}</div>
     </template>
 
-    <div v-if="(needed || busy) && status?.llm_optional" class="s-row" style="margin-top:4px">
+    <div v-if="(needed || busy) && status?.llm_optional && !llmOnly" class="s-row" style="margin-top:4px">
       <label class="toggle"><input type="checkbox" v-model="withLlm" :disabled="busy" /><span class="slider"></span></label>
       <span class="s-tip" style="margin:0">{{ t('同时装上 LLM 后处理要用的 llama.cpp(预编译包,约几十 MB;模型要等打开后处理开关时才下载)', 'Also install llama.cpp for LLM post-processing (prebuilt, a few dozen MB; the model is only downloaded when you turn post-processing on)') }}</span>
     </div>
 
     <div v-if="needed || busy" class="s-row" style="margin-top:6px">
       <button class="s-btn ls-primary" @click="run" :disabled="!canRun">
-        {{ busy ? stageText : (status?.repo_path ? (status.python_path ? t('重建环境', 'Rebuild environment') : t('一键建环境', 'Set up environment')) : t('下载并安装', 'Download and install')) }}
+        {{ busy ? stageText : llmOnly ? t('安装 LLM 依赖', 'Install LLM dependencies') : (status?.repo_path ? (status.python_path ? t('重建环境', 'Rebuild environment') : t('一键建环境', 'Set up environment')) : t('下载并安装', 'Download and install')) }}
       </button>
       <span v-if="status?.running && !busy" class="s-tip" style="margin:0">{{ t('有一次安装或更新正在进行…', 'An install or update is in progress…') }}</span>
     </div>
@@ -78,6 +82,8 @@ const props = defineProps<{
   repoPath: string;
   /** 环境体检没过。仓库在、解释器也在时,只有它为真才显示「重建环境」。 */
   envBroken: boolean;
+  /** 放在「LLM 后处理」那一节用:环境是好的,只差 llama.cpp。 */
+  llmMissing?: boolean;
 }>();
 const emit = defineEmits<{ done: [outcome: Outcome] }>();
 
@@ -92,9 +98,17 @@ const result = ref<{ ok: boolean; msg: string } | null>(null);
 const copied = ref(false);
 
 /** 还有事可做:没有仓库、没有解释器,或者体检说环境有问题。 */
+/** 只补 LLM 依赖:仓库和解释器都在,父组件说只差 llama.cpp(Apple Silicon 用 MLX,没有这回事)。 */
+const llmOnly = computed(() => {
+  const s = status.value;
+  return !!props.llmMissing && !!s?.repo_path && !!s.python_path && s.llm_optional;
+});
 const needed = computed(() => {
   const s = status.value;
-  return !!s && (!s.repo_path || !s.python_path || props.envBroken);
+  if (!s) return false;
+  // 「LLM 后处理」那一节里的这一个只管补 llama.cpp;环境本身没建好是「服务」页那一个的事。
+  if (props.llmMissing) return llmOnly.value;
+  return !s.repo_path || !s.python_path || props.envBroken;
 });
 /** 没事可做时整块不显示;跑着 / 刚跑完(要留着那句结果)时留着。 */
 const visible = computed(() => busy.value || !!result.value || needed.value);
@@ -126,7 +140,7 @@ async function run() {
   stage.value = "checking";
   line.value = "";
   try {
-    const outcome = await invoke<Outcome>("run_local_setup", { dir: dir.value.trim() || null, llm: withLlm.value });
+    const outcome = await invoke<Outcome>("run_local_setup", { dir: dir.value.trim() || null, llm: withLlm.value || llmOnly.value });
     result.value = { ok: true, msg: outcome.message };
     emit("done", outcome);
   } catch (e) {

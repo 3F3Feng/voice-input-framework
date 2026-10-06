@@ -296,6 +296,9 @@
             <div v-if="!llmSupported" class="s-tip" style="margin-top:4px">
               {{ llmUnsupportedReason || t('这台机器不支持 LLM 后处理', "This machine doesn't support LLM post-processing") }}
             </div>
+            <!-- 非 Apple 平台上没装 llama.cpp:以前只有上面那句话里的一条命令,得去终端里跑。
+                 仓库没配好时这一块自己不显示(那种情况先去「服务」页把环境建起来)。 -->
+            <LocalSetup v-if="!llmSupported && serverMode === 'local' && connected" :repo-path="repoPath" :env-broken="false" llm-missing @done="onLocalSetupDone" />
             <!-- 本地管理模式下这个开关不只是个标志位:LLM 服务跟着它起停。
                  加载模型要几秒,开关这几秒是锁着的——得让用户知道那不是卡死。 -->
             <div v-else-if="serverMode === 'local'" class="s-tip" style="margin-top:4px">
