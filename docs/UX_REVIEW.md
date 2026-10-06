@@ -474,7 +474,7 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
   Windows 的 WER / CrashDumps 定位和更新安装器退出前删标记连编译都没过过(本机交叉编译卡在 ring 的 C 代码),要等 Windows CI;
   Linux 只记日志。
 - F17 llama.cpp 后端只在本机(M3 Max,Metal 版和 `VIF_LLM_GPU_LAYERS=0` 的纯 CPU)实测过;
-  Windows / Linux 上 `setup-env --llm` 现编译 llama-cpp-python、CUDA / Vulkan 版都没验证过。
+  Windows（2026-10-05，GTX 1070 Ti）实测：`setup-env.ps1 -Llm` 在没装 VS Build Tools（C++ 桌面开发）时**必失败** —— `llama-cpp-python` 现编译，CMake 找不到 nmake/cl；装上 C++ 工具链后能否成功、以及 Linux、CUDA / Vulkan 版仍未验证。
 
 ### 5.3 后续迭代
 
