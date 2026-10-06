@@ -15,6 +15,65 @@ on:
   workflow_dispatch:
 
 jobs:
+  # 客户端的 Rust 单测。以前 CI 只编译、不跑测试(测试只在开发机 macOS 上跑过),
+  # Windows / Linux 专有的那些分支从来没有被执行过——Windows 上「应用内更新后认不回自己
+  # 启动的服务」就是这么漏掉的。这里三个平台都跑;Windows 上有一个对着真进程的测试
+  # (用仓库 venv 起一个假服务,再按 pid 认领、按端口认身份、停掉)。
+  test:
+    name: Rust tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      # tauri 在编译期把前端产物(gui/dist)嵌进去,没有它连测试都编译不过。
+      - name: Build the frontend
+        working-directory: gui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri -> target
+          key: tests
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libasound2-dev \
+            libxdo-dev \
+            libxtst-dev
+
+      - name: cargo test
+        working-directory: gui/src-tauri
+        run: cargo test --lib
+
   build:
     strategy:
       fail-fast: false
