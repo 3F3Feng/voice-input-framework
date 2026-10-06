@@ -743,6 +743,7 @@ class LlamaCppBackend:
 
         `VIF_LLM_GPU_LAYERS` 明确设了就听它的。没设时看这台机器的配置:显存只够放识别
         模型的机器上,后处理一层都不往显卡上放(否则两个模型抢显存,谁都跑不好)。
+        只有那一档才拦:配置表「没探测到显卡」时不拦,llama.cpp 加载时认得出显卡就照用。
         """
         if self.N_GPU_LAYERS == 0:
             return 0, "env"
@@ -750,7 +751,7 @@ class LlamaCppBackend:
             try:
                 from services.hardware import current_plan
 
-                if not current_plan().llm_on_gpu:
+                if current_plan().reserve_gpu_for_stt:
                     return 0, "plan"
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"hardware plan unavailable: {e}")

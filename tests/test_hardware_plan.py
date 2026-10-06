@@ -348,3 +348,38 @@ def test_recommended_stt_falls_back_when_the_planned_model_is_unavailable(monkey
         "services.device.recommend_stt_model", lambda p: ("whisper_turbo", "显存 8GB")
     )
     assert hardware.recommended_stt_model() == ("whisper_turbo", "显存 8GB")
+
+
+def test_only_the_small_gpu_tier_keeps_the_llm_off_the_gpu():
+    """「没探测到显卡」不等于「不许用显卡」:探测可能失败,llama.cpp 自己认得出就照用"""
+    assert plan(gpu("cuda", 4)).reserve_gpu_for_stt is True
+    for m in (
+        gpu("cuda", 8),
+        gpu("vulkan", 24),
+        Machine(ram_gb=32, cores=16),
+        Machine(ram_gb=4, cores=2),
+        Machine(apple_silicon=True, ram_gb=16, cores=8),
+    ):
+        assert plan(m).reserve_gpu_for_stt is False, m
+
+
+def test_ggml_functions_are_found_in_whichever_library_exports_them():
+    """Windows 上按名字找函数只看点名的那个 DLL:设备注册表在 ggml,设备本身在 ggml-base"""
+
+    class Lib:
+        def __init__(self, **functions):
+            for name, fn in functions.items():
+                setattr(self, name, fn)
+
+    def make(result):
+        def fn(*args):
+            return result
+
+        return fn
+
+    ggml = object.__new__(hardware._Ggml)
+    ggml._libs = [Lib(ggml_backend_dev_count=make(2)), Lib(ggml_backend_dev_name=make(b"CUDA0"))]
+    assert ggml.function("ggml_backend_dev_count", None, [])() == 2
+    assert ggml.function("ggml_backend_dev_name", None, [])() == b"CUDA0"
+    with pytest.raises(AttributeError):
+        ggml.function("ggml_backend_dev_nope", None, [])

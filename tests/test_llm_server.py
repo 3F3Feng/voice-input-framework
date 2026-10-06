@@ -202,7 +202,9 @@ class TestLlamaCppAccelerator:
     默认模型在 CPU 上一句话要等好几秒:悄悄跑在 CPU 上,用户只会觉得「后处理怎么这么慢」。
     """
 
-    def backend(self, monkeypatch, *, has_gpu: bool, gpu_fails: bool = False, layers: int = -1):
+    def backend(
+        self, monkeypatch, *, has_gpu: bool, gpu_fails: bool = False, layers: int = -1, machine=None
+    ):
         import sys
         import types
 
@@ -227,6 +229,14 @@ class TestLlamaCppAccelerator:
             types.SimpleNamespace(hf_hub_download=lambda repo_id, filename: "/tmp/m.gguf"),
         )
         monkeypatch.setattr(srv.GGUFChatTemplate, "from_llama", classmethod(lambda cls, llm: "t"))
+        # 这台机器被分到哪一档由参数定,不看跑测试的机器(CI 上没有显卡也没有 llama.cpp)。
+        from services import hardware
+        from shared.hardware_plan import Machine, plan
+
+        monkeypatch.delenv("VIF_LLM_GPU_LAYERS", raising=False)
+        monkeypatch.setattr(
+            hardware, "current_plan", lambda: plan(machine or Machine(ram_gb=16, cores=8))
+        )
         backend = srv.LlamaCppBackend()
         monkeypatch.setattr(backend, "N_GPU_LAYERS", layers)
         return backend, opened
@@ -278,6 +288,50 @@ class TestLlamaCppAccelerator:
         assert "没有认出可用的显卡" in zh["accelerator_note"]
         en = client.get("/health", headers={"Accept-Language": "en"}).json()
         assert "no usable GPU" in en["accelerator_note"]
+
+    def test_a_small_gpu_is_left_to_the_speech_model(self, monkeypatch):
+        """显存只够放识别模型的那一档:后处理一层都不往显卡上放,并说明为什么"""
+        from shared.hardware_plan import Machine
+
+        small = Machine(gpu="cuda", gpu_name="GTX 1650", vram_gb=4, ram_gb=16, cores=12)
+        backend, opened = self.backend(monkeypatch, has_gpu=True, machine=small)
+        assert backend.gpu_layers() == (0, "plan")
+        backend.load("org/repo/file.gguf")
+        assert opened == [0]
+        assert backend.accelerator == "cpu"
+        assert "显存" in backend.accelerator_note
+        # 明确设了环境变量就听它的
+        monkeypatch.setenv("VIF_LLM_GPU_LAYERS", "-1")
+        assert backend.gpu_layers() == (-1, None)
+
+    def test_no_detected_gpu_does_not_keep_llama_cpp_off_a_gpu_it_can_see(self, monkeypatch):
+        """配置表没探测到显卡(探测可能失败),可 llama.cpp 加载时认得出:照用,不拦
+
+        CI 上实测过反例:Windows 上问设备表的那一步失败了,整台机器被当成没有显卡。
+        """
+        from shared.hardware_plan import Machine
+
+        backend, opened = self.backend(
+            monkeypatch, has_gpu=True, machine=Machine(ram_gb=16, cores=4, llama_cpp=False)
+        )
+        assert backend.gpu_layers() == (-1, None)
+        backend.load("org/repo/file.gguf")
+        assert opened == [-1]
+        assert backend.accelerator == "gpu"
+
+    def test_default_model_follows_the_plan(self, monkeypatch):
+        from shared.hardware_plan import Machine
+
+        big = Machine(gpu="cuda", vram_gb=24, ram_gb=64, cores=32)
+        backend, _ = self.backend(monkeypatch, has_gpu=True, machine=big)
+        assert backend.default_model() == "Gemma-4-E4B-GGUF"
+        mid = Machine(gpu="vulkan", vram_gb=8, ram_gb=32, cores=16)
+        backend, _ = self.backend(monkeypatch, has_gpu=True, machine=mid)
+        assert backend.default_model() == "Gemma-4-E2B-GGUF"
+        # Apple 芯片的配置表给的是 MLX 的模型名:llama.cpp 后端不认,用自己最稳的那个
+        mac = Machine(apple_silicon=True, ram_gb=36, cores=14)
+        backend, _ = self.backend(monkeypatch, has_gpu=True, machine=mac)
+        assert backend.default_model() == "Gemma-4-E2B-GGUF"
 
     def test_mlx_always_reports_gpu(self):
         import services.llm_server as srv

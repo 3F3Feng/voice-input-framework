@@ -337,6 +337,16 @@ class TestLlamaCppLoad:
             # 显卡版:llama.cpp 认出了显卡,模型整个放上去(n_gpu_layers == -1)
             types.SimpleNamespace(Llama=make_llama, llama_supports_gpu_offload=lambda: True),
         )
+        # 机器的档位定死,不看跑测试的机器(见 shared/hardware_plan.py)。
+        from services import hardware
+        from shared.hardware_plan import Machine, plan
+
+        monkeypatch.delenv("VIF_LLM_GPU_LAYERS", raising=False)
+        monkeypatch.setattr(
+            hardware,
+            "current_plan",
+            lambda: plan(Machine(gpu="cuda", vram_gb=8, ram_gb=16, cores=8)),
+        )
         return seen
 
     @pytest.mark.asyncio

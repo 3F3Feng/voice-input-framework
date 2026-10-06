@@ -53,17 +53,38 @@ def pick_gpu(devices: list[dict]) -> dict | None:
     return max(gpus, key=lambda d: d.get("total_bytes", 0)) if gpus else None
 
 
-def _ggml_library() -> ctypes.CDLL:
-    """llama-cpp-python 自带的 ggml 动态库(设备表在这里面)。"""
-    import llama_cpp
+class _Ggml:
+    """llama-cpp-python 自带的 ggml 动态库里的设备表函数。
 
-    lib_dir = Path(llama_cpp.__file__).parent / "lib"
-    names = {"win32": ["ggml.dll"], "darwin": ["libggml.dylib"]}.get(sys.platform, ["libggml.so"])
-    for name in names:
-        path = lib_dir / name
-        if path.exists():
-            return ctypes.CDLL(str(path))
-    raise FileNotFoundError(f"no ggml library in {lib_dir}")
+    这几个函数分在两个库里:`ggml`(设备注册表:有几个设备、取第几个)和 `ggml-base`
+    (设备本身:名字、类型、显存)。macOS / Linux 上从 `ggml` 这一个库里按名字找,系统会
+    顺着它的依赖找到 `ggml-base` 里的;Windows 上只在点名的那个 DLL 里找,找不到就是
+    「function not found」(CI 在 Windows 上实测)。所以两个库都打开,每个函数在哪个里
+    有就用哪个。
+    """
+
+    def __init__(self) -> None:
+        import llama_cpp
+
+        lib_dir = Path(llama_cpp.__file__).parent / "lib"
+        names = {
+            "win32": ("ggml.dll", "ggml-base.dll"),
+            "darwin": ("libggml.dylib", "libggml-base.dylib"),
+        }.get(sys.platform, ("libggml.so", "libggml-base.so"))
+        self._libs = [ctypes.CDLL(str(lib_dir / n)) for n in names if (lib_dir / n).exists()]
+        if not self._libs:
+            raise FileNotFoundError(f"no ggml library in {lib_dir}")
+
+    def function(self, name: str, restype, argtypes: list):
+        for lib in self._libs:
+            try:
+                fn = getattr(lib, name)
+            except AttributeError:
+                continue
+            fn.restype = restype
+            fn.argtypes = argtypes
+            return fn
+        raise AttributeError(f"function '{name}' not found in the ggml libraries")
 
 
 def llama_devices() -> list[dict]:
@@ -79,33 +100,28 @@ def llama_devices() -> list[dict]:
         import llama_cpp
 
         llama_cpp.llama_backend_init()
-        ggml = _ggml_library()
-        ggml.ggml_backend_dev_count.restype = ctypes.c_size_t
-        ggml.ggml_backend_dev_get.restype = ctypes.c_void_p
-        ggml.ggml_backend_dev_get.argtypes = [ctypes.c_size_t]
-        for fn in (ggml.ggml_backend_dev_name, ggml.ggml_backend_dev_description):
-            fn.restype = ctypes.c_char_p
-            fn.argtypes = [ctypes.c_void_p]
-        ggml.ggml_backend_dev_type.restype = ctypes.c_int
-        ggml.ggml_backend_dev_type.argtypes = [ctypes.c_void_p]
-        ggml.ggml_backend_dev_memory.restype = None
-        ggml.ggml_backend_dev_memory.argtypes = [
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_size_t),
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
+        ggml = _Ggml()
+        size_p = ctypes.POINTER(ctypes.c_size_t)
+        dev_count = ggml.function("ggml_backend_dev_count", ctypes.c_size_t, [])
+        dev_get = ggml.function("ggml_backend_dev_get", ctypes.c_void_p, [ctypes.c_size_t])
+        dev_name = ggml.function("ggml_backend_dev_name", ctypes.c_char_p, [ctypes.c_void_p])
+        dev_description = ggml.function(
+            "ggml_backend_dev_description", ctypes.c_char_p, [ctypes.c_void_p]
+        )
+        dev_type = ggml.function("ggml_backend_dev_type", ctypes.c_int, [ctypes.c_void_p])
+        dev_memory = ggml.function(
+            "ggml_backend_dev_memory", None, [ctypes.c_void_p, size_p, size_p]
+        )
         devices = []
-        for i in range(ggml.ggml_backend_dev_count()):
-            dev = ggml.ggml_backend_dev_get(i)
+        for i in range(dev_count()):
+            dev = dev_get(i)
             free, total = ctypes.c_size_t(), ctypes.c_size_t()
-            ggml.ggml_backend_dev_memory(dev, ctypes.byref(free), ctypes.byref(total))
+            dev_memory(dev, ctypes.byref(free), ctypes.byref(total))
             devices.append(
                 {
-                    "name": (ggml.ggml_backend_dev_name(dev) or b"").decode(errors="replace"),
-                    "description": (ggml.ggml_backend_dev_description(dev) or b"").decode(
-                        errors="replace"
-                    ),
-                    "type": int(ggml.ggml_backend_dev_type(dev)),
+                    "name": (dev_name(dev) or b"").decode(errors="replace"),
+                    "description": (dev_description(dev) or b"").decode(errors="replace"),
+                    "type": int(dev_type(dev)),
                     "total_bytes": int(total.value),
                     "free_bytes": int(free.value),
                 }

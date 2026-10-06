@@ -232,6 +232,8 @@ jobs:
         env:
           # Linux 上这一步跑在软件实现的 Vulkan 上(见上);Windows 的 runner 没有显卡,跑 CPU。
           GGML_VK_VISIBLE_DEVICES: "0"
+          # 档位的说明是中文的;Windows 的控制台默认代码页打不出来。
+          PYTHONUTF8: "1"
         run: |
           # 非 Apple 平台上默认的识别模型(services/qwen_asr_gguf.py)。音频是经 llama.cpp 的
           # 多模态库送进去的,开发机(macOS)上验证不了 Windows / Linux 的包里这条路通不通。
@@ -246,7 +248,10 @@ jobs:
           from services.qwen_asr_gguf import QwenASRGguf
           from shared.model_registry import MODELS_CONFIG
 
-          print("devices:", hardware.llama_devices())
+          devices = hardware.llama_devices()
+          print("devices:", devices)
+          # 设备表至少得有 CPU 那一项:问不到(函数找不到、库加载不了)就是空的。
+          assert devices, "could not list llama.cpp devices"
           print("machine:", hardware.machine())
           print("plan   :", hardware.current_plan())
 

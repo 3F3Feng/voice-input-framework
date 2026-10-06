@@ -95,12 +95,22 @@ class Plan:
     tier: str
     stt_model: str
     llm_model: str
-    #: 后处理模型放不放显卡上。False 时 LLM 服务不往显卡上放一层(留给识别模型)。
+    #: 后处理模型预计跑在哪(给界面和日志看的)。真正「不许往显卡上放」的只有
+    #: `reserve_gpu_for_stt` 那一档。
     llm_on_gpu: bool
     #: 用户没有明确开关过时,后处理默认开不开。
     llm_default_on: bool
     #: 为什么是这一档(中英文)。
     why: str
+
+    @property
+    def reserve_gpu_for_stt(self) -> bool:
+        """显卡在、但显存只够放识别模型:LLM 服务一层都不要往显卡上放。
+
+        只有这一档才拦。「没探测到显卡」的那几档不拦——探测可能失败(问不到设备表),
+        而 llama.cpp 自己加载时认得出显卡的话,没有理由不用。
+        """
+        return self.tier == "gpu-stt-only"
 
     def as_dict(self, lang: str = "zh") -> dict:
         from shared.i18n import localize
