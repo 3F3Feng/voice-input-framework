@@ -103,8 +103,9 @@ class TestLLMProxyContract:
             r = client.get(path)
             body = r.json()
             if r.status_code != 200:
-                # LLM 不可达:M7 结构化错误 + 非 2xx 状态码
-                assert r.status_code >= 500
+                # LLM 不可达:M7 结构化错误 + 非 2xx 状态码。本机正好跑着一个设了
+                # 访问令牌的 LLM 服务(开了「手机直连」)时,转发会原样带回它的 401。
+                assert r.status_code >= 500 or r.status_code == 401
                 assert body["error_code"] == "LLM_PROXY_ERROR"
                 assert "error_message" in body
                 assert "details" in body

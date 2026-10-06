@@ -56,6 +56,15 @@ class ModelInfo(BaseModel):
     is_default: bool = False
     #: 以下字段给界面用,见 services/model_catalog.py
     memory_gb: float | None = None
+    #: 首次使用要下载的大小(MB)。`memory_gb` 是运行时占的内存,两者差得远
+    #: (8bit 的 Qwen3-ASR-1.7B 占 1 GB 内存、要下 2.5 GB),界面以前拿它当下载量报。
+    download_mb: float | None = None
+    #: 服务端当前指着的模型(加载好了没有另说)。加载期间、加载失败之后都没有任何
+    #: 模型 `is_loaded`,界面靠它知道下拉框该停在哪一项上——以前停在列表第一项,
+    #: Windows 上那是本机根本跑不了的 `qwen_asr_mlx_native`。
+    is_current: bool = False
+    #: `is_current` 而且正在加载(含下载)。
+    is_loading: bool = False
     available: bool = True
     unavailable_reason: str | None = None
     downloaded: bool | None = None
@@ -637,16 +646,19 @@ class STTEngine:
         return cache_bytes(self._model_info.get("model_id", ""))
 
     def loading_progress(self) -> dict[str, Any] | None:
-        """正在加载时:模型名、已用秒数、这次下载了多少字节;没在加载时为 None。"""
+        """正在加载时:模型名、已用秒数、下载了多少 / 一共多少;没在加载时为 None。"""
         if not self._loading or self._load_started_at is None:
             return None
-        downloaded = max(0, self._cache_bytes() - self._load_bytes_at_start)
-        return {
-            "model": self.current_model_name,
-            "elapsed_s": round(time.time() - self._load_started_at, 1),
-            "downloaded_bytes": downloaded,
-            "phase": "downloading" if downloaded > 0 else "loading",
-        }
+        from services.model_catalog import load_progress
+
+        return load_progress(
+            self.current_model_name,
+            self._cache_bytes(),
+            self._load_started_at,
+            self._load_bytes_at_start,
+            self._model_info.get("download_mb"),
+            time.time(),
+        )
 
     def backend_info(self, lang: str = "zh") -> dict | None:
         """选中的推理后端(设备 / 精度 / 说明)。还没加载模型时为 None。"""

@@ -19,10 +19,15 @@ use serde_json::Value;
 use std::time::Duration;
 
 use crate::i18n::t;
+use crate::loading::LoadingProgress;
 
 /// 心跳间隔。本地回环一次 `/health` 几毫秒,5 秒一次谈不上负担;再长,服务挂了
 /// 之后头部要很久才变。
 pub const INTERVAL: Duration = Duration::from_secs(5);
+
+/// 模型加载期间的间隔。这时头部在报下载进度,5 秒跳一次像是卡住了;而且越早
+/// 发现「加载完了」,用户越早能开始说话。
+pub const LOADING_INTERVAL: Duration = Duration::from_secs(2);
 
 /// 之前能连上时,连续失败几次才判定为「连不上」。
 ///
@@ -60,6 +65,10 @@ pub struct SttHealth {
     pub error: Option<String>,
     /// 这份结论说的是哪个地址。地址一换,旧结论就不作数了。
     pub url: String,
+    /// 加载 / 下载进度(`state == Loading` 时才有)。带着它,加载期间每一轮心跳的
+    /// 结论都和上一轮不同,事件会一直发——头部那行「正在下载模型… 405 MB / 约
+    /// 1.6 GB」就是这么动起来的。
+    pub loading: Option<LoadingProgress>,
 }
 
 impl SttHealth {
@@ -71,6 +80,7 @@ impl SttHealth {
             current_model: None,
             error: None,
             url: url.to_string(),
+            loading: None,
         }
     }
 
@@ -113,6 +123,12 @@ impl SttHealth {
                 .filter(|m| !m.is_empty())
                 .map(str::to_string),
             url: url.to_string(),
+            loading: match state {
+                SttHealthState::Loading => {
+                    serde_json::from_value::<LoadingProgress>(data["loading"].clone()).ok()
+                }
+                _ => None,
+            },
         }
     }
 }
@@ -131,6 +147,11 @@ impl Tracker {
             failures: 0,
             current: SttHealth::unknown(url),
         }
+    }
+
+    /// 现在的结论。
+    pub fn state(&self) -> SttHealthState {
+        self.current.state
     }
 
     /// 喂一次对 `url` 的探测结果。状态变了才返回新状态(用来发事件)。
@@ -214,6 +235,7 @@ pub fn spawn(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut tracker: Option<Tracker> = None;
         loop {
+            let mut loading = false;
             if let Some(url) = current_url(&app) {
                 let probe = crate::stt::SttClient::new(&url).get_health().await;
                 // 探测期间地址被改了:这次结果说的是旧地址,丢掉,下一轮再说。
@@ -226,9 +248,10 @@ pub fn spawn(app: tauri::AppHandle) {
                         }
                         let _ = app.emit("stt-health", &changed);
                     }
+                    loading = t.state() == SttHealthState::Loading;
                 }
             }
-            tokio::time::sleep(INTERVAL).await;
+            tokio::time::sleep(if loading { LOADING_INTERVAL } else { INTERVAL }).await;
         }
     });
 }
@@ -347,5 +370,43 @@ mod tests {
         // 结论属于旧地址(刚换过地址,心跳还没轮到):不拦。
         h.state = SttHealthState::Unreachable;
         assert!(recording_gate(&h, "http://127.0.0.1:7000").is_ok());
+    }
+
+    #[test]
+    fn loading_progress_rides_along_and_keeps_events_flowing() {
+        let mut t = Tracker::new(URL);
+        let tick = |secs: u64, mb: u64| {
+            json!({"status": "loading", "current_model": "whisper_turbo",
+                   "loading": {"model": "whisper_turbo", "elapsed_s": secs as f64,
+                               "downloaded_bytes": mb * 1_000_000,
+                               "cached_bytes": mb * 1_000_000,
+                               "total_bytes": 1620u64 * 1_000_000}})
+        };
+        let first = t.observe(URL, Ok(tick(2, 40))).expect("first loading tick");
+        assert_eq!(first.state, SttHealthState::Loading);
+        let p = first.loading.expect("progress");
+        assert_eq!(p.total_bytes, Some(1620 * 1_000_000));
+        // 进度变了就是「状态变了」:要接着发事件,头部才会动。
+        let second = t.observe(URL, Ok(tick(4, 90))).expect("progress changed");
+        assert_eq!(second.loading.unwrap().downloaded_bytes, 90 * 1_000_000);
+        // 一模一样的两次不重复发。
+        assert!(t.observe(URL, Ok(tick(4, 90))).is_none());
+        // 加载完了:进度清掉。
+        let ready = t
+            .observe(
+                URL,
+                Ok(json!({"status": "ok", "current_model": "whisper_turbo",
+                                    "loading": null})),
+            )
+            .expect("ready");
+        assert_eq!(ready.state, SttHealthState::Ready);
+        assert!(ready.loading.is_none());
+    }
+
+    #[test]
+    fn old_server_without_loading_field_still_parses() {
+        let h = SttHealth::from_health(URL, &json!({"status": "loading"}));
+        assert_eq!(h.state, SttHealthState::Loading);
+        assert!(h.loading.is_none());
     }
 }

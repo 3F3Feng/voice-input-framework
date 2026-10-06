@@ -30,6 +30,16 @@ pub struct ModelInfo {
     pub downloaded: Option<bool>,
     #[serde(default)]
     pub recommended: bool,
+    /// 首次使用要下载的大小(MB)。`memory_gb` 是运行时内存,不是下载量。
+    #[serde(default)]
+    pub download_mb: Option<f64>,
+    /// 服务端当前指着的模型(加载好了没有另说)。加载期间 / 加载失败后没有任何模型
+    /// `is_loaded`,界面靠它决定下拉框停在哪一项。老服务端没有这个字段。
+    #[serde(default)]
+    pub is_current: bool,
+    /// 正在加载(含下载)的那一个。
+    #[serde(default)]
+    pub is_loading: bool,
 }
 
 fn default_true() -> bool {

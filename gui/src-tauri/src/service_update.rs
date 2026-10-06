@@ -41,8 +41,8 @@ pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// `git fetch` / `git pull` 的时限。走的是用户的网络和凭据,卡住(比如在等一个
 /// 永远不会出现的密码输入)时不能让按钮一直转下去。
 const GIT_NET_TIMEOUT: Duration = Duration::from_secs(180);
-/// 建环境的时限。首次装 torch / 现编译 llama-cpp-python 要十几分钟,给足。
-const SETUP_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+/// 建环境的时限。首次装 torch(CUDA 版有 2 GB 多)在慢网络上要十几分钟,给足。
+pub(crate) const SETUP_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 /// 失败时附在报错里的输出行数。
 const TAIL_LINES: usize = 12;
 
@@ -546,7 +546,7 @@ pub fn find_git(
 ///
 /// macOS 的 `/usr/bin/git` 是个转发壳:没装命令行工具时一运行就弹「安装开发者工具」
 /// 的系统对话框。先用 `xcode-select -p` 问一句装没装,没装就当没有 git,不去碰那个壳。
-fn locate_git() -> Option<PathBuf> {
+pub(crate) fn locate_git() -> Option<PathBuf> {
     let git = find_git(std::env::var_os("PATH").as_deref(), cfg!(windows), |p| {
         p.is_file()
     })?;
@@ -571,7 +571,7 @@ fn locate_git() -> Option<PathBuf> {
 }
 
 /// 子进程的 PATH:uv / git 所在目录放最前,再接上原来的,最后补上系统目录。
-fn augmented_path(front: &[&Path]) -> Option<std::ffi::OsString> {
+pub(crate) fn augmented_path(front: &[&Path]) -> Option<std::ffi::OsString> {
     let mut dirs: Vec<PathBuf> = front.iter().map(|p| p.to_path_buf()).collect();
     if let Some(p) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&p));
@@ -837,7 +837,7 @@ where
 ///
 /// stdout / stderr 都要读:uv、git 的进度和报错都在 stderr 上;不读的话管道写满,
 /// 子进程就卡在 write 上(和服务日志那边是同一个坑,见 `server_manager::pump`)。
-async fn run_streamed(
+pub(crate) async fn run_streamed(
     std_cmd: std::process::Command,
     timeout: Duration,
     on_line: &mut (dyn FnMut(&str) + Send),
@@ -904,9 +904,9 @@ async fn run_streamed(
 // ── 整个流程 ──
 
 /// 同一时间只允许一次更新:两次 `git pull` / `uv sync` 并发跑,结果谁也说不清。
-static RUNNING: AtomicBool = AtomicBool::new(false);
+pub(crate) static RUNNING: AtomicBool = AtomicBool::new(false);
 
-struct RunningGuard;
+pub(crate) struct RunningGuard;
 impl Drop for RunningGuard {
     fn drop(&mut self) {
         RUNNING.store(false, AtomicOrdering::SeqCst);
@@ -934,7 +934,7 @@ fn python_in_repo_venv(python: &Path, repo: &Path) -> bool {
     std::fs::canonicalize(dir).is_ok_and(|d| d.starts_with(&venv))
 }
 
-async fn probe_env(python: &str, repo: &Path) -> Option<EnvFacts> {
+pub(crate) async fn probe_env(python: &str, repo: &Path) -> Option<EnvFacts> {
     let mut cmd = std::process::Command::new(python);
     cmd.arg("-c")
         .arg(ENV_PROBE_SCRIPT)
@@ -956,7 +956,7 @@ async fn probe_env(python: &str, repo: &Path) -> Option<EnvFacts> {
         .and_then(|j| serde_json::from_str(j).ok())
 }
 
-fn setup_command(
+pub(crate) fn setup_command(
     repo: &Path,
     args: &[String],
     path: Option<&std::ffi::OsString>,
@@ -1234,7 +1234,7 @@ async fn run_update(
 }
 
 /// 逐个重启(`restart = true`)或拉起服务,返回每个的结果(失败的以 ✗ 开头)。
-async fn restart_all(
+pub(crate) async fn restart_all(
     servers: &Arc<Mutex<ServerManager>>,
     cfg: &ServerConfig,
     kinds: &[ServerKind],

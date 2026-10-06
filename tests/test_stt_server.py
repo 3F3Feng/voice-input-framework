@@ -730,9 +730,59 @@ class TestLoadingProgress:
         assert first["phase"] == "loading" and first["downloaded_bytes"] == 0
         second = engine.loading_progress()  # 长了 4000 字节:在下载
         assert second["phase"] == "downloading" and second["downloaded_bytes"] == 4000
+        assert second["cached_bytes"] == 5000
+        # whisper_tiny 的下载大小在注册表里:界面拿它当分母
+        assert second["total_bytes"] == 155_000_000
         release.set()
         assert await task is True
         assert engine.loading_progress() is None
+
+    @pytest.mark.asyncio
+    async def test_models_list_marks_the_model_being_loaded(self, monkeypatch):
+        """加载期间没有任何模型 is_loaded:/models 得说出服务端指着哪一个,
+
+        不然界面的下拉框只能停在列表第一项(Windows 上那是跑不了的 MLX 模型)。
+        """
+        import asyncio
+
+        from fastapi.testclient import TestClient
+
+        import services.stt_server as srv
+
+        engine = srv.STTEngine(default_model="whisper_base")
+        release = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(
+            engine,
+            "_load_model_sync",
+            lambda: asyncio.run_coroutine_threadsafe(release.wait(), loop).result(timeout=5),
+        )
+        monkeypatch.setattr(srv, "engine", engine)
+
+        def flags():
+            models = {m["name"]: m for m in client.get("/models").json()}
+            return {
+                k: [n for n, m in models.items() if m[k]]
+                for k in ("is_loaded", "is_current", "is_loading")
+            }
+
+        client = TestClient(srv.app)
+        task = asyncio.create_task(engine.load())
+        await asyncio.sleep(0.05)
+        during = await asyncio.to_thread(flags)
+        assert during == {
+            "is_loaded": [],
+            "is_current": ["whisper_base"],
+            "is_loading": ["whisper_base"],
+        }
+        release.set()
+        assert await task is True
+        after = await asyncio.to_thread(flags)
+        assert after == {
+            "is_loaded": ["whisper_base"],
+            "is_current": ["whisper_base"],
+            "is_loading": [],
+        }
 
 
 class TestKeepalive:

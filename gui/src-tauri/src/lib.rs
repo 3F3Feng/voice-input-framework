@@ -9,6 +9,8 @@ mod i18n;
 mod indicator;
 mod input;
 mod lan_share;
+mod loading;
+mod local_setup;
 mod log;
 mod mobile_pairing;
 mod permissions;
@@ -1612,6 +1614,35 @@ async fn update_services(
     service_update::update_services(app, servers, cfg).await
 }
 
+/// 「本机安装」的现状:有没有仓库、会克隆到哪、有没有 git(没有时怎么装)。
+#[tauri::command]
+async fn get_local_setup_status(
+    state: State<'_, AppState>,
+    dir: Option<String>,
+) -> Result<local_setup::SetupStatus, String> {
+    let cfg = server_config_snapshot(&state)?;
+    local_setup::status(&cfg, dir.as_deref())
+}
+
+/// 一键取代码 + 建环境(见 `local_setup`)。进度走 `local-setup` 事件和客户端日志。
+/// 成功后把仓库和解释器路径写进配置——向导中途被关掉,装好的东西也不会白装。
+#[tauri::command]
+async fn run_local_setup(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    dir: Option<String>,
+    llm: bool,
+) -> Result<local_setup::Outcome, String> {
+    let cfg = server_config_snapshot(&state)?;
+    let servers = state.servers.clone();
+    let outcome = local_setup::run(app.clone(), servers, cfg, dir, llm).await?;
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    cfg.server.local.repo_path = Some(outcome.repo_path.clone());
+    cfg.server.local.python_path = Some(outcome.python_path.clone());
+    cfg.save(&app)?;
+    Ok(outcome)
+}
+
 // ── 应用外壳:托盘、诊断、退出 ──
 
 /// 前端按连接状态更新托盘里的状态行(已连接 · 模型 / 连接中 / 未连接)。
@@ -1964,6 +1995,8 @@ pub fn run() {
             get_service_versions,
             check_service_updates,
             update_services,
+            get_local_setup_status,
+            run_local_setup,
             log::get_gui_logs,
             log::open_log_dir,
             get_diagnostics,

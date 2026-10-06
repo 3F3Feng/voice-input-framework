@@ -1005,34 +1005,7 @@ struct Health {
     error: Option<String>,
     /// 加载进度(STT 服务端 `/health.loading`,见 services/stt_engine.py)。
     #[serde(default)]
-    loading: Option<LoadingProgress>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct LoadingProgress {
-    #[serde(default)]
-    elapsed_s: f64,
-    #[serde(default)]
-    downloaded_bytes: u64,
-}
-
-/// 「启动中」那一行怎么说。首次用一个模型要下几百 MB 到几 GB,以前全程只有一句
-/// 「正在加载模型...」,看不出是在下载、卡住了还是坏了。
-fn loading_text(progress: Option<&LoadingProgress>) -> String {
-    match progress {
-        Some(p) if p.downloaded_bytes >= 1024 * 1024 => tr!(
-            "正在下载模型… 已下载 {} MB({:.0} 秒)",
-            "Downloading model… {} MB downloaded ({:.0}s)",
-            p.downloaded_bytes / (1024 * 1024),
-            p.elapsed_s
-        ),
-        Some(p) if p.elapsed_s >= 1.0 => tr!(
-            "正在加载模型…({:.0} 秒)",
-            "Loading model… ({:.0}s)",
-            p.elapsed_s
-        ),
-        _ => t("正在加载模型...", "Loading model...").to_string(),
-    }
+    loading: Option<crate::loading::LoadingProgress>,
 }
 
 /// 端口上那个服务说它的模型怎么样了。
@@ -1142,7 +1115,7 @@ pub async fn status(
         Some(Answer::Failed(reason)) => Some(reason.clone()),
         _ => None,
     };
-    let loading = loading_text(raw.as_ref().and_then(|h| h.loading.as_ref()));
+    let loading = crate::loading::text(raw.as_ref().and_then(|h| h.loading.as_ref()));
     let health = raw.filter(|h| h.status == "ok");
 
     let snapshot = manager.lock().ok().and_then(|mut m| m.snapshot(kind));
@@ -1663,7 +1636,7 @@ pub(crate) fn is_repo_root(path: &Path) -> bool {
 }
 
 /// 在仓库里找可用的 Python 解释器。
-fn find_python(repo: &Path) -> Option<String> {
+pub(crate) fn find_python(repo: &Path) -> Option<String> {
     for rel in [
         ".venv/bin/python",
         "venv/bin/python",
@@ -1767,8 +1740,8 @@ pub fn detect() -> DetectResult {
             python_path: None,
             problem: Some(
                 t(
-                    "没有自动找到 voice-input-framework 仓库(在 ~ 下的常见位置都找过了)。请手动填写仓库路径。",
-                    "Couldn't find the voice-input-framework repository automatically (checked the usual places under ~). Enter the repository path manually.",
+                    "没有自动找到 voice-input-framework 仓库(在 ~ 下的常见位置都找过了)。已经下载过就手动填写仓库路径;还没有的话可以用下面的「下载并安装」。",
+                    "Couldn't find the voice-input-framework repository automatically (checked the usual places under ~). If you already have it, enter its path manually; if not, use Download and install below.",
                 )
                 .into(),
             ),
@@ -3028,30 +3001,5 @@ mod real_servers {
             );
             assert!(!st.can_stop);
         }
-    }
-}
-
-#[cfg(test)]
-mod loading_text_tests {
-    use super::*;
-
-    #[test]
-    fn download_progress_is_shown_in_mb() {
-        let p = LoadingProgress {
-            elapsed_s: 42.0,
-            downloaded_bytes: 300 * 1024 * 1024,
-        };
-        assert_eq!(loading_text(Some(&p)), "正在下载模型… 已下载 300 MB(42 秒)");
-    }
-
-    #[test]
-    fn loading_without_download_shows_elapsed_time() {
-        let p = LoadingProgress {
-            elapsed_s: 7.4,
-            downloaded_bytes: 0,
-        };
-        assert_eq!(loading_text(Some(&p)), "正在加载模型…(7 秒)");
-        // 老服务端没有 loading 字段:保持原来的说法
-        assert_eq!(loading_text(None), "正在加载模型...");
     }
 }

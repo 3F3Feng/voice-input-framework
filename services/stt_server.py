@@ -474,6 +474,8 @@ async def list_models(request: Request):
             ModelInfo(
                 name=name,
                 is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
+                is_current=(name == engine.current_model_name),
+                is_loading=(name == engine.current_model_name and engine.is_loading()),
                 is_default=(name == engine.default_model),
                 **model_catalog.describe(name, lang),
             )

@@ -180,10 +180,10 @@
                   <div class="s-tip env-detail">{{ it.detail }}</div>
                   <div v-if="it.fix" class="s-tip srv-problem">→ {{ it.fix }}</div>
                 </div>
-                <!-- 只给出命令、不在界面里直接跑:建环境要下几个 GB、可能要装 uv,
-                     放在用户自己的终端里跑,出了问题看得见、也能随时中断。 -->
+                <!-- 命令照样给出来:想在自己的终端里跑、看着它跑的人可以复制;
+                     不想碰终端的用下面的「一键建环境」(LocalSetup)。 -->
                 <template v-if="!envReport.ok">
-                  <div class="s-tip" style="margin-top:6px">{{ t('在终端里运行这条命令重建环境，然后再体检一次：', 'Run this command in a terminal to rebuild the environment, then check again:') }}</div>
+                  <div class="s-tip" style="margin-top:6px">{{ t('用下面的按钮重建环境，或者在终端里运行这条命令，然后再体检一次：', 'Rebuild the environment with the button below, or run this command in a terminal, then check again:') }}</div>
                   <div class="s-row" style="margin-top:4px">
                     <code class="env-cmd">{{ envReport.setup_command }}</code>
                     <button class="s-btn" @click="copyEnvCommand">{{ t('复制命令', 'Copy command') }}</button>
@@ -191,6 +191,8 @@
                 </template>
                 <div v-else class="s-tip" style="margin-top:6px">{{ t('环境没有问题。', 'The environment looks good.') }}{{ envReport.items.some(i => i.status === 'warn') ? t('标黄的几项不影响运行，按提示处理即可。', " Items in yellow don't stop it from running; follow their hints when convenient.") : '' }}</div>
               </div>
+              <!-- 没有仓库 / 没有 .venv / 体检没过时,可以直接在这里一键装好(见 LocalSetup.vue)。 -->
+              <LocalSetup :repo-path="repoPath" :env-broken="!!envReport && !envReport.ok" @done="onLocalSetupDone" />
 
               <!-- 子进程输出搬到「日志」标签页去了：两个日志框并排摆在设置里，
                    谁也分不清哪个是客户端自己的、哪个是 Python 服务打出来的。 -->
@@ -299,10 +301,13 @@
             <div v-else-if="serverMode === 'local'" class="s-tip" style="margin-top:4px">
               {{ t('LLM 服务跟着这个开关走：打开时启动（加载模型要几秒），关闭时停止，不用一直占着内存。只停本应用启动的那个；你自己在终端里跑的服务会保留。', "The LLM service follows this switch: turning it on starts the service (loading the model takes a few seconds), turning it off stops it so it doesn't sit in memory. Only the one this app started is stopped; a service you run in your own terminal is left alone.") }}
             </div>
+            <!-- 默认的 LLM 要下 3–7 GB:打开开关后以前只有一句「正在启动 LLM 服务…」,
+                 30 秒后弹一句「还在加载」,之后就什么都没有了。 -->
+            <div v-if="llmLoadingNote" class="s-loading">{{ llmLoadingNote }}</div>
             <div v-if="llmEnabled" style="margin-top: 8px;">
               <select v-if="llmModels.length" class="s-select" v-model="llmModel" @change="switchLlm">
                 <option v-for="m in llmModels" :key="m.name" :value="m.name">
-                  {{ m.name }} {{ m.is_loaded ? '✓' : '' }}
+                  {{ llmModelLabel(m) }}
                 </option>
               </select>
               <!-- 空下拉框什么也不说明。拿不到列表基本只有一个原因:LLM 服务
@@ -656,7 +661,7 @@
           <span v-if="recording" class="status-rec">{{ t('录音中', 'Recording') }} {{ timerText }}</span>
           <span v-else-if="loading" class="status-proc">{{ llmProcessing ? t('LLM 处理中', 'LLM processing') : t('识别中', 'Transcribing') }} {{ processingTimerText }}</span>
           <!-- 模型没就绪时录音按钮是灰的,得说清楚在等什么(R11) -->
-          <span v-else-if="healthState === 'loading'" class="status-proc">{{ t('模型加载中，稍等再说…', 'Model loading, give it a moment…') }}</span>
+          <span v-else-if="healthState === 'loading'" class="status-proc">{{ loadingNote(sttHealth?.loading) || t('模型加载中，稍等再说…', 'Model loading, give it a moment…') }}</span>
           <span v-else-if="healthState === 'error'" class="status-off" :title="sttHealth?.error ?? ''">{{ t('模型加载失败，请在设置里换一个模型或重启服务', 'Model failed to load — pick another model in Settings or restart the service') }}</span>
           <span v-else-if="canRecord" class="status-ready">{{ hotkeyToggle ? t('按一下开始', 'Press to start') : t('按住说话', 'Hold to talk') }} · {{ displayHotkey }}</span>
           <span v-else-if="connecting" class="status-proc">{{ t('正在连接服务器…', 'Connecting to server…') }}</span>
@@ -755,6 +760,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Onboarding from "./Onboarding.vue";
+import LocalSetup from "./LocalSetup.vue";
 import { t, applyLanguagePref } from "./i18n";
 
 // ── Types ──
@@ -768,6 +774,20 @@ interface ModelInfo {
   unavailable_reason?: string | null;
   downloaded?: boolean | null;
   recommended?: boolean;
+  /** 首次使用要下载的大小(MB)。`memory_gb` 是运行时内存,不是下载量。 */
+  download_mb?: number | null;
+  /** 服务端当前指着的模型(加载好了没有另说);老服务端没有。 */
+  is_current?: boolean;
+  /** 正在加载(含下载)的那一个。 */
+  is_loading?: boolean;
+}
+/** 服务端 `/health.loading`(services/model_catalog.py 的 load_progress);Rust 那边见 loading.rs。 */
+interface LoadingProgress {
+  model?: string | null;
+  elapsed_s: number;
+  downloaded_bytes: number;
+  cached_bytes?: number | null;
+  total_bytes?: number | null;
 }
 // 服务器：本地管理 / 远程连接
 type ServerMode = "local" | "remote";
@@ -858,6 +878,8 @@ interface SttHealth {
   current_model: string | null;
   error: string | null;
   url: string;
+  /** 加载 / 下载进度(state === "loading" 时才有)。 */
+  loading?: LoadingProgress | null;
 }
 const sttHealth = ref<SttHealth | null>(null);
 const loading = ref(false);
@@ -1225,8 +1247,13 @@ const connView = computed<{ cls: string; text: string; title: string }>(() => {
   // 服务能答话时,模型的状态比「连接中」更有信息量:本地刚拉起的服务正在加载
   // 模型,说「连接中」看着像连不上。
   if (st === "loading") {
+    // 首次用一个模型要下几百 MB 到几 GB:只说「加载中」看不出是在下载、卡住了还是坏了。
+    // 头部这一格很窄(140px),只放得下「下载模型 28%」;整句话在悬停提示和麦克风下面那一行。
+    const short = loadingShort(h?.loading);
     const m = h?.current_model ? ` · ${h.current_model}` : "";
-    return { cls: "wait", text: t(`模型加载中…${m}`, `Loading model…${m}`), title: "" };
+    return short
+      ? { cls: "wait", text: short, title: `${loadingNote(h?.loading)}${m}` }
+      : { cls: "wait", text: t(`模型加载中…${m}`, `Loading model…${m}`), title: "" };
   }
   if (st === "error") {
     const why = h?.error || t("原因未知", "unknown reason");
@@ -1237,6 +1264,44 @@ const connView = computed<{ cls: string; text: string; title: string }>(() => {
   const model = h?.current_model || currentModelName.value;
   return { cls: "on", text: model ? t(`已就绪 · ${model}`, `Ready · ${model}`) : t("已就绪", "Ready"), title: model };
 });
+
+// 十进制(1 MB = 10^6 字节):和 HuggingFace 页面上、注册表里的 download_mb 是同一种算法。
+const MB = 1e6;
+/** 上一次因为心跳去刷新模型列表时的「状态:模型」,见 applySttHealth。 */
+let lastModelSyncKey = "";
+function sizeText(bytes: number): string {
+  return bytes >= 1000 * MB ? `${(bytes / (1000 * MB)).toFixed(1)} GB` : `${Math.floor(bytes / MB)} MB`;
+}
+/**
+ * 下载进度那句话;没在下载(模型已经在本地,只是往内存里加载)时返回空串。
+ * 说法和 Rust 的 `loading.rs` 一致——服务器面板 / 向导里那一行是它写的。
+ */
+function loadingNote(p: LoadingProgress | null | undefined): string {
+  if (!p || p.downloaded_bytes < MB) return "";
+  const secs = Math.round(p.elapsed_s);
+  const have = Math.max(p.cached_bytes ?? 0, p.downloaded_bytes);
+  const total = p.total_bytes ?? 0;
+  // 分母是估计值:对不上(仓库更新过、引擎多拉了文件)时不显示,免得出现 105%。
+  if (total > 0 && have <= total) {
+    const pct = Math.floor(have * 100 / total);
+    if (pct >= 99) return t(`下载完成,正在加载模型…(${secs} 秒)`, `Download finished; loading model… (${secs}s)`);
+    return t(`正在下载模型… ${sizeText(have)} / 约 ${sizeText(total)}(${pct}%,${secs} 秒)`,
+      `Downloading model… ${sizeText(have)} of ~${sizeText(total)} (${pct}%, ${secs}s)`);
+  }
+  return t(`正在下载模型… 已下载 ${sizeText(have)}(${secs} 秒)`, `Downloading model… ${sizeText(have)} downloaded (${secs}s)`);
+}
+
+/** 同一件事的短说法,给头部那一格用。 */
+function loadingShort(p: LoadingProgress | null | undefined): string {
+  if (!p || p.downloaded_bytes < MB) return "";
+  const have = Math.max(p.cached_bytes ?? 0, p.downloaded_bytes);
+  const total = p.total_bytes ?? 0;
+  if (total > 0 && have <= total) {
+    const pct = Math.floor(have * 100 / total);
+    return pct >= 99 ? t("加载模型中…", "Loading model…") : t(`下载模型 ${pct}%`, `Downloading ${pct}%`);
+  }
+  return t(`下载模型 ${sizeText(have)}`, `Downloading ${sizeText(have)}`);
+}
 
 /**
  * 心跳报来的新状态(R12)。以前连接状态只在设置面板开着 + 本地模式时才会更新,
@@ -1258,7 +1323,16 @@ function applySttHealth(h: SttHealth) {
     // 让下拉框的 ✓ 和头部的模型名跟上。
     if (!connected.value) ensureConnected(CONNECT_BUDGET_RUNNING_MS);
     else loadModels();
+  } else if (h.state === "loading" || h.state === "error") {
+    // 开始加载 / 加载失败 / 服务端换了模型(切换失败后回退):下拉框要跟着服务端走。
+    // 加载期间每 2 秒来一次进度,只在「状态或模型变了」那一下刷新;正在这里切换
+    // (sttLoading)时不动,免得把用户刚选的那一项拨回去。
+    const key = `${h.state}:${h.current_model ?? ""}`;
+    if (key !== lastModelSyncKey && connected.value && !sttLoading.value) loadModels();
+    lastModelSyncKey = key;
+    return;
   }
+  lastModelSyncKey = "";
 }
 // 主界面上「按住说话 · …」显示的是**已生效**的快捷键,不是录了还没应用的那个。
 /** 推荐的排最前,本机跑不了的沉底。 */
@@ -1270,12 +1344,18 @@ const sortedSttModels = computed(() => {
 function sttModelLabel(m: ModelInfo): string {
   const tags: string[] = [];
   if (m.is_loaded) tags.push(t("✓ 使用中", "✓ in use"));
+  else if (m.is_loading) tags.push(t("加载中…", "loading…"));
   if (m.recommended) tags.push(t("推荐", "recommended"));
   if (m.available === false) {
     const why = m.unavailable_reason || t("本机不支持", "not supported on this machine");
     tags.push(t(`不可用:${why}`, `unavailable: ${why}`));
   }
-  else if (m.downloaded === false) tags.push(m.memory_gb ? t(`需下载 ~${m.memory_gb} GB`, `~${m.memory_gb} GB download`) : t("需下载", "download needed"));
+  else if (m.downloaded === false) {
+    // 下载量和运行内存是两回事(8bit 的 Qwen3-ASR-1.7B 占 1 GB 内存、要下 2.5 GB);
+    // 老服务端没有 download_mb,那就不报数字,不拿内存占用充数。
+    const size = m.download_mb ? sizeText(m.download_mb * MB) : "";
+    tags.push(size ? t(`需下载约 ${size}`, `~${size} download`) : t("需下载", "download needed"));
+  }
   const name = m.description || m.name;
   return tags.length ? t(`${name}(${tags.join(" · ")})`, `${name} (${tags.join(" · ")})`) : name;
 }
@@ -1341,6 +1421,20 @@ const llmToggleText = computed(() => {
   }
   return llmEnabled.value ? t("已启用", "Enabled") : t("已禁用", "Disabled");
 });
+
+/** LLM 服务正在加载 / 下载模型时那一行(本地管理模式;文字是 Rust 按 /health.loading 写的)。 */
+const llmLoadingNote = computed(() => {
+  const llm = serverReport.value?.llm;
+  if (serverMode.value !== "local" || !llm || llm.state !== "starting") return "";
+  return llm.detail ? `LLM:${llm.detail}` : "";
+});
+function llmModelLabel(m: ModelInfo): string {
+  const tags: string[] = [];
+  if (m.is_loaded) tags.push("✓");
+  else if (m.is_loading) tags.push(t("加载中…", "loading…"));
+  else if (m.downloaded === false && m.download_mb) tags.push(t(`需下载约 ${sizeText(m.download_mb * MB)}`, `~${sizeText(m.download_mb * MB)} download`));
+  return tags.length ? `${m.name} (${tags.join(" · ")})` : m.name;
+}
 
 const serverRows = computed(() =>
   SERVER_META.map(m => {
@@ -2097,6 +2191,19 @@ async function copyEnvCommand() {
 watch([repoPath, pythonPath], () => { envReport.value = null; envError.value = ""; });
 
 /** 自动探测仓库 / 解释器。探测不到时把原因说出来，而不是静默无反应。 */
+/** 「本机安装」跑完了:路径 Rust 那边已经写进配置,这里把输入框和面板跟上,再体检一次。 */
+async function onLocalSetupDone(o: { repo_path: string; python_path: string }) {
+  repoPath.value = o.repo_path;
+  pythonPath.value = o.python_path;
+  await saveLocal();
+  await runEnvCheck();
+  // llama.cpp 可能刚装上:「LLM 后处理」那个开关能不能拨要重新问一遍。
+  try {
+    const st = await invoke<LlmStatus>("get_llm_status");
+    llmSupported.value = st.supported;
+    llmUnsupportedReason.value = st.reason ?? "";
+  } catch {}
+}
 async function detectPaths() {
   detecting.value = true;
   try {
@@ -2357,12 +2464,27 @@ async function updateServer() {
 }
 
 // ── Models ──
+/**
+ * 下拉框该停在哪一项:服务端正在用 / 正在加载 / 当前指着的那个模型。
+ *
+ * 以前是「已加载的那个,否则列表第一项」。模型还在加载(首次启动要下载,可能好几
+ * 分钟)或加载失败时没有任何一项是已加载的,下拉框就停在第一项——注册表里那是
+ * `qwen_asr_mlx_native`,Windows / Linux 上是本机根本跑不了的模型,看着像是程序
+ * 选错了模型。老服务端没有 is_current / is_loading,退回 `/health` 报的 current_model;
+ * 再不行也挑一个本机能跑的。
+ */
+function pickCurrentModel(list: ModelInfo[], healthModel?: string | null): string {
+  const hit = list.find(m => m.is_loaded) ?? list.find(m => m.is_loading) ?? list.find(m => m.is_current)
+    ?? list.find(m => !!healthModel && m.name === healthModel)
+    ?? list.find(m => m.available !== false) ?? list[0];
+  return hit.name;
+}
 async function loadModels(): Promise<boolean> {
   let ok = false;
   try {
     const list = await invoke<ModelInfo[]>("get_models");
     sttModels.value = list;
-    if (list.length > 0) { const loaded = list.find(m => m.is_loaded); sttModel.value = loaded?.name || list[0].name; }
+    if (list.length > 0) sttModel.value = pickCurrentModel(list, sttHealth.value?.current_model);
     ok = true;
   } catch (e) { console.error("get_models error:", e); }
   await loadLlmModels();
@@ -2417,15 +2539,15 @@ async function switchStt() {
     for (;;) {
       const st = await invoke<{
         is_loaded: boolean; is_loading: boolean; is_current: boolean; error: string | null;
-        loading?: { downloaded_bytes: number } | null;
+        loading?: LoadingProgress | null;
       }>("get_model_status", { name });
       if (st.is_loaded) { toast(t(`已切换到 ${name}`, `Switched to ${name}`), "ok"); break; }
       if (st.error) throw t(`${st.error}(已回到原来的模型)`, `${st.error} (reverted to the previous model)`);
       if (!st.is_current && !st.is_loading) throw t("切换被中断(可能又选了别的模型)", "Switch interrupted (another model may have been selected)");
       const secs = Math.round((Date.now() - started) / 1000);
-      const mb = Math.round((st.loading?.downloaded_bytes ?? 0) / 1048576);
-      sttSwitchNote.value = mb > 0
-        ? t(`正在下载模型… 已下载 ${mb} MB(${secs} 秒)`, `Downloading model… ${mb} MB so far (${secs}s)`)
+      const downloading = loadingNote(st.loading);
+      sttSwitchNote.value = downloading
+        ? downloading
         : secs < 10
           ? t("正在加载模型…", "Loading model…")
           : t(`正在加载模型… ${secs} 秒(第一次用这个模型需要下载,可能要几分钟)`, `Loading model… ${secs}s (first use of a model downloads it, which can take a few minutes)`);

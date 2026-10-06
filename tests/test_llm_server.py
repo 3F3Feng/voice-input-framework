@@ -234,6 +234,55 @@ class TestLoadFailureAndModelChoice:
         assert not state_file.exists()
 
     @pytest.mark.asyncio
+    async def test_health_reports_download_progress_while_loading(self, monkeypatch, state_file):
+        """默认的 LLM 要下 3–7 GB:加载期间 /health 得报进度,而且报的是**正在加载的**
+
+        那个模型(切换期间 current_model_name 还是旧的)。"""
+        import asyncio
+
+        from fastapi.testclient import TestClient
+
+        import services.llm_server as srv
+
+        engine = mlx_engine(srv, default_model="Qwen3-0.6B")
+        release = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        slow_id = engine.MODEL_IDS["Qwen3-1.7B"]
+
+        def load(model_id):
+            if model_id == slow_id:
+                asyncio.run_coroutine_threadsafe(release.wait(), loop).result(timeout=5)
+            engine._model, engine._tokenizer = object(), object()
+
+        sizes = {"Qwen3-0.6B": iter([0, 0]), "Qwen3-1.7B": iter([10_000_000, 310_000_000])}
+        monkeypatch.setattr(engine, "_load_sync", load)
+        monkeypatch.setattr(engine, "_cache_bytes", lambda name: next(sizes[name]))
+        monkeypatch.setattr(srv, "engine", engine)
+        client = TestClient(srv.app)
+
+        assert engine.loading_progress() is None
+        assert await engine.load() is True
+        assert engine.loading_progress() is None
+
+        task = asyncio.create_task(engine.load("Qwen3-1.7B"))
+        await asyncio.sleep(0.05)
+        body = (await asyncio.to_thread(client.get, "/health")).json()
+        assert body["status"] == "loading"
+        assert body["loading"]["model"] == "Qwen3-1.7B"
+        assert body["loading"]["downloaded_bytes"] == 300_000_000
+        assert body["loading"]["cached_bytes"] == 310_000_000
+        assert body["loading"]["total_bytes"] == 985_000_000
+        assert body["loading"]["phase"] == "downloading"
+        models = {m["name"]: m for m in (await asyncio.to_thread(client.get, "/models")).json()}
+        assert models["Qwen3-1.7B"]["is_loading"] is True
+        assert models["Qwen3-0.6B"]["is_loading"] is False
+        assert models["Qwen3-1.7B"]["download_mb"] == 985
+
+        release.set()
+        assert await task is True
+        assert (await asyncio.to_thread(client.get, "/health")).json()["loading"] is None
+
+    @pytest.mark.asyncio
     async def test_failed_switch_rolls_back_to_previous_model(self, monkeypatch, state_file):
         """切到加载不了的 LLM 模型:回到原来的模型,切换失败的原因照样报出来"""
         from fastapi.testclient import TestClient
