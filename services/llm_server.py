@@ -855,8 +855,8 @@ class LLMEngine:
         self._load_target: str | None = None
         self._load_started_at: float | None = None
         self._load_bytes_at_start = 0
-        #: 加载开始时进程已经下载的字节数(huggingface_hub 的进度计数,见 model_catalog)
-        self._load_meter_at_start = 0
+        #: 加载开始时的下载计数(huggingface_hub 的进度回调,见 model_catalog.DOWNLOAD_METER)
+        self._load_meter_at_start: tuple[int, int] = (0, 0)
         self._load_lock = asyncio.Lock()
         self._processing = False
         # 生成在线程池执行,需用线程锁(而非 asyncio.Lock)串行化
@@ -902,7 +902,7 @@ class LLMEngine:
             self._load_started_at = time.time()
             self._load_bytes_at_start = self._cache_bytes(target_model)
             model_catalog.install_download_meter()
-            self._load_meter_at_start = model_catalog.downloaded_total()
+            self._load_meter_at_start = model_catalog.DOWNLOAD_METER.snapshot()
             # 切换前那个模型要是能用,新模型加载失败时就回退过去(和 STT 侧一致)。
             # 以前失败了就什么模型都没有,后处理从此每句都失败,直到用户再选一个。
             previous = self.current_model_name if self._is_loaded else None
@@ -1101,7 +1101,7 @@ class LLMEngine:
             self._load_bytes_at_start,
             self.backend.DOWNLOAD_MB.get(target),
             time.time(),
-            metered=max(0, model_catalog.downloaded_total() - self._load_meter_at_start),
+            metered=model_catalog.DOWNLOAD_METER.since(self._load_meter_at_start),
         )
 
     def is_model_loaded(self) -> bool:

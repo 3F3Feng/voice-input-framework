@@ -296,8 +296,8 @@ class STTEngine:
         #: 这次加载开始的时刻、开始时缓存里已有的字节数(算「这次下载了多少」用)
         self._load_started_at: float | None = None
         self._load_bytes_at_start = 0
-        #: 加载开始时进程已经下载的字节数(huggingface_hub 的进度计数,见 model_catalog)
-        self._load_meter_at_start = 0
+        #: 加载开始时的下载计数(huggingface_hub 的进度回调,见 model_catalog.DOWNLOAD_METER)
+        self._load_meter_at_start: tuple[int, int] = (0, 0)
         #: 切换失败的模型 → 失败原因。切换失败会回退到上一个模型,`_load_error`
         #: 随之清空,原因就只能记在这里,好让 `/models/status/{name}` 答得出来。
         self._switch_errors: dict[str, str] = {}
@@ -338,7 +338,7 @@ class STTEngine:
             self._load_error = None
             self._load_started_at = time.time()
             self._load_bytes_at_start = self._cache_bytes()
-            self._load_meter_at_start = self._metered_bytes(install=True)
+            self._load_meter_at_start = self._meter_snapshot()
             try:
                 logger.info(f"Loading STT model: {self._model_info['model_id']}")
                 loop = asyncio.get_event_loop()
@@ -665,13 +665,18 @@ class STTEngine:
 
         return cache_bytes(self._model_info.get("model_id", ""))
 
-    def _metered_bytes(self, install: bool = False) -> int:
-        """这个进程到现在下载了多少字节(huggingface_hub 的进度计数)。"""
+    def _meter_snapshot(self) -> tuple[int, int]:
+        """装上下载计数(只装一次)并记下现在的读数。"""
         from services import model_catalog
 
-        if install:
-            model_catalog.install_download_meter()
-        return model_catalog.downloaded_total()
+        model_catalog.install_download_meter()
+        return model_catalog.DOWNLOAD_METER.snapshot()
+
+    def _metered_bytes(self) -> int:
+        """这次加载开始以来下载了多少字节(huggingface_hub 的进度计数)。"""
+        from services import model_catalog
+
+        return model_catalog.DOWNLOAD_METER.since(self._load_meter_at_start)
 
     def loading_progress(self) -> dict[str, Any] | None:
         """正在加载时:模型名、已用秒数、下载了多少 / 一共多少;没在加载时为 None。"""
@@ -686,7 +691,7 @@ class STTEngine:
             self._load_bytes_at_start,
             self._model_info.get("download_mb"),
             time.time(),
-            metered=max(0, self._metered_bytes() - self._load_meter_at_start),
+            metered=self._metered_bytes(),
         )
 
     def backend_info(self, lang: str = "zh") -> dict | None:

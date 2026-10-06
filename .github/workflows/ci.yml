@@ -203,47 +203,28 @@ jobs:
           # 干净的缓存:前面的步骤可能已经下过同一个文件,那样这里一个字节都不会再下。
           HF_HOME: ${{ runner.temp }}/hf-meter
         run: |
-          # 界面上的下载进度以前是数缓存目录里文件的大小;Windows 上正在写的文件大小很久
-          # 才更新一次,进度就一直不动(2.7.1 实测)。现在接在 huggingface_hub 的进度回调上
-          # (services/model_catalog.py)。这里真下两个文件,看计数和文件大小对不对得上。
+          # 界面上的下载进度接在 huggingface_hub 的进度回调上(services/model_catalog.py)。
+          # 新建的环境装到的是最新的 huggingface_hub,而它报进度的方式变过(2.x 一个文件报
+          # 两条:网络上收到的、写进文件的;加在一起就是文件大小的 1.5~1.9 倍)——开发机
+          # 上的旧环境看不出来。所以在这里对着真下载核对:数出来的要正好等于文件大小。
           if [ -x .venv/Scripts/python.exe ]; then PY=.venv/Scripts/python.exe; else PY=.venv/bin/python; fi
           "$PY" - <<'PY'
           import os
+          import huggingface_hub
           from huggingface_hub import hf_hub_download
-          from huggingface_hub.utils import tqdm as hf_tqdm
           from services import model_catalog as mc
 
-          # 诊断:每个进度条是怎么建的、被 update 了多少次、加起来多少。
-          bars = []
-          real_init, real_update = hf_tqdm.__init__, hf_tqdm.update
-
-          def spy_init(self, *a, **k):
-              self._spy = {"desc": k.get("desc"), "unit": k.get("unit"), "total": k.get("total"),
-                           "initial": k.get("initial"), "disable": k.get("disable"), "calls": 0, "sum": 0}
-              bars.append(self._spy)
-              real_init(self, *a, **k)
-
-          def spy_update(self, n=1):
-              spy = getattr(self, "_spy", None)
-              if spy is not None:
-                  spy["calls"] += 1
-                  spy["sum"] += n or 0
-              return real_update(self, n)
-
-          hf_tqdm.__init__, hf_tqdm.update = spy_init, spy_update
+          print("huggingface_hub", huggingface_hub.__version__)
           assert mc.install_download_meter(), "could not hook huggingface_hub's progress"
-          failed = []
+          meter = mc.DOWNLOAD_METER
           for name in ("tinyllamas/stories260K.gguf", "tinyllamas/stories15M-q4_0.gguf"):
-              bars.clear()
-              before = mc.downloaded_total()
+              start = meter.snapshot()
               path = hf_hub_download("ggml-org/models", name)
-              counted, size = mc.downloaded_total() - before, os.path.getsize(path)
-              print(f"{name}: counted {counted} bytes, file is {size} bytes")
-              for b in bars:
-                  print("   bar:", b)
-              if counted != size:
-                  failed.append((name, counted, size))
-          assert not failed, failed
+              written, transferred = (now - then for now, then in zip(meter.snapshot(), start))
+              counted, size = meter.since(start), os.path.getsize(path)
+              print(f"{name}: counted {counted} (written {written}, transferred {transferred}), file is {size}")
+              assert counted == size, (name, counted, size)
+              assert transferred <= size, (name, transferred, size)
           PY
 
       # ── 两边都要:装出来的环境里 LLM 后处理的后端真的可用 ──
