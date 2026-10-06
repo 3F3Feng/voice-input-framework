@@ -151,6 +151,10 @@ pub struct ServerStatus {
     pub log_path: Option<String>,
     /// 最近若干行 stdout/stderr,失败时用来定位问题。
     pub recent_logs: Vec<String>,
+    /// 服务在跑,但模型没放在显卡上(LLM 的 `/health.accelerator == "cpu"`):为什么、
+    /// 怎么办。默认的 LLM 在 CPU 上一句话要等好几秒,不说出来用户只会觉得「后处理
+    /// 怎么这么慢」。跑在显卡上、或者服务端太老不报这一项时为空。
+    pub slow_note: Option<String>,
 }
 
 /// 两个服务 + 当前模式,一次性给前端。
@@ -1006,6 +1010,12 @@ struct Health {
     /// 加载进度(STT 服务端 `/health.loading`,见 services/stt_engine.py)。
     #[serde(default)]
     loading: Option<crate::loading::LoadingProgress>,
+    /// 模型跑在哪:`gpu` / `cpu`(LLM 服务端报,见 services/llm_server.py)。
+    #[serde(default)]
+    accelerator: Option<String>,
+    /// `accelerator == "cpu"` 的原因(装的是 CPU 版、显存不够退回来的……)。
+    #[serde(default)]
+    accelerator_note: Option<String>,
 }
 
 /// 端口上那个服务说它的模型怎么样了。
@@ -1020,6 +1030,30 @@ enum Answer {
 }
 
 impl Health {
+    /// 模型跑在 CPU 上时给用户看的那句话;跑在显卡上、或者服务端没报时为空。
+    fn slow_note(&self) -> Option<String> {
+        if self.accelerator.as_deref() != Some("cpu") {
+            return None;
+        }
+        let why = self
+            .accelerator_note
+            .as_deref()
+            .map(str::trim)
+            .filter(|w| !w.is_empty());
+        Some(match why {
+            Some(w) => tr!(
+                "模型跑在 CPU 上,会比较慢:{}",
+                "The model is running on the CPU, which is slow: {}",
+                w
+            ),
+            None => t(
+                "模型跑在 CPU 上,会比较慢",
+                "The model is running on the CPU, which is slow",
+            )
+            .to_string(),
+        })
+    }
+
     fn answer(&self) -> Answer {
         match self.status.as_str() {
             "ok" => Answer::Ready,
@@ -1134,6 +1168,7 @@ pub async fn status(
             owner: ServerOwner::App,
             can_stop: ServerOwner::App.can_manage(),
             pid: Some(snap.pid),
+            slow_note: h.slow_note(),
             current_model: h.current_model,
             detail: None,
             log_path: Some(snap.log_path),
@@ -1168,6 +1203,7 @@ pub async fn status(
                 owner,
                 can_stop: owner.can_manage(),
                 pid,
+                slow_note: h.slow_note(),
                 current_model: h.current_model,
                 detail: Some(detail.into()),
                 log_path: other.as_ref().map(|s| s.log_path.clone()),
@@ -1192,6 +1228,7 @@ pub async fn status(
                 )),
                 log_path: Some(snap.log_path),
                 recent_logs: snap.recent_logs,
+                slow_note: None,
             }
         }
         // 进程还活着但 `/health` 没通 = 正在加载模型(同样要求端口一致)。
@@ -1206,6 +1243,7 @@ pub async fn status(
             detail: Some(tr!("已启动,{}", "Started. {}", loading)),
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
+            slow_note: None,
         },
         // 端口有应答、模型还没就绪,但应答的**不是**本应用手里那个进程——典型是
         // 用户在终端里起的服务正在加载模型。以前这里要么落进下面的「未运行」
@@ -1244,6 +1282,7 @@ pub async fn status(
             }),
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
+            slow_note: None,
         },
         // 从没起过。本地模式下路径没配好就报 NotConfigured,让 UI 能说清原因。
         (None, None) => ServerStatus {
@@ -1266,6 +1305,7 @@ pub async fn status(
             },
             log_path: None,
             recent_logs: Vec::new(),
+            slow_note: None,
         },
     }
 }
@@ -1316,6 +1356,7 @@ fn external_pending_status(
         detail: Some(tr!("{}({})", "{} ({})", what, owner_note)),
         log_path: stale.as_ref().map(|s| s.log_path.clone()),
         recent_logs: stale.map(|s| s.recent_logs).unwrap_or_default(),
+        slow_note: None,
     }
 }
 
@@ -1985,6 +2026,7 @@ mod tests {
             detail: None,
             log_path: None,
             recent_logs: Vec::new(),
+            slow_note: None,
         }
     }
 
@@ -2161,7 +2203,30 @@ mod tests {
             current_model: Some("m".into()),
             error: error.map(Into::into),
             loading: None,
+            accelerator: None,
+            accelerator_note: None,
         }
+    }
+
+    #[test]
+    fn a_model_on_the_cpu_is_called_out_and_a_gpu_one_is_not() {
+        let with = |acc: Option<&str>, note: Option<&str>| Health {
+            accelerator: acc.map(Into::into),
+            accelerator_note: note.map(Into::into),
+            ..health("ok", None)
+        };
+        // 跑在显卡上、老服务端不报这一项:什么都不说。
+        assert_eq!(with(Some("gpu"), None).slow_note(), None);
+        assert_eq!(with(None, None).slow_note(), None);
+        // 跑在 CPU 上:说出来,带上服务端给的原因。
+        assert_eq!(
+            with(Some("cpu"), Some("显存不够")).slow_note().as_deref(),
+            Some("模型跑在 CPU 上,会比较慢:显存不够")
+        );
+        assert_eq!(
+            with(Some("cpu"), Some("  ")).slow_note().as_deref(),
+            Some("模型跑在 CPU 上,会比较慢")
+        );
     }
 
     #[test]

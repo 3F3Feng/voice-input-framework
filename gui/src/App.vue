@@ -307,6 +307,9 @@
             <!-- 默认的 LLM 要下 3–7 GB:打开开关后以前只有一句「正在启动 LLM 服务…」,
                  30 秒后弹一句「还在加载」,之后就什么都没有了。 -->
             <div v-if="llmLoadingNote" class="s-loading">{{ llmLoadingNote }}</div>
+            <!-- 模型没放在显卡上(装成了 CPU 版、显存不够退回来的):默认模型在 CPU 上一句话
+                 要等好几秒,得说出来,不然只会觉得「后处理怎么这么慢」。 -->
+            <div v-else-if="llmEnabled && llmSlowNote" class="s-tip srv-problem">⚠ {{ llmSlowNote }}</div>
             <div v-if="llmEnabled" style="margin-top: 8px;">
               <select v-if="llmModels.length" class="s-select" v-model="llmModel" @change="switchLlm">
                 <option v-for="m in llmModels" :key="m.name" :value="m.name">
@@ -811,6 +814,8 @@ interface ServerStatus {
   detail: string | null;
   log_path: string | null;
   recent_logs: string[];
+  /** 服务在跑,但模型没放在显卡上(LLM):为什么、怎么办。跑在显卡上时为空。 */
+  slow_note?: string | null;
 }
 interface LocalPathReport {
   repo_path: string | null;
@@ -1431,6 +1436,10 @@ const llmLoadingNote = computed(() => {
   if (serverMode.value !== "local" || !llm || llm.state !== "starting") return "";
   return llm.detail ? `LLM:${llm.detail}` : "";
 });
+const llmSlowNote = computed(() => {
+  const llm = serverReport.value?.llm;
+  return serverMode.value === "local" && llm?.state === "running" ? (llm.slow_note ?? "") : "";
+});
 function llmModelLabel(m: ModelInfo): string {
   const tags: string[] = [];
   if (m.is_loaded) tags.push("✓");
@@ -1462,6 +1471,7 @@ const serverRows = computed(() =>
           status.pid ? `pid ${status.pid}` : "",
           status.current_model ? t(`模型 ${status.current_model}`, `model ${status.current_model}`) : "",
           status.detail || "",
+          status.slow_note ? `⚠ ${status.slow_note}` : "",
           offBecauseToggle ? t("已随「LLM 后处理」关闭；打开那个开关会自动启动", "Off because LLM post-processing is off; turning it on starts this automatically") : "",
           onButMissing ? t("⚠「LLM 后处理」开着但服务没在跑，转录时的后处理会失败；点「启动」，或把那个开关关掉", "⚠ LLM post-processing is on but this service isn't running, so post-processing will fail; click Start, or turn that switch off") : "",
         ].filter(Boolean).join(t("　", " · "))

@@ -6,7 +6,7 @@
 两边都不必 import 对方(`services.llm_server` 在 import 时就会建引擎、读状态文件)。
 
 - Apple Silicon:MLX(mlx-lm),`pyproject.toml` 按平台 marker 默认就装。
-- 其它平台:llama.cpp(llama-cpp-python 跑 GGUF),要 `setup-env --llm` 装 `llm-cpp` extra。
+- 其它平台:llama.cpp(llama-cpp-python 跑 GGUF),要 `setup-env --llm` 装上(有显卡装 `llm-cpp-cuda` / `llm-cpp-vulkan`,否则 `llm-cpp`)。
 - `VIF_LLM_BACKEND=mlx|llamacpp` 可以强制指定(比如在 Mac 上试 llama.cpp 后端)。
 """
 

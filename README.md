@@ -112,10 +112,24 @@ llama.cpp 后端（其它平台，4bit 量化，首次使用时下载到 Hugging
 Gemma-4-E2B 的 QAT 版在 MLX 和 llama.cpp 上都只有 1 例不合格，延迟约为旧默认的一半。
 
 `llama-cpp-python` 要 0.3.25 以上（更早的版本不认 Gemma 4）。`setup-env --llm` 装的是官方
-预编译的 **CPU 版**（Windows x64、Linux x86_64 / aarch64），不需要编译器。想用显卡跑 LLM 后处理，
-可以在建好环境后自己换成 CUDA / Vulkan 版（`uv pip install llama-cpp-python --index-url
-https://abetlen.github.io/llama-cpp-python/whl/cu124`，或 `.../whl/vulkan`；CUDA 版要求系统里有
-CUDA 12 的运行库）——这条路还没在真机上验证过，之后「更新服务」会把它换回 CPU 版。
+**预编译包**，不需要编译器，并且**有显卡就装显卡版**（默认模型在纯 CPU 上一句话要等好几秒，
+CPU 版只是兜底）：
+
+| 显卡 | 装哪个 | 说明 |
+|------|--------|------|
+| NVIDIA | CUDA 版 | 最快。约 500 MB（Windows）/ 1.8 GB（Linux）。包里不带 CUDA 运行库，用的是 PyTorch CUDA 版带的那份，所以只需要显卡驱动 |
+| AMD / Intel Arc | Vulkan 版 | 约 40 MB，只需要显卡驱动；也能在 NVIDIA 上跑，比 CUDA 慢一些 |
+| 没有独立显卡 | CPU 版 | 兜底，慢 |
+
+装完脚本会真的加载一次，看 llama.cpp 认不认得出显卡；认不出（驱动太旧、缺运行库）就依次退回
+CUDA → Vulkan → CPU，并在最后说清楚落在了哪一个。`--llm-backend cuda|vulkan|cpu`
+（PowerShell 是 `-LlmBackend`）可以手动指定，「更新服务」会记住手动的选择；自动选的每次更新都重新
+探测，装了新驱动之后能自己升到显卡版。运行时如果模型在显卡上放不下（显存不够），LLM 服务会退回
+CPU，并在「设置 → 服务」和 LLM 开关下面提示。
+
+> 显卡版的选择和回退逻辑在 CI 里验证过（Vulkan 版用软件渲染真的跑了一次推理；假装有 N 卡时
+> CUDA 版加载不了会退回）。**CUDA 版在真的 NVIDIA 显卡上还没跑过**——有 N 卡的话，装完看一眼
+> 「设置 → 服务」里 LLM 那一行有没有「跑在 CPU 上」的提示。
 
 ## 🚀 快速开始
 
@@ -356,7 +370,7 @@ npm run tauri build
 | `VIF_LLM_MODEL` | Gemma-4-E2B(MLX)/ Gemma-4-E2B-GGUF(llama.cpp) | 默认 LLM 模型;填了另一个后端的模型名时忽略 |
 | `VIF_LLM_BACKEND` | 自动 | LLM 推理后端:`mlx` 或 `llamacpp`。不设时 Apple Silicon 用 MLX,其它平台用 llama.cpp |
 | `VIF_LLM_CTX` | 8192 | llama.cpp 后端的上下文窗口(token) |
-| `VIF_LLM_GPU_LAYERS` | -1 | llama.cpp 后端放到 GPU 上的层数,-1 为全部;CPU 版 llama.cpp 忽略它 |
+| `VIF_LLM_GPU_LAYERS` | -1 | llama.cpp 后端放到 GPU 上的层数,-1 为全部,0 为只用 CPU;装的是 CPU 版时没有作用 |
 | `VIF_API_TOKEN` | 未设置 | 访问令牌。设了之后除 `/health` 外的请求都要带 `Authorization: Bearer <令牌>`(WebSocket 也可用 `?token=`);客户端在「远程连接」里填。**暴露到局域网时务必设置** |
 | `VIF_CORS_ORIGINS` | 本地 GUI 的几个来源 | 允许的跨域来源,逗号分隔;见 `shared/constants.py` 的 `DEFAULT_CORS_ORIGINS` |
 | `VIF_REQUEST_TIMEOUT` | 300.0 | 请求超时(秒) |

@@ -30,7 +30,7 @@
     </template>
     <template v-else-if="llmOnly">
       <div class="s-label">{{ t('LLM 后处理的依赖还没装', "The LLM post-processing dependencies aren't installed") }}</div>
-      <div class="s-tip">{{ t('在这里装上 llama.cpp(预编译包,约几十 MB,不需要编译器),装完会重启本应用启动的服务。模型要等打开开关时才下载。', 'Install llama.cpp here (prebuilt, a few dozen MB, no compiler needed); services started by this app are restarted afterwards. The model is only downloaded when you turn the switch on.') }}</div>
+      <div class="s-tip">{{ t('在这里装上 llama.cpp(预编译包,不需要编译器):有 NVIDIA 显卡装 CUDA 版(约 500 MB),别的独立显卡装 Vulkan 版,都不行才用 CPU 版。装完会重启本应用启动的服务;模型要等打开开关时才下载。', 'Install llama.cpp here (prebuilt, no compiler needed): the CUDA build on NVIDIA GPUs (about 500 MB), the Vulkan build on other discrete GPUs, and the CPU build only as a last resort. Services started by this app are restarted afterwards; the model is only downloaded when you turn the switch on.') }}</div>
     </template>
     <template v-else>
       <div class="s-label">{{ status.python_path ? t('依赖没装全?在这里重建环境', 'Dependencies incomplete? Rebuild the environment here') : t('代码在了,还没有 Python 环境', 'The code is here, but there is no Python environment yet') }}</div>
@@ -39,7 +39,7 @@
 
     <div v-if="(needed || busy) && status?.llm_optional && !llmOnly" class="s-row" style="margin-top:4px">
       <label class="toggle"><input type="checkbox" v-model="withLlm" :disabled="busy" /><span class="slider"></span></label>
-      <span class="s-tip" style="margin:0">{{ t('同时装上 LLM 后处理要用的 llama.cpp(预编译包,约几十 MB;模型要等打开后处理开关时才下载)', 'Also install llama.cpp for LLM post-processing (prebuilt, a few dozen MB; the model is only downloaded when you turn post-processing on)') }}</span>
+      <span class="s-tip" style="margin:0">{{ t('同时装上 LLM 后处理要用的 llama.cpp(预编译包;有显卡装显卡版,NVIDIA 的约 500 MB。模型要等打开后处理开关时才下载)', 'Also install llama.cpp for LLM post-processing (prebuilt; the GPU build when you have a GPU — about 500 MB for NVIDIA. The model is only downloaded when you turn post-processing on)') }}</span>
     </div>
 
     <div v-if="needed || busy" class="s-row" style="margin-top:6px">

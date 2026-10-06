@@ -86,9 +86,14 @@ jobs:
   setup-env:
     # 建环境脚本本身没人测过:Windows 的 .ps1 在开发机(macOS)上根本跑不了,
     # `-Llm` 在没有 C++ 工具链的 Windows 上必失败这件事,是用户实测才发现的。
-    # 这里在干净的 runner 上真跑一遍(CPU 版 torch + 预编译的 llama-cpp-python),
-    # 再确认装出来的环境里 LLM 后处理的后端确实可用。
-    name: setup-env on ${{ matrix.os }} (with LLM deps)
+    # 这里在干净的 runner 上真跑一遍,重点是 LLM 后处理(llama.cpp)那一段:
+    # 有显卡装显卡版、装完加载不了依次退回(cuda → vulkan → cpu)。runner 没有显卡,
+    # 所以:
+    #   - Windows:放一个假的 nvidia-smi,让脚本以为有 NVIDIA 显卡 → 装 CUDA 版 →
+    #     没有驱动加载不了 → 退回。和用户的 N 卡机器走的是同一条路,只差最后成功那一步。
+    #   - Linux:装上软件实现的 Vulkan(lavapipe),手动指定 vulkan 版,真的用它跑一次
+    #     推理——证明 Vulkan 版的包能加载、能出字(速度当然不算数)。
+    name: setup-env on ${{ matrix.os }} (LLM backend selection)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -98,20 +103,89 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run setup-env.sh
-        if: runner.os != 'Windows'
-        run: scripts/setup-env.sh --backend cpu --llm
+      # ── Linux ──
+      - name: Install a software Vulkan driver (lavapipe)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
 
-      - name: Run setup-env.ps1
+      - name: setup-env.sh --llm (auto, no GPU on the runner -> CPU build)
+        if: runner.os == 'Linux'
+        run: |
+          scripts/setup-env.sh --backend cpu --llm
+          cat .venv/vif-llm-backend
+          grep -q '"requested": "auto", "installed": "cpu"' .venv/vif-llm-backend
+
+      - name: setup-env.sh --llm-backend vulkan (runs on lavapipe)
+        if: runner.os == 'Linux'
+        run: |
+          scripts/setup-env.sh --backend cpu --llm --llm-backend vulkan
+          cat .venv/vif-llm-backend
+          grep -q '"requested": "vulkan", "installed": "vulkan"' .venv/vif-llm-backend
+
+      - name: Vulkan build really generates text
+        if: runner.os == 'Linux'
+        run: |
+          .venv/bin/python - <<'PY'
+          import llama_cpp
+          from huggingface_hub import hf_hub_download
+
+          assert llama_cpp.llama_supports_gpu_offload(), "the Vulkan build sees no device"
+          # 1 MB 的玩具模型:要验证的是「模型放到 Vulkan 设备上能生成」,不是质量。
+          path = hf_hub_download("ggml-org/models", "tinyllamas/stories260K.gguf")
+          llm = llama_cpp.Llama(model_path=path, n_ctx=256, n_gpu_layers=-1, verbose=True)
+          out = llm("Once upon a time", max_tokens=16)["choices"][0]["text"]
+          print("generated:", repr(out))
+          assert out.strip(), "nothing was generated"
+          PY
+
+      # ── Windows ──
+      - name: setup-env.ps1 -Llm with a fake NVIDIA card (cuda -> vulkan -> cpu)
         if: runner.os == 'Windows'
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -Backend cpu -Llm
+        run: |
+          # 假的 nvidia-smi:脚本会以为有 NVIDIA 显卡,PyTorch 装 CUDA 版、llama.cpp 先试
+          # CUDA 版——和用户的 N 卡机器走的是同一条路。
+          $fake = Join-Path $env:RUNNER_TEMP "fake-nvidia"
+          New-Item -ItemType Directory -Force $fake | Out-Null
+          Set-Content -Path (Join-Path $fake "nvidia-smi.cmd") -Value "@exit /b 0" -Encoding ASCII
+          $env:Path = "$fake;$env:Path"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -Llm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $marker = Get-Content .venv\vif-llm-backend -Raw
+          Write-Host "marker: $marker"
+          # CUDA 版在没有驱动的 runner 上一定用不了;最后落在哪一个取决于 runner 上有没有
+          # Vulkan 运行库,但必须落在一个真能用的上面。
+          if ($marker -notmatch '"requested": "auto", "installed": "(vulkan|cpu)"') {
+            Write-Error "unexpected marker: $marker"; exit 1
+          }
 
+      - name: CUDA runtime from PyTorch is reachable for llama.cpp
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # CUDA 版的 llama.cpp 要 cudart64_12.dll / cublas64_12.dll(包里不带),我们指给它
+          # PyTorch CUDA 版带的那份(shared/llama_runtime.py)。runner 没有显卡驱动,
+          # 验证不了整条链,但这两个库按名字加载得到——剩下缺的就只有驱动里的 nvcuda.dll。
+          .venv/Scripts/python.exe - <<'PY'
+          import ctypes
+          from shared import llama_runtime
+
+          used = llama_runtime.prepare()
+          print("dirs:", used)
+          assert used, "no CUDA runtime directory found next to torch"
+          for name in ("cudart64_12.dll", "cublas64_12.dll"):
+              ctypes.WinDLL(name)
+              print("loaded", name)
+          PY
+
+      # ── 两边都要:装出来的环境里 LLM 后处理的后端真的可用 ──
       - name: LLM backend is usable in the environment it built
         shell: bash
         run: |
-          # 脚本在 LLM 依赖装不上时会退回「不带它再装一遍」并以 0 退出,所以光看
-          # 退出码不够,要确认 llama_cpp 真的能 import、后端选得出来。
+          # 脚本在 LLM 依赖装不上时会退回「不带它」并以 0 退出,所以光看退出码不够,
+          # 要确认 llama_cpp 真的能 import、后端选得出来。
           if [ -x .venv/Scripts/python.exe ]; then PY=.venv/Scripts/python.exe; else PY=.venv/bin/python; fi
           "$PY" - <<'PY'
           import llama_cpp, torch
@@ -120,7 +194,7 @@ jobs:
           backend, why = llm_backend.choose_backend(False)
           assert (backend, why) == ("llamacpp", None), (backend, why)
           print("llama_cpp", llama_cpp.__version__, "| torch", torch.__version__)
-          print(llama_cpp.llama_print_system_info().decode(errors="replace"))
+          print("gpu offload:", llama_cpp.llama_supports_gpu_offload())
           PY
 
   rust-logic:

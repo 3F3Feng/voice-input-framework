@@ -425,6 +425,9 @@ pub struct EnvFacts {
     pub torch: Option<String>,
     pub llama_cpp: bool,
     pub dev: bool,
+    /// 上次建环境时 `--llm-backend` 要的是什么(`<venv>/vif-llm-backend`,脚本写的):
+    /// auto / cuda / vulkan / cpu。没有这个文件(老环境)时为空,按 auto 处理。
+    pub llm_backend: Option<String>,
 }
 
 /// 只查包的元数据,不 import:import torch 要好几秒,这里只要版本号。
@@ -436,9 +439,16 @@ def v(name):
         return metadata.version(name)
     except Exception:
         return None
+def llm_backend():
+    try:
+        import os
+        with open(os.path.join(sys.prefix, "vif-llm-backend"), encoding="utf-8") as f:
+            return str(json.load(f).get("requested") or "") or None
+    except Exception:
+        return None
 out = {"apple_silicon": sys.platform == "darwin" and platform.machine() == "arm64",
        "torch": v("torch"), "llama_cpp": v("llama-cpp-python") is not None,
-       "dev": v("pytest") is not None}
+       "dev": v("pytest") is not None, "llm_backend": llm_backend()}
 sys.stdout.write("\nVIF_SETUP_JSON:" + json.dumps(out) + "\n")
 "#;
 
@@ -459,6 +469,30 @@ fn torch_backend(version: &str) -> Option<&'static str> {
     }
 }
 
+/// 这个环境当初要没要 LLM 后处理的依赖。装着 llama.cpp 当然算;标记文件在也算——
+/// 上次要了但没装上(连不上 github.com),重建时应该再试一次。
+fn wants_llm(env: &EnvFacts) -> bool {
+    !env.apple_silicon && (env.llama_cpp || env.llm_backend.is_some())
+}
+
+/// 用户手动指定过的 llama.cpp 版本(cuda / vulkan / cpu),重建时原样带上。自动选的
+/// 和老环境(没有标记文件)不带,让脚本重新探测:换了显卡、更新了驱动之后能自己升到
+/// 显卡版,以前现编译出来的 CPU 版也会换成显卡版。
+fn manual_llm_backend(env: &EnvFacts) -> Option<&'static str> {
+    match env
+        .llm_backend
+        .as_deref()?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "cuda" => Some("cuda"),
+        "vulkan" => Some("vulkan"),
+        "cpu" => Some("cpu"),
+        _ => None,
+    }
+}
+
 /// 建环境脚本的参数。`windows` 时用 PowerShell 版的写法(`-Backend` / `-Llm` / `-Dev`)。
 pub fn setup_args(env: &EnvFacts, windows: bool) -> Vec<String> {
     let mut args = Vec::new();
@@ -474,8 +508,12 @@ pub fn setup_args(env: &EnvFacts, windows: bool) -> Vec<String> {
             args.push("-Backend".into());
             args.push(b.into());
         }
-        if env.llama_cpp && !env.apple_silicon {
+        if wants_llm(env) {
             args.push("-Llm".into());
+            if let Some(b) = manual_llm_backend(env) {
+                args.push("-LlmBackend".into());
+                args.push(b.into());
+            }
         }
         if env.dev {
             args.push("-Dev".into());
@@ -485,8 +523,12 @@ pub fn setup_args(env: &EnvFacts, windows: bool) -> Vec<String> {
             args.push("--backend".into());
             args.push(b.into());
         }
-        if env.llama_cpp && !env.apple_silicon {
+        if wants_llm(env) {
             args.push("--llm".into());
+            if let Some(b) = manual_llm_backend(env) {
+                args.push("--llm-backend".into());
+                args.push(b.into());
+            }
         }
         if env.dev {
             args.push("--dev".into());
@@ -1436,6 +1478,7 @@ mod tests {
             detail: None,
             log_path: None,
             recent_logs: Vec::new(),
+            slow_note: None,
         }
     }
 
@@ -1489,6 +1532,7 @@ mod tests {
             torch: Some("2.5.1".into()),
             llama_cpp: false,
             dev: false,
+            llm_backend: None,
         };
         assert!(setup_args(&mac, false).is_empty());
         let mac_dev = EnvFacts {
@@ -1502,6 +1546,7 @@ mod tests {
             torch: Some("2.5.1+cu124".into()),
             llama_cpp: true,
             dev: false,
+            llm_backend: None,
         };
         assert_eq!(
             setup_args(&linux, false),
@@ -1525,6 +1570,44 @@ mod tests {
         assert_eq!(setup_args(&cpu, true), vec!["-Backend", "cpu", "-Dev"]);
         // 没有本地版本标记 / 没装 torch:让脚本自己探测。
         assert!(setup_args(&EnvFacts::default(), false).is_empty());
+    }
+
+    #[test]
+    fn setup_args_keep_a_manual_llm_backend_and_redetect_an_automatic_one() {
+        let with = |llama_cpp: bool, backend: Option<&str>| EnvFacts {
+            llama_cpp,
+            llm_backend: backend.map(str::to_string),
+            ..Default::default()
+        };
+        // 自动选的、老环境(没有标记):只带 --llm,让脚本重新探测显卡——以前现编译的
+        // CPU 版、当时没驱动退回 CPU 的,下次更新能自己升到显卡版。
+        assert_eq!(setup_args(&with(true, Some("auto")), false), vec!["--llm"]);
+        assert_eq!(setup_args(&with(true, None), false), vec!["--llm"]);
+        // 手动指定过的原样带上(比如在有显卡的机器上特意要 CPU 版)。
+        assert_eq!(
+            setup_args(&with(true, Some("cpu")), false),
+            vec!["--llm", "--llm-backend", "cpu"]
+        );
+        assert_eq!(
+            setup_args(&with(true, Some("Vulkan")), true),
+            vec!["-Llm", "-LlmBackend", "vulkan"]
+        );
+        // 上次要了但没装上(标记在、包不在):再试一次。
+        assert_eq!(setup_args(&with(false, Some("auto")), false), vec!["--llm"]);
+        assert_eq!(
+            setup_args(&with(false, Some("cuda")), true),
+            vec!["-Llm", "-LlmBackend", "cuda"]
+        );
+        // 标记文件里是不认识的东西:当成自动。
+        assert_eq!(setup_args(&with(true, Some("metal")), false), vec!["--llm"]);
+        // Apple Silicon 用 MLX,什么都不带。
+        let mac = EnvFacts {
+            apple_silicon: true,
+            llama_cpp: true,
+            llm_backend: Some("cpu".into()),
+            ..Default::default()
+        };
+        assert!(setup_args(&mac, false).is_empty());
     }
 
     #[test]

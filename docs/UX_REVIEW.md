@@ -448,7 +448,7 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
 | 默认 LLM 换成 Gemma-4-E2B QAT | 64 例自动检查(`tools/llm_prompt_eval.py`)比了 9 个小模型:MLX 与 llama.cpp 上都只有 1 例不合格,延迟约为旧默认一半,内存相当;旧的 llama.cpp 默认 Qwen3.5-2B 54/64 不合格(基本原样照抄)。默认模型加载失败时退回旧默认;提示词照顾中英混说、写明英文大小写 |
 | LLM 不再翻译 | 实测中文提示词会让模型把英文口述整理成中文、把中英混说里的 deploy / rollback 译掉:包原文的说明加「保持原文的语言,不要翻译」,输出兜底加「换了语言就退回原文」 |
 | F17 长期 | LLM 服务加 llama.cpp 后端(GGUF,默认 Qwen3.5-2B-GGUF):Apple Silicon 用 MLX,其它平台装了 llama-cpp-python 就用 llama.cpp,`VIF_LLM_BACKEND` 可强制;`/llm/enabled` 的 supported 跟着走,没装时提示 `setup-env --llm` |
-| 2.7.0(Windows 真机反馈) | 新机器「下载并安装 / 一键建环境」(克隆 + setup-env,只缺 git 时给安装命令);下载进度带总量、进头部、LLM 也报;模型下拉框跟着服务端正在加载的模型;`setup-env --llm` 改装预编译的 llama-cpp-python(Windows 无 C++ 工具链时不再必失败);transformers 原生的 Qwen3-ASR 引擎(`qwen_asr` / `qwen_asr_small`,Windows / Linux 可选);`whisper_mlx_turbo` 的仓库名修正;CI 真跑 `setup-env`(Windows + Linux) |
+| 2.7.0(Windows 真机反馈) | 新机器「下载并安装 / 一键建环境」(克隆 + setup-env,只缺 git 时给安装命令);下载进度带总量、进头部、LLM 也报;模型下拉框跟着服务端正在加载的模型;`setup-env --llm` 改装预编译的 llama-cpp-python(Windows 无 C++ 工具链时不再必失败),有显卡装显卡版(CUDA / Vulkan),加载不了逐级退回,跑在 CPU 上时界面提示;transformers 原生的 Qwen3-ASR 引擎(`qwen_asr` / `qwen_asr_small`,Windows / Linux 可选);`whisper_mlx_turbo` 的仓库名修正;CI 真跑 `setup-env`(Windows + Linux) |
 
 实测坐实并验证过的(本机真模型、真服务):R9 R25 R34 R35 R36 R37 R40、LLM 失败回退原文、
 转写心跳(49 秒推理收到 9 条)、个人词库(热词把「石峰」认成「石枫」,规则把「陶睿」换成 Tauri)、
@@ -476,10 +476,15 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
   Linux 只记日志。
 - F17 llama.cpp 后端只在本机(M3 Max,Metal 版和 `VIF_LLM_GPU_LAYERS=0` 的纯 CPU)实测过;
   Windows（2026-10-05，GTX 1070 Ti）实测：`setup-env.ps1 -Llm` 在没装 VS Build Tools（C++ 桌面开发）时**必失败** —— `llama-cpp-python` 现编译，CMake 找不到 nmake/cl。
-  2.7.0 改成装官方预编译的 CPU 版(不用编译器;装不上也只是 LLM 后处理用不了,不拖累整个环境),
-  CI 在干净的 Windows / Linux runner 上真跑一遍 `setup-env -Llm` 并确认 `llama_cpp` 能 import。
-  **真机上还没验证的**:预编译包在用户的 Windows 上跑默认 GGUF 模型的速度(纯 CPU);CUDA / Vulkan 版
-  (README 里给了手动换装的命令,「更新服务」会把它换回 CPU 版——要做成一等公民得有真机)。
+  2.7.0 改成装官方预编译包,并且有显卡就装显卡版(NVIDIA → CUDA,AMD / Intel Arc → Vulkan,
+  装完加载一次、认不出显卡就依次退回,CPU 版只是兜底;`--llm-backend` 可手动指定)。CI 在干净的
+  Windows / Linux runner 上真跑:Windows 上假装有 N 卡走「CUDA → 退回」,Linux 上用 lavapipe 让
+  Vulkan 版真的生成一段字。
+  **真机上还没验证的(最要紧的一条)**:CUDA 版在真的 NVIDIA 显卡上。它不带 cudart / cublas,靠
+  `shared/llama_runtime.py` 把 PyTorch CUDA 版目录里的那两个库指给它——CI 只验证到「这两个库按名字
+  加载得到」,缺驱动的 runner 上走不到真正出字。GTX 10 系这种老卡能不能用 cu124 的包也不知道
+  (不行会退到 Vulkan)。Vulkan 版在真显卡上的速度也没量过。
+  macOS 的预编译包是坏的(解压报 deflate 错误),所以 macOS 照旧从源码编译(自带 Metal)。
 - 2.7.0 的几样新东西只在本机(M3 Max)和浏览器假后端里验证过:
   - 「下载并安装 / 一键建环境」(`local_setup.rs`):克隆 + 建环境的整条链在 macOS 上用真脚本跑通;
     Windows 上的 PowerShell 路径、没有 git 时的提示、建环境前停服务再拉起,都没在真机上走过。
@@ -520,8 +525,9 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
    下拉框就停在列表第一项(注册表里是 `qwen_asr_mlx_native`)。`/models` 现在报 `is_current` /
    `is_loading`,下拉框跟着服务端走。
 
-7. (新)llama.cpp 用显卡:预编译包是 CPU 版。Vulkan 版(A / N / I 卡通吃,驱动自带运行库)最有希望
-   做成默认,但没有真机不敢动;CUDA 版要系统里有 CUDA 12 运行库。
+7. (新)llama.cpp 的显卡版要在真机上过一遍(见 5.2):CUDA 版在 NVIDIA 上能不能加载、多快;
+   Vulkan 版在 A 卡 / N 卡上多快。过了之后可以考虑给 ≥16 GB 显存 / 内存的机器默认 E4B 的 GGUF
+   (现在 llama.cpp 这边一律 E2B)。
 8. (新)Whisper(transformers)自动检测语言时,结果里的 `language` 一律报成 `en`(`_infer_sync`
    里 `lang or "en"`)。目前没有地方依赖它,但历史记录 / 以后按语言挑提示词时会出错。
 

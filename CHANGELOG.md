@@ -23,7 +23,8 @@
   和 `whisper_turbo` 一样准、自带标点,还更快(90 秒录音 4.5 秒对 9.6 秒)。**NVIDIA 真机上还没验证
   过**,所以暂时不会自动选它,要手动切。
 - **CI 真跑一遍建环境脚本**:在干净的 Windows / Linux runner 上执行 `setup-env -Llm`(Windows 的
-  `.ps1` 以前从来没被自动测过),并确认装出来的环境里 LLM 后处理的后端能用。
+  `.ps1` 以前从来没被自动测过):Windows 上假装有 NVIDIA 显卡走完「CUDA → 退回」那条链,Linux 上
+  用软件实现的 Vulkan 让 Vulkan 版真的生成一段字,最后确认装出来的环境里 LLM 后处理的后端能用。
 
 ### Changed
 
@@ -35,10 +36,18 @@
   - 打开「LLM 后处理」开关、切换 LLM 模型时,开关下面也有这一行;
   - 模型下拉框里没下载过的写「需下载约 1.6 GB」——以前写的其实是运行时占的内存
     (Qwen3-ASR-1.7B 写「~1 GB」,实际要下 2.5 GB);LLM 的下拉框也有了。
-- **`setup-env --llm` / `-Llm` 不再现编译**:`llama-cpp-python` 改装官方的预编译包(CPU 版),不需要
-  CMake 和编译器。带它装不上时(没有对应平台的预编译包、连不上 github.com),脚本退回不带它再装
-  一遍,最后说清楚只有 LLM 后处理没装上,不再让整个环境建不起来。想用显卡跑 LLM 后处理,README 里
-  有手动换成 CUDA / Vulkan 版的命令(未在真机上验证)。
+- **`setup-env --llm` / `-Llm` 不再现编译,而且有显卡就装显卡版**:`llama-cpp-python` 改装官方的
+  预编译包,不需要 CMake 和编译器。默认模型在纯 CPU 上一句话要等好几秒,所以:
+  - NVIDIA 显卡装 **CUDA 版**(最快;CUDA 运行库用 PyTorch CUDA 版带的那份,只需要显卡驱动),
+    AMD / Intel Arc 装 **Vulkan 版**,没有独立显卡才装 CPU 版;
+  - 装完真的加载一次,llama.cpp 认不出显卡(驱动太旧、缺运行库)就依次退回 CUDA → Vulkan → CPU,
+    最后说清楚落在了哪一个;哪一种都装不上时只是 LLM 后处理用不了,不再让整个环境建不起来;
+  - `--llm-backend cuda|vulkan|cpu`(PowerShell 是 `-LlmBackend`)可以手动指定,「更新服务」会原样
+    带上;自动选的每次更新重新探测(装了新驱动、以前现编译出来的 CPU 版,都会自己升到显卡版);
+  - 运行时模型在显卡上放不下(显存不够)会退回 CPU;跑在 CPU 上时「设置 → 服务」的 LLM 那一行和
+    LLM 开关下面有黄字提示和原因。
+  - **CUDA 版还没在真的 NVIDIA 显卡上跑过**(CI 没有显卡:Vulkan 版用软件渲染跑了一次真推理,
+    CUDA 版验证了加载不了时会退回,以及 PyTorch 带的 CUDA 运行库按名字加载得到)。
 
 ### Fixed
 

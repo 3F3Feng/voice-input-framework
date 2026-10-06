@@ -196,6 +196,96 @@ class TestLLMEngine:
         assert result is True
 
 
+class TestLlamaCppAccelerator:
+    """llama.cpp 默认把模型放在显卡上;放不上去就退回 CPU,并且说出来。
+
+    默认模型在 CPU 上一句话要等好几秒:悄悄跑在 CPU 上,用户只会觉得「后处理怎么这么慢」。
+    """
+
+    def backend(self, monkeypatch, *, has_gpu: bool, gpu_fails: bool = False, layers: int = -1):
+        import sys
+        import types
+
+        import services.llm_server as srv
+
+        opened: list[int] = []
+
+        class Llama:
+            def __init__(self, model_path, n_ctx, n_gpu_layers, verbose):
+                opened.append(n_gpu_layers)
+                if gpu_fails and n_gpu_layers != 0:
+                    raise RuntimeError("failed to allocate 3400 MiB")
+
+        monkeypatch.setitem(
+            sys.modules,
+            "llama_cpp",
+            types.SimpleNamespace(Llama=Llama, llama_supports_gpu_offload=lambda: has_gpu),
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "huggingface_hub",
+            types.SimpleNamespace(hf_hub_download=lambda repo_id, filename: "/tmp/m.gguf"),
+        )
+        monkeypatch.setattr(srv.GGUFChatTemplate, "from_llama", classmethod(lambda cls, llm: "t"))
+        backend = srv.LlamaCppBackend()
+        monkeypatch.setattr(backend, "N_GPU_LAYERS", layers)
+        return backend, opened
+
+    def test_gpu_build_puts_every_layer_on_the_gpu(self, monkeypatch):
+        backend, opened = self.backend(monkeypatch, has_gpu=True)
+        assert backend.accelerator is None  # 还没加载过
+        backend.load("org/repo/file.gguf")
+        assert opened == [-1]
+        assert (backend.accelerator, backend.accelerator_note) == ("gpu", None)
+
+    def test_gpu_load_failure_falls_back_to_cpu_and_says_why(self, monkeypatch):
+        backend, opened = self.backend(monkeypatch, has_gpu=True, gpu_fails=True)
+        backend.load("org/repo/file.gguf")
+        assert opened == [-1, 0]
+        assert backend.accelerator == "cpu"
+        assert "3400 MiB" in backend.accelerator_note
+        assert "CPU" in backend.accelerator_note
+
+    def test_cpu_build_runs_on_cpu_and_points_at_the_gpu_install(self, monkeypatch):
+        backend, opened = self.backend(monkeypatch, has_gpu=False)
+        backend.load("org/repo/file.gguf")
+        assert opened == [0]
+        assert backend.accelerator == "cpu"
+        assert "setup-env" in backend.accelerator_note
+
+    def test_gpu_layers_zero_is_respected_without_a_scary_note(self, monkeypatch):
+        backend, opened = self.backend(monkeypatch, has_gpu=True, layers=0)
+        backend.load("org/repo/file.gguf")
+        assert opened == [0]
+        assert backend.accelerator == "cpu"
+        assert "VIF_LLM_GPU_LAYERS" in backend.accelerator_note
+
+    @pytest.mark.asyncio
+    async def test_health_reports_the_accelerator_once_loaded(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        import services.llm_server as srv
+
+        backend, _ = self.backend(monkeypatch, has_gpu=False)
+        engine = srv.LLMEngine(backend=backend)
+        monkeypatch.setattr(srv, "engine", engine)
+        client = TestClient(srv.app)
+        before = client.get("/health").json()
+        assert before["accelerator"] is None and before["accelerator_note"] is None
+        assert await engine.load() is True
+        zh = client.get("/health").json()
+        assert zh["accelerator"] == "cpu"
+        assert "没有认出可用的显卡" in zh["accelerator_note"]
+        en = client.get("/health", headers={"Accept-Language": "en"}).json()
+        assert "no usable GPU" in en["accelerator_note"]
+
+    def test_mlx_always_reports_gpu(self):
+        import services.llm_server as srv
+
+        assert srv.MLXBackend().accelerator == "gpu"
+        assert srv.MLXBackend().accelerator_note is None
+
+
 class TestLoadFailureAndModelChoice:
     """R15:加载失败要报出来;R16:选过的模型重启后还在"""
 

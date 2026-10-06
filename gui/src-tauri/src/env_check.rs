@@ -80,7 +80,16 @@ for n in names:
     out["packages"][n] = probe(n)
 
 if not out["apple_silicon"]:
-    # LLM 后处理在非 Apple 平台走 llama.cpp(可选,不装只是后处理用不了)
+    # LLM 后处理在非 Apple 平台走 llama.cpp(可选,不装只是后处理用不了)。
+    # CUDA 版要的 CUDA 运行库在 PyTorch 的目录里,先照 LLM 服务的做法指给它
+    # (shared/llama_runtime.py),不然装得好好的也会被报成 import 失败。
+    if repo:
+        try:
+            sys.path.insert(0, repo)
+            from shared import llama_runtime
+            llama_runtime.prepare()
+        except BaseException:
+            pass
     out["packages"]["llama_cpp"] = probe("llama_cpp")
     try:
         import importlib.util
@@ -544,14 +553,14 @@ fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
                 .to_string(),
                 Some(if cfg!(target_os = "windows") {
                     t(
-                        "要 LLM 后处理的话运行 scripts\\setup-env.ps1 -Llm(装预编译包,不需要编译器)",
-                        "For LLM post-processing, run scripts\\setup-env.ps1 -Llm (installs a prebuilt package; no compiler needed)",
+                        "要 LLM 后处理的话运行 scripts\\setup-env.ps1 -Llm(装预编译包,有显卡装显卡版,不需要编译器)",
+                        "For LLM post-processing, run scripts\\setup-env.ps1 -Llm (installs a prebuilt package — the GPU build when you have a GPU; no compiler needed)",
                     )
                     .to_string()
                 } else {
                     t(
-                        "要 LLM 后处理的话运行 scripts/setup-env.sh --llm(装预编译包,不需要编译器)",
-                        "For LLM post-processing, run scripts/setup-env.sh --llm (installs a prebuilt package; no compiler needed)",
+                        "要 LLM 后处理的话运行 scripts/setup-env.sh --llm(装预编译包,有显卡装显卡版,不需要编译器)",
+                        "For LLM post-processing, run scripts/setup-env.sh --llm (installs a prebuilt package — the GPU build when you have a GPU; no compiler needed)",
                     )
                     .to_string()
                 }),
