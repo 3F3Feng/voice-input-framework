@@ -69,6 +69,21 @@ pub struct SttHealth {
     /// 结论都和上一轮不同,事件会一直发——头部那行「正在下载模型… 405 MB / 约
     /// 1.6 GB」就是这么动起来的。
     pub loading: Option<LoadingProgress>,
+    /// 服务端按这台机器的硬件定下的那一套配置(`/health.hardware.plan`,见
+    /// shared/hardware_plan.py)。界面上用它说明「为什么默认是这个模型」。老服务端没有。
+    pub plan: Option<HardwarePlan>,
+}
+
+/// 服务端的 `Plan.as_dict()`。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct HardwarePlan {
+    pub tier: String,
+    pub stt_model: String,
+    pub llm_model: String,
+    pub llm_on_gpu: bool,
+    pub llm_default_on: bool,
+    pub why: String,
 }
 
 impl SttHealth {
@@ -81,6 +96,7 @@ impl SttHealth {
             error: None,
             url: url.to_string(),
             loading: None,
+            plan: None,
         }
     }
 
@@ -129,6 +145,9 @@ impl SttHealth {
                 }
                 _ => None,
             },
+            plan: serde_json::from_value::<HardwarePlan>(data["hardware"]["plan"].clone())
+                .ok()
+                .filter(|p| !p.tier.is_empty()),
         }
     }
 }
@@ -408,5 +427,29 @@ mod tests {
         let h = SttHealth::from_health(URL, &json!({"status": "loading"}));
         assert_eq!(h.state, SttHealthState::Loading);
         assert!(h.loading.is_none());
+    }
+
+    #[test]
+    fn hardware_plan_is_read_from_health_when_the_server_has_one() {
+        let h = SttHealth::from_health(
+            URL,
+            &json!({"status": "ok", "current_model": "qwen_asr_small",
+                    "hardware": {"backend": "llamacpp", "plan": {
+                        "tier": "gpu-both", "stt_model": "qwen_asr_small",
+                        "llm_model": "Gemma-4-E2B-GGUF", "llm_on_gpu": true,
+                        "llm_default_on": true, "why": "GTX 1070 Ti,显存 8 GB"}}}),
+        );
+        let plan = h.plan.expect("plan");
+        assert_eq!(plan.tier, "gpu-both");
+        assert_eq!(plan.llm_model, "Gemma-4-E2B-GGUF");
+        assert!(plan.llm_on_gpu);
+        // 老服务端:hardware 里没有 plan,或者压根没有 hardware。
+        for old in [
+            json!({"status": "ok", "hardware": {"backend": "cuda"}}),
+            json!({"status": "ok"}),
+            json!({"status": "ok", "hardware": {"plan": null}}),
+        ] {
+            assert!(SttHealth::from_health(URL, &old).plan.is_none());
+        }
     }
 }

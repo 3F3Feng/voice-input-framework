@@ -110,10 +110,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
 
-      - name: setup-env.sh --llm (auto, no GPU on the runner -> CPU build)
+      - name: setup-env.sh (auto, no GPU on the runner -> CPU build of llama.cpp)
         if: runner.os == 'Linux'
         run: |
-          scripts/setup-env.sh --backend cpu --llm
+          # 不带任何参数:llama.cpp 是默认就装的(语音识别和 LLM 后处理都跑在它上面)。
+          scripts/setup-env.sh --backend cpu
           cat .venv/vif-llm-backend
           grep -q '"requested": "auto", "installed": "cpu"' .venv/vif-llm-backend
 
@@ -122,7 +123,7 @@ jobs:
         run: |
           # 只有 lavapipe、不点名设备:Vulkan 版装得上,但 llama.cpp 认不出显卡,脚本应该
           # 判它「用不了」。手动指定时不再往下退,所以落在 none。
-          scripts/setup-env.sh --backend cpu --llm --llm-backend vulkan
+          scripts/setup-env.sh --backend cpu --llm-backend vulkan
           cat .venv/vif-llm-backend
           grep -q '"requested": "vulkan", "installed": "none"' .venv/vif-llm-backend
 
@@ -134,7 +135,7 @@ jobs:
         env:
           GGML_VK_VISIBLE_DEVICES: "0"
         run: |
-          scripts/setup-env.sh --backend cpu --llm --llm-backend vulkan
+          scripts/setup-env.sh --backend cpu --llm-backend vulkan
           cat .venv/vif-llm-backend
           grep -q '"requested": "vulkan", "installed": "vulkan"' .venv/vif-llm-backend
 
@@ -157,7 +158,7 @@ jobs:
           PY
 
       # ── Windows ──
-      - name: setup-env.ps1 -Llm with a fake NVIDIA card (cuda -> vulkan -> cpu)
+      - name: setup-env.ps1 with a fake NVIDIA card (cuda -> vulkan -> cpu)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
@@ -167,7 +168,7 @@ jobs:
           New-Item -ItemType Directory -Force $fake | Out-Null
           Set-Content -Path (Join-Path $fake "nvidia-smi.cmd") -Value "@exit /b 0" -Encoding ASCII
           $env:Path = "$fake;$env:Path"
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -Llm
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-env.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $marker = Get-Content .venv\vif-llm-backend -Raw
           Write-Host "marker: $marker"
@@ -225,6 +226,48 @@ jobs:
               print(f"{name}: counted {counted} (written {written}, transferred {transferred}), file is {size}")
               assert counted == size, (name, counted, size)
               assert transferred <= size, (name, transferred, size)
+      # ── 两边都要:量化版 Qwen3-ASR 在这个环境里真的认得出话 ──
+      - name: Quantized Qwen3-ASR transcribes real speech
+        shell: bash
+        env:
+          # Linux 上这一步跑在软件实现的 Vulkan 上(见上);Windows 的 runner 没有显卡,跑 CPU。
+          GGML_VK_VISIBLE_DEVICES: "0"
+        run: |
+          # 非 Apple 平台上默认的识别模型(services/qwen_asr_gguf.py)。音频是经 llama.cpp 的
+          # 多模态库送进去的,开发机(macOS)上验证不了 Windows / Linux 的包里这条路通不通。
+          # 顺便把这台机器被分到哪一档、识别花了多久打出来——runner 是 4 核的普通 x86,
+          # 正好当「没有显卡的机器」的速度参考。
+          if [ -x .venv/Scripts/python.exe ]; then PY=.venv/Scripts/python.exe; else PY=.venv/bin/python; fi
+          "$PY" - <<'PY'
+          import time, wave
+          import numpy as np
+          from huggingface_hub import hf_hub_download
+          from services import hardware
+          from services.qwen_asr_gguf import QwenASRGguf
+          from shared.model_registry import MODELS_CONFIG
+
+          print("devices:", hardware.llama_devices())
+          print("machine:", hardware.machine())
+          print("plan   :", hardware.current_plan())
+
+          info = MODELS_CONFIG["qwen_asr_small"]
+          t = time.time()
+          engine = QwenASRGguf(info["model_id"], info["gguf_file"], info["mmproj_file"])
+          print(f"loaded on {engine.accelerator} in {time.time() - t:.1f}s; note: {engine.accelerator_note}")
+
+          clip = hf_hub_download("bezzam/audio_samples", "librispeech_mr_quilter.wav", repo_type="dataset")
+          with wave.open(clip) as w:
+              assert (w.getnchannels(), w.getsampwidth(), w.getframerate()) == (1, 2, 16000)
+              audio = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32768
+          seconds = len(audio) / 16000
+          for language in (None, "English"):
+              t = time.time()
+              text, spoken = engine.transcribe(audio, 16000, language)
+              took = time.time() - t
+              print(f"language={language}: {seconds:.1f}s of audio in {took:.2f}s (x{took / seconds:.2f} realtime) -> {spoken}: {text}")
+              assert "quilter" in text.lower() and "gospel" in text.lower(), text
+          assert spoken is None  # 指定了语言时模型不再报语言
+          engine.close()
           PY
 
       # ── 两边都要:装出来的环境里 LLM 后处理的后端真的可用 ──

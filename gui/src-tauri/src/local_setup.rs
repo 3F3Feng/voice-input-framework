@@ -166,23 +166,17 @@ pub fn git_hint(os: Os) -> GitHint {
     }
 }
 
-/// 建环境脚本的参数里有没有 LLM 那一项。
-fn has_llm_flag(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--llm" || a == "-Llm")
-}
-
-/// 在现有参数上按需补 LLM 后处理的依赖。Apple Silicon 用 MLX,不需要(脚本在那边
-/// 也会忽略这个参数,但别把没用的东西写进命令里)。
-pub fn with_llm(
-    mut args: Vec<String>,
-    want_llm: bool,
-    apple_silicon: bool,
-    windows: bool,
-) -> Vec<String> {
-    if want_llm && !apple_silicon && !has_llm_flag(&args) {
-        args.push(if windows { "-Llm" } else { "--llm" }.into());
+/// 用户在这里点了「安装」:llama.cpp 默认就装,所以只要把以前留下的「不装」去掉。
+///
+/// 环境里的标记是 `off`(当初用了 `--no-llm`)时,`setup_args` 会原样带上它;可用户
+/// 现在明确要装了(「安装 LLM 依赖」),不能再带。别的参数(后端、手动指定的版本)照旧。
+pub fn with_llm(args: Vec<String>, want_llm: bool) -> Vec<String> {
+    if !want_llm {
+        return args;
     }
-    args
+    args.into_iter()
+        .filter(|a| a != "--no-llm" && a != "-NoLlm")
+        .collect()
 }
 
 /// 给前端的现状:要不要克隆、能不能克隆、缺什么。
@@ -415,12 +409,7 @@ async fn run_inner(
     // 这一次会给**已有的环境**新装上 llama.cpp:STT 服务是启动时查的「本机能不能跑
     // LLM 后处理」,不重启它,开关会一直灰着。
     let llm_newly_installed = llm && !APPLE_SILICON && existing_python.is_some() && !env.llama_cpp;
-    let args = with_llm(
-        service_update::setup_args(&env, windows),
-        llm,
-        APPLE_SILICON,
-        windows,
-    );
+    let args = with_llm(service_update::setup_args(&env, windows), llm);
     let manual = manual_command(&repo, &args, windows);
 
     // Windows 上正在运行的 Python 进程锁着它加载的 .pyd / .dll,uv 换不掉;已有环境
@@ -622,22 +611,20 @@ mod tests {
     }
 
     #[test]
-    fn llm_flag_is_added_once_and_only_where_it_matters() {
+    fn asking_for_llm_drops_an_old_opt_out_and_nothing_else() {
         let none: Vec<String> = Vec::new();
-        assert_eq!(with_llm(none.clone(), true, false, false), vec!["--llm"]);
-        assert_eq!(with_llm(none.clone(), true, false, true), vec!["-Llm"]);
-        // Apple Silicon 用 MLX。
-        assert!(with_llm(none.clone(), true, true, false).is_empty());
-        assert!(with_llm(none.clone(), false, false, false).is_empty());
-        // 现有环境已经装了 LLM 依赖:不重复加;没要 LLM 也不把已有的去掉。
-        let has = vec!["--backend".to_string(), "cuda".into(), "--llm".into()];
-        assert_eq!(with_llm(has.clone(), true, false, false), has);
-        assert_eq!(with_llm(has.clone(), false, false, false), has);
-        let win = vec!["-Backend".to_string(), "cpu".into()];
-        assert_eq!(
-            with_llm(win, true, false, true),
-            vec!["-Backend", "cpu", "-Llm"]
-        );
+        // llama.cpp 默认就装:不需要加任何参数。
+        assert!(with_llm(none.clone(), true).is_empty());
+        assert!(with_llm(none, false).is_empty());
+        // 以前说过不装,现在点了「安装 LLM 依赖」:把那个「不装」去掉,别的照旧。
+        let off = vec!["--backend".to_string(), "cuda".into(), "--no-llm".into()];
+        assert_eq!(with_llm(off.clone(), true), vec!["--backend", "cuda"]);
+        assert_eq!(with_llm(off.clone(), false), off);
+        let win = vec!["-Backend".to_string(), "cpu".into(), "-NoLlm".into()];
+        assert_eq!(with_llm(win, true), vec!["-Backend", "cpu"]);
+        // 手动指定的版本不动。
+        let manual = vec!["--llm-backend".to_string(), "cpu".into()];
+        assert_eq!(with_llm(manual.clone(), true), manual);
     }
 
     #[test]
@@ -654,8 +641,8 @@ mod tests {
     fn manual_command_carries_the_args() {
         let repo = Path::new("/home/u/vif");
         assert_eq!(
-            manual_command(repo, &["--llm".into()], false),
-            "cd \"/home/u/vif\" && scripts/setup-env.sh --llm"
+            manual_command(repo, &["--llm-backend".into(), "cpu".into()], false),
+            "cd \"/home/u/vif\" && scripts/setup-env.sh --llm-backend cpu"
         );
         assert_eq!(
             manual_command(repo, &[], false),

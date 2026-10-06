@@ -52,12 +52,12 @@ class TestChooseBackend:
     def test_other_platforms_without_llama_cpp_say_how_to_install(self):
         name, reason = llm_backend.choose_backend(False, has=installed(), platform="linux")
         assert name == "llamacpp"  # 仍然给出后端名:/models 要列装好之后能用的模型
-        assert "scripts/setup-env.sh --llm" in reason
+        assert "scripts/setup-env.sh" in reason
         assert "Apple Silicon" not in reason  # 不再说「只支持 Apple Silicon」
 
     def test_windows_hint_is_the_powershell_script(self):
         _, reason = llm_backend.choose_backend(False, has=installed(), platform="win32")
-        assert r"scripts\setup-env.ps1 -Llm" in reason
+        assert r"scripts\setup-env.ps1" in reason
 
     def test_forced_llamacpp(self):
         assert llm_backend.choose_backend(True, "llamacpp", has=installed("llama_cpp")) == (
@@ -116,7 +116,7 @@ class TestSttSupportReport:
         monkeypatch.setattr(llm_backend, "has_package", installed())
         supported, reason = stt._llm_support()
         assert supported is False
-        assert "setup-env" in reason and ("--llm" in reason or "-Llm" in reason)
+        assert "setup-env" in reason and "setup-env" in reason
 
     def test_apple_silicon_is_supported(self, monkeypatch, stt):
         monkeypatch.setattr(stt, "IS_APPLE_SILICON", True)

@@ -200,8 +200,8 @@ def _infer_sync(
         )
         return result.get("text", "").strip(), lang or "en"
 
-    # ── Qwen3-ASR (transformers 原生,见 services/qwen_asr_hf.py) ──
-    if model_type == "qwen_asr_hf":
+    # ── Qwen3-ASR 量化版 (llama.cpp,见 services/qwen_asr_gguf.py) ──
+    if model_type == "qwen_asr_gguf":
         text, spoken = model.transcribe(audio_array, sample_rate, lang, context=context)
         # 自动检测时模型报的是语言名("Chinese"),换回客户端认的代码。
         code = _CODE_BY_QWEN_NAME.get((spoken or lang or "").lower())
@@ -365,6 +365,33 @@ class STTEngine:
         model_id = self._model_info["model_id"]
         engine_type = self._model_info.get("engine", "qwen_asr_mlx_native")
 
+        # ── Qwen3-ASR 量化版 (llama.cpp) ──
+        # 排在探测 PyTorch 后端之前:这个引擎不用 PyTorch,而那一步会 import torch、
+        # 在 N 卡上还会建一个 CUDA 上下文——白占几百 MB 显存,正是换量化版想省掉的。
+        if engine_type == "qwen_asr_gguf":
+            from services.device import Backend
+            from services.qwen_asr_gguf import QwenASRGguf
+
+            logger.info(f"Loading Qwen3-ASR (GGUF, llama.cpp): {model_id}...")
+            engine = QwenASRGguf(
+                model_id, self._model_info["gguf_file"], self._model_info["mmproj_file"]
+            )
+            on_gpu = engine.accelerator == "gpu"
+            detail = (
+                bi("llama.cpp(显卡)", "llama.cpp (GPU)")
+                if on_gpu
+                else bi("llama.cpp(CPU)", "llama.cpp (CPU)")
+            )
+            if engine.accelerator_note:
+                detail = bi(
+                    f"{detail}:{engine.accelerator_note}",
+                    f"{en_of(detail)}: {en_of(engine.accelerator_note)}",
+                )
+            self._backend = Backend("llamacpp", "gpu" if on_gpu else "cpu", "q8", detail)
+            self._model = engine
+            self._model_type = "qwen_asr_gguf"
+            return
+
         # 后端选择集中在 services/device.py:那里认得出 ROCm(否则 A 卡会被
         # 报成 N 卡)和 Intel XPU,也会按硬件挑精度,而不是「只有 CUDA 用 fp16」。
         from services.device import detect as detect_backend
@@ -430,16 +457,6 @@ class STTEngine:
                 device=device,
             )
             self._model_type = "whisper_turbo"
-            return
-
-        # ── Qwen3-ASR (transformers 原生) ──
-        if engine_type == "qwen_asr_hf":
-            from services.qwen_asr_hf import QwenASRTransformers, pick_dtype_name
-
-            dtype_name = pick_dtype_name(backend.name, backend.dtype_name)
-            logger.info(f"Loading Qwen3-ASR (transformers) on {backend.detail} [{dtype_name}]...")
-            self._model = QwenASRTransformers(model_id, device, dtype_name)
-            self._model_type = "qwen_asr_hf"
             return
 
         # ── 未匹配引擎 ──
@@ -541,16 +558,24 @@ class STTEngine:
         if self._model is not None:
             import gc
 
+            # llama.cpp 的模型要明说才还显存(等垃圾回收的话,新模型加载时旧的还占着)。
+            close = getattr(self._model, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as e:  # noqa: BLE001
+                    logger.debug(f"closing the old model failed: {e}")
             self._model = None
             self._model_type = None
-            try:
-                import torch
-
-                if torch.backends.mps.is_available():
-                    torch.mps.empty_cache()
-            except ImportError:
-                # MLX 模型不需要 torch;没装就不必清它的缓存。
-                pass
+            # 只在 PyTorch 已经被用过时才清它的缓存:MLX 和 llama.cpp 的模型不用它,
+            # 为了清一个不存在的缓存去 import torch 要好几秒,N 卡上还会白占显存。
+            torch = sys.modules.get("torch")
+            if torch is not None:
+                try:
+                    if torch.backends.mps.is_available():
+                        torch.mps.empty_cache()
+                except Exception as e:  # noqa: BLE001
+                    logger.debug(f"torch cache clear skipped: {e}")
             gc.collect()
             logger.info("Old model memory released")
 

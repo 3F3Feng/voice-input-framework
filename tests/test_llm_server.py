@@ -415,7 +415,7 @@ class TestLoadFailureAndModelChoice:
         assert engine.backend.name == "llamacpp"
         assert await engine.load() is False
         assert "setup-env" in engine.load_error()
-        assert "--llm" in engine.load_error() or "-Llm" in engine.load_error()
+        assert "setup-env" in engine.load_error()
 
     @pytest.mark.asyncio
     async def test_selected_model_survives_restart(self, monkeypatch, state_file):
