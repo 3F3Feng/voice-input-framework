@@ -196,6 +196,28 @@ jobs:
               print("loaded", name)
           PY
 
+      # ── 两边都要:下载进度的计数在真下载上数得准 ──
+      - name: Download meter counts a real HuggingFace download
+        shell: bash
+        run: |
+          # 界面上的下载进度以前是数缓存目录里文件的大小;Windows 上正在写的文件大小很久
+          # 才更新一次,进度就一直不动(2.7.1 实测)。现在接在 huggingface_hub 的进度回调上
+          # (services/model_catalog.py)。这里真下两个文件,看计数和文件大小对不对得上。
+          if [ -x .venv/Scripts/python.exe ]; then PY=.venv/Scripts/python.exe; else PY=.venv/bin/python; fi
+          "$PY" - <<'PY'
+          import os
+          from huggingface_hub import hf_hub_download
+          from services import model_catalog as mc
+
+          assert mc.install_download_meter(), "could not hook huggingface_hub's progress"
+          for name in ("tinyllamas/stories260K.gguf", "tinyllamas/stories15M-q4_0.gguf"):
+              before = mc.downloaded_total()
+              path = hf_hub_download("ggml-org/models", name)
+              counted, size = mc.downloaded_total() - before, os.path.getsize(path)
+              print(f"{name}: counted {counted} bytes, file is {size} bytes")
+              assert counted == size, (name, counted, size)
+          PY
+
       # ── 两边都要:装出来的环境里 LLM 后处理的后端真的可用 ──
       - name: LLM backend is usable in the environment it built
         shell: bash

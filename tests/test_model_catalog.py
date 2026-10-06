@@ -128,3 +128,40 @@ def test_llm_backends_have_a_download_size_for_every_model():
     # GGUF:一个仓库里有十几种量化,只下一个文件;数进度看的是仓库目录
     assert LlamaCppBackend.repo_of("org/repo-GGUF/file-Q4.gguf") == "org/repo-GGUF"
     assert MLXBackend.repo_of("mlx-community/x-4bit") == "mlx-community/x-4bit"
+
+
+def test_load_progress_uses_the_download_meter_when_file_sizes_do_not_move():
+    """Windows 上正在写的文件大小不更新:缓存目录看着一个字节没多,计数却在涨"""
+    p = model_catalog.load_progress("m", 0, 0.0, 0, 3350, 42.0, metered=1_200_000_000)
+    assert p["phase"] == "downloading"
+    assert p["downloaded_bytes"] == 1_200_000_000
+    assert p["cached_bytes"] == 1_200_000_000
+    assert p["total_bytes"] == 3_350_000_000
+    # 两边都有数时取大的;文件系统正常的系统上两者相等,不会翻倍
+    both = model_catalog.load_progress("m", 500, 0.0, 0, None, 1.0, metered=500)
+    assert (both["downloaded_bytes"], both["cached_bytes"]) == (500, 500)
+    ahead = model_catalog.load_progress("m", 900, 0.0, 100, None, 1.0, metered=300)
+    assert (ahead["downloaded_bytes"], ahead["cached_bytes"]) == (800, 900)
+
+
+def test_download_meter_counts_byte_bars_only():
+    """计数接在 huggingface_hub 的进度条上:按字节计的才算,显示关掉了也照样算"""
+    import pytest
+
+    pytest.importorskip("huggingface_hub")
+    from huggingface_hub.utils import tqdm as hf_tqdm
+
+    assert model_catalog.install_download_meter() is True
+    # 再装几次也不会在同一个类上包两层(包了就会数两遍)
+    model_catalog.DOWNLOAD_METER.installed = False
+    assert model_catalog.install_download_meter() is True
+    assert model_catalog.install_download_meter() is True
+
+    before = model_catalog.downloaded_total()
+    for disable in (False, True):
+        with hf_tqdm(total=1000, unit="B", disable=disable) as bar:
+            bar.update(300)
+            bar.update(200)
+        with hf_tqdm(total=5, unit="it", disable=disable) as files:  # 「Fetching N files」
+            files.update(1)
+    assert model_catalog.downloaded_total() - before == 1000
