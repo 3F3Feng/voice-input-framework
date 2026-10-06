@@ -1611,7 +1611,29 @@ async fn update_services(
 ) -> Result<String, String> {
     let cfg = server_config_snapshot(&state)?;
     let servers = state.servers.clone();
-    service_update::update_services(app, servers, cfg).await
+    service_update::update_services(app, servers, cfg, None).await
+}
+
+/// 远端有哪些分支、现在在哪个上(给「换分支」的下拉框)。只读。
+#[tauri::command]
+async fn list_service_branches(
+    state: State<'_, AppState>,
+) -> Result<service_update::BranchList, String> {
+    let cfg = server_config_snapshot(&state)?;
+    Ok(service_update::list_branches(&cfg).await)
+}
+
+/// 「换分支」:把本机仓库切到远端的另一个分支(比如还没合并的开发分支),再和
+/// 「更新服务」一样重建环境、重启服务。进度同样走 `service-update` 事件。
+#[tauri::command]
+async fn switch_service_branch(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    branch: String,
+) -> Result<String, String> {
+    let cfg = server_config_snapshot(&state)?;
+    let servers = state.servers.clone();
+    service_update::update_services(app, servers, cfg, Some(branch)).await
 }
 
 /// 「本机安装」的现状:有没有仓库、会克隆到哪、有没有 git(没有时怎么装)。
@@ -1995,6 +2017,8 @@ pub fn run() {
             get_service_versions,
             check_service_updates,
             update_services,
+            list_service_branches,
+            switch_service_branch,
             get_local_setup_status,
             run_local_setup,
             log::get_gui_logs,

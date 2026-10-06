@@ -66,6 +66,25 @@
                 <span class="s-tip" style="margin:0;flex:1">{{ t('一键更新:在仓库里 git pull --ff-only、重跑建环境脚本,再重启本应用启动的服务。仓库有未提交的改动、分支分叉,或者有不是本应用启动的服务在跑时,会停下来并告诉你怎么手动做。', "One-click update: git pull --ff-only in the repository, rerun the setup script, then restart the services this app started. If the repository has uncommitted changes, the branch has diverged, or a service not started by this app is running, it stops and tells you how to do it by hand.") }}</span>
                 <button class="s-btn" @click="updateServices" :disabled="svcUpdating">{{ svcUpdating ? t('更新中…', 'Updating…') : t('更新服务', 'Update services') }}</button>
               </div>
+              <!-- 换分支(给帮忙测试的人):把本机仓库切到远端的另一个分支,比如还没合并的
+                   开发分支。平时收着,不在 main 上时上面那行黄字会一直提醒。 -->
+              <div v-if="onDevBranch" class="s-row" style="margin-top:6px">
+                <span class="s-tip srv-problem" style="margin:0;flex:1">⚠ {{ t(`服务代码在开发分支 ${codeStatus?.branch} 上,不是正式版:可能不稳定,「更新服务」也会跟着这个分支走。`, `The service code is on the development branch ${codeStatus?.branch}, not a release: it may be unstable, and Update services follows this branch.`) }}</span>
+                <button class="s-btn" @click="switchBranch(mainBranchName)" :disabled="svcUpdating">{{ t(`切回 ${mainBranchName}`, `Back to ${mainBranchName}`) }}</button>
+              </div>
+              <details class="branch-box" @toggle="onBranchBoxToggle">
+                <summary class="s-tip">{{ t('参与测试:切换服务代码的分支', 'Help test: switch the service code to another branch') }}</summary>
+                <div class="s-tip">{{ t('想试还没发布的改动时用:把本机仓库切到开发分支,自动重建环境、重启服务。只换服务端代码,客户端还是现在这个版本;开发分支可能不稳定,随时可以切回来。仓库里有未提交的改动时不会切。', "For trying changes that aren't released yet: switches the local repository to a development branch, rebuilds the environment and restarts the services. Only the service code changes, not this app; development branches can be unstable, and you can switch back at any time. Nothing is switched while the repository has uncommitted changes.") }}</div>
+                <div class="s-row" style="margin-top:4px">
+                  <select class="s-select" style="flex:1" v-model="branchChoice" :disabled="svcUpdating || branchesLoading || !branchList?.branches.length">
+                    <option v-if="!branchList?.branches.length" value="">{{ branchesLoading ? t('读取中…', 'Loading…') : t('(还没读取分支列表)', '(branches not loaded yet)') }}</option>
+                    <option v-for="b in branchList?.branches ?? []" :key="b" :value="b">{{ b }}{{ b === branchList?.current ? t('(当前)', ' (current)') : '' }}</option>
+                  </select>
+                  <button class="s-btn" @click="loadBranches" :disabled="branchesLoading || svcUpdating">{{ branchesLoading ? '…' : t('读取分支列表', 'Load branches') }}</button>
+                  <button class="s-btn" @click="switchBranch(branchChoice)" :disabled="svcUpdating || !branchChoice || branchChoice === branchList?.current">{{ t('切换', 'Switch') }}</button>
+                </div>
+                <div v-if="branchList?.error" class="s-tip s-err">{{ branchList.error }}</div>
+              </details>
               <div v-if="svcUpdating" class="s-tip srv-problem">{{ svcStageText }}</div>
               <div v-if="svcUpdating && svcUpdateLine" class="s-tip svc-line" :title="svcUpdateLine">{{ svcUpdateLine }}</div>
               <div v-if="svcUpdateResult" :class="['s-tip', 'svc-result', svcUpdateResult.ok ? 'svc-ok' : 's-err']">{{ svcUpdateResult.msg }}</div>
@@ -1964,6 +1983,7 @@ function openVersionSection() { showSettings.value = true; tab.value = "service"
 
 const SVC_STAGE_LABEL: Record<string, () => string> = {
   checking: () => t("检查仓库和服务…", "Checking the repository and services…"),
+  switching: () => t("切换分支…", "Switching branch…"),
   fetching: () => t("从远端拉取…", "Fetching from the remote…"),
   pulling: () => t("拉取新代码…", "Pulling the new code…"),
   setup: () => t("重建环境(要装新依赖时可能要几分钟)…", "Rebuilding the environment (may take a few minutes if there are new dependencies)…"),
@@ -1981,7 +2001,50 @@ function onServiceUpdateProgress(p: { stage: string; line: string | null }) {
   svcUpdateLine.value = p.line ?? "";
 }
 
+// ── 换分支(给帮忙测试的人)──
+// 后端是同一套流程(service_update.rs):先把仓库切到远端的那个分支,再和「更新服务」
+// 一样重建环境、重启服务;进度和结果也共用下面那几行。
+interface BranchList { current: string | null; branches: string[]; error: string | null; }
+const branchList = ref<BranchList | null>(null);
+const branchChoice = ref("");
+const branchesLoading = ref(false);
+/** 正式版所在的分支:远端有 main 就是它,老仓库可能叫 master。 */
+const mainBranchName = computed(() =>
+  branchList.value?.branches.includes("master") && !branchList.value.branches.includes("main") ? "master" : "main");
+/** 服务代码不在正式分支上(上次「检查服务更新」看到的)。 */
+const onDevBranch = computed(() => {
+  const b = codeStatus.value?.branch;
+  return serverMode.value === "local" && !!b && b !== "main" && b !== "master";
+});
+async function loadBranches() {
+  if (branchesLoading.value) return;
+  branchesLoading.value = true;
+  try {
+    const list = await invoke<BranchList>("list_service_branches");
+    branchList.value = list;
+    if (!list.branches.includes(branchChoice.value)) branchChoice.value = list.current && list.branches.includes(list.current) ? list.current : (list.branches[0] ?? "");
+  } catch (e) { branchList.value = { current: null, branches: [], error: `${e}` }; }
+  branchesLoading.value = false;
+}
+/** 第一次展开时自动读一次分支列表(要联网问远端,所以不在打开设置时就读)。 */
+function onBranchBoxToggle(e: Event) {
+  if ((e.target as HTMLDetailsElement).open && !branchList.value) void loadBranches();
+}
+async function switchBranch(branch: string) {
+  if (!branch) return;
+  await runServiceUpdate("switch_service_branch", { branch },
+    t(`已切换到分支 ${branch}`, `Switched to branch ${branch}`),
+    t("没有切换分支,原因见「服务」页", "The branch wasn't switched; see the Service tab"));
+  // 成功时 runServiceUpdate 已经重新问过「在哪个分支、落后几个提交」;这里只刷新下拉框。
+  if (branchList.value) await loadBranches();
+}
+
 async function updateServices() {
+  await runServiceUpdate("update_services", {},
+    t("服务已更新", "Services updated"),
+    t("服务没有更新,原因见「服务」页", "Services weren't updated; see the Service tab"));
+}
+async function runServiceUpdate(command: string, args: Record<string, unknown>, okToast: string, failToast: string) {
   if (svcUpdating.value) return;
   svcUpdating.value = true;
   svcUpdateResult.value = null;
@@ -1989,13 +2052,13 @@ async function updateServices() {
   svcUpdateLine.value = "";
   let ok = false;
   try {
-    const msg = await invoke<string>("update_services");
+    const msg = await invoke<string>(command, args);
     svcUpdateResult.value = { ok: true, msg };
     ok = true;
-    toast(t("服务已更新", "Services updated"), "ok", false);
+    toast(okToast, "ok", false);
   } catch (e) {
     svcUpdateResult.value = { ok: false, msg: `${e}` };
-    toast(t("服务没有更新,原因见「服务」页", "Services weren't updated; see the Service tab"), "err", false);
+    toast(failToast, "err", false);
   } finally {
     svcUpdating.value = false;
     // 成功后服务在重启、重新加载模型,这一刻多半还没答话:丢掉旧结论,别让
@@ -3749,6 +3812,9 @@ html, body, #app { height: 100%; }
 .banner-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.75rem; padding: 0 2px; opacity: 0.7; line-height: 1.4; }
 .banner-close:hover { opacity: 1; }
 .svc-commits { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5; }
+.branch-box { margin-top: 6px; }
+.branch-box > summary { cursor: pointer; margin-top: 0; user-select: none; }
+.branch-box[open] > summary { color: var(--text); }
 .svc-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .svc-result { white-space: pre-wrap; word-break: break-word; user-select: text; -webkit-user-select: text; }
 .svc-result.svc-ok { color: var(--green); }

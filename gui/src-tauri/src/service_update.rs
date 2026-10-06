@@ -14,7 +14,10 @@
 //! 2. **一键更新**(只在本地模式):在仓库里 `git pull --ff-only`、重跑建环境脚本、
 //!    重启本应用管理的服务。这一步动的是用户的仓库和进程,所以先把能想到的「不该
 //!    动」的情况全部拦下来(见 [`Blocker`]),拦下时给出原因和手动命令。绝不
-//!    `reset` / `stash` / `checkout`,绝不停认不出来源、或不是本应用启动的进程。
+//!    `reset` / `stash`,绝不丢弃改动,绝不停认不出来源、或不是本应用启动的进程。
+//! 3. **换分支**(给帮忙测试的人):把仓库切到远端的另一个分支(比如还没合并的开发
+//!    分支),之后和更新一样重建环境、重启服务。只在工作区干净时做;切换用的是普通的
+//!    `git checkout <分支>`,有会被覆盖的改动时 git 自己会拒绝。
 //!
 //! 判断规则都是纯函数(`relation`、`check_git`、`plan_pull`、`plan_restart`、
 //! `setup_args`),单测覆盖;git 那几条还对着测试里现建的临时仓库跑了一遍。
@@ -235,6 +238,10 @@ pub enum Blocker {
     /// 有在跑的服务不是本应用启动的。
     ForeignService(ServerKind, ServerOwner),
     AlreadyRunning,
+    /// 要切换到的分支名不像个分支名(防止把选项、路径当成分支名传给 git)。
+    BadBranchName(String),
+    /// 远端没有这个分支。
+    NoSuchBranch(String),
 }
 
 impl Blocker {
@@ -314,6 +321,16 @@ impl Blocker {
                 ),
             },
             Blocker::AlreadyRunning => t("更新已经在进行中。", "An update is already running.").to_string(),
+            Blocker::BadBranchName(name) => tr!(
+                "「{}」不是一个合法的分支名。",
+                "\"{}\" isn't a valid branch name.",
+                name
+            ),
+            Blocker::NoSuchBranch(name) => tr!(
+                "远端没有 {} 这个分支(可能已经合并后删掉了)。点「读取分支列表」看看现在有哪些。",
+                "The remote has no branch named {} (it may have been merged and deleted). Click Load branches to see what exists now.",
+                name
+            ),
         }
     }
 }
@@ -361,6 +378,70 @@ pub fn check_git(facts: &GitFacts) -> Result<(), Blocker> {
         return Err(Blocker::NoUpstream(branch));
     }
     Ok(())
+}
+
+/// 换分支前的检查。比 [`check_git`] 宽在两处:当前在不在分支上、有没有上游都无所谓
+/// (反正要换走);严的那几条(工作区干净、没有做到一半的合并)一条不少。
+pub fn check_git_for_switch(facts: &GitFacts) -> Result<(), Blocker> {
+    match check_git(facts) {
+        Err(Blocker::DetachedHead | Blocker::NoUpstream(_)) => Ok(()),
+        other => other,
+    }
+}
+
+/// 分支名能不能原样交给 git。远端的分支名本来就受 git 自己的规则约束,这里只挡住会被
+/// 当成别的东西的写法:以 `-` 开头(选项)、带空白或控制字符、`..`、引用语法里的特殊字符。
+pub fn valid_branch_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 200
+        && !name.starts_with('-')
+        && !name.starts_with('/')
+        && !name.ends_with('/')
+        && !name.ends_with('.')
+        && !name.ends_with(".lock")
+        && !name.contains("..")
+        && !name.contains("//")
+        && !name.contains("@{")
+        && name
+            .chars()
+            .all(|c| !c.is_whitespace() && !c.is_control() && !"~^:?*[\\".contains(c))
+}
+
+/// 上游(`origin/main`)里的远端名;没有上游时按惯例是 `origin`。
+pub fn remote_of(upstream: Option<&str>) -> String {
+    upstream
+        .and_then(|u| u.split_once('/'))
+        .map(|(remote, _)| remote.to_string())
+        .filter(|r| !r.is_empty())
+        .unwrap_or_else(|| "origin".to_string())
+}
+
+/// `git ls-remote --heads` 的输出 → 分支名。`main` / `master` 排最前,其余按名字排。
+pub fn parse_remote_heads(output: &str) -> Vec<String> {
+    let mut names: Vec<String> = output
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(1))
+        .filter_map(|r| r.strip_prefix("refs/heads/"))
+        .filter(|n| valid_branch_name(n))
+        .map(str::to_string)
+        .collect();
+    names.sort_by(|a, b| {
+        let rank = |n: &str| !matches!(n, "main" | "master");
+        rank(a).cmp(&rank(b)).then_with(|| a.cmp(b))
+    });
+    names.dedup();
+    names
+}
+
+/// 远端的抓取规则(`remote.<名>.fetch`)包不包含这个分支。只克隆了一个分支的仓库
+/// (`git clone --single-branch`,「下载并安装」就是这么克隆的)规则里只有那一个分支,
+/// 别的分支 `git fetch` 根本不会去拉。
+pub fn refspecs_cover(refspecs: &str, branch: &str) -> bool {
+    refspecs.lines().any(|line| {
+        let src = line.trim().trim_start_matches('+');
+        let src = src.split(':').next().unwrap_or_default();
+        src == "refs/heads/*" || src == format!("refs/heads/{branch}")
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -827,6 +908,170 @@ pub async fn check_code(cfg: &ServerConfig) -> CodeStatus {
     status
 }
 
+// ── 换分支 ──
+
+/// 远端有哪些分支,现在在哪个上。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BranchList {
+    pub current: Option<String>,
+    /// 远端的分支,`main` 排最前。
+    pub branches: Vec<String>,
+    /// 没法列出来的原因(不是本地模式、没有仓库、没有 git、连不上远端……)。
+    pub error: Option<String>,
+}
+
+/// 列远端分支的时限。只是问一句话,等不了建环境那么久。
+const LS_REMOTE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 只读:`git ls-remote` 只问远端,不动仓库。
+pub async fn list_branches(cfg: &ServerConfig) -> BranchList {
+    let fail = |e: String| BranchList {
+        error: Some(e),
+        ..Default::default()
+    };
+    if cfg.mode != ServerMode::Local {
+        return fail(Blocker::NotLocal.message());
+    }
+    let Some(repo) = cfg
+        .local
+        .repo_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| server_manager::is_repo_root(p))
+    else {
+        return fail(Blocker::NoRepo.message());
+    };
+    let Some(git) = locate_git() else {
+        return fail(Blocker::GitMissing.message());
+    };
+    let facts = {
+        let (git, repo) = (git.clone(), repo.clone());
+        tokio::task::spawn_blocking(move || gather_git_facts(&git, &repo))
+            .await
+            .unwrap_or_default()
+    };
+    if !facts.is_repo_root {
+        return fail(Blocker::NotGitRepo.message());
+    }
+    let mut list = BranchList {
+        current: facts.branch.clone(),
+        ..Default::default()
+    };
+    match remote_heads(&git, &repo, &remote_of(facts.upstream.as_deref())).await {
+        Ok(branches) => list.branches = branches,
+        Err(e) => list.error = Some(Blocker::FetchFailed(e).message()),
+    }
+    list
+}
+
+async fn remote_heads(git: &Path, repo: &Path, remote: &str) -> Result<Vec<String>, String> {
+    let mut cmd = git_std(git, repo);
+    cmd.args(["ls-remote", "--heads", remote])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut cmd = tokio::process::Command::from(cmd);
+    cmd.kill_on_drop(true);
+    let out = tokio::time::timeout(LS_REMOTE_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| {
+            tr!(
+                "{} 秒内没有应答",
+                "no answer within {} seconds",
+                LS_REMOTE_TIMEOUT.as_secs()
+            )
+        })?
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(parse_remote_heads(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// 把仓库切到远端 `remote` 上的 `branch`。调用前要确认工作区干净(`check_git_for_switch`)。
+///
+/// 只用不会丢东西的命令:`fetch` 只更新远端跟踪分支;`checkout <分支>` 在有会被覆盖的
+/// 改动时 git 自己会拒绝。本地已经有同名分支就切过去(之后由更新流程按快进处理),
+/// 没有就从远端的那个建一个并跟踪它。
+async fn checkout_branch(
+    git: &Path,
+    repo: &Path,
+    remote: &str,
+    branch: &str,
+    on_line: &mut (dyn FnMut(&str) + Send),
+) -> Result<(), Blocker> {
+    if !valid_branch_name(branch) {
+        return Err(Blocker::BadBranchName(branch.to_string()));
+    }
+    // 先问远端有没有这个分支:比等 fetch 失败再去认 git 的报错(会跟着系统语言变)可靠。
+    let heads = remote_heads(git, repo, remote)
+        .await
+        .map_err(Blocker::FetchFailed)?;
+    if !heads.iter().any(|h| h == branch) {
+        return Err(Blocker::NoSuchBranch(branch.to_string()));
+    }
+    // 只克隆了一个分支的仓库:先让远端的抓取规则带上这个分支,不然以后「检查服务更新」
+    // 「更新服务」的 `git fetch` 永远看不到它的新提交。
+    let specs = git_query(
+        git,
+        repo,
+        &["config", "--get-all", &format!("remote.{remote}.fetch")],
+    )
+    .unwrap_or_default();
+    if !refspecs_cover(&specs, branch) {
+        let mut add = git_std(git, repo);
+        add.args(["remote", "set-branches", "--add", remote, branch]);
+        run_streamed(add, GIT_NET_TIMEOUT, on_line)
+            .await
+            .map_err(Blocker::FetchFailed)?;
+    }
+    let tracking = format!("{remote}/{branch}");
+    let mut fetch = git_std(git, repo);
+    fetch.args([
+        "fetch",
+        remote,
+        &format!("+refs/heads/{branch}:refs/remotes/{tracking}"),
+    ]);
+    if let Err(e) = run_streamed(fetch, GIT_NET_TIMEOUT, on_line).await {
+        // git 的原话是英文的 "couldn't find remote ref";这一种单独说清楚。
+        return Err(if e.contains("find remote ref") {
+            Blocker::NoSuchBranch(branch.to_string())
+        } else {
+            Blocker::FetchFailed(e)
+        });
+    }
+    let has_local = git_query(
+        git,
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_some();
+    let mut checkout = git_std(git, repo);
+    if has_local {
+        checkout.args(["checkout", branch]);
+    } else {
+        checkout.args(["checkout", "-b", branch, "--track", &tracking]);
+    }
+    run_streamed(checkout, GIT_NET_TIMEOUT, on_line)
+        .await
+        .map_err(Blocker::FetchFailed)?;
+    if has_local {
+        // 以前自己建的同名分支可能没设上游;设上,后面的「落后几个提交」才问得出来。
+        let mut track = git_std(git, repo);
+        track.args(["branch", "--set-upstream-to", &tracking, branch]);
+        run_streamed(track, GIT_NET_TIMEOUT, on_line)
+            .await
+            .map_err(Blocker::FetchFailed)?;
+    }
+    Ok(())
+}
+
 // ── 带实时输出地跑一条命令 ──
 
 /// 去掉 ANSI 颜色码:建环境脚本给 `==>` 上了色,原样进日志框就是一串 `[1;36m`。
@@ -1031,10 +1276,13 @@ pub(crate) fn setup_command(
 }
 
 /// 一键更新本地服务。成功时返回给用户看的总结;失败 / 被拦下时返回原因(带手动命令)。
+///
+/// `target_branch`:先把仓库切到远端的这个分支再更新(「换分支」);`None` = 留在当前分支。
 pub async fn update_services(
     app: tauri::AppHandle,
     servers: Arc<Mutex<ServerManager>>,
     cfg: ServerConfig,
+    target_branch: Option<String>,
 ) -> Result<String, String> {
     if RUNNING.swap(true, AtomicOrdering::SeqCst) {
         return Err(Blocker::AlreadyRunning.message());
@@ -1044,7 +1292,7 @@ pub async fn update_services(
         use tauri::Emitter;
         let _ = app.emit("service-update", Progress { stage, line });
     };
-    let result = run_update(&emit, &servers, &cfg).await;
+    let result = run_update(&emit, &servers, &cfg, target_branch.as_deref()).await;
     match &result {
         Ok(msg) => {
             crate::log_info!("[服务更新] 完成:{}", msg);
@@ -1062,6 +1310,7 @@ async fn run_update(
     emit: Emit<'_>,
     servers: &Arc<Mutex<ServerManager>>,
     cfg: &ServerConfig,
+    target_branch: Option<&str>,
 ) -> Result<String, String> {
     let windows = cfg!(windows);
     emit("checking", None);
@@ -1111,19 +1360,54 @@ async fn run_update(
     )
     .ok_or_else(|| refuse(Blocker::UvMissing))?;
 
-    let facts = gather_git_facts(&git, &repo);
-    check_git(&facts).map_err(refuse)?;
+    let mut facts = gather_git_facts(&git, &repo);
+    // 要换到的分支就是现在这个:那就是一次普通的更新。
+    let switch_to = target_branch
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && facts.branch.as_deref() != Some(*t));
+    if let Some(target) = switch_to {
+        if !valid_branch_name(target) {
+            return Err(Blocker::BadBranchName(target.to_string()).message());
+        }
+        // 换分支的手动命令和「拉取」不是一回事,拦下时只说原因。
+        check_git_for_switch(&facts).map_err(|b| b.message())?;
+    } else {
+        check_git(&facts).map_err(refuse)?;
+    }
 
     // 服务归属在动仓库之前就查:要是有别人的服务在跑,一个文件都不该改。
     let report = server_manager::report(servers, cfg).await;
     let to_restart = plan_restart(&[&report.stt, &report.llm]).map_err(refuse)?;
 
-    let branch = facts.branch.clone().unwrap_or_default();
-    let upstream = facts.upstream.clone().unwrap_or_default();
     let mut log_line = |line: &str| {
         crate::log_info!("[服务更新] {}", line);
         emit("progress", Some(line.to_string()));
     };
+
+    let mut switch_note = None;
+    if let Some(target) = switch_to {
+        let from = facts
+            .branch
+            .clone()
+            .unwrap_or_else(|| t("(不在分支上)", "(detached)").to_string());
+        emit("switching", Some(tr!("{} → {}", "{} → {}", from, target)));
+        crate::log_info!("[服务更新] 换分支:{} → {}", from, target);
+        let remote = remote_of(facts.upstream.as_deref());
+        checkout_branch(&git, &repo, &remote, target, &mut log_line)
+            .await
+            .map_err(|b| {
+                tr!(
+                    "没有换成分支 {},仓库和服务都没有动:{}",
+                    "Didn't switch to branch {}; the repository and services weren't touched: {}",
+                    target,
+                    b.message()
+                )
+            })?;
+        facts = gather_git_facts(&git, &repo);
+        switch_note = Some(tr!("分支 {} → {}", "Branch {} → {}", from, target));
+    }
+    let branch = facts.branch.clone().unwrap_or_default();
+    let upstream = facts.upstream.clone().unwrap_or_default();
 
     emit(
         "fetching",
@@ -1187,6 +1471,11 @@ async fn run_update(
                 n
             )
         }
+    };
+    // 换过分支的话,总结里先说这一句。
+    let code_note = match switch_note {
+        Some(note) => tr!("{},{}", "{}; {}", note, code_note),
+        None => code_note,
     };
 
     // Windows 上正在运行的 Python 进程锁着它加载的 .pyd / .dll,uv 换不掉这些文件,
@@ -2029,9 +2318,272 @@ mod tests {
             let emit = |stage: &'static str, line: Option<String>| {
                 events.lock().unwrap().push((stage, line));
             };
-            let r = run_update(&emit, &self.servers, &self.cfg).await;
+            let r = run_update(&emit, &self.servers, &self.cfg, None).await;
             (r, events.into_inner().unwrap())
         }
+
+        async fn switch(
+            &self,
+            branch: &str,
+        ) -> (Result<String, String>, Vec<(&'static str, Option<String>)>) {
+            let events = Mutex::new(Vec::new());
+            let emit = |stage: &'static str, line: Option<String>| {
+                events.lock().unwrap().push((stage, line));
+            };
+            let r = run_update(&emit, &self.servers, &self.cfg, Some(branch)).await;
+            (r, events.into_inner().unwrap())
+        }
+    }
+
+    // ── 换分支 ──
+
+    #[test]
+    fn branch_names_that_git_could_misread_are_rejected() {
+        for ok in ["main", "feat/next-2.7", "release/2.7.0", "fix_x", "a.b"] {
+            assert!(valid_branch_name(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "-D",
+            "--upload-pack=x",
+            "a b",
+            "a..b",
+            "a~1",
+            "a^",
+            "a:b",
+            "a?",
+            "a*",
+            "a[b",
+            "a\\b",
+            "/abs",
+            "trailing/",
+            "x.lock",
+            "x.",
+            "a//b",
+            "a@{1}",
+            "tab\there",
+        ] {
+            assert!(!valid_branch_name(bad), "{bad:?}");
+        }
+        assert!(!valid_branch_name(&"x".repeat(201)));
+    }
+
+    #[test]
+    fn remote_heads_are_parsed_with_main_first() {
+        let out = "1111\trefs/heads/feat/zeta\n2222\trefs/heads/main\n3333\trefs/heads/dev\n\
+                   4444\trefs/tags/v1\n5555\tHEAD\n6666\trefs/heads/-evil\n";
+        assert_eq!(parse_remote_heads(out), vec!["main", "dev", "feat/zeta"]);
+        assert!(parse_remote_heads("").is_empty());
+    }
+
+    #[test]
+    fn single_branch_clones_need_the_refspec_added() {
+        let single = "+refs/heads/main:refs/remotes/origin/main";
+        assert!(refspecs_cover(single, "main"));
+        assert!(!refspecs_cover(single, "dev"));
+        assert!(refspecs_cover("+refs/heads/*:refs/remotes/origin/*", "dev"));
+        let two = "+refs/heads/main:refs/remotes/origin/main\n+refs/heads/feat/x:refs/remotes/origin/feat/x";
+        assert!(refspecs_cover(two, "feat/x"));
+        assert!(!refspecs_cover("", "main"));
+    }
+
+    #[test]
+    fn remote_name_comes_from_the_upstream() {
+        assert_eq!(remote_of(Some("origin/main")), "origin");
+        assert_eq!(remote_of(Some("fork/feat/x")), "fork");
+        assert_eq!(remote_of(None), "origin");
+        assert_eq!(remote_of(Some("weird")), "origin");
+    }
+
+    #[test]
+    fn switching_tolerates_no_upstream_but_not_a_dirty_tree() {
+        let clean = GitFacts {
+            is_repo_root: true,
+            ..Default::default()
+        };
+        // 不在分支上、没有上游:换走就是了。
+        assert_eq!(check_git_for_switch(&clean), Ok(()));
+        assert_eq!(
+            check_git_for_switch(&GitFacts {
+                branch: Some("mine".into()),
+                ..clean.clone()
+            }),
+            Ok(())
+        );
+        // 有改动、做到一半的合并、不是仓库:和更新一样拦下。
+        assert!(matches!(
+            check_git_for_switch(&GitFacts {
+                dirty: vec![" M a.py".into()],
+                ..clean.clone()
+            }),
+            Err(Blocker::Dirty(_))
+        ));
+        assert_eq!(
+            check_git_for_switch(&GitFacts {
+                in_progress: Some("merge"),
+                ..clean.clone()
+            }),
+            Err(Blocker::InProgress("merge"))
+        );
+        assert_eq!(
+            check_git_for_switch(&GitFacts::default()),
+            Err(Blocker::NotGitRepo)
+        );
+    }
+
+    /// 真的换一次。仓库是 `--single-branch` 克隆出来的(「下载并安装」就是这么克隆的):
+    /// 这种仓库的抓取规则里只有 main,不补规则的话换过去之后永远看不到新提交。
+    #[tokio::test]
+    async fn switching_branches_in_a_single_branch_clone_and_back() {
+        let Some(sb) = Sandbox::new("switch") else {
+            return;
+        };
+        // 远端多一个开发分支(名字带斜杠)。
+        sb.run(&sb.other(), &["checkout", "-q", "-b", "feat/dev"]);
+        std::fs::write(sb.other().join("dev-only.txt"), "dev\n").unwrap();
+        sb.commit(&sb.other(), "dev work");
+        sb.run(&sb.other(), &["push", "-q", "origin", "feat/dev"]);
+        sb.run(
+            &sb.root,
+            &[
+                "clone",
+                "-q",
+                "--single-branch",
+                "-b",
+                "main",
+                "origin.git",
+                "single",
+            ],
+        );
+        let repo = sb.root.join("single");
+        let branch_of = |r: &Path| sb.run(r, &["symbolic-ref", "--short", "HEAD"]);
+
+        assert_eq!(
+            remote_heads(&sb.git, &repo, "origin").await.unwrap(),
+            vec!["main", "feat/dev"]
+        );
+
+        checkout_branch(&sb.git, &repo, "origin", "feat/dev", &mut |_| {})
+            .await
+            .expect("switch to the dev branch");
+        assert_eq!(branch_of(&repo), "feat/dev");
+        assert!(repo.join("dev-only.txt").exists());
+        assert_eq!(
+            gather_git_facts(&sb.git, &repo).upstream.as_deref(),
+            Some("origin/feat/dev")
+        );
+
+        // 开发分支上又来了新提交:普通的 `git fetch`(「检查服务更新」用的)要看得到。
+        std::fs::write(sb.other().join("dev-more.txt"), "more\n").unwrap();
+        sb.commit(&sb.other(), "more dev work");
+        sb.run(&sb.other(), &["push", "-q", "origin", "feat/dev"]);
+        sb.run(&repo, &["fetch", "-q"]);
+        assert_eq!(ahead_behind(&sb.git, &repo), Some((0, 1)));
+
+        // 换回 main:开发分支的文件跟着没了,本地的开发分支还留着。
+        checkout_branch(&sb.git, &repo, "origin", "main", &mut |_| {})
+            .await
+            .expect("switch back to main");
+        assert_eq!(branch_of(&repo), "main");
+        assert!(!repo.join("dev-only.txt").exists());
+
+        // 再换过去:走「本地已经有这个分支」那条路,不重复建;落后的那个提交留给更新流程。
+        checkout_branch(&sb.git, &repo, "origin", "feat/dev", &mut |_| {})
+            .await
+            .expect("switch to the existing local branch");
+        assert_eq!(branch_of(&repo), "feat/dev");
+        assert_eq!(ahead_behind(&sb.git, &repo), Some((0, 1)));
+        // 抓取规则只补了一次。
+        let specs = sb.run(&repo, &["config", "--get-all", "remote.origin.fetch"]);
+        assert_eq!(specs.matches("feat/dev").count(), 2, "{specs}");
+    }
+
+    #[tokio::test]
+    async fn switching_to_a_branch_the_remote_does_not_have_changes_nothing() {
+        let Some(sb) = Sandbox::new("switch-missing") else {
+            return;
+        };
+        let head = sb.run(&sb.work(), &["rev-parse", "HEAD"]);
+        let err = checkout_branch(&sb.git, &sb.work(), "origin", "no-such-branch", &mut |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err, Blocker::NoSuchBranch("no-such-branch".into()));
+        assert_eq!(
+            sb.run(&sb.work(), &["symbolic-ref", "--short", "HEAD"]),
+            "main"
+        );
+        assert_eq!(sb.run(&sb.work(), &["rev-parse", "HEAD"]), head);
+        // 名字不对的根本不会交给 git。
+        let err = checkout_branch(&sb.git, &sb.work(), "origin", "--orphan", &mut |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err, Blocker::BadBranchName("--orphan".into()));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_whole_switch_flow_changes_branch_then_rebuilds_the_environment() {
+        let script = "#!/usr/bin/env bash\nset -e\necho \"==> fake setup $*\"\ngit -C \"$(dirname \"$0\")/..\" symbolic-ref --short HEAD > \"$(dirname \"$0\")/../setup-ran-on.txt\"\n";
+        let Some(p) = ProjectSandbox::new("switch-flow", script) else {
+            eprintln!("没有 git / uv / python3,跳过");
+            return;
+        };
+        let sb = &p.sb;
+        sb.run(&sb.other(), &["pull", "-q", "--ff-only"]);
+        sb.run(&sb.other(), &["checkout", "-q", "-b", "feat/dev"]);
+        std::fs::write(sb.other().join("dev-only.txt"), "dev\n").unwrap();
+        sb.commit(&sb.other(), "dev work");
+        sb.run(&sb.other(), &["push", "-q", "origin", "feat/dev"]);
+
+        // 名字不对:什么都不做。
+        let (r, _) = p.switch("--force").await;
+        assert!(r.unwrap_err().contains("--force"));
+        assert_eq!(
+            sb.run(&sb.work(), &["symbolic-ref", "--short", "HEAD"]),
+            "main"
+        );
+
+        let (r, events) = p.switch("feat/dev").await;
+        let msg = r.expect("clean repo should switch");
+        assert!(msg.contains("main → feat/dev"), "{msg}");
+        assert_eq!(
+            sb.run(&sb.work(), &["symbolic-ref", "--short", "HEAD"]),
+            "feat/dev"
+        );
+        assert!(sb.work().join("dev-only.txt").exists());
+        // 建环境脚本是在**新分支**上跑的(依赖可能不一样,得用新分支的脚本和 pyproject)。
+        assert_eq!(
+            std::fs::read_to_string(sb.work().join("setup-ran-on.txt"))
+                .unwrap()
+                .trim(),
+            "feat/dev"
+        );
+        let stages: Vec<_> = events.iter().map(|(s, _)| *s).collect();
+        for want in ["checking", "switching", "fetching", "setup"] {
+            assert!(stages.contains(&want), "missing stage {want}: {stages:?}");
+        }
+
+        // 工作区有改动:不换,原因说清楚,仓库原样。
+        std::fs::write(sb.work().join("dev-only.txt"), "edited\n").unwrap();
+        let (r, _) = p.switch("main").await;
+        let err = r.unwrap_err();
+        assert!(err.contains("dev-only.txt"), "{err}");
+        assert_eq!(
+            sb.run(&sb.work(), &["symbolic-ref", "--short", "HEAD"]),
+            "feat/dev"
+        );
+        sb.run(&sb.work(), &["checkout", "-q", "--", "dev-only.txt"]);
+
+        // 要换到的就是当前分支:当成一次普通的更新。
+        let (r, events) = p.switch("feat/dev").await;
+        r.expect("same branch is a plain update");
+        assert!(!events.iter().any(|(s, _)| *s == "switching"));
+
+        // 换回 main。
+        let (r, _) = p.switch("main").await;
+        let msg = r.expect("switch back");
+        assert!(msg.contains("feat/dev → main"), "{msg}");
+        assert!(!sb.work().join("dev-only.txt").exists());
     }
 
     #[cfg(unix)]
