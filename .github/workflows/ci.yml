@@ -117,8 +117,22 @@ jobs:
           cat .venv/vif-llm-backend
           grep -q '"requested": "auto", "installed": "cpu"' .venv/vif-llm-backend
 
+      - name: Vulkan build without a real GPU is rejected (software rendering doesn't count)
+        if: runner.os == 'Linux'
+        run: |
+          # 只有 lavapipe、不点名设备:Vulkan 版装得上,但 llama.cpp 认不出显卡,脚本应该
+          # 判它「用不了」。手动指定时不再往下退,所以落在 none。
+          scripts/setup-env.sh --backend cpu --llm --llm-backend vulkan
+          cat .venv/vif-llm-backend
+          grep -q '"requested": "vulkan", "installed": "none"' .venv/vif-llm-backend
+
       - name: setup-env.sh --llm-backend vulkan (runs on lavapipe)
         if: runner.os == 'Linux'
+        # llama.cpp 的 Vulkan 版**故意不认** CPU 类型的 Vulkan 设备(lavapipe 就是):只有
+        # 软件渲染时它报「No devices found」。对用户是好事——没有显卡的 Linux 桌面不会被
+        # 当成有显卡。这里要测的是 Vulkan 这条路本身,所以点名用第 0 块设备。
+        env:
+          GGML_VK_VISIBLE_DEVICES: "0"
         run: |
           scripts/setup-env.sh --backend cpu --llm --llm-backend vulkan
           cat .venv/vif-llm-backend
@@ -126,6 +140,8 @@ jobs:
 
       - name: Vulkan build really generates text
         if: runner.os == 'Linux'
+        env:
+          GGML_VK_VISIBLE_DEVICES: "0"
         run: |
           .venv/bin/python - <<'PY'
           import llama_cpp
