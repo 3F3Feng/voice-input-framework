@@ -37,7 +37,8 @@ dependencies = [
     "rich>=13.7.0",
     "click>=8.1.0",
     # STT 两个引擎都要 transformers;torch 由下面的硬件 extra 指定来源
-    "transformers>=4.37.0",
+    # 5.13 起原生支持 Qwen3-ASR(services/qwen_asr_hf.py:非 Apple 平台的中文识别)
+    "transformers>=5.13.0",
     # ── MLX:**只在 Apple Silicon 上装** ──
     # 这个 marker 是必须的,不是保险起见。mlx 现在确实为 Linux/Windows 发了
     # wheel,但 Linux x86_64 那个是残的:装得上,一 import 就

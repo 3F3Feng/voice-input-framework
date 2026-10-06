@@ -65,12 +65,20 @@
 | `whisper_small` | Whisper Small（transformers），速度与精度折中 | ~1GB | 全平台 |
 | `whisper_medium` | Whisper Medium（transformers），有独显时适用 | ~2.5GB | 全平台 |
 | `whisper_turbo` | Whisper Large V3 Turbo（transformers），精度最好，建议配 GPU | ~3GB | 全平台 |
+| `qwen_asr_small` | Qwen3-ASR-0.6B（transformers），中文和中英混说明显好于同档 Whisper，CPU 也能跑 | ~2GB | 全平台 |
+| `qwen_asr` | Qwen3-ASR-1.7B（transformers），中文最准，建议 6GB 以上显存 | ~5GB | 全平台 |
 | `whisper_cpp_base` / `whisper_cpp_large` | Whisper V3 via whisper.cpp | 1GB / 3GB | 需自行编译 `~/whisper.cpp` 并把模型放到 `~/.cache/whisper/` |
 
 不指定时服务端**按硬件挑**（`services/device.py` 的 `recommend_stt_model`）：
 Apple Silicon 上内存 ≥16GB 用 `qwen_asr_mlx_native`，否则用 `qwen_asr_mlx_native_small`；
 有独显按显存从 `whisper_turbo` 往下挑；纯 CPU 按核数和内存在 `whisper_tiny` /
 `whisper_base` / `whisper_small` 里取。启动日志里会写明选了哪个、为什么。
+
+**Windows / Linux 上主要说中文的话**，建议在设置里手动换成 `qwen_asr_small`（有 6GB 以上显存
+可以用 `qwen_asr`）：它是 Qwen3-ASR 的 transformers 原生版（要 transformers ≥ 5.13，
+`setup-env` 装的就是），在 M3 Max 的 CPU 和 GPU 上实测，同一段中文 / 中英混说录音，
+`whisper_base` 出繁体字和错字，它和 `whisper_turbo` 一样准还自带标点，而且更快。
+NVIDIA 真机上还没人测过，所以暂时没有放进自动推荐。
 
 ### LLM 后处理模型
 

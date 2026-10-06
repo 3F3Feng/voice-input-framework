@@ -135,6 +135,28 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "description": "Whisper Large V3 Turbo (transformers, 精度最好, 建议配 GPU)",
         "description_en": "Whisper Large V3 Turbo (transformers, best accuracy, GPU recommended)",
     },
+    # ── Qwen3-ASR (transformers 原生,跨平台:CPU / CUDA / ROCm / MPS)──
+    #
+    # 非 Apple 平台以前只有上面那组 Whisper,中文不如 Qwen3-ASR(它还认 22 种汉语
+    # 方言、中英混说更稳)。transformers 5.13 起原生支持,见 services/qwen_asr_hf.py。
+    # 本机(M3 Max)在 CPU fp32 和 MPS fp16 上实测过;NVIDIA 真机上还没人测过,所以
+    # 暂时不进自动推荐(services/device.py),要用户自己选。
+    "qwen_asr_small": {
+        "model_id": "Qwen/Qwen3-ASR-0.6B-hf",
+        "engine": "qwen_asr_hf",
+        "memory_gb": 2.0,
+        "download_mb": 1580,
+        "description": "Qwen3-ASR-0.6B (transformers, 中文比 Whisper 准, CPU 也能跑)",
+        "description_en": "Qwen3-ASR-0.6B (transformers, better Chinese than Whisper, runs on CPU too)",
+    },
+    "qwen_asr": {
+        "model_id": "Qwen/Qwen3-ASR-1.7B-hf",
+        "engine": "qwen_asr_hf",
+        "memory_gb": 5.0,
+        "download_mb": 4090,
+        "description": "Qwen3-ASR-1.7B (transformers, 中文最准, 建议 6GB 以上显存)",
+        "description_en": "Qwen3-ASR-1.7B (transformers, best Chinese accuracy, 6 GB+ VRAM recommended)",
+    },
 }
 
 

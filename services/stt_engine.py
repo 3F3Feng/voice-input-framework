@@ -200,7 +200,14 @@ def _infer_sync(
         )
         return result.get("text", "").strip(), lang or "en"
 
-    # ── Qwen3-ASR (transformers 或 MLX 环境) ──
+    # ── Qwen3-ASR (transformers 原生,见 services/qwen_asr_hf.py) ──
+    if model_type == "qwen_asr_hf":
+        text, spoken = model.transcribe(audio_array, sample_rate, lang, context=context)
+        # 自动检测时模型报的是语言名("Chinese"),换回客户端认的代码。
+        code = _CODE_BY_QWEN_NAME.get((spoken or lang or "").lower())
+        return text, code or spoken or lang
+
+    # ── Qwen3-ASR (qwen-asr 包的接口;现在没有引擎走到这里,留给外部自定义模型) ──
     results = model.transcribe(audio=(audio_array, sample_rate), language=lang)
     if results and len(results) > 0:
         return results[0].text, results[0].language
@@ -420,6 +427,16 @@ class STTEngine:
                 device=device,
             )
             self._model_type = "whisper_turbo"
+            return
+
+        # ── Qwen3-ASR (transformers 原生) ──
+        if engine_type == "qwen_asr_hf":
+            from services.qwen_asr_hf import QwenASRTransformers, pick_dtype_name
+
+            dtype_name = pick_dtype_name(backend.name, backend.dtype_name)
+            logger.info(f"Loading Qwen3-ASR (transformers) on {backend.detail} [{dtype_name}]...")
+            self._model = QwenASRTransformers(model_id, device, dtype_name)
+            self._model_type = "qwen_asr_hf"
             return
 
         # ── 未匹配引擎 ──
