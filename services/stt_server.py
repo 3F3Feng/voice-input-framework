@@ -86,9 +86,10 @@ def _resolve_stt_model() -> str:
     if explicit:
         return explicit
     try:
-        from services.device import profile, recommend_stt_model
+        # 按「这台机器该用哪一套」来(shared/hardware_plan.py),LLM 服务用的是同一张表。
+        from services.hardware import recommended_stt_model
 
-        model, why = recommend_stt_model(profile())
+        model, why = recommended_stt_model()
         log.info(f"按硬件选定 STT 模型: {model}({why});可用 VIF_STT_MODEL 覆盖")
         return model
     except Exception as e:  # noqa: BLE001 - 探测失败不该让服务起不来
@@ -109,7 +110,26 @@ LLM_SERVER_HOST = os.getenv("VIF_LLM_HOST", "127.0.0.1")
 LLM_SERVER_PORT = int(os.getenv("VIF_LLM_PORT", str(DEFAULT_LLM_PORT)))
 LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}"
 
+
 # LLM Processing Toggle
+def _llm_enabled_by_default() -> bool:
+    """用户没开关过、环境变量也没设时,后处理默认开不开:按这台机器的配置来。
+
+    后处理跑在 CPU 上一句话要等好几秒;没有显卡的小机器上默认开着,第一印象就是「说完
+    要等半天」。那种机器默认关,想要的人自己打开(见 shared/hardware_plan.py)。
+    """
+    try:
+        from services.hardware import current_plan
+
+        return current_plan().llm_default_on
+    except Exception as e:  # noqa: BLE001 - 探测失败就按以前的默认(开)
+        logging.getLogger("stt-server").warning(f"硬件探测失败({e}),后处理默认按开着算")
+        return True
+
+
+# 环境变量 > 用户上次的开关(见下面「State Persistence」)> 按这台机器的配置。
+# 这里先按「开」占位;没有环境变量也没有存过的状态时,再去问硬件(那一步要探测显卡,
+# 不值得在用不上它的时候做)。
 LLM_ENABLED = os.getenv("VIF_LLM_ENABLED", "true").lower() == "true"
 # 只用来记日志;真正加载哪个模型由 LLM 服务自己决定(见 llm_server.resolve_llm_model)。
 LLM_MODEL = os.getenv("VIF_LLM_MODEL", "(LLM 服务的默认)")
@@ -160,6 +180,9 @@ if "VIF_LLM_ENABLED" not in os.environ:
     if "llm_enabled" in _persisted_state:
         LLM_ENABLED = bool(_persisted_state["llm_enabled"])
         logger.info(f"Restoring LLM enabled from saved state: {LLM_ENABLED}")
+    else:
+        LLM_ENABLED = _llm_enabled_by_default()
+        logger.info(f"LLM enabled by default for this machine: {LLM_ENABLED}")
 if "VIF_LLM_MODEL" not in os.environ:
     if saved_llm := _persisted_state.get("llm_model"):
         logger.info(f"Restoring LLM model from saved state: {saved_llm}")
@@ -433,6 +456,21 @@ async def request_id_middleware(request: Request, call_next):
         raise
 
 
+def _hardware_info(lang: str) -> dict:
+    """/health 的 hardware:模型实际跑在哪,加上这台机器被分到的那一套配置。"""
+    info = dict(
+        engine.backend_info(lang)
+        or {"status": i18n.t(lang, "模型尚未加载", "Model not loaded yet")}
+    )
+    try:
+        from services.hardware import current_plan
+
+        info["plan"] = current_plan().as_dict(lang)
+    except Exception as e:  # noqa: BLE001 - 诊断信息,拿不到就不带
+        logger.debug(f"hardware plan unavailable: {e}")
+    return info
+
+
 @app.get("/health", response_model=HealthStatus)
 async def health_check(request: Request):
     """健康检查"""
@@ -456,8 +494,7 @@ async def health_check(request: Request):
         diarize=diarize_engine.get_health() if diarize_engine else {"status": "disabled"},
         # 实际选中的后端与机器画像。用户(和我们)得能一眼看出这台机器到底
         # 跑在 GPU 上还是 CPU 上、为什么给了这个模型 —— 以前这些全靠猜。
-        hardware=engine.backend_info(lang)
-        or {"status": i18n.t(lang, "模型尚未加载", "Model not loaded yet")},
+        hardware=_hardware_info(lang),
         error=load_error,
         loading=engine.loading_progress(),
         app_version=APP_VERSION,

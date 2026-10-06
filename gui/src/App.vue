@@ -302,6 +302,9 @@
               </option>
             </select>
             <div v-if="sttLoading" class="s-loading">{{ sttSwitchNote || t('切换中...', 'Switching...') }}</div>
+            <!-- 默认模型是服务端按这台机器的硬件挑的(识别和后处理是配成一套的,免得抢显存)。
+                 说出来,用户才知道「推荐」那一项是怎么来的、自己换大换小会碰到什么。 -->
+            <div v-if="hardwarePlanNote" class="s-tip">{{ hardwarePlanNote }}</div>
           </div>
 
           <div class="s-section">
@@ -907,6 +910,8 @@ interface SttHealth {
   url: string;
   /** 加载 / 下载进度(state === "loading" 时才有)。 */
   loading?: LoadingProgress | null;
+  /** 服务端按这台机器的硬件定下的那一套配置(shared/hardware_plan.py);老服务端没有。 */
+  plan?: { tier: string; stt_model: string; llm_model: string; llm_on_gpu: boolean; llm_default_on: boolean; why: string } | null;
 }
 const sttHealth = ref<SttHealth | null>(null);
 const loading = ref(false);
@@ -1454,6 +1459,18 @@ const llmLoadingNote = computed(() => {
   const llm = serverReport.value?.llm;
   if (serverMode.value !== "local" || !llm || llm.state !== "starting") return "";
   return llm.detail ? `LLM:${llm.detail}` : "";
+});
+/** 「按这台机器的配置……」那一行。 */
+const hardwarePlanNote = computed(() => {
+  const p = sttHealth.value?.plan;
+  if (!p) return "";
+  const stt = sttModels.value.find(m => m.name === p.stt_model);
+  const sttName = (stt?.description || p.stt_model).replace(/\s*[((].*$/, "");
+  const llmWhere = p.llm_on_gpu ? "" : t("(放在 CPU 上)", " (on the CPU)");
+  const llmOff = p.llm_default_on ? "" : t(",默认关闭", ", off by default");
+  return t(
+    `这台机器的配置(${p.why}):识别用 ${sttName},后处理用 ${p.llm_model}${llmWhere}${llmOff}。`,
+    `For this machine (${p.why}): ${sttName} for recognition, ${p.llm_model}${llmWhere} for post-processing${llmOff}.`);
 });
 const llmSlowNote = computed(() => {
   const llm = serverReport.value?.llm;

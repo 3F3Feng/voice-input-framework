@@ -29,22 +29,20 @@
       </template>
     </template>
     <template v-else-if="llmOnly">
-      <div class="s-label">{{ t('LLM 后处理的依赖还没装', "The LLM post-processing dependencies aren't installed") }}</div>
-      <div class="s-tip">{{ t('在这里装上 llama.cpp(预编译包,不需要编译器):有 NVIDIA 显卡装 CUDA 版(约 500 MB),别的独立显卡装 Vulkan 版,都不行才用 CPU 版。装完会重启本应用启动的服务;模型要等打开开关时才下载。', 'Install llama.cpp here (prebuilt, no compiler needed): the CUDA build on NVIDIA GPUs (about 500 MB), the Vulkan build on other discrete GPUs, and the CPU build only as a last resort. Services started by this app are restarted afterwards; the model is only downloaded when you turn the switch on.') }}</div>
+      <div class="s-label">{{ t('这个环境里还没有 llama.cpp', "llama.cpp isn't installed in this environment yet") }}</div>
+      <div class="s-tip">{{ t('LLM 后处理和量化版 Qwen3-ASR 都要它(早先建的环境里没有)。在这里装上(预编译包,不需要编译器):有 NVIDIA 显卡装 CUDA 版(约 500 MB),别的独立显卡装 Vulkan 版,都不行才用 CPU 版。装完会重启本应用启动的服务;模型要等第一次用到时才下载。', 'LLM post-processing and the quantized Qwen3-ASR both need it (older environments lack it). Install it here (prebuilt, no compiler needed): the CUDA build on NVIDIA GPUs (about 500 MB), the Vulkan build on other discrete GPUs, and the CPU build only as a last resort. Services started by this app are restarted afterwards; models are downloaded the first time they are used.') }}</div>
     </template>
     <template v-else>
       <div class="s-label">{{ status.python_path ? t('依赖没装全?在这里重建环境', 'Dependencies incomplete? Rebuild the environment here') : t('代码在了,还没有 Python 环境', 'The code is here, but there is no Python environment yet') }}</div>
       <div class="s-tip">{{ t('会在仓库里运行建环境脚本(scripts/setup-env),装好的部分不会重下。', "Runs the project's setup script (scripts/setup-env) in the repository; what's already installed isn't downloaded again.") }}</div>
     </template>
 
-    <div v-if="(needed || busy) && status?.llm_optional && !llmOnly" class="s-row" style="margin-top:4px">
-      <label class="toggle"><input type="checkbox" v-model="withLlm" :disabled="busy" /><span class="slider"></span></label>
-      <span class="s-tip" style="margin:0">{{ t('同时装上 LLM 后处理要用的 llama.cpp(预编译包;有显卡装显卡版,NVIDIA 的约 500 MB。模型要等打开后处理开关时才下载)', 'Also install llama.cpp for LLM post-processing (prebuilt; the GPU build when you have a GPU — about 500 MB for NVIDIA. The model is only downloaded when you turn post-processing on)') }}</span>
-    </div>
+    <!-- llama.cpp 不再是可选项:非 Apple 平台上语音识别(量化版 Qwen3-ASR)和 LLM 后处理都跑在它上面。 -->
+    <div v-if="(needed || busy) && status?.llm_optional && !llmOnly" class="s-tip">{{ t('会一并装上 llama.cpp(语音识别和 LLM 后处理都用它):有 NVIDIA 显卡装 CUDA 版(约 500 MB),别的独立显卡装 Vulkan 版,没有显卡装 CPU 版。模型要等第一次用到时才下载。', 'llama.cpp is installed too (speech recognition and LLM post-processing both run on it): the CUDA build on NVIDIA GPUs (about 500 MB), the Vulkan build on other discrete GPUs, the CPU build otherwise. Models are downloaded the first time they are used.') }}</div>
 
     <div v-if="needed || busy" class="s-row" style="margin-top:6px">
       <button class="s-btn ls-primary" @click="run" :disabled="!canRun">
-        {{ busy ? stageText : llmOnly ? t('安装 LLM 依赖', 'Install LLM dependencies') : (status?.repo_path ? (status.python_path ? t('重建环境', 'Rebuild environment') : t('一键建环境', 'Set up environment')) : t('下载并安装', 'Download and install')) }}
+        {{ busy ? stageText : llmOnly ? t('安装 llama.cpp', 'Install llama.cpp') : (status?.repo_path ? (status.python_path ? t('重建环境', 'Rebuild environment') : t('一键建环境', 'Set up environment')) : t('下载并安装', 'Download and install')) }}
       </button>
       <span v-if="status?.running && !busy" class="s-tip" style="margin:0">{{ t('有一次安装或更新正在进行…', 'An install or update is in progress…') }}</span>
     </div>
@@ -89,7 +87,6 @@ const emit = defineEmits<{ done: [outcome: Outcome] }>();
 
 const status = ref<SetupStatus | null>(null);
 const dir = ref("");
-const withLlm = ref(true);
 const busy = ref(false);
 const checking = ref(false);
 const stage = ref("");
@@ -140,7 +137,7 @@ async function run() {
   stage.value = "checking";
   line.value = "";
   try {
-    const outcome = await invoke<Outcome>("run_local_setup", { dir: dir.value.trim() || null, llm: withLlm.value || llmOnly.value });
+    const outcome = await invoke<Outcome>("run_local_setup", { dir: dir.value.trim() || null, llm: true });
     result.value = { ok: true, msg: outcome.message };
     emit("done", outcome);
   } catch (e) {

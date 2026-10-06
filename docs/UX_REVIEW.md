@@ -449,6 +449,7 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
 | LLM 不再翻译 | 实测中文提示词会让模型把英文口述整理成中文、把中英混说里的 deploy / rollback 译掉:包原文的说明加「保持原文的语言,不要翻译」,输出兜底加「换了语言就退回原文」 |
 | F17 长期 | LLM 服务加 llama.cpp 后端(GGUF,默认 Qwen3.5-2B-GGUF):Apple Silicon 用 MLX,其它平台装了 llama-cpp-python 就用 llama.cpp,`VIF_LLM_BACKEND` 可强制;`/llm/enabled` 的 supported 跟着走,没装时提示 `setup-env --llm` |
 | 2.7.0(Windows 真机反馈) | 新机器「下载并安装 / 一键建环境」(克隆 + setup-env,只缺 git 时给安装命令);下载进度带总量、进头部、LLM 也报;模型下拉框跟着服务端正在加载的模型;`setup-env --llm` 改装预编译的 llama-cpp-python(Windows 无 C++ 工具链时不再必失败),有显卡装显卡版(CUDA / Vulkan),加载不了逐级退回,跑在 CPU 上时界面提示;transformers 原生的 Qwen3-ASR 引擎(`qwen_asr` / `qwen_asr_small`,Windows / Linux 可选);`whisper_mlx_turbo` 的仓库名修正;CI 真跑 `setup-env`(Windows + Linux) |
+| 2.7.1 / 2.7.2 | Windows 上应用内更新后认领回自己的服务(PowerShell 问 CIM);CI 三个平台跑 Rust 单测;客户端里切换服务代码的分支;下载进度接到 huggingface_hub 的进度回调(新版下载库上缓存目录很久才动);Windows / Linux 的 Qwen3-ASR 换成 llama.cpp 上的 8 位量化版并成为默认;识别和后处理按同一张硬件配置表选(Apple / NVIDIA / AMD·Intel / 无显卡,各分几档);llama.cpp 成为默认依赖;Gemma-4-E4B 的 GGUF |
 
 实测坐实并验证过的(本机真模型、真服务):R9 R25 R34 R35 R36 R37 R40、LLM 失败回退原文、
 转写心跳(49 秒推理收到 9 条)、个人词库(热词把「石峰」认成「石枫」,规则把「陶睿」换成 Tauri)、
@@ -485,6 +486,17 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
   加载得到」,缺驱动的 runner 上走不到真正出字。GTX 10 系这种老卡能不能用 cu124 的包也不知道
   (不行会退到 Vulkan)。Vulkan 版在真显卡上的速度也没量过。
   macOS 的预编译包是坏的(解压报 deflate 错误),所以 macOS 照旧从源码编译(自带 Metal)。
+- 2.7.2 的「按硬件配好的几套」(`shared/hardware_plan.py` + `services/hardware.py`):
+  - **实测过的**:Apple 芯片两档;llama.cpp 上的每个模型(量化版 Qwen3-ASR 0.6B / 1.7B、
+    Gemma-4-E2B / E4B 的 GGUF)在本机 Metal 和纯 CPU 上的质量和速度;设备表的探测(本机 Metal);
+    CI 在 Linux(软件渲染的 Vulkan)和 Windows(CPU)上真识别一段英文;NVIDIA 上 CUDA 版能装上并
+    认出显卡(GTX 1070 Ti,2026-10-06)。
+  - **没实测的**:各档的显存门槛(按模型大小算的,不是在每种显卡上量的);CUDA / Vulkan 上识别和
+    后处理的真实速度和显存占用;AMD、Intel Arc 真卡;Windows 上 llama.cpp 设备表里 N 卡 / A 卡的
+    类型是不是如预期(独显 = GPU,集显 = IGPU);没有显卡的普通 x86 上量化版 Qwen3-ASR 的速度
+    (门槛是按本机 2 线程的结果外推的,CI 的 4 核 runner 会打出一个参考数);Intel Mac。
+  - 8 GB 显卡实际能不能放下 1.7B + E2B(表里保守地给了 0.6B)要看真机上的显存占用,量到了可以
+    把第二档的门槛调低。
 - Windows(2026-10-06,2.7.0 实测):应用内更新之后两个服务没被认领回来,成了停不掉的「外部进程」。
   原因是 `pid_runs_module` / `pid_is_project_server` 在 Windows 上一直是「一律 false」的占位。
   2.7.1 改成用 PowerShell 问 CIM(命令行 + 解释器 / 父进程路径在不在仓库里),并让 CI 在
@@ -505,10 +517,9 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
    (`services/segmenter.py`),松手只转最后一段;老服务端、连不上、中途断线都退回松手后整段上传。
    实测(M3 Max,Qwen3-ASR-1.7B):101 秒 / 217 秒录音松手到结果从 3.3 / 7.8 秒降到约 0.8 秒,
    字与整段转写一致,只有段边界附近少数标点不同。真麦克风 + 真应用里还没点过。
-2. ~~NVIDIA 机器上跑 Qwen3-ASR~~ 已做(2.7.0),但走的不是 PR #6 那条路:transformers 5.13 起原生
-   支持 Qwen3-ASR(`Qwen/Qwen3-ASR-*-hf`),不需要把 transformers 钉死在 4.57 的 `qwen-asr` 包。
-   新引擎 `qwen_asr_hf`(`services/qwen_asr_hf.py`),模型 `qwen_asr_small`(0.6B)/ `qwen_asr`(1.7B),
-   CPU / CUDA / ROCm / MPS 同一段代码。本机实测(同一批中文 / 中英混说录音):`whisper_base` 出繁体和
+2. ~~NVIDIA 机器上跑 Qwen3-ASR~~ 已做。2.7.0 先用 transformers 原生支持接了半精度的原版权重
+   (`qwen_asr_hf`);2.7.2 换成 llama.cpp 上的 8 位量化版(`services/qwen_asr_gguf.py`,显存小三分之一、
+   更快、A 卡也能用),并进了自动推荐。下面是 2.7.0 当时的记录:本机实测(同一批中文 / 中英混说录音):`whisper_base` 出繁体和
    错字(「命令航救」「Floid out」),`qwen_asr_small` 和 `whisper_turbo` 一样准、自带标点,还更快
    (90 秒录音 4.5 秒 vs 9.6 秒)。**剩下的**:在 NVIDIA 真机上验证后,把它放进
    `services/device.py` 的自动推荐(现在要用户手动选);纯 CPU 上量一下速度再决定给不给 CPU 用户推荐。
@@ -533,6 +544,9 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
 7. (新)llama.cpp 的显卡版要在真机上过一遍(见 5.2):CUDA 版在 NVIDIA 上能不能加载、多快;
    Vulkan 版在 A 卡 / N 卡上多快。过了之后可以考虑给 ≥16 GB 显存 / 内存的机器默认 E4B 的 GGUF
    (现在 llama.cpp 这边一律 E2B)。
+10. (新,2.7.2 留下的)「按硬件配好的几套」要用真机数据校准:显存门槛、CPU 档的线程数门槛、
+    后处理默认开不开的门槛,现在都是按模型大小和本机测速外推的。测试者报回「任务管理器里显存占了
+    多少、说完到出字几秒」之后调。
 9. (新)客户端的测试版通道。2.7.0 有了「切换服务代码的分支」(`service_update.rs` 的换分支),
    测试者能在客户端里切到开发分支;但**客户端安装包自己**还只能跟正式版(应用内更新读的是
    最新 Release 的 `latest.json`)。同时动了客户端和服务端的改动,测试者仍然要手动装 CI 产物。

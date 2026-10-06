@@ -547,20 +547,20 @@ fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
                 "llama_cpp",
                 Warn,
                 t(
-                    "没装:LLM 后处理用不了(语音识别不受影响)",
-                    "Not installed: LLM post-processing is unavailable (speech recognition is unaffected)",
+                    "没装:LLM 后处理和量化版 Qwen3-ASR 用不了(Whisper 系的识别模型不受影响)",
+                    "Not installed: LLM post-processing and the quantized Qwen3-ASR are unavailable (Whisper models are unaffected)",
                 )
                 .to_string(),
                 Some(if cfg!(target_os = "windows") {
                     t(
-                        "要 LLM 后处理的话运行 scripts\\setup-env.ps1 -Llm(装预编译包,有显卡装显卡版,不需要编译器)",
-                        "For LLM post-processing, run scripts\\setup-env.ps1 -Llm (installs a prebuilt package — the GPU build when you have a GPU; no compiler needed)",
+                        "重跑 scripts\\setup-env.ps1 就会装上(预编译包,有显卡装显卡版);或者在「LLM 后处理」那里点「安装 llama.cpp」",
+                        "Rerun scripts\\setup-env.ps1 to install it (prebuilt; the GPU build when you have a GPU), or click Install llama.cpp under LLM post-processing",
                     )
                     .to_string()
                 } else {
                     t(
-                        "要 LLM 后处理的话运行 scripts/setup-env.sh --llm(装预编译包,有显卡装显卡版,不需要编译器)",
-                        "For LLM post-processing, run scripts/setup-env.sh --llm (installs a prebuilt package — the GPU build when you have a GPU; no compiler needed)",
+                        "重跑 scripts/setup-env.sh 就会装上(预编译包,有显卡装显卡版);或者在「LLM 后处理」那里点「安装 llama.cpp」",
+                        "Rerun scripts/setup-env.sh to install it (prebuilt; the GPU build when you have a GPU), or click Install llama.cpp under LLM post-processing",
                     )
                     .to_string()
                 }),

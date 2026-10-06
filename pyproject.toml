@@ -37,7 +37,8 @@ dependencies = [
     "rich>=13.7.0",
     "click>=8.1.0",
     # STT 两个引擎都要 transformers;torch 由下面的硬件 extra 指定来源
-    # 5.13 起原生支持 Qwen3-ASR(services/qwen_asr_hf.py:非 Apple 平台的中文识别)
+    # Whisper 系的识别模型用(非 Apple 平台)。下限是 2.7.0 时为原生 Qwen3-ASR 提上来的;
+    # 那个引擎后来换成了 llama.cpp 上的量化版,下限留着不动,免得来回折腾已有的环境。
     "transformers>=5.13.0",
     # ── MLX:**只在 Apple Silicon 上装** ──
     # 这个 marker 是必须的,不是保险起见。mlx 现在确实为 Linux/Windows 发了

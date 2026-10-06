@@ -107,10 +107,13 @@ class TestSTTServer:
 
         monkeypatch.setattr(stt, "engine", STTEngine())
         client = TestClient(stt.app)
-        assert client.get("/health").json()["hardware"] == {"status": "模型尚未加载"}
-        assert client.get("/health", headers=EN).json()["hardware"] == {
-            "status": "Model not loaded yet"
-        }
+        zh = client.get("/health").json()["hardware"]
+        en = client.get("/health", headers=EN).json()["hardware"]
+        assert zh["status"] == "模型尚未加载"
+        assert en["status"] == "Model not loaded yet"
+        # 这台机器被分到的那一套配置也在里面,说明跟着语言走
+        assert zh["plan"]["tier"] == en["plan"]["tier"]
+        assert zh["plan"]["stt_model"] and zh["plan"]["llm_model"]
 
     def test_transcribe_error_is_localized(self, stt, monkeypatch):
         """转写报的「模型加载失败」按请求的语言说"""

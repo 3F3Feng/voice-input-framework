@@ -506,8 +506,9 @@ pub struct EnvFacts {
     pub torch: Option<String>,
     pub llama_cpp: bool,
     pub dev: bool,
-    /// 上次建环境时 `--llm-backend` 要的是什么(`<venv>/vif-llm-backend`,脚本写的):
-    /// auto / cuda / vulkan / cpu。没有这个文件(老环境)时为空,按 auto 处理。
+    /// 上次建环境时 llama.cpp 要的是什么(`<venv>/vif-llm-backend`,脚本写的):
+    /// auto / cuda / vulkan / cpu,或者 off(`--no-llm`)。没有这个文件(老环境)时为空,
+    /// 按 auto 处理。
     pub llm_backend: Option<String>,
 }
 
@@ -550,10 +551,15 @@ fn torch_backend(version: &str) -> Option<&'static str> {
     }
 }
 
-/// 这个环境当初要没要 LLM 后处理的依赖。装着 llama.cpp 当然算;标记文件在也算——
-/// 上次要了但没装上(连不上 github.com),重建时应该再试一次。
-fn wants_llm(env: &EnvFacts) -> bool {
-    !env.apple_silicon && (env.llama_cpp || env.llm_backend.is_some())
+/// 用户明确说过不装 llama.cpp(`--no-llm`,标记文件里是 `off`)。
+///
+/// 2.7.2 起 llama.cpp 是默认就装的:非 Apple 平台上语音识别(量化版 Qwen3-ASR)和 LLM
+/// 后处理都跑在它上面。所以不再看「现在装没装」——老环境里没有的,更新时补上;只有
+/// 明确拒绝过的才继续不装。
+fn llm_opted_out(env: &EnvFacts) -> bool {
+    env.llm_backend
+        .as_deref()
+        .is_some_and(|b| b.trim().eq_ignore_ascii_case("off"))
 }
 
 /// 用户手动指定过的 llama.cpp 版本(cuda / vulkan / cpu),重建时原样带上。自动选的
@@ -589,9 +595,10 @@ pub fn setup_args(env: &EnvFacts, windows: bool) -> Vec<String> {
             args.push("-Backend".into());
             args.push(b.into());
         }
-        if wants_llm(env) {
-            args.push("-Llm".into());
-            if let Some(b) = manual_llm_backend(env) {
+        if !env.apple_silicon {
+            if llm_opted_out(env) {
+                args.push("-NoLlm".into());
+            } else if let Some(b) = manual_llm_backend(env) {
                 args.push("-LlmBackend".into());
                 args.push(b.into());
             }
@@ -604,9 +611,10 @@ pub fn setup_args(env: &EnvFacts, windows: bool) -> Vec<String> {
             args.push("--backend".into());
             args.push(b.into());
         }
-        if wants_llm(env) {
-            args.push("--llm".into());
-            if let Some(b) = manual_llm_backend(env) {
+        if !env.apple_silicon {
+            if llm_opted_out(env) {
+                args.push("--no-llm".into());
+            } else if let Some(b) = manual_llm_backend(env) {
                 args.push("--llm-backend".into());
                 args.push(b.into());
             }
@@ -1837,11 +1845,9 @@ mod tests {
             dev: false,
             llm_backend: None,
         };
-        assert_eq!(
-            setup_args(&linux, false),
-            vec!["--backend", "cuda", "--llm"]
-        );
-        assert_eq!(setup_args(&linux, true), vec!["-Backend", "cuda", "-Llm"]);
+        // llama.cpp 默认就装,不用再带 --llm。
+        assert_eq!(setup_args(&linux, false), vec!["--backend", "cuda"]);
+        assert_eq!(setup_args(&linux, true), vec!["-Backend", "cuda"]);
 
         let rocm = EnvFacts {
             torch: Some("2.5.1+rocm6.2".into()),
@@ -1862,38 +1868,45 @@ mod tests {
     }
 
     #[test]
-    fn setup_args_keep_a_manual_llm_backend_and_redetect_an_automatic_one() {
+    fn setup_args_keep_a_manual_llm_choice_and_redetect_an_automatic_one() {
         let with = |llama_cpp: bool, backend: Option<&str>| EnvFacts {
             llama_cpp,
             llm_backend: backend.map(str::to_string),
             ..Default::default()
         };
-        // 自动选的、老环境(没有标记):只带 --llm,让脚本重新探测显卡——以前现编译的
-        // CPU 版、当时没驱动退回 CPU 的,下次更新能自己升到显卡版。
-        assert_eq!(setup_args(&with(true, Some("auto")), false), vec!["--llm"]);
-        assert_eq!(setup_args(&with(true, None), false), vec!["--llm"]);
+        // 自动选的、老环境(没有标记):什么都不带。llama.cpp 默认就装,脚本会重新探测
+        // 显卡——以前现编译的 CPU 版、当时没驱动退回 CPU 的、压根没装过的,这次更新都会
+        // 装上该装的那一种。
+        assert!(setup_args(&with(true, Some("auto")), false).is_empty());
+        assert!(setup_args(&with(true, None), false).is_empty());
+        assert!(setup_args(&with(false, None), true).is_empty());
         // 手动指定过的原样带上(比如在有显卡的机器上特意要 CPU 版)。
         assert_eq!(
             setup_args(&with(true, Some("cpu")), false),
-            vec!["--llm", "--llm-backend", "cpu"]
+            vec!["--llm-backend", "cpu"]
         );
         assert_eq!(
             setup_args(&with(true, Some("Vulkan")), true),
-            vec!["-Llm", "-LlmBackend", "vulkan"]
+            vec!["-LlmBackend", "vulkan"]
         );
-        // 上次要了但没装上(标记在、包不在):再试一次。
-        assert_eq!(setup_args(&with(false, Some("auto")), false), vec!["--llm"]);
+        // 上次要了但没装上(标记在、包不在):照样带上,再试一次。
         assert_eq!(
             setup_args(&with(false, Some("cuda")), true),
-            vec!["-Llm", "-LlmBackend", "cuda"]
+            vec!["-LlmBackend", "cuda"]
         );
+        // 明确说过不装的,继续不装。
+        assert_eq!(
+            setup_args(&with(false, Some("off")), false),
+            vec!["--no-llm"]
+        );
+        assert_eq!(setup_args(&with(false, Some("OFF")), true), vec!["-NoLlm"]);
         // 标记文件里是不认识的东西:当成自动。
-        assert_eq!(setup_args(&with(true, Some("metal")), false), vec!["--llm"]);
+        assert!(setup_args(&with(true, Some("metal")), false).is_empty());
         // Apple Silicon 用 MLX,什么都不带。
         let mac = EnvFacts {
             apple_silicon: true,
             llama_cpp: true,
-            llm_backend: Some("cpu".into()),
+            llm_backend: Some("off".into()),
             ..Default::default()
         };
         assert!(setup_args(&mac, false).is_empty());
@@ -1901,10 +1914,10 @@ mod tests {
 
     #[test]
     fn manual_commands_match_the_platform() {
-        let unix = manual_commands("/home/u/vif", &["--llm".into()], false);
+        let unix = manual_commands("/home/u/vif", &["--backend".into(), "cuda".into()], false);
         assert_eq!(
             unix,
-            "cd \"/home/u/vif\"\ngit pull --ff-only\nscripts/setup-env.sh --llm"
+            "cd \"/home/u/vif\"\ngit pull --ff-only\nscripts/setup-env.sh --backend cuda"
         );
         let win = manual_commands("C:\\vif", &[], true);
         assert!(win.ends_with("powershell -ExecutionPolicy Bypass -File scripts\\setup-env.ps1"));

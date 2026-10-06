@@ -30,24 +30,8 @@ _ENGINE_PACKAGES = {
     "qwen_asr_mlx_native": "mlx_audio",
     "whisper_mlx": "mlx_whisper",
     "whisper_turbo": "transformers",
-    "qwen_asr_hf": "transformers",
+    "qwen_asr_gguf": "llama_cpp",
 }
-
-
-def _package_version(name: str) -> tuple[int, ...] | None:
-    """已装的包的版本(只取开头的数字段);没装或读不出来返回 None。"""
-    try:
-        from importlib import metadata
-
-        parts: list[int] = []
-        for piece in metadata.version(name).split("."):
-            digits = "".join(ch for ch in piece if ch.isdigit())
-            if not digits or not piece[0].isdigit():
-                break
-            parts.append(int(digits))
-        return tuple(parts) or None
-    except Exception:  # noqa: BLE001 - 读不出版本就当不知道,不拦
-        return None
 
 
 def _has_package(name: str) -> bool:
@@ -74,28 +58,24 @@ def unavailable_reason(info: dict[str, Any]) -> str | None:
             )
         return None
     package = _ENGINE_PACKAGES.get(engine)
+    if package == "llama_cpp" and not _has_package(package):
+        # 量化版 Qwen3-ASR 跑在 llama.cpp 上。2.7.2 起建环境默认就装;更早建的环境里没有。
+        return bi(
+            f"环境里没有 llama.cpp,请用 {SETUP_COMMAND} 重建环境"
+            f"(或者在「LLM 后处理」那里点「安装 llama.cpp」)",
+            f"llama.cpp is missing from the environment; rebuild it with {SETUP_COMMAND} "
+            f"(or click Install llama.cpp under LLM post-processing)",
+        )
     if package and not _has_package(package):
         return bi(
             f"环境里缺少 {package},请用 {SETUP_COMMAND} 重建环境",
             f"{package} is missing from the environment; rebuild it with {SETUP_COMMAND}",
         )
-    if engine in ("whisper_turbo", "qwen_asr_hf") and not _has_package("torch"):
+    if engine == "whisper_turbo" and not _has_package("torch"):
         return bi(
             f"环境里缺少 torch,请用 {SETUP_COMMAND} 重建环境",
             f"torch is missing from the environment; rebuild it with {SETUP_COMMAND}",
         )
-    if engine == "qwen_asr_hf":
-        from services.qwen_asr_hf import MIN_TRANSFORMERS
-
-        have = _package_version("transformers")
-        if have is not None and have[:2] < MIN_TRANSFORMERS:
-            need = ".".join(map(str, MIN_TRANSFORMERS))
-            got = ".".join(map(str, have))
-            return bi(
-                f"transformers 太旧({got}),这个模型要 {need} 以上;用 {SETUP_COMMAND} 重建环境",
-                f"transformers is too old ({got}); this model needs {need}+. "
-                f"Rebuild the environment with {SETUP_COMMAND}",
-            )
     return None
 
 
@@ -124,9 +104,9 @@ def is_downloaded(info: dict[str, Any]) -> bool | None:
 def recommended_model() -> str | None:
     """按本机硬件推荐的模型(探测一次就缓存)。探测不了时返回 None。"""
     try:
-        from services.device import profile, recommend_stt_model
+        from services.hardware import recommended_stt_model
 
-        return recommend_stt_model(profile())[0]
+        return recommended_stt_model()[0]
     except Exception as e:  # noqa: BLE001 - 推荐只是锦上添花,探测失败不该影响列表
         logger.debug(f"hardware recommendation unavailable: {e}")
         return None

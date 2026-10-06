@@ -46,10 +46,14 @@ def has_package(name: str) -> bool:
 
 
 def setup_hint(platform: str | None = None) -> str:
-    """装 llama.cpp 依赖的命令。Windows 用户多半没有 bash,给 .sh 等于没给。"""
+    """装 llama.cpp 的命令。Windows 用户多半没有 bash,给 .sh 等于没给。
+
+    不带参数:llama.cpp 是建环境脚本默认就装的(有显卡装显卡版);更早建的环境里没有,
+    重跑一遍就补上了。
+    """
     if (platform or sys.platform) == "win32":
-        return r"scripts\setup-env.ps1 -Llm"
-    return "scripts/setup-env.sh --llm"
+        return r"scripts\setup-env.ps1"
+    return "scripts/setup-env.sh"
 
 
 def requested_backend() -> str | None:

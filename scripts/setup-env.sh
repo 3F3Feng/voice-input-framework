@@ -4,8 +4,8 @@
 #
 #   scripts/setup-env.sh                # 自动探测
 #   scripts/setup-env.sh --backend cuda # 手动指定 cpu|cuda|rocm|xpu|mlx
-#   scripts/setup-env.sh --llm          # 连 LLM 后处理的依赖一起装(有显卡就装显卡版)
-#   scripts/setup-env.sh --llm --llm-backend cpu   # 手动指定 cuda|vulkan|cpu
+#   scripts/setup-env.sh --llm-backend cpu   # llama.cpp 手动指定 cuda|vulkan|cpu(默认自动)
+#   scripts/setup-env.sh --no-llm       # 不装 llama.cpp(那样量化版 Qwen3-ASR 和后处理都用不了)
 #   scripts/setup-env.sh --dev          # 加上测试/lint 工具
 #
 # 为什么不是 `pip install -r requirements.txt`:
@@ -20,13 +20,16 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 BACKEND=""
-WITH_LLM=0
+# llama.cpp 默认就装:非 Apple 平台上语音识别(量化版 Qwen3-ASR)和 LLM 后处理都跑在它
+# 上面,不是可选的附加功能了。--llm 留着只为兼容以前的用法。
+WITH_LLM=1
 LLM_BACKEND="auto"
 WITH_DEV=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend) BACKEND="${2:?--backend 需要 cpu|cuda|rocm|xpu|mlx}"; shift 2 ;;
     --llm)     WITH_LLM=1; shift ;;
+    --no-llm)  WITH_LLM=0; shift ;;
     --llm-backend) LLM_BACKEND="${2:?--llm-backend 需要 auto|cuda|vulkan|cpu}"; WITH_LLM=1; shift 2 ;;
     --dev)     WITH_DEV=1; shift ;;
     -h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -152,10 +155,10 @@ if [[ $WITH_LLM -eq 1 && "$BACKEND" != "mlx" ]]; then
         vulkan) LLM_CANDIDATES=(vulkan cpu) ;;
         *)      LLM_CANDIDATES=(cpu) ;;
       esac
-      say "LLM 后处理(llama.cpp):自动选择,依次尝试 ${LLM_CANDIDATES[*]}" ;;
+      say "llama.cpp(语音识别 + LLM 后处理):自动选择,依次尝试 ${LLM_CANDIDATES[*]}" ;;
     cuda|vulkan|cpu)
       LLM_CANDIDATES=("$LLM_BACKEND")
-      say "LLM 后处理(llama.cpp):手动指定 $LLM_BACKEND" ;;
+      say "llama.cpp(语音识别 + LLM 后处理):手动指定 $LLM_BACKEND" ;;
     *) die "不认识的 --llm-backend「$LLM_BACKEND」,可选:auto cuda vulkan cpu" ;;
   esac
 fi
@@ -186,11 +189,15 @@ if [[ -z "$LLM_INSTALLED" ]]; then
   uv sync ${EXTRAS[@]+"${EXTRAS[@]}"} || die "uv sync 失败,见上面的输出。"
 fi
 
-# 记下这次是怎么选的:「更新服务」重跑本脚本时,手动指定过的要原样带上,自动选的
-# 重新探测(换了显卡、装了驱动之后能自己升上去)。
-if [[ $WANT_LLM -eq 1 && -d .venv ]]; then
-  printf '{"requested": "%s", "installed": "%s"}\n' "$LLM_BACKEND" "${LLM_INSTALLED:-none}" \
-    > .venv/vif-llm-backend
+# 记下这次是怎么选的:「更新服务」重跑本脚本时,手动指定过的(包括 --no-llm)要原样
+# 带上,自动选的重新探测(换了显卡、装了驱动之后能自己升上去)。
+if [[ -d .venv && "$BACKEND" != "mlx" ]]; then
+  if [[ $WANT_LLM -eq 1 ]]; then
+    printf '{"requested": "%s", "installed": "%s"}\n' "$LLM_BACKEND" "${LLM_INSTALLED:-none}" \
+      > .venv/vif-llm-backend
+  else
+    printf '{"requested": "off", "installed": "none"}\n' > .venv/vif-llm-backend
+  fi
 fi
 
 # ── 交代清楚装出来的是什么 ────────────────────────────────────────────────
@@ -222,21 +229,21 @@ PY
 if [[ $WANT_LLM -eq 1 ]]; then
   case "$LLM_INSTALLED" in
     "")
-      warn "LLM 后处理的依赖(llama-cpp-python)没装上,原因见上面的输出;语音识别不受影响。"
-      warn "多半是连不上 github.com(预编译包放在那里)。可以稍后重跑本脚本,或关掉「LLM 后处理」。" ;;
+      warn "llama.cpp(llama-cpp-python)没装上,原因见上面的输出。Whisper 系的识别模型不受影响;"
+      warn "量化版 Qwen3-ASR 和 LLM 后处理用不了。多半是连不上 github.com(预编译包放在那里),稍后重跑本脚本即可。" ;;
     cpu)
       if [[ "${LLM_CANDIDATES[0]}" != "cpu" ]]; then
-        warn "LLM 后处理装的是 CPU 版(显卡版在这台机器上用不了):能用,但一句话要等好几秒。"
+        warn "llama.cpp 装的是 CPU 版(显卡版在这台机器上用不了):能用,但会慢。"
         warn "更新显卡驱动后重跑本脚本,会重新尝试显卡版。"
       elif [[ "$(uname -s)" == "Darwin" ]]; then
         # macOS 上只有这一种包(从源码编译),自带 Metal 显卡加速。
-        say "LLM 后处理:llama.cpp(macOS,Metal 显卡加速)。"
+        say "llama.cpp:macOS,Metal 显卡加速。"
       elif [[ "$LLM_BACKEND" == "cpu" ]]; then
-        say "LLM 后处理:CPU 版(手动指定;一句话要等好几秒)。"
+        say "llama.cpp:CPU 版(手动指定)。"
       else
-        say "LLM 后处理:CPU 版(没探测到独立显卡;一句话要等好几秒)。"
+        say "llama.cpp:CPU 版(没探测到独立显卡)。"
       fi ;;
-    *) say "LLM 后处理:$LLM_INSTALLED 版(显卡加速)。" ;;
+    *) say "llama.cpp:$LLM_INSTALLED 版(显卡加速)。" ;;
   esac
 fi
 say "完成。启动服务:"

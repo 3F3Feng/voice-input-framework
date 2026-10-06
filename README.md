@@ -65,26 +65,48 @@
 | `whisper_small` | Whisper Small（transformers），速度与精度折中 | ~1GB | 全平台 |
 | `whisper_medium` | Whisper Medium（transformers），有独显时适用 | ~2.5GB | 全平台 |
 | `whisper_turbo` | Whisper Large V3 Turbo（transformers），精度最好，建议配 GPU | ~3GB | 全平台 |
-| `qwen_asr_small` | Qwen3-ASR-0.6B（transformers），中文和中英混说明显好于同档 Whisper，CPU 也能跑 | ~2GB | 全平台 |
-| `qwen_asr` | Qwen3-ASR-1.7B（transformers），中文最准，建议 6GB 以上显存 | ~5GB | 全平台 |
+| `qwen_asr_small` | Qwen3-ASR-0.6B 8 位量化版（llama.cpp），中文和中英混说明显好于 Whisper，显卡 / CPU 都能跑 | ~1.3GB | 全平台（Windows / Linux 的默认） |
+| `qwen_asr` | Qwen3-ASR-1.7B 8 位量化版（llama.cpp），中文最准 | ~3GB | 全平台（显存 ≥ 11GB 时的默认） |
 | `whisper_cpp_base` / `whisper_cpp_large` | Whisper V3 via whisper.cpp | 1GB / 3GB | 需自行编译 `~/whisper.cpp` 并把模型放到 `~/.cache/whisper/` |
 
-不指定时服务端**按硬件挑**（`services/device.py` 的 `recommend_stt_model`）：
-Apple Silicon 上内存 ≥16GB 用 `qwen_asr_mlx_native`，否则用 `qwen_asr_mlx_native_small`；
-有独显按显存从 `whisper_turbo` 往下挑；纯 CPU 按核数和内存在 `whisper_tiny` /
-`whisper_base` / `whisper_small` 里取。启动日志里会写明选了哪个、为什么。
+### 按硬件配好的几套
 
-**Windows / Linux 上主要说中文的话**，建议在设置里手动换成 `qwen_asr_small`（有 6GB 以上显存
-可以用 `qwen_asr`）：它是 Qwen3-ASR 的 transformers 原生版（要 transformers ≥ 5.13，
-`setup-env` 装的就是），在 M3 Max 的 CPU 和 GPU 上实测，同一段中文 / 中英混说录音，
-`whisper_base` 出繁体字和错字，它和 `whisper_turbo` 一样准还自带标点，而且更快。
-NVIDIA 真机上还没人测过，所以暂时没有放进自动推荐。
+不指定模型时，两个服务按**同一张表**挑（`shared/hardware_plan.py`）：识别模型和后处理模型是配成
+一套的，加起来放得进显存，还给桌面留一截。「设置 → 服务 → STT 模型」下面会写明这台机器被分到了哪一套。
+
+| 系统 | 硬件 | 档位 | 语音识别 | LLM 后处理 | 运行环境 |
+|------|------|------|----------|------------|----------|
+| macOS | Apple 芯片 | 内存 ≥ 16 GB | Qwen3-ASR-1.7B（MLX 8bit） | Gemma-4-E4B（MLX） | MLX / Metal |
+| macOS | Apple 芯片 | 内存 < 16 GB | Qwen3-ASR-0.6B（MLX 4bit） | Gemma-4-E2B（MLX） | MLX / Metal |
+| Windows / Linux | NVIDIA | 显存 ≥ 11 GB | Qwen3-ASR-1.7B 量化版 | Gemma-4-E4B（显卡） | llama.cpp CUDA |
+| Windows / Linux | NVIDIA | 显存 5.5–11 GB | Qwen3-ASR-0.6B 量化版 | Gemma-4-E2B（显卡） | llama.cpp CUDA |
+| Windows / Linux | NVIDIA | 显存 2.5–5.5 GB | Qwen3-ASR-0.6B 量化版 | Gemma-4-E2B（CPU） | llama.cpp CUDA |
+| Windows / Linux | AMD / Intel Arc | 同上三档，按显存 | 同上 | 同上 | llama.cpp Vulkan |
+| 任何系统 | 没有独立显卡 | ≥ 6 线程且内存 ≥ 8 GB | Qwen3-ASR-0.6B 量化版 | Gemma-4-E2B（CPU） | llama.cpp CPU |
+| 任何系统 | 没有独立显卡 | 更小的机器 | Whisper Base / Tiny | Gemma-4-E2B（CPU） | PyTorch CPU + llama.cpp CPU |
+
+- 后处理跑在 CPU 上时一句话要等几秒，所以只有 ≥ 12 线程且内存 ≥ 16 GB 的机器默认开着，其余默认关
+  （可以自己打开）。「线程」是系统报的逻辑处理器数。
+- 显卡看的是 **llama.cpp 认得出什么**：显卡在、但装的是 CPU 版的 llama.cpp（或者驱动不可用）时，
+  按没有显卡来选。集成显卡不算。
+- 8 GB 的显卡落在第二档（1.3 + 3.8 = 5.1 GB），而不是勉强塞进 1.7B——Windows 的桌面自己要占
+  0.5–1.5 GB 显存。想换可以手动选，「设置 → 服务」里会提示模型是不是跑在了 CPU 上。
+- 哪些是实测的：Apple 芯片两档、llama.cpp 上的每个模型（本机 Metal 和纯 CPU）、NVIDIA 上 CUDA 版
+  能装上并认出显卡（GTX 1070 Ti）。AMD / Intel Arc 的 Vulkan 只在 CI 的软件渲染上跑过；各档的门槛是
+  按模型大小算的，不是在每种显卡上量出来的。Intel Mac 没有测过（按「没有独立显卡」处理）。
+- `VIF_STT_MODEL` / `VIF_LLM_MODEL` 可以强制指定；在设置里手动切换过的模型会被记住，优先于这张表。
+
+为什么非 Apple 平台用量化版 Qwen3-ASR 而不是 Whisper：同一批中文 / 中英混说录音，`whisper_base`
+出繁体字和错字，量化版 Qwen3-ASR-0.6B 和 `whisper_turbo` 一样准、自带标点，而且快得多——本机
+显卡上 90 秒录音 2 秒出结果，只给 2 个 CPU 线程也只要 11.5 秒。它和半精度的原版权重比过 12 段
+录音：9 段逐字相同，其余 3 段是标点和中英文之间空格的差别；权重小三分之一，识别服务也不再需要
+加载 PyTorch。
 
 ### LLM 后处理模型
 
 LLM 服务按平台挑推理后端：**Apple Silicon 用 MLX**（依赖默认就装），**Windows / Linux 用
-llama.cpp** 跑 GGUF 模型（要用 `scripts/setup-env.sh --llm` / `setup-env.ps1 -Llm` 装上
-`llama-cpp-python`，没装时界面上的后处理开关会置灰并提示这条命令）。
+llama.cpp** 跑 GGUF 模型（`setup-env` 默认就会装上 `llama-cpp-python`；更早建的环境里没有时，
+界面上的后处理开关会置灰，旁边有「安装 llama.cpp」）。
 想在 Mac 上也用 llama.cpp，设 `VIF_LLM_BACKEND=llamacpp` 并 `uv sync --extra llm-cpp`。
 两个后端的模型不通用，模型列表只列当前后端的。
 
@@ -102,7 +124,8 @@ llama.cpp 后端（其它平台，4bit 量化，首次使用时下载到 Hugging
 
 | 模型 | 下载大小 | 特点 |
 |------|----------|------|
-| Gemma-4-E2B-GGUF | ~3.4GB | **默认**，Google 官方 QAT q4_0；中文、英文、中英混说都稳 |
+| Gemma-4-E4B-GGUF | ~5.2GB | 显存 ≥ 11 GB 时的**默认**；格式整理 18/18，本机 Metal 上中位延迟 0.44 秒 |
+| Gemma-4-E2B-GGUF | ~3.4GB | 其余情况的**默认**，Google 官方 QAT q4_0；中文、英文、中英混说都稳 |
 | Qwen3.5-2B-GGUF | ~1.3GB | 旧默认；实测多数句子原样照抄，默认模型加载失败时退回它 |
 | Qwen3.5-0.8B-GGUF | ~0.5GB | 最快，但填充词和改口常常原样留着 |
 | Qwen3.5-4B-GGUF | ~2.7GB | 纯 CPU 上一段长文要等十几秒以上 |
@@ -111,7 +134,7 @@ llama.cpp 后端（其它平台，4bit 量化，首次使用时下载到 Hugging
 「帮我写一首诗」等 8 类输入 × 默认提示词和三个预设共 64 例自动检查，再量延迟和内存。
 Gemma-4-E2B 的 QAT 版在 MLX 和 llama.cpp 上都只有 1 例不合格，延迟约为旧默认的一半。
 
-`llama-cpp-python` 要 0.3.25 以上（更早的版本不认 Gemma 4）。`setup-env --llm` 装的是官方
+`llama-cpp-python` 要 0.3.25 以上（更早的版本不认 Gemma 4）。`setup-env` 装的是官方
 **预编译包**，不需要编译器，并且**有显卡就装显卡版**（默认模型在纯 CPU 上一句话要等好几秒，
 CPU 版只是兜底）：
 
@@ -167,16 +190,15 @@ cd voice-input-framework
 # 一键建环境:探测硬件(Apple Silicon / NVIDIA / AMD / Intel / 纯 CPU),
 # 挑对应的 PyTorch 后端,用 uv 装进仓库下的 .venv(没有 uv 会先自动装上)
 scripts/setup-env.sh
-# 连 LLM 后处理的依赖一起装:scripts/setup-env.sh --llm
 
 # 启动 STT 服务 (端口 6544)
 uv run python -m services.stt_server
 
-# 启动 LLM 服务 (端口 6545，可选;非 Apple 平台要先 --llm 装 llama.cpp)
+# 启动 LLM 服务 (端口 6545，可选)
 uv run python -m services.llm_server
 ```
 
-Windows 上用 PowerShell 版脚本（参数与 bash 版对应：`-Backend cpu|cuda|xpu`、`-Llm`、`-Dev`；
+Windows 上用 PowerShell 版脚本（参数与 bash 版对应：`-Backend cpu|cuda|xpu`、`-LlmBackend`、`-NoLlm`、`-Dev`；
 有 NVIDIA 显卡会自动选 CUDA，否则用 CPU）：
 
 ```powershell
@@ -185,8 +207,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1
 uv run python -m services.stt_server
 ```
 
-- **LLM 后处理**：Apple Silicon 上 MLX 相关依赖默认就会装上；其它平台加 `--llm`（Windows 上 `-Llm`）
-  装 llama.cpp 的依赖。不开 LLM 后处理不影响语音识别本身。
+- **所有依赖默认都装**：Apple Silicon 上是 MLX；其它平台是 PyTorch 加 llama.cpp（语音识别的量化版
+  Qwen3-ASR 和 LLM 后处理都跑在 llama.cpp 上，有显卡装显卡版）。不想装 llama.cpp 可以加 `--no-llm`
+  （Windows 上 `-NoLlm`），那样只剩 Whisper 系的识别模型，也没有后处理。
 - 自动探测不准时可以手动指定后端：`scripts/setup-env.sh --backend cpu|cuda|rocm|xpu|mlx`。
 - 建完环境后可以在客户端「设置 → 服务」里点「环境体检」：逐项检查 Python 版本、关键依赖能否导入、
   加速后端和 uv，有问题会给出修复命令。

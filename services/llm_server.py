@@ -689,6 +689,7 @@ class LlamaCppBackend:
     #: GGUF,用的是 unsloth 转的。
     #: Qwen3.5 要 llama-cpp-python >= 0.3.17(更早的版本不认 qwen35 架构)。
     MODEL_IDS = {
+        "Gemma-4-E4B-GGUF": "google/gemma-4-E4B-it-qat-q4_0-gguf/gemma-4-E4B_q4_0-it.gguf",
         "Gemma-4-E2B-GGUF": "google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf",
         "Qwen3.5-2B-GGUF": "unsloth/Qwen3.5-2B-GGUF/Qwen3.5-2B-Q4_K_M.gguf",
         "Qwen3.5-0.8B-GGUF": "unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q4_K_M.gguf",
@@ -696,13 +697,15 @@ class LlamaCppBackend:
     }
     #: 那一个 GGUF 文件的大小(MB),下载进度的分母。
     DOWNLOAD_MB = {
+        "Gemma-4-E4B-GGUF": 5155,
         "Gemma-4-E2B-GGUF": 3350,
         "Qwen3.5-2B-GGUF": 1280,
         "Qwen3.5-0.8B-GGUF": 535,
         "Qwen3.5-4B-GGUF": 2740,
     }
     AVAILABLE_MODELS = [
-        "Gemma-4-E2B-GGUF",  # ~3.4GB,默认:中文、英文、中英混说都稳
+        "Gemma-4-E4B-GGUF",  # ~5.2GB,显存 ≥ 11 GB 时的默认:格式整理最好
+        "Gemma-4-E2B-GGUF",  # ~3.4GB,其余情况的默认:中文、英文、中英混说都稳
         "Qwen3.5-2B-GGUF",  # ~1.3GB,旧默认;实测多数句子原样照抄
         "Qwen3.5-0.8B-GGUF",  # ~0.5GB,最快,填充词和改口常常留着不动
         "Qwen3.5-4B-GGUF",  # ~2.7GB,纯 CPU 上一段长文要等很久
@@ -721,8 +724,38 @@ class LlamaCppBackend:
         self.accelerator_note: str | None = None
 
     def default_model(self, ram_gb: float | None = None) -> str:
-        # llama.cpp 这边还没对 E4B 跑过格式整理和纯 CPU 上的速度,先不按内存分档。
+        """按这台机器的那一套配置来(shared/hardware_plan.py):显存放得下两个大模型时用
+
+        E4B(本机 Metal 上用同一套评测:格式整理 18/18,中位延迟 0.44 秒),否则 E2B。
+        """
+        try:
+            from services.hardware import current_plan
+
+            chosen = current_plan().llm_model
+            if chosen in self.MODEL_IDS:
+                return chosen
+        except Exception as e:  # noqa: BLE001 - 探测失败就用最稳的那个
+            logger.warning(f"hardware plan unavailable ({e}); using {self.DEFAULT_MODEL}")
         return self.DEFAULT_MODEL
+
+    def gpu_layers(self) -> tuple[int, str | None]:
+        """放到显卡上的层数,以及为什么是 0(`"env"` / `"plan"`;不是 0 时为 None)。
+
+        `VIF_LLM_GPU_LAYERS` 明确设了就听它的。没设时看这台机器的配置:显存只够放识别
+        模型的机器上,后处理一层都不往显卡上放(否则两个模型抢显存,谁都跑不好)。
+        只有那一档才拦:配置表「没探测到显卡」时不拦,llama.cpp 加载时认得出显卡就照用。
+        """
+        if self.N_GPU_LAYERS == 0:
+            return 0, "env"
+        if "VIF_LLM_GPU_LAYERS" not in os.environ:
+            try:
+                from services.hardware import current_plan
+
+                if current_plan().reserve_gpu_for_stt:
+                    return 0, "plan"
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"hardware plan unavailable: {e}")
+        return self.N_GPU_LAYERS, None
 
     @staticmethod
     def split_ref(model_id: str) -> tuple[str, str]:
@@ -757,10 +790,20 @@ class LlamaCppBackend:
         # False(这是运行时查的,不是编译选项)。
         has_gpu = bool(llama_cpp.llama_supports_gpu_offload())
         hint = llm_backend.setup_hint()
-        if self.N_GPU_LAYERS == 0:
+        layers, why_cpu = self.gpu_layers()
+        if why_cpu == "env":
             self.accelerator, self.accelerator_note = "cpu", bi(
                 "VIF_LLM_GPU_LAYERS=0,按设置只用 CPU",
                 "VIF_LLM_GPU_LAYERS=0, so only the CPU is used as configured",
+            )
+            llm = open_model(0)
+        elif why_cpu == "plan" and has_gpu:
+            self.accelerator, self.accelerator_note = "cpu", bi(
+                "显存只够放语音识别的模型,后处理放在 CPU 上;"
+                "想让它也用显卡,可以把识别模型换小,或设 VIF_LLM_GPU_LAYERS=-1",
+                "there's only enough VRAM for the speech model, so post-processing runs on the "
+                "CPU; to put it on the GPU too, pick a smaller speech model or set "
+                "VIF_LLM_GPU_LAYERS=-1",
             )
             llm = open_model(0)
         elif not has_gpu:
@@ -773,7 +816,7 @@ class LlamaCppBackend:
             llm = open_model(0)
         else:
             try:
-                llm = open_model(self.N_GPU_LAYERS)
+                llm = open_model(layers)
                 self.accelerator, self.accelerator_note = "gpu", None
             except Exception as e:  # noqa: BLE001 - 显存不够、驱动出错:退回 CPU 总比没有强
                 logger.warning(f"Loading on the GPU failed ({e}); falling back to CPU")

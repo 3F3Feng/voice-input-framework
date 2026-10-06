@@ -135,27 +135,32 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "description": "Whisper Large V3 Turbo (transformers, 精度最好, 建议配 GPU)",
         "description_en": "Whisper Large V3 Turbo (transformers, best accuracy, GPU recommended)",
     },
-    # ── Qwen3-ASR (transformers 原生,跨平台:CPU / CUDA / ROCm / MPS)──
+    # ── Qwen3-ASR 量化版(GGUF 8 位,llama.cpp;跨平台:CUDA / Vulkan / CPU)──
     #
-    # 非 Apple 平台以前只有上面那组 Whisper,中文不如 Qwen3-ASR(它还认 22 种汉语
-    # 方言、中英混说更稳)。transformers 5.13 起原生支持,见 services/qwen_asr_hf.py。
-    # 本机(M3 Max)在 CPU fp32 和 MPS fp16 上实测过;NVIDIA 真机上还没人测过,所以
-    # 暂时不进自动推荐(services/device.py),要用户自己选。
+    # 非 Apple 平台以前只有上面那组 Whisper,中文不如 Qwen3-ASR(它还认 22 种汉语方言、
+    # 中英混说更稳)。2.7.0 用 transformers 接过半精度的原版权重,0.6B 就要占和 Whisper
+    # Large 差不多的显存;换成 llama.cpp 官方转的 8 位量化版(见 services/qwen_asr_gguf.py):
+    # 权重小三分之一,识别结果一样,速度更快,N 卡(CUDA)、A 卡 / Intel(Vulkan)、纯 CPU
+    # 都能跑。模型由两个文件组成:`gguf_file` 是本体,`mmproj_file` 是音频投影器。
     "qwen_asr_small": {
-        "model_id": "Qwen/Qwen3-ASR-0.6B-hf",
-        "engine": "qwen_asr_hf",
-        "memory_gb": 2.0,
-        "download_mb": 1580,
-        "description": "Qwen3-ASR-0.6B (transformers, 中文比 Whisper 准, CPU 也能跑)",
-        "description_en": "Qwen3-ASR-0.6B (transformers, better Chinese than Whisper, runs on CPU too)",
+        "model_id": "ggml-org/Qwen3-ASR-0.6B-GGUF",
+        "engine": "qwen_asr_gguf",
+        "gguf_file": "Qwen3-ASR-0.6B-Q8_0.gguf",
+        "mmproj_file": "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
+        "memory_gb": 1.3,
+        "download_mb": 1020,
+        "description": "Qwen3-ASR-0.6B 量化版 (llama.cpp, 中文比 Whisper 准, 显卡 / CPU 都能跑)",
+        "description_en": "Qwen3-ASR-0.6B quantized (llama.cpp, better Chinese than Whisper, GPU or CPU)",
     },
     "qwen_asr": {
-        "model_id": "Qwen/Qwen3-ASR-1.7B-hf",
-        "engine": "qwen_asr_hf",
-        "memory_gb": 5.0,
-        "download_mb": 4090,
-        "description": "Qwen3-ASR-1.7B (transformers, 中文最准, 建议 6GB 以上显存)",
-        "description_en": "Qwen3-ASR-1.7B (transformers, best Chinese accuracy, 6 GB+ VRAM recommended)",
+        "model_id": "ggml-org/Qwen3-ASR-1.7B-GGUF",
+        "engine": "qwen_asr_gguf",
+        "gguf_file": "Qwen3-ASR-1.7B-Q8_0.gguf",
+        "mmproj_file": "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+        "memory_gb": 3.0,
+        "download_mb": 2520,
+        "description": "Qwen3-ASR-1.7B 量化版 (llama.cpp, 中文最准, 建议 11GB 以上显存)",
+        "description_en": "Qwen3-ASR-1.7B quantized (llama.cpp, best Chinese accuracy, 11 GB+ VRAM recommended)",
     },
 }
 

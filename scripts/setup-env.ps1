@@ -7,8 +7,8 @@
 
     powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1               # 自动探测
     powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -Backend cuda # 手动指定 cpu|cuda|xpu
-    powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -Llm          # 连 LLM 后处理的依赖一起装(有显卡就装显卡版)
-    powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -Llm -LlmBackend cpu  # 手动指定 cuda|vulkan|cpu
+    powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -LlmBackend cpu  # llama.cpp 手动指定 cuda|vulkan|cpu(默认自动)
+    powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -NoLlm        # 不装 llama.cpp(那样量化版 Qwen3-ASR 和后处理都用不了)
     powershell -ExecutionPolicy Bypass -File scripts\setup-env.ps1 -Dev          # 加上测试/lint 工具
 
   为什么不是 `pip install -r requirements.txt`:
@@ -26,7 +26,10 @@
 param(
     # cpu | cuda | xpu。留空自动探测。ROCm 的 PyTorch 只有 Linux 版,MLX 只有 Apple Silicon。
     [string]$Backend = "",
+    # llama.cpp 默认就装:语音识别(量化版 Qwen3-ASR)和 LLM 后处理都跑在它上面,不是可选的
+    # 附加功能了。-Llm 留着只为兼容以前的用法,-NoLlm 才是不装。
     [switch]$Llm,
+    [switch]$NoLlm,
     # llama.cpp 装哪一种:auto | cuda | vulkan | cpu。auto = 有显卡就装显卡版,不行再退回。
     [string]$LlmBackend = "auto",
     [switch]$Dev,
@@ -170,8 +173,9 @@ function Test-Llm([string]$name) {
 }
 
 $LlmBackend = $LlmBackend.Trim().ToLower()
+$wantLlm = -not $NoLlm
 $llmCandidates = @()
-if ($Llm) {
+if ($wantLlm) {
     switch ($LlmBackend) {
         "auto" {
             switch (Get-DetectedLlmBackend) {
@@ -179,11 +183,11 @@ if ($Llm) {
                 "vulkan" { $llmCandidates = @("vulkan", "cpu") }
                 default  { $llmCandidates = @("cpu") }
             }
-            Say "LLM 后处理(llama.cpp):自动选择,依次尝试 $($llmCandidates -join ' ')"
+            Say "llama.cpp(语音识别 + LLM 后处理):自动选择,依次尝试 $($llmCandidates -join ' ')"
         }
         { $_ -in @("cuda", "vulkan", "cpu") } {
             $llmCandidates = @($LlmBackend)
-            Say "LLM 后处理(llama.cpp):手动指定 $LlmBackend"
+            Say "llama.cpp(语音识别 + LLM 后处理):手动指定 $LlmBackend"
         }
         default { Die "不认识的 -LlmBackend「$LlmBackend」,可选:auto cuda vulkan cpu" }
     }
@@ -214,9 +218,10 @@ if (-not $llmInstalled) {
 # 记下这次是怎么选的:「更新服务」重跑本脚本时,手动指定过的要原样带上,自动选的
 # 重新探测(换了显卡、装了驱动之后能自己升上去)。
 $venvDir = Join-Path $RepoRoot ".venv"
-if ($Llm -and (Test-Path $venvDir)) {
+if (Test-Path $venvDir) {
     $installedName = if ($llmInstalled) { $llmInstalled } else { "none" }
-    $marker = '{"requested": "' + $LlmBackend + '", "installed": "' + $installedName + '"}'
+    $requestedName = if ($wantLlm) { $LlmBackend } else { "off" }
+    $marker = '{"requested": "' + $requestedName + '", "installed": "' + $installedName + '"}'
     [System.IO.File]::WriteAllText((Join-Path $venvDir "vif-llm-backend"), $marker + "`n", (New-Object System.Text.UTF8Encoding($false)))
 }
 
@@ -256,21 +261,21 @@ try {
     Remove-Item $tmp -ErrorAction SilentlyContinue
 }
 
-if ($Llm) {
+if ($wantLlm) {
     if (-not $llmInstalled) {
-        Warn "LLM 后处理的依赖(llama-cpp-python)没装上,原因见上面的输出;语音识别不受影响。"
-        Warn "多半是连不上 github.com(预编译包放在那里)。可以稍后重跑本脚本,或关掉「LLM 后处理」。"
+        Warn "llama.cpp(llama-cpp-python)没装上,原因见上面的输出。Whisper 系的识别模型不受影响;"
+        Warn "量化版 Qwen3-ASR 和 LLM 后处理用不了。多半是连不上 github.com(预编译包放在那里),稍后重跑本脚本即可。"
     } elseif ($llmInstalled -eq "cpu") {
         if ($llmCandidates[0] -ne "cpu") {
-            Warn "LLM 后处理装的是 CPU 版(显卡版在这台机器上用不了):能用,但一句话要等好几秒。"
+            Warn "llama.cpp 装的是 CPU 版(显卡版在这台机器上用不了):能用,但会慢。"
             Warn "更新显卡驱动后重跑本脚本,会重新尝试显卡版。"
         } elseif ($LlmBackend -eq "cpu") {
-            Say "LLM 后处理:CPU 版(手动指定;一句话要等好几秒)。"
+            Say "llama.cpp:CPU 版(手动指定)。"
         } else {
-            Say "LLM 后处理:CPU 版(没探测到独立显卡;一句话要等好几秒)。"
+            Say "llama.cpp:CPU 版(没探测到独立显卡)。"
         }
     } else {
-        Say "LLM 后处理:$llmInstalled 版(显卡加速)。"
+        Say "llama.cpp:$llmInstalled 版(显卡加速)。"
     }
 }
 Say "完成。启动服务:"
