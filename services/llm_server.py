@@ -16,6 +16,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -28,7 +29,8 @@ project_dir = Path(__file__).parent.parent
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
-from shared import auth, i18n, llm_backend  # noqa: E402
+from services import model_catalog  # noqa: E402
+from shared import auth, i18n, llama_runtime, llm_backend  # noqa: E402
 from shared.app_version import APP_VERSION  # noqa: E402
 from shared.i18n import bi, en_of  # noqa: E402
 from shared.constants import (  # noqa: E402
@@ -261,6 +263,11 @@ class ModelInfo(BaseModel):
     description: str = ""
     is_loaded: bool = False
     is_current: bool = False
+    #: 正在加载(含下载)的那一个。切换期间 `is_current` 还指着旧模型。
+    is_loading: bool = False
+    #: 首次使用要下载的大小(MB)、权重在不在本地缓存里。
+    download_mb: float | None = None
+    downloaded: bool | None = None
 
 
 class HealthStatus(BaseModel):
@@ -275,6 +282,14 @@ class HealthStatus(BaseModel):
     error: str | None = None
     #: 推理后端(mlx / llamacpp),排查「为什么这台机器列的是这些模型」时用。
     backend: str | None = None
+    #: 模型跑在哪:`gpu` / `cpu`(还没加载时为空)。llama.cpp 装成了 CPU 版、或者显卡上
+    #: 加载失败退回了 CPU 时是 `cpu`——那时一句话要等好几秒,界面得说出来,不然用户
+    #: 只会觉得「后处理怎么这么慢」。`accelerator_note` 是为什么。
+    accelerator: str | None = None
+    accelerator_note: str | None = None
+    #: 加载进度(正在加载时有值),和 STT 那边 `/health.loading` 同一个格式。默认的
+    #: LLM 要下 3–7 GB,以前打开后处理开关后全程只有一句「正在启动 LLM 服务…」。
+    loading: dict[str, Any] | None = None
     #: 项目版本号(pyproject.toml,和客户端同一个版本号),见 shared/app_version.py。
     #: 上面的 `version` 是接口版本,留着给老客户端。
     app_version: str | None = None
@@ -494,6 +509,21 @@ class MLXBackend:
         "Qwen3-0.6B": "mlx-community/Qwen3-0.6B-4bit",
         "Qwen3-1.7B": "mlx-community/Qwen3-1.7B-4bit",
     }
+    #: 首次使用要下载的大小(MB,HuggingFace 上量的),下载进度的分母。
+    DOWNLOAD_MB = {
+        "Gemma-4-E4B": 6830,
+        "Gemma-4-E2B": 4360,
+        "Qwen3.5-4B-OptiQ": 4045,
+        "Qwen3.5-2B-OptiQ": 2265,
+        "Qwen3.5-4B-MLX": 3060,
+        "Qwen3-0.6B": 350,
+        "Qwen3-1.7B": 985,
+    }
+
+    @staticmethod
+    def repo_of(model_id: str) -> str:
+        """这个模型下载到 HF 缓存里的哪个仓库目录(数下载进度用)。"""
+        return model_id
 
     def default_model(self, ram_gb: float | None = None) -> str:
         """这台机器上的默认模型:内存够就用格式整理更好的 E4B。读不到内存时按小内存算。"""
@@ -502,6 +532,10 @@ class MLXBackend:
 
             ram_gb = total_ram_gb()
         return self.DEFAULT_MODEL if ram_gb >= self.LARGE_MODEL_MIN_RAM_GB else self.SMALL_MODEL
+
+    #: MLX 一律跑在 Apple 的显卡(Metal)上。
+    accelerator: str | None = "gpu"
+    accelerator_note: str | None = None
 
     def __init__(self, unavailable: str | None = None):
         #: 这台机器上用不了这个后端的原因(None = 能用)。加载时才抛出来,好让
@@ -660,6 +694,13 @@ class LlamaCppBackend:
         "Qwen3.5-0.8B-GGUF": "unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q4_K_M.gguf",
         "Qwen3.5-4B-GGUF": "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf",
     }
+    #: 那一个 GGUF 文件的大小(MB),下载进度的分母。
+    DOWNLOAD_MB = {
+        "Gemma-4-E2B-GGUF": 3350,
+        "Qwen3.5-2B-GGUF": 1280,
+        "Qwen3.5-0.8B-GGUF": 535,
+        "Qwen3.5-4B-GGUF": 2740,
+    }
     AVAILABLE_MODELS = [
         "Gemma-4-E2B-GGUF",  # ~3.4GB,默认:中文、英文、中英混说都稳
         "Qwen3.5-2B-GGUF",  # ~1.3GB,旧默认;实测多数句子原样照抄
@@ -675,6 +716,9 @@ class LlamaCppBackend:
 
     def __init__(self, unavailable: str | None = None):
         self.unavailable = unavailable
+        #: 最近一次加载把模型放在了哪(见 `load`);还没加载过时为空。
+        self.accelerator: str | None = None
+        self.accelerator_note: str | None = None
 
     def default_model(self, ram_gb: float | None = None) -> str:
         # llama.cpp 这边还没对 E4B 跑过格式整理和纯 CPU 上的速度,先不按内存分档。
@@ -685,7 +729,14 @@ class LlamaCppBackend:
         repo, _, filename = model_id.rpartition("/")
         return repo, filename
 
+    @classmethod
+    def repo_of(cls, model_id: str) -> str:
+        return cls.split_ref(model_id)[0]
+
     def load(self, model_id: str):
+        # CUDA 版的 llama.cpp 要的 CUDA 运行库在 PyTorch 的目录里,得先指给它。
+        llama_runtime.prepare()
+        import llama_cpp
         from huggingface_hub import hf_hub_download
         from llama_cpp import Llama
 
@@ -693,12 +744,46 @@ class LlamaCppBackend:
         # 下到标准的 HF 缓存里(不另起目录):HF_ENDPOINT 镜像照样生效,
         # 和别的模型一样按 blobs 目录的增长报下载进度。
         path = hf_hub_download(repo_id=repo, filename=filename)
-        llm = Llama(
-            model_path=path,
-            n_ctx=self.N_CTX,
-            n_gpu_layers=self.N_GPU_LAYERS,
-            verbose=False,
-        )
+
+        def open_model(gpu_layers: int):
+            return Llama(
+                model_path=path,
+                n_ctx=self.N_CTX,
+                n_gpu_layers=gpu_layers,
+                verbose=False,
+            )
+
+        # llama.cpp 认不认得出显卡:装的是 CPU 版、没有驱动、没有 Vulkan 运行库时都是
+        # False(这是运行时查的,不是编译选项)。
+        has_gpu = bool(llama_cpp.llama_supports_gpu_offload())
+        hint = llm_backend.setup_hint()
+        if self.N_GPU_LAYERS == 0:
+            self.accelerator, self.accelerator_note = "cpu", bi(
+                "VIF_LLM_GPU_LAYERS=0,按设置只用 CPU",
+                "VIF_LLM_GPU_LAYERS=0, so only the CPU is used as configured",
+            )
+            llm = open_model(0)
+        elif not has_gpu:
+            self.accelerator, self.accelerator_note = "cpu", bi(
+                f"llama.cpp 没有认出可用的显卡(装的是 CPU 版,或者显卡驱动不可用);"
+                f"有独立显卡的话重跑 {hint} 换成显卡版",
+                f"llama.cpp found no usable GPU (the CPU build is installed, or the GPU driver "
+                f"isn't available); if you have a discrete GPU, rerun {hint} to get the GPU build",
+            )
+            llm = open_model(0)
+        else:
+            try:
+                llm = open_model(self.N_GPU_LAYERS)
+                self.accelerator, self.accelerator_note = "gpu", None
+            except Exception as e:  # noqa: BLE001 - 显存不够、驱动出错:退回 CPU 总比没有强
+                logger.warning(f"Loading on the GPU failed ({e}); falling back to CPU")
+                llm = open_model(0)
+                self.accelerator, self.accelerator_note = "cpu", bi(
+                    f"在显卡上加载模型失败({e}),已退回 CPU;多半是显存不够",
+                    f"Loading the model on the GPU failed ({e}), so it fell back to the CPU; "
+                    f"most likely not enough VRAM",
+                )
+        logger.info(f"llama.cpp model on {self.accelerator.upper()}")
         return llm, GGUFChatTemplate.from_llama(llm)
 
     def release(self) -> None:
@@ -765,6 +850,11 @@ class LLMEngine:
         #: 不了(没装推理库、下载断了、内存不够)和「还在加载」在
         #: 外面看起来一模一样,打开后处理开关要白等满 30 秒才报「还在加载」。
         self._load_error: str | None = None
+        #: 正在加载的是哪个模型、从什么时候开始、开始时缓存里已有多少字节
+        #: (`loading_progress` 用)。切换期间 `current_model_name` 还是旧模型。
+        self._load_target: str | None = None
+        self._load_started_at: float | None = None
+        self._load_bytes_at_start = 0
         self._load_lock = asyncio.Lock()
         self._processing = False
         # 生成在线程池执行,需用线程锁(而非 asyncio.Lock)串行化
@@ -806,6 +896,9 @@ class LLMEngine:
             # `_loading` 本身保留: is_loading() 对外暴露加载状态(/ready 等接口在用)。
             self._loading = True
             self._load_error = None
+            self._load_target = target_model
+            self._load_started_at = time.time()
+            self._load_bytes_at_start = self._cache_bytes(target_model)
             # 切换前那个模型要是能用,新模型加载失败时就回退过去(和 STT 侧一致)。
             # 以前失败了就什么模型都没有,后处理从此每句都失败,直到用户再选一个。
             previous = self.current_model_name if self._is_loaded else None
@@ -984,6 +1077,28 @@ class LLMEngine:
     def is_loading(self) -> bool:
         return self._loading
 
+    def _cache_bytes(self, model_name: str) -> int:
+        """这个模型在 HF 缓存里已经落盘的字节数(数下载进度用)。"""
+        return model_catalog.cache_bytes(self.backend.repo_of(self.MODEL_IDS.get(model_name, "")))
+
+    def loading_model(self) -> str | None:
+        """正在加载的模型名;没在加载时为 None。"""
+        return self._load_target if self._loading else None
+
+    def loading_progress(self) -> dict[str, Any] | None:
+        """正在加载时:模型名、已用秒数、下载了多少 / 一共多少;没在加载时为 None。"""
+        target = self.loading_model()
+        if target is None or self._load_started_at is None:
+            return None
+        return model_catalog.load_progress(
+            target,
+            self._cache_bytes(target),
+            self._load_started_at,
+            self._load_bytes_at_start,
+            self.backend.DOWNLOAD_MB.get(target),
+            time.time(),
+        )
+
     def is_model_loaded(self) -> bool:
         return self._is_loaded
 
@@ -1128,6 +1243,13 @@ async def health_check(request: Request):
         is_processing=engine.is_processing(),
         error=load_error,
         backend=engine.backend.name,
+        accelerator=engine.backend.accelerator if engine.is_model_loaded() else None,
+        accelerator_note=(
+            i18n.localize(i18n.lang_of(request), engine.backend.accelerator_note)
+            if engine.is_model_loaded()
+            else None
+        ),
+        loading=engine.loading_progress(),
         app_version=APP_VERSION,
     )
 
@@ -1143,6 +1265,11 @@ async def list_models():
                 description=f"LLM model ({engine.backend.name}): {engine.MODEL_IDS.get(name, name)}",
                 is_loaded=(name == engine.current_model_name and engine.is_model_loaded()),
                 is_current=(name == engine.current_model_name),
+                is_loading=(name == engine.loading_model()),
+                download_mb=engine.backend.DOWNLOAD_MB.get(name),
+                downloaded=model_catalog.is_downloaded(
+                    {"model_id": engine.backend.repo_of(engine.MODEL_IDS.get(name, ""))}
+                ),
             )
         )
     return models

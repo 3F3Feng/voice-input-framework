@@ -4,7 +4,8 @@
 #
 #   scripts/setup-env.sh                # 自动探测
 #   scripts/setup-env.sh --backend cuda # 手动指定 cpu|cuda|rocm|xpu|mlx
-#   scripts/setup-env.sh --llm          # 连 LLM 后处理的依赖一起装
+#   scripts/setup-env.sh --llm          # 连 LLM 后处理的依赖一起装(有显卡就装显卡版)
+#   scripts/setup-env.sh --llm --llm-backend cpu   # 手动指定 cuda|vulkan|cpu
 #   scripts/setup-env.sh --dev          # 加上测试/lint 工具
 #
 # 为什么不是 `pip install -r requirements.txt`:
@@ -20,13 +21,15 @@ cd "$REPO_ROOT"
 
 BACKEND=""
 WITH_LLM=0
+LLM_BACKEND="auto"
 WITH_DEV=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend) BACKEND="${2:?--backend 需要 cpu|cuda|rocm|xpu|mlx}"; shift 2 ;;
     --llm)     WITH_LLM=1; shift ;;
+    --llm-backend) LLM_BACKEND="${2:?--llm-backend 需要 auto|cuda|vulkan|cpu}"; WITH_LLM=1; shift 2 ;;
     --dev)     WITH_DEV=1; shift ;;
-    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "未知参数: $1(用 --help 查看用法)" >&2; exit 2 ;;
   esac
 done
@@ -83,24 +86,116 @@ case "$BACKEND" in
   *) die "不认识的后端「$BACKEND」,可选:cpu cuda rocm xpu mlx" ;;
 esac
 
-if [[ $WITH_LLM -eq 1 && "$BACKEND" != "mlx" ]]; then
-  # 非 Apple 平台的 LLM 后处理走 llama.cpp;Apple 上用 MLX,不需要额外装
-  EXTRAS+=(--extra llm-cpp)
-  # PyPI 上的 llama-cpp-python 只有源码包,要现编译。编译失败最常见的原因是缺工具链。
-  say "llama-cpp-python 要现编译,需要 CMake 和 C/C++ 编译器(如 build-essential);编译失败先检查这两样。"
-fi
 [[ $WITH_DEV -eq 1 ]] && EXTRAS+=(--extra dev)
 
-say "uv sync ${EXTRAS[*]:-(无额外 extra)}"
+# ── LLM 后处理(llama.cpp)装哪一种 ─────────────────────────────────────────
+#
+# llama-cpp-python 按硬件有三种预编译版(pyproject 里的 llm-cpp-cuda / llm-cpp-vulkan /
+# llm-cpp)。默认模型在 CPU 上一句话要等好几秒,所以**有显卡就装显卡版**,CPU 版只是
+# 兜底:
+#   NVIDIA      → cuda(最快;CUDA 运行库用 PyTorch CUDA 版带的那份,见
+#                 shared/llama_runtime.py),不行退 vulkan,再退 cpu
+#   别的显卡    → vulkan(AMD / Intel Arc;只要显卡驱动),不行退 cpu
+#   没有显卡    → cpu
+# 「不行」指的是装上之后真的加载一次,看 llama.cpp 认不认得出显卡(驱动太旧、没有
+# Vulkan 运行库时包装得上但用不了)。--llm-backend 手动指定时只试那一种。
+#
+# Apple Silicon 用 MLX,不走这里。
+detect_llm_backend() {
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    echo "cuda"; return
+  fi
+  # 集成显卡不算:Intel 核显跑 Vulkan 并不比 CPU 快。lspci 没有就当没有显卡。
+  if command -v lspci >/dev/null 2>&1 \
+    && lspci 2>/dev/null | grep -Ei 'vga|3d|display' | grep -Eiq 'nvidia|amd|radeon|intel.*arc'; then
+    echo "vulkan"; return
+  fi
+  echo "cpu"
+}
+
+llm_extra() {  # 后端名 → pyproject 里的 extra
+  case "$1" in
+    cuda)   echo "llm-cpp-cuda" ;;
+    vulkan) echo "llm-cpp-vulkan" ;;
+    cpu)    echo "llm-cpp" ;;
+  esac
+}
+
+# 装上之后验证:能 import,而且(显卡版)llama.cpp 真的认出了一块显卡。
+verify_llm() {  # $1 = cuda|vulkan|cpu
+  uv run --no-sync python - "$1" "$REPO_ROOT" <<'PY'
+import sys
+want = sys.argv[1]
+sys.path.insert(0, sys.argv[2])
+try:
+    # CUDA 版要的 CUDA 运行库在 PyTorch 的目录里,和 LLM 服务用同一段代码指给它
+    from shared import llama_runtime
+    llama_runtime.prepare()
+    import llama_cpp
+except Exception as e:  # 缺驱动 / 缺 Vulkan 运行库时在这里就失败
+    print(f"    llama.cpp 加载失败:{type(e).__name__}: {e}")
+    sys.exit(3)
+gpu = bool(llama_cpp.llama_supports_gpu_offload())
+print(f"    llama.cpp {llama_cpp.__version__}:{'认出了显卡' if gpu else '没有可用的显卡,只能用 CPU'}")
+sys.exit(0 if (gpu or want == "cpu") else 4)
+PY
+}
+
+WANT_LLM=0
+LLM_CANDIDATES=()
+if [[ $WITH_LLM -eq 1 && "$BACKEND" != "mlx" ]]; then
+  WANT_LLM=1
+  case "$LLM_BACKEND" in
+    auto)
+      case "$(detect_llm_backend)" in
+        cuda)   LLM_CANDIDATES=(cuda vulkan cpu) ;;
+        vulkan) LLM_CANDIDATES=(vulkan cpu) ;;
+        *)      LLM_CANDIDATES=(cpu) ;;
+      esac
+      say "LLM 后处理(llama.cpp):自动选择,依次尝试 ${LLM_CANDIDATES[*]}" ;;
+    cuda|vulkan|cpu)
+      LLM_CANDIDATES=("$LLM_BACKEND")
+      say "LLM 后处理(llama.cpp):手动指定 $LLM_BACKEND" ;;
+    *) die "不认识的 --llm-backend「$LLM_BACKEND」,可选:auto cuda vulkan cpu" ;;
+  esac
+fi
+
 # 不能直接写 "${EXTRAS[@]}":macOS 自带的 /bin/bash 是 3.2,`set -u` 下展开空数组
 # 会报「EXTRAS[@]: unbound variable」直接退出 —— Apple Silicon 的默认路径(mlx、
 # 不带 --llm / --dev)正好是空数组,一步都走不下去(「更新服务」按钮用的就是系统 bash)。
 # `${arr[@]+"${arr[@]}"}` 在 3.2 和新版 bash 上都成立。
-uv sync ${EXTRAS[@]+"${EXTRAS[@]}"}
+LLM_INSTALLED=""
+if [[ $WANT_LLM -eq 1 ]]; then
+  for candidate in "${LLM_CANDIDATES[@]}"; do
+    say "uv sync ${EXTRAS[*]:-} --extra $(llm_extra "$candidate")"
+    # --reinstall-package 不能省:三种版本是**同一个包名、同一个版本号**,只是来自不同
+    # 的索引。不强制重装的话,uv 看到已经装着这个版本就什么都不做,换版本等于没换。
+    if uv sync ${EXTRAS[@]+"${EXTRAS[@]}"} --extra "$(llm_extra "$candidate")" \
+        --reinstall-package llama-cpp-python \
+      && verify_llm "$candidate"; then
+      LLM_INSTALLED="$candidate"
+      break
+    fi
+    warn "llama.cpp 的 $candidate 版在这台机器上用不了(原因见上)。"
+  done
+fi
+if [[ -z "$LLM_INSTALLED" ]]; then
+  # 没要 LLM 依赖,或者哪一种都没装上:把其余的装好。识别本身不依赖它,不能让整个
+  # 环境跟着建不起来。
+  say "uv sync ${EXTRAS[*]:-(无额外 extra)}"
+  uv sync ${EXTRAS[@]+"${EXTRAS[@]}"} || die "uv sync 失败,见上面的输出。"
+fi
+
+# 记下这次是怎么选的:「更新服务」重跑本脚本时,手动指定过的要原样带上,自动选的
+# 重新探测(换了显卡、装了驱动之后能自己升上去)。
+if [[ $WANT_LLM -eq 1 && -d .venv ]]; then
+  printf '{"requested": "%s", "installed": "%s"}\n' "$LLM_BACKEND" "${LLM_INSTALLED:-none}" \
+    > .venv/vif-llm-backend
+fi
 
 # ── 交代清楚装出来的是什么 ────────────────────────────────────────────────
 say "校验..."
-uv run python - <<'PY'
+uv run --no-sync python - <<'PY'
 import platform
 print(f"    Python  : {platform.python_version()} ({platform.machine()})")
 try:
@@ -122,14 +217,29 @@ try:
     print(f"    MLX     : 可用,设备 {mx.default_device()}")
 except Exception as e:
     print(f"    MLX     : 不可用({type(e).__name__})")
-try:
-    import llama_cpp  # LLM 后处理在非 Apple 平台上的后端(--llm 才装)
-    print(f"    llama.cpp: {llama_cpp.__version__}")
-except ImportError:
-    pass
 PY
 
+if [[ $WANT_LLM -eq 1 ]]; then
+  case "$LLM_INSTALLED" in
+    "")
+      warn "LLM 后处理的依赖(llama-cpp-python)没装上,原因见上面的输出;语音识别不受影响。"
+      warn "多半是连不上 github.com(预编译包放在那里)。可以稍后重跑本脚本,或关掉「LLM 后处理」。" ;;
+    cpu)
+      if [[ "${LLM_CANDIDATES[0]}" != "cpu" ]]; then
+        warn "LLM 后处理装的是 CPU 版(显卡版在这台机器上用不了):能用,但一句话要等好几秒。"
+        warn "更新显卡驱动后重跑本脚本,会重新尝试显卡版。"
+      elif [[ "$(uname -s)" == "Darwin" ]]; then
+        # macOS 上只有这一种包(从源码编译),自带 Metal 显卡加速。
+        say "LLM 后处理:llama.cpp(macOS,Metal 显卡加速)。"
+      elif [[ "$LLM_BACKEND" == "cpu" ]]; then
+        say "LLM 后处理:CPU 版(手动指定;一句话要等好几秒)。"
+      else
+        say "LLM 后处理:CPU 版(没探测到独立显卡;一句话要等好几秒)。"
+      fi ;;
+    *) say "LLM 后处理:$LLM_INSTALLED 版(显卡加速)。" ;;
+  esac
+fi
 say "完成。启动服务:"
 echo "    uv run python -m services.stt_server"
-[[ $WITH_LLM -eq 1 || "$BACKEND" == "mlx" ]] && echo "    uv run python -m services.llm_server"
+[[ -n "$LLM_INSTALLED" || "$BACKEND" == "mlx" ]] && echo "    uv run python -m services.llm_server"
 exit 0

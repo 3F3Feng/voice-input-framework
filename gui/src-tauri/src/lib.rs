@@ -9,6 +9,8 @@ mod i18n;
 mod indicator;
 mod input;
 mod lan_share;
+mod loading;
+mod local_setup;
 mod log;
 mod mobile_pairing;
 mod permissions;
@@ -1609,7 +1611,58 @@ async fn update_services(
 ) -> Result<String, String> {
     let cfg = server_config_snapshot(&state)?;
     let servers = state.servers.clone();
-    service_update::update_services(app, servers, cfg).await
+    service_update::update_services(app, servers, cfg, None).await
+}
+
+/// 远端有哪些分支、现在在哪个上(给「换分支」的下拉框)。只读。
+#[tauri::command]
+async fn list_service_branches(
+    state: State<'_, AppState>,
+) -> Result<service_update::BranchList, String> {
+    let cfg = server_config_snapshot(&state)?;
+    Ok(service_update::list_branches(&cfg).await)
+}
+
+/// 「换分支」:把本机仓库切到远端的另一个分支(比如还没合并的开发分支),再和
+/// 「更新服务」一样重建环境、重启服务。进度同样走 `service-update` 事件。
+#[tauri::command]
+async fn switch_service_branch(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    branch: String,
+) -> Result<String, String> {
+    let cfg = server_config_snapshot(&state)?;
+    let servers = state.servers.clone();
+    service_update::update_services(app, servers, cfg, Some(branch)).await
+}
+
+/// 「本机安装」的现状:有没有仓库、会克隆到哪、有没有 git(没有时怎么装)。
+#[tauri::command]
+async fn get_local_setup_status(
+    state: State<'_, AppState>,
+    dir: Option<String>,
+) -> Result<local_setup::SetupStatus, String> {
+    let cfg = server_config_snapshot(&state)?;
+    local_setup::status(&cfg, dir.as_deref())
+}
+
+/// 一键取代码 + 建环境(见 `local_setup`)。进度走 `local-setup` 事件和客户端日志。
+/// 成功后把仓库和解释器路径写进配置——向导中途被关掉,装好的东西也不会白装。
+#[tauri::command]
+async fn run_local_setup(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    dir: Option<String>,
+    llm: bool,
+) -> Result<local_setup::Outcome, String> {
+    let cfg = server_config_snapshot(&state)?;
+    let servers = state.servers.clone();
+    let outcome = local_setup::run(app.clone(), servers, cfg, dir, llm).await?;
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    cfg.server.local.repo_path = Some(outcome.repo_path.clone());
+    cfg.server.local.python_path = Some(outcome.python_path.clone());
+    cfg.save(&app)?;
+    Ok(outcome)
 }
 
 // ── 应用外壳:托盘、诊断、退出 ──
@@ -1964,6 +2017,10 @@ pub fn run() {
             get_service_versions,
             check_service_updates,
             update_services,
+            list_service_branches,
+            switch_service_branch,
+            get_local_setup_status,
+            run_local_setup,
             log::get_gui_logs,
             log::open_log_dir,
             get_diagnostics,

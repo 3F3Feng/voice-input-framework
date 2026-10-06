@@ -196,6 +196,96 @@ class TestLLMEngine:
         assert result is True
 
 
+class TestLlamaCppAccelerator:
+    """llama.cpp 默认把模型放在显卡上;放不上去就退回 CPU,并且说出来。
+
+    默认模型在 CPU 上一句话要等好几秒:悄悄跑在 CPU 上,用户只会觉得「后处理怎么这么慢」。
+    """
+
+    def backend(self, monkeypatch, *, has_gpu: bool, gpu_fails: bool = False, layers: int = -1):
+        import sys
+        import types
+
+        import services.llm_server as srv
+
+        opened: list[int] = []
+
+        class Llama:
+            def __init__(self, model_path, n_ctx, n_gpu_layers, verbose):
+                opened.append(n_gpu_layers)
+                if gpu_fails and n_gpu_layers != 0:
+                    raise RuntimeError("failed to allocate 3400 MiB")
+
+        monkeypatch.setitem(
+            sys.modules,
+            "llama_cpp",
+            types.SimpleNamespace(Llama=Llama, llama_supports_gpu_offload=lambda: has_gpu),
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "huggingface_hub",
+            types.SimpleNamespace(hf_hub_download=lambda repo_id, filename: "/tmp/m.gguf"),
+        )
+        monkeypatch.setattr(srv.GGUFChatTemplate, "from_llama", classmethod(lambda cls, llm: "t"))
+        backend = srv.LlamaCppBackend()
+        monkeypatch.setattr(backend, "N_GPU_LAYERS", layers)
+        return backend, opened
+
+    def test_gpu_build_puts_every_layer_on_the_gpu(self, monkeypatch):
+        backend, opened = self.backend(monkeypatch, has_gpu=True)
+        assert backend.accelerator is None  # 还没加载过
+        backend.load("org/repo/file.gguf")
+        assert opened == [-1]
+        assert (backend.accelerator, backend.accelerator_note) == ("gpu", None)
+
+    def test_gpu_load_failure_falls_back_to_cpu_and_says_why(self, monkeypatch):
+        backend, opened = self.backend(monkeypatch, has_gpu=True, gpu_fails=True)
+        backend.load("org/repo/file.gguf")
+        assert opened == [-1, 0]
+        assert backend.accelerator == "cpu"
+        assert "3400 MiB" in backend.accelerator_note
+        assert "CPU" in backend.accelerator_note
+
+    def test_cpu_build_runs_on_cpu_and_points_at_the_gpu_install(self, monkeypatch):
+        backend, opened = self.backend(monkeypatch, has_gpu=False)
+        backend.load("org/repo/file.gguf")
+        assert opened == [0]
+        assert backend.accelerator == "cpu"
+        assert "setup-env" in backend.accelerator_note
+
+    def test_gpu_layers_zero_is_respected_without_a_scary_note(self, monkeypatch):
+        backend, opened = self.backend(monkeypatch, has_gpu=True, layers=0)
+        backend.load("org/repo/file.gguf")
+        assert opened == [0]
+        assert backend.accelerator == "cpu"
+        assert "VIF_LLM_GPU_LAYERS" in backend.accelerator_note
+
+    @pytest.mark.asyncio
+    async def test_health_reports_the_accelerator_once_loaded(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        import services.llm_server as srv
+
+        backend, _ = self.backend(monkeypatch, has_gpu=False)
+        engine = srv.LLMEngine(backend=backend)
+        monkeypatch.setattr(srv, "engine", engine)
+        client = TestClient(srv.app)
+        before = client.get("/health").json()
+        assert before["accelerator"] is None and before["accelerator_note"] is None
+        assert await engine.load() is True
+        zh = client.get("/health").json()
+        assert zh["accelerator"] == "cpu"
+        assert "没有认出可用的显卡" in zh["accelerator_note"]
+        en = client.get("/health", headers={"Accept-Language": "en"}).json()
+        assert "no usable GPU" in en["accelerator_note"]
+
+    def test_mlx_always_reports_gpu(self):
+        import services.llm_server as srv
+
+        assert srv.MLXBackend().accelerator == "gpu"
+        assert srv.MLXBackend().accelerator_note is None
+
+
 class TestLoadFailureAndModelChoice:
     """R15:加载失败要报出来;R16:选过的模型重启后还在"""
 
@@ -232,6 +322,55 @@ class TestLoadFailureAndModelChoice:
         assert engine.load_error() is None
         # 失败的加载不能被记成用户的选择
         assert not state_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_health_reports_download_progress_while_loading(self, monkeypatch, state_file):
+        """默认的 LLM 要下 3–7 GB:加载期间 /health 得报进度,而且报的是**正在加载的**
+
+        那个模型(切换期间 current_model_name 还是旧的)。"""
+        import asyncio
+
+        from fastapi.testclient import TestClient
+
+        import services.llm_server as srv
+
+        engine = mlx_engine(srv, default_model="Qwen3-0.6B")
+        release = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        slow_id = engine.MODEL_IDS["Qwen3-1.7B"]
+
+        def load(model_id):
+            if model_id == slow_id:
+                asyncio.run_coroutine_threadsafe(release.wait(), loop).result(timeout=5)
+            engine._model, engine._tokenizer = object(), object()
+
+        sizes = {"Qwen3-0.6B": iter([0, 0]), "Qwen3-1.7B": iter([10_000_000, 310_000_000])}
+        monkeypatch.setattr(engine, "_load_sync", load)
+        monkeypatch.setattr(engine, "_cache_bytes", lambda name: next(sizes[name]))
+        monkeypatch.setattr(srv, "engine", engine)
+        client = TestClient(srv.app)
+
+        assert engine.loading_progress() is None
+        assert await engine.load() is True
+        assert engine.loading_progress() is None
+
+        task = asyncio.create_task(engine.load("Qwen3-1.7B"))
+        await asyncio.sleep(0.05)
+        body = (await asyncio.to_thread(client.get, "/health")).json()
+        assert body["status"] == "loading"
+        assert body["loading"]["model"] == "Qwen3-1.7B"
+        assert body["loading"]["downloaded_bytes"] == 300_000_000
+        assert body["loading"]["cached_bytes"] == 310_000_000
+        assert body["loading"]["total_bytes"] == 985_000_000
+        assert body["loading"]["phase"] == "downloading"
+        models = {m["name"]: m for m in (await asyncio.to_thread(client.get, "/models")).json()}
+        assert models["Qwen3-1.7B"]["is_loading"] is True
+        assert models["Qwen3-0.6B"]["is_loading"] is False
+        assert models["Qwen3-1.7B"]["download_mb"] == 985
+
+        release.set()
+        assert await task is True
+        assert (await asyncio.to_thread(client.get, "/health")).json()["loading"] is None
 
     @pytest.mark.asyncio
     async def test_failed_switch_rolls_back_to_previous_model(self, monkeypatch, state_file):

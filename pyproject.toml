@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voice-input-framework"
-version = "2.6.1"
+version = "2.7.0"
 description = "Voice Input Framework - 跨平台语音识别与 LLM 后处理"
 readme = "README.md"
 license = {text = "MIT"}
@@ -37,7 +37,8 @@ dependencies = [
     "rich>=13.7.0",
     "click>=8.1.0",
     # STT 两个引擎都要 transformers;torch 由下面的硬件 extra 指定来源
-    "transformers>=4.37.0",
+    # 5.13 起原生支持 Qwen3-ASR(services/qwen_asr_hf.py:非 Apple 平台的中文识别)
+    "transformers>=5.13.0",
     # ── MLX:**只在 Apple Silicon 上装** ──
     # 这个 marker 是必须的,不是保险起见。mlx 现在确实为 Linux/Windows 发了
     # wheel,但 Linux x86_64 那个是残的:装得上,一 import 就
@@ -91,13 +92,36 @@ xpu = [
     "torchaudio>=2.2.0",
     "pytorch-triton-xpu; sys_platform == 'linux'",
 ]
-# 非 Apple 机器上的 LLM 后处理后端。MLX 只有 Apple Silicon 能跑,
-# 别的平台用 llama.cpp 跑 GGUF(CPU 可用,也能编译出 CUDA/ROCm/Vulkan 版)。
+# 非 Apple 机器上的 LLM 后处理后端。MLX 只有 Apple Silicon 能跑,别的平台用 llama.cpp
+# 跑 GGUF。和 torch 一样,同一个包按硬件有不同的预编译版,名字都叫 llama-cpp-python,
+# 靠索引区分(见下面的 [tool.uv.sources]),三选一:
+#
+#   llm-cpp-cuda    NVIDIA 显卡,最快(Windows 约 500 MB、Linux 约 1.8 GB)。包里**不带**
+#                   CUDA 运行库(cudart / cublas),用的是 PyTorch CUDA 版带的那份
+#                   (见 shared/llama_runtime.py),所以要和 `cuda` 那个 extra 一起装。
+#   llm-cpp-vulkan  其它显卡(AMD / Intel),也能在 NVIDIA 上跑。只要显卡驱动(Vulkan
+#                   运行库是驱动带的)。
+#   llm-cpp         纯 CPU。**只是兜底**:默认模型在 CPU 上一句话要等好几秒。
+#
+# 选哪个由 scripts/setup-env.* 的 `--llm` 决定:有显卡就装显卡版,装完验证一下加载
+# 不了再依次退回(cuda → vulkan → cpu);`--llm-backend` 可以手动指定。
+# PyPI 上只有源码包,要现编译——Windows 上没装 Visual Studio Build Tools 就必失败
+# (2026-10 实测),所以三个都从预编译索引装。
+#
 # 0.3.25 起才认 Gemma 4(默认的 GGUF 模型);更早的版本加载时报 unknown model
 # architecture(那时服务会退回 Qwen3.5-2B,它要 0.3.17 以上)。模板渲染用的 jinja2
 # 是 llama-cpp-python 自带的依赖。
 llm-cpp = [
     "llama-cpp-python>=0.3.25",
+    "huggingface-hub>=0.24.0",
+]
+# 显卡版只有 Windows / Linux 的包(macOS 上是 Metal,见下面 sources 的说明)。
+llm-cpp-vulkan = [
+    "llama-cpp-python>=0.3.25; sys_platform != 'darwin'",
+    "huggingface-hub>=0.24.0",
+]
+llm-cpp-cuda = [
+    "llama-cpp-python>=0.3.25; sys_platform != 'darwin'",
     "huggingface-hub>=0.24.0",
 ]
 dev = [
@@ -122,6 +146,12 @@ conflicts = [
         { extra = "rocm" },
         { extra = "xpu" },
     ],
+    # llama-cpp-python 的三种预编译版同理
+    [
+        { extra = "llm-cpp" },
+        { extra = "llm-cpp-vulkan" },
+        { extra = "llm-cpp-cuda" },
+    ],
 ]
 
 [[tool.uv.index]]
@@ -144,7 +174,31 @@ name = "pytorch-xpu"
 url = "https://download.pytorch.org/whl/xpu"
 explicit = true
 
+# llama-cpp-python 官方的预编译包,按加速后端分索引。PyPI 上只有源码包。
+[[tool.uv.index]]
+name = "llama-cpp-cpu"
+url = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "llama-cpp-vulkan"
+url = "https://abetlen.github.io/llama-cpp-python/whl/vulkan"
+explicit = true
+
+[[tool.uv.index]]
+name = "llama-cpp-cuda"
+url = "https://abetlen.github.io/llama-cpp-python/whl/cu124"
+explicit = true
+
 [tool.uv.sources]
+# macOS 不走预编译索引,照旧从 PyPI 的源码包现编译(自带 Metal;有 Xcode 命令行工具
+# 就行,半分钟):索引上的 macOS arm64 包是坏的,解压就报 deflate 错误(0.3.36 实测,
+# 更早的版本也是)。Mac 上本来默认用 MLX,只有 VIF_LLM_BACKEND=llamacpp 才走到这里。
+llama-cpp-python = [
+    { index = "llama-cpp-cpu", extra = "llm-cpp", marker = "sys_platform != 'darwin'" },
+    { index = "llama-cpp-vulkan", extra = "llm-cpp-vulkan", marker = "sys_platform != 'darwin'" },
+    { index = "llama-cpp-cuda", extra = "llm-cpp-cuda", marker = "sys_platform != 'darwin'" },
+]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cuda", extra = "cuda" },

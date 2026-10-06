@@ -28,7 +28,7 @@
         <div class="ob-q">{{ t('语音识别在哪儿跑?', 'Where should speech recognition run?') }}</div>
         <button :class="['ob-choice', { sel: mode === 'local' }]" @click="chooseMode('local')" :disabled="modeBusy">
           <span class="ob-choice-title">{{ t('在本机跑模型(推荐)', 'Run models on this computer (recommended)') }}</span>
-          <span class="ob-choice-desc">{{ t('本机有这个项目的仓库和 Python 环境时选它,由本应用负责启动服务。', 'Choose this if the project repo and its Python environment are on this computer. The app starts the service for you.') }}</span>
+          <span class="ob-choice-desc">{{ t('模型就跑在这台电脑上,由本应用负责启动服务。还没装过服务端的话,下一步可以一键下载安装。', "Models run on this computer and the app starts the service for you. If the service isn't installed yet, the next step can download and set it up in one click.") }}</span>
         </button>
         <button :class="['ob-choice', { sel: mode === 'remote' }]" @click="chooseMode('remote')" :disabled="modeBusy">
           <span class="ob-choice-title">{{ t('连接已有的服务器', 'Connect to an existing server') }}</span>
@@ -50,6 +50,8 @@
           <input class="s-input" v-model="pythonPath" :placeholder="t('如 仓库/.venv/bin/python', 'e.g. repo/.venv/bin/python')" @change="saveLocal" />
         </div>
         <div v-if="pathProblem" class="s-tip srv-problem">⚠ {{ pathProblem }}</div>
+        <!-- 新机器:代码还没下载 / 环境还没建。可以直接在这里一键装好(见 LocalSetup.vue)。 -->
+        <LocalSetup :repo-path="repoPath" :env-broken="!!envReport && !envReport.ok" @done="onSetupDone" />
 
         <div class="ob-block">
           <div class="perm-head">
@@ -70,7 +72,7 @@
               <span v-if="it.fix" class="srv-problem"> → {{ it.fix }}</span>
             </div>
             <template v-if="!envReport.ok">
-              <div class="s-tip">{{ t('在终端里运行这条命令建好环境,再点「重新检查」:', 'Run this command in a terminal to set up the environment, then click "Check again":') }}</div>
+              <div class="s-tip">{{ t('用上面的按钮建环境,或者在终端里运行这条命令,再点「重新检查」:', 'Set up the environment with the button above, or run this command in a terminal, then click "Check again":') }}</div>
               <div class="s-row" style="margin-top:4px">
                 <code class="env-cmd">{{ envReport.setup_command }}</code>
                 <button class="s-btn" @click="copySetup">{{ copied ? t('已复制', 'Copied') : t('复制', 'Copy') }}</button>
@@ -240,6 +242,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { t, applyLanguagePref } from "./i18n";
+import LocalSetup from "./LocalSetup.vue";
 
 // 主界面算好的、给人看的快捷键(⌃⌥ / Ctrl+Alt)。只要这一个 prop:格式化规则
 // 留在 App.vue 一处,别在这里再抄一份。
@@ -354,6 +357,15 @@ async function enterLocal() {
   } catch (e) { console.error("get_config:", e); }
   if (!repoPath.value) await detectPaths();
   else await saveLocal();
+}
+
+/** 「本机安装」跑完了:路径 Rust 那边已经写进配置,这里跟上并重新体检。 */
+async function onSetupDone(o: { repo_path: string; python_path: string }) {
+  repoPath.value = o.repo_path;
+  pythonPath.value = o.python_path;
+  envReport.value = null;
+  envError.value = "";
+  await saveLocal();
 }
 
 async function detectPaths() {

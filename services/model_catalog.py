@@ -30,7 +30,24 @@ _ENGINE_PACKAGES = {
     "qwen_asr_mlx_native": "mlx_audio",
     "whisper_mlx": "mlx_whisper",
     "whisper_turbo": "transformers",
+    "qwen_asr_hf": "transformers",
 }
+
+
+def _package_version(name: str) -> tuple[int, ...] | None:
+    """已装的包的版本(只取开头的数字段);没装或读不出来返回 None。"""
+    try:
+        from importlib import metadata
+
+        parts: list[int] = []
+        for piece in metadata.version(name).split("."):
+            digits = "".join(ch for ch in piece if ch.isdigit())
+            if not digits or not piece[0].isdigit():
+                break
+            parts.append(int(digits))
+        return tuple(parts) or None
+    except Exception:  # noqa: BLE001 - 读不出版本就当不知道,不拦
+        return None
 
 
 def _has_package(name: str) -> bool:
@@ -62,11 +79,23 @@ def unavailable_reason(info: dict[str, Any]) -> str | None:
             f"环境里缺少 {package},请用 {SETUP_COMMAND} 重建环境",
             f"{package} is missing from the environment; rebuild it with {SETUP_COMMAND}",
         )
-    if engine == "whisper_turbo" and not _has_package("torch"):
+    if engine in ("whisper_turbo", "qwen_asr_hf") and not _has_package("torch"):
         return bi(
             f"环境里缺少 torch,请用 {SETUP_COMMAND} 重建环境",
             f"torch is missing from the environment; rebuild it with {SETUP_COMMAND}",
         )
+    if engine == "qwen_asr_hf":
+        from services.qwen_asr_hf import MIN_TRANSFORMERS
+
+        have = _package_version("transformers")
+        if have is not None and have[:2] < MIN_TRANSFORMERS:
+            need = ".".join(map(str, MIN_TRANSFORMERS))
+            got = ".".join(map(str, have))
+            return bi(
+                f"transformers 太旧({got}),这个模型要 {need} 以上;用 {SETUP_COMMAND} 重建环境",
+                f"transformers is too old ({got}); this model needs {need}+. "
+                f"Rebuild the environment with {SETUP_COMMAND}",
+            )
     return None
 
 
@@ -116,6 +145,7 @@ def describe(name: str, lang: str = "zh") -> dict[str, Any]:
     return {
         "description": description,
         "memory_gb": info.get("memory_gb"),
+        "download_mb": info.get("download_mb"),
         "available": reason is None,
         "unavailable_reason": localize(lang, reason),
         "downloaded": is_downloaded(info),
@@ -127,19 +157,57 @@ def cache_bytes(model_id: str) -> int:
     """这个模型在 HuggingFace 缓存里已经落盘的字节数(含下载中的 .incomplete)。
 
     用来给「首次加载要下载几百 MB 到几 GB」报进度。不挂 huggingface_hub 的进度
-    回调,是因为几个引擎(mlx-audio / mlx-whisper / transformers)各自调下载,
-    接口和版本都不一样;数缓存目录的增长对谁都成立。
+    回调,是因为几个引擎(mlx-audio / mlx-whisper / transformers / llama.cpp)各自调
+    下载,接口和版本都不一样;数缓存目录的增长对谁都成立。
+
+    数的是整个 `models--<org>--<name>` 目录里的**真实文件**,不只是 `blobs/`:Windows
+    上没开开发者模式时建不了软链,huggingface_hub 下完一个文件就把它从 `blobs/`
+    **挪**进 `snapshots/`——只数 `blobs/` 的话,每下完一个文件进度就倒退回去。
+    软链不算(它指向的 blob 已经数过了)。
     """
     if "/" not in model_id:
         return 0
-    blobs = _hf_cache_dir() / f"models--{model_id.replace('/', '--')}" / "blobs"
+    root = _hf_cache_dir() / f"models--{model_id.replace('/', '--')}"
     total = 0
-    try:
-        for f in blobs.iterdir():
-            try:
-                total += f.stat().st_size
-            except OSError:
-                pass
-    except OSError:
-        return 0
+    for sub in ("blobs", "snapshots"):
+        try:
+            for dirpath, _dirs, files in os.walk(root / sub):
+                for name in files:
+                    path = os.path.join(dirpath, name)
+                    try:
+                        if not os.path.islink(path):
+                            total += os.path.getsize(path)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
     return total
+
+
+def load_progress(
+    model: str,
+    cached: int,
+    started_at: float,
+    bytes_at_start: int,
+    download_mb: float | None,
+    now: float,
+) -> dict[str, Any]:
+    """`/health.loading` 的内容:加载了多久、下载了多少、一共要下多少。STT / LLM 共用。
+
+    - `downloaded_bytes`:**这次加载**新落盘的字节数(老客户端只认它);
+    - `cached_bytes`:缓存里现在一共有多少(`cached`,调用方用 `cache_bytes` 量的;上次
+      下到一半、这次接着下时比上面那个大);
+    - `total_bytes`:下完一共多大(注册表里的 `download_mb`),不知道时为 None。
+      只是个估计:仓库更新过、或者引擎多拉了几个文件时会对不上,所以界面上写「约」,
+      超过了就不再显示分母。
+    """
+    downloaded = max(0, cached - bytes_at_start)
+    return {
+        "model": model,
+        "elapsed_s": round(now - started_at, 1),
+        "downloaded_bytes": downloaded,
+        "cached_bytes": cached,
+        # download_mb 是十进制的 MB(HuggingFace 报的字节数 / 1e6)
+        "total_bytes": int(download_mb * 1_000_000) if download_mb else None,
+        "phase": "downloading" if downloaded > 0 else "loading",
+    }

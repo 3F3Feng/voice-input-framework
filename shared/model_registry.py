@@ -16,12 +16,15 @@ IS_APPLE_SILICON = platform.machine() == "arm64" and platform.system() == "Darwi
 # `description` 是界面上的说明;含中文的那些另有 `description_en`,
 # 界面语言是英文时用它(见 services/model_catalog.py 的 describe)。
 # engine_type 必须与 services/stt_server.py 和 server/models/base.py 中的加载代码匹配
+# `download_mb` 是首次使用时要下载的大小(十进制 MB = 字节数 / 1e6,按 HuggingFace 上引擎
+# 实际会拉的那些文件量的),界面拿它当下载进度的分母;没有它就只能说「已下载多少」,说不出还剩多少。
 MODELS_CONFIG: dict[str, dict[str, Any]] = {
     # ── MLX 原生模型 (mlx-audio，Apple Silicon 优化，推荐) ──
     "qwen_asr_mlx_native": {
         "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
         "engine": "qwen_asr_mlx_native",
         "memory_gb": 1.0,
+        "download_mb": 2470,
         "description": "Qwen3-ASR-1.7B MLX 8bit (MLX原生，推荐)",
         "description_en": "Qwen3-ASR-1.7B MLX 8bit (native MLX, recommended)",
         "requires_apple_silicon": True,
@@ -30,6 +33,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "model_id": "mlx-community/Qwen3-ASR-0.6B-4bit",
         "engine": "qwen_asr_mlx_native",
         "memory_gb": 0.5,
+        "download_mb": 715,
         "description": "Qwen3-ASR-0.6B MLX 4bit (MLX原生，更快)",
         "description_en": "Qwen3-ASR-0.6B MLX 4bit (native MLX, faster)",
         "requires_apple_silicon": True,
@@ -39,13 +43,15 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "model_id": "mlx-community/whisper-large-v3-mlx",
         "engine": "whisper_mlx",
         "memory_gb": 3.0,
+        "download_mb": 3085,
         "description": "MLX Whisper Large V3 (Apple Silicon)",
         "requires_apple_silicon": True,
     },
     "whisper_mlx_turbo": {
-        "model_id": "mlx-community/whisper-large-v3-turbo-mlx",
+        "model_id": "mlx-community/whisper-large-v3-turbo",
         "engine": "whisper_mlx",
         "memory_gb": 2.0,
+        "download_mb": 1615,
         "description": "MLX Whisper Large V3 Turbo (快速+准确，Apple Silicon)",
         "description_en": "MLX Whisper Large V3 Turbo (fast + accurate, Apple Silicon)",
         "requires_apple_silicon": True,
@@ -54,6 +60,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "model_id": "mlx-community/whisper-medium-mlx",
         "engine": "whisper_mlx",
         "memory_gb": 1.5,
+        "download_mb": 1525,
         "description": "MLX Whisper Medium (Apple Silicon)",
         "requires_apple_silicon": True,
     },
@@ -61,6 +68,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "model_id": "mlx-community/whisper-small-mlx",
         "engine": "whisper_mlx",
         "memory_gb": 0.5,
+        "download_mb": 480,
         "description": "MLX Whisper Small (最快，Apple Silicon)",
         "description_en": "MLX Whisper Small (fastest, Apple Silicon)",
         "requires_apple_silicon": True,
@@ -91,6 +99,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "model_id": "openai/whisper-tiny",
         "engine": "whisper_turbo",
         "memory_gb": 0.3,
+        "download_mb": 155,
         "description": "Whisper Tiny (transformers, 最快, 精度一般, 适合低配 / 纯 CPU)",
         "description_en": "Whisper Tiny (transformers, fastest, modest accuracy, for low-end / CPU-only machines)",
     },
@@ -98,6 +107,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "model_id": "openai/whisper-base",
         "engine": "whisper_turbo",
         "memory_gb": 0.5,
+        "download_mb": 295,
         "description": "Whisper Base (transformers, 纯 CPU 上的推荐起点)",
         "description_en": "Whisper Base (transformers, recommended starting point on CPU only)",
     },
@@ -105,6 +115,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "model_id": "openai/whisper-small",
         "engine": "whisper_turbo",
         "memory_gb": 1.0,
+        "download_mb": 970,
         "description": "Whisper Small (transformers, 速度与精度折中)",
         "description_en": "Whisper Small (transformers, balance of speed and accuracy)",
     },
@@ -112,6 +123,7 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "model_id": "openai/whisper-medium",
         "engine": "whisper_turbo",
         "memory_gb": 2.5,
+        "download_mb": 3060,
         "description": "Whisper Medium (transformers, 有独显时适用)",
         "description_en": "Whisper Medium (transformers, for machines with a discrete GPU)",
     },
@@ -119,8 +131,31 @@ MODELS_CONFIG: dict[str, dict[str, Any]] = {
         "model_id": "openai/whisper-large-v3-turbo",
         "engine": "whisper_turbo",
         "memory_gb": 3,
+        "download_mb": 1620,
         "description": "Whisper Large V3 Turbo (transformers, 精度最好, 建议配 GPU)",
         "description_en": "Whisper Large V3 Turbo (transformers, best accuracy, GPU recommended)",
+    },
+    # ── Qwen3-ASR (transformers 原生,跨平台:CPU / CUDA / ROCm / MPS)──
+    #
+    # 非 Apple 平台以前只有上面那组 Whisper,中文不如 Qwen3-ASR(它还认 22 种汉语
+    # 方言、中英混说更稳)。transformers 5.13 起原生支持,见 services/qwen_asr_hf.py。
+    # 本机(M3 Max)在 CPU fp32 和 MPS fp16 上实测过;NVIDIA 真机上还没人测过,所以
+    # 暂时不进自动推荐(services/device.py),要用户自己选。
+    "qwen_asr_small": {
+        "model_id": "Qwen/Qwen3-ASR-0.6B-hf",
+        "engine": "qwen_asr_hf",
+        "memory_gb": 2.0,
+        "download_mb": 1580,
+        "description": "Qwen3-ASR-0.6B (transformers, 中文比 Whisper 准, CPU 也能跑)",
+        "description_en": "Qwen3-ASR-0.6B (transformers, better Chinese than Whisper, runs on CPU too)",
+    },
+    "qwen_asr": {
+        "model_id": "Qwen/Qwen3-ASR-1.7B-hf",
+        "engine": "qwen_asr_hf",
+        "memory_gb": 5.0,
+        "download_mb": 4090,
+        "description": "Qwen3-ASR-1.7B (transformers, 中文最准, 建议 6GB 以上显存)",
+        "description_en": "Qwen3-ASR-1.7B (transformers, best Chinese accuracy, 6 GB+ VRAM recommended)",
     },
 }
 

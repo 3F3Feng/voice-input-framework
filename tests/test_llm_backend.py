@@ -331,7 +331,12 @@ class TestLlamaCppLoad:
         monkeypatch.setitem(
             sys.modules, "huggingface_hub", types.SimpleNamespace(hf_hub_download=hf_hub_download)
         )
-        monkeypatch.setitem(sys.modules, "llama_cpp", types.SimpleNamespace(Llama=make_llama))
+        monkeypatch.setitem(
+            sys.modules,
+            "llama_cpp",
+            # 显卡版:llama.cpp 认出了显卡,模型整个放上去(n_gpu_layers == -1)
+            types.SimpleNamespace(Llama=make_llama, llama_supports_gpu_offload=lambda: True),
+        )
         return seen
 
     @pytest.mark.asyncio
@@ -391,7 +396,11 @@ class TestLlamaCppLoad:
                 raise ValueError("unknown model architecture: 'qwen35'")
             return FakeLlama(**kwargs)
 
-        monkeypatch.setitem(sys.modules, "llama_cpp", types.SimpleNamespace(Llama=only_small_loads))
+        monkeypatch.setitem(
+            sys.modules,
+            "llama_cpp",
+            types.SimpleNamespace(Llama=only_small_loads, llama_supports_gpu_offload=lambda: True),
+        )
         assert await engine.load("Qwen3.5-4B-GGUF", remember=True) is False
         assert engine.current_model_name == "Qwen3.5-0.8B-GGUF"
         assert "qwen35" in engine._load_error

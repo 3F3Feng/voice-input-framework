@@ -1,0 +1,115 @@
+"""CUDA 版 llama.cpp 的运行库从哪儿来(shared/llama_runtime.py)。
+
+预编译的 CUDA 包不带 cudart / cublas;PyTorch 的 CUDA 版带着。这里钉住「去哪些目录找」
+——真正的加载只有在有 NVIDIA 显卡的机器上才验证得了。
+"""
+
+import sys
+from pathlib import Path
+
+import pytest
+
+from shared import llama_runtime
+
+
+@pytest.fixture(autouse=True)
+def fresh(monkeypatch):
+    monkeypatch.setattr(llama_runtime, "_prepared", None)
+
+
+def make_tree(tmp_path, sub):
+    torch = tmp_path / "torch"
+    (torch / "lib").mkdir(parents=True)
+    nvidia = tmp_path / "nvidia"
+    for pkg in ("cublas", "cuda_runtime"):
+        (nvidia / pkg / sub).mkdir(parents=True)
+    (nvidia / "cudnn").mkdir()  # 没有库目录的包:跳过
+    (nvidia / "__init__.py").write_text("")  # 文件不是包目录
+    return torch, nvidia
+
+
+def test_windows_looks_in_torch_lib_and_nvidia_bin(tmp_path):
+    torch, nvidia = make_tree(tmp_path, "bin")
+    dirs = llama_runtime.library_dirs("win32", torch, nvidia)
+    assert dirs == [torch / "lib", nvidia / "cublas" / "bin", nvidia / "cuda_runtime" / "bin"]
+
+
+def test_linux_looks_in_nvidia_lib(tmp_path):
+    torch, nvidia = make_tree(tmp_path, "lib")
+    dirs = llama_runtime.library_dirs("linux", torch, nvidia)
+    assert dirs == [torch / "lib", nvidia / "cublas" / "lib", nvidia / "cuda_runtime" / "lib"]
+
+
+def test_missing_packages_are_fine(tmp_path, monkeypatch):
+    monkeypatch.setattr(llama_runtime, "_package_dir", lambda name: None)
+    assert llama_runtime.library_dirs("win32") == []
+    # 目录不存在(包装了一半)也不报错
+    assert llama_runtime.library_dirs("linux", tmp_path / "nope", tmp_path / "nope2") == []
+    assert llama_runtime.prepare() == []
+
+
+def test_package_dir_does_not_import_the_package():
+    assert llama_runtime._package_dir("definitely_not_installed_xyz") is None
+    before = set(sys.modules)
+    found = llama_runtime._package_dir("json")
+    assert found is not None and found.name == "json"
+    assert "torch" not in set(sys.modules) - before
+
+
+def test_windows_prepare_puts_the_cuda_dirs_on_path(tmp_path, monkeypatch):
+    torch, nvidia = make_tree(tmp_path, "bin")
+    (torch / "lib" / "cudart64_12.dll").write_bytes(b"")
+    (torch / "lib" / "cublas64_12.dll").write_bytes(b"")
+    added = []
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        llama_runtime, "library_dirs", lambda: [torch / "lib", nvidia / "cublas" / "bin"]
+    )
+    monkeypatch.setattr(llama_runtime.os, "add_dll_directory", added.append, raising=False)
+    monkeypatch.setenv("PATH", "C:\\Windows")
+    used = llama_runtime.prepare()
+    # 只加真的放着 CUDA 运行库的目录(nvidia/cublas/bin 是空的)
+    assert used == [str(torch / "lib")]
+    assert llama_runtime.os.environ["PATH"].startswith(str(torch / "lib"))
+    assert llama_runtime.os.environ["PATH"].endswith("C:\\Windows")
+    assert added == [str(torch / "lib")]
+    # 重复调用不重复加
+    assert llama_runtime.prepare() == used
+    assert llama_runtime.os.environ["PATH"].count(str(torch / "lib")) == 1
+
+
+def test_linux_prepare_preloads_in_dependency_order(tmp_path, monkeypatch):
+    import ctypes
+
+    torch, nvidia = make_tree(tmp_path, "lib")
+    (nvidia / "cublas" / "lib" / "libcublas.so.12").write_bytes(b"")
+    (nvidia / "cublas" / "lib" / "libcublasLt.so.12").write_bytes(b"")
+    (nvidia / "cuda_runtime" / "lib" / "libcudart.so.12").write_bytes(b"")
+    loaded = []
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        llama_runtime,
+        "library_dirs",
+        lambda: [nvidia / "cublas" / "lib", nvidia / "cuda_runtime" / "lib"],
+    )
+    monkeypatch.setattr(ctypes, "CDLL", lambda path, mode=0: loaded.append(path))
+    used = llama_runtime.prepare()
+    assert [Path(p).name for p in loaded] == list(llama_runtime.LINUX_LIBRARIES)
+    assert used == loaded
+
+
+def test_a_library_that_will_not_load_is_skipped_not_fatal(tmp_path, monkeypatch):
+    import ctypes
+
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    for name in llama_runtime.LINUX_LIBRARIES:
+        (lib / name).write_bytes(b"not a real library")
+
+    def refuse(path, mode=0):
+        raise OSError("invalid ELF header")
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(llama_runtime, "library_dirs", lambda: [lib])
+    monkeypatch.setattr(ctypes, "CDLL", refuse)
+    assert llama_runtime.prepare() == []

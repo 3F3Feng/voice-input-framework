@@ -151,6 +151,10 @@ pub struct ServerStatus {
     pub log_path: Option<String>,
     /// 最近若干行 stdout/stderr,失败时用来定位问题。
     pub recent_logs: Vec<String>,
+    /// 服务在跑,但模型没放在显卡上(LLM 的 `/health.accelerator == "cpu"`):为什么、
+    /// 怎么办。默认的 LLM 在 CPU 上一句话要等好几秒,不说出来用户只会觉得「后处理
+    /// 怎么这么慢」。跑在显卡上、或者服务端太老不报这一项时为空。
+    pub slow_note: Option<String>,
 }
 
 /// 两个服务 + 当前模式,一次性给前端。
@@ -1005,34 +1009,13 @@ struct Health {
     error: Option<String>,
     /// 加载进度(STT 服务端 `/health.loading`,见 services/stt_engine.py)。
     #[serde(default)]
-    loading: Option<LoadingProgress>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct LoadingProgress {
+    loading: Option<crate::loading::LoadingProgress>,
+    /// 模型跑在哪:`gpu` / `cpu`(LLM 服务端报,见 services/llm_server.py)。
     #[serde(default)]
-    elapsed_s: f64,
+    accelerator: Option<String>,
+    /// `accelerator == "cpu"` 的原因(装的是 CPU 版、显存不够退回来的……)。
     #[serde(default)]
-    downloaded_bytes: u64,
-}
-
-/// 「启动中」那一行怎么说。首次用一个模型要下几百 MB 到几 GB,以前全程只有一句
-/// 「正在加载模型...」,看不出是在下载、卡住了还是坏了。
-fn loading_text(progress: Option<&LoadingProgress>) -> String {
-    match progress {
-        Some(p) if p.downloaded_bytes >= 1024 * 1024 => tr!(
-            "正在下载模型… 已下载 {} MB({:.0} 秒)",
-            "Downloading model… {} MB downloaded ({:.0}s)",
-            p.downloaded_bytes / (1024 * 1024),
-            p.elapsed_s
-        ),
-        Some(p) if p.elapsed_s >= 1.0 => tr!(
-            "正在加载模型…({:.0} 秒)",
-            "Loading model… ({:.0}s)",
-            p.elapsed_s
-        ),
-        _ => t("正在加载模型...", "Loading model...").to_string(),
-    }
+    accelerator_note: Option<String>,
 }
 
 /// 端口上那个服务说它的模型怎么样了。
@@ -1047,6 +1030,30 @@ enum Answer {
 }
 
 impl Health {
+    /// 模型跑在 CPU 上时给用户看的那句话;跑在显卡上、或者服务端没报时为空。
+    fn slow_note(&self) -> Option<String> {
+        if self.accelerator.as_deref() != Some("cpu") {
+            return None;
+        }
+        let why = self
+            .accelerator_note
+            .as_deref()
+            .map(str::trim)
+            .filter(|w| !w.is_empty());
+        Some(match why {
+            Some(w) => tr!(
+                "模型跑在 CPU 上,会比较慢:{}",
+                "The model is running on the CPU, which is slow: {}",
+                w
+            ),
+            None => t(
+                "模型跑在 CPU 上,会比较慢",
+                "The model is running on the CPU, which is slow",
+            )
+            .to_string(),
+        })
+    }
+
     fn answer(&self) -> Answer {
         match self.status.as_str() {
             "ok" => Answer::Ready,
@@ -1142,7 +1149,7 @@ pub async fn status(
         Some(Answer::Failed(reason)) => Some(reason.clone()),
         _ => None,
     };
-    let loading = loading_text(raw.as_ref().and_then(|h| h.loading.as_ref()));
+    let loading = crate::loading::text(raw.as_ref().and_then(|h| h.loading.as_ref()));
     let health = raw.filter(|h| h.status == "ok");
 
     let snapshot = manager.lock().ok().and_then(|mut m| m.snapshot(kind));
@@ -1161,6 +1168,7 @@ pub async fn status(
             owner: ServerOwner::App,
             can_stop: ServerOwner::App.can_manage(),
             pid: Some(snap.pid),
+            slow_note: h.slow_note(),
             current_model: h.current_model,
             detail: None,
             log_path: Some(snap.log_path),
@@ -1195,6 +1203,7 @@ pub async fn status(
                 owner,
                 can_stop: owner.can_manage(),
                 pid,
+                slow_note: h.slow_note(),
                 current_model: h.current_model,
                 detail: Some(detail.into()),
                 log_path: other.as_ref().map(|s| s.log_path.clone()),
@@ -1219,6 +1228,7 @@ pub async fn status(
                 )),
                 log_path: Some(snap.log_path),
                 recent_logs: snap.recent_logs,
+                slow_note: None,
             }
         }
         // 进程还活着但 `/health` 没通 = 正在加载模型(同样要求端口一致)。
@@ -1233,6 +1243,7 @@ pub async fn status(
             detail: Some(tr!("已启动,{}", "Started. {}", loading)),
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
+            slow_note: None,
         },
         // 端口有应答、模型还没就绪,但应答的**不是**本应用手里那个进程——典型是
         // 用户在终端里起的服务正在加载模型。以前这里要么落进下面的「未运行」
@@ -1271,6 +1282,7 @@ pub async fn status(
             }),
             log_path: Some(snap.log_path),
             recent_logs: snap.recent_logs,
+            slow_note: None,
         },
         // 从没起过。本地模式下路径没配好就报 NotConfigured,让 UI 能说清原因。
         (None, None) => ServerStatus {
@@ -1293,6 +1305,7 @@ pub async fn status(
             },
             log_path: None,
             recent_logs: Vec::new(),
+            slow_note: None,
         },
     }
 }
@@ -1343,6 +1356,7 @@ fn external_pending_status(
         detail: Some(tr!("{}({})", "{} ({})", what, owner_note)),
         log_path: stale.as_ref().map(|s| s.log_path.clone()),
         recent_logs: stale.map(|s| s.recent_logs).unwrap_or_default(),
+        slow_note: None,
     }
 }
 
@@ -1663,7 +1677,7 @@ pub(crate) fn is_repo_root(path: &Path) -> bool {
 }
 
 /// 在仓库里找可用的 Python 解释器。
-fn find_python(repo: &Path) -> Option<String> {
+pub(crate) fn find_python(repo: &Path) -> Option<String> {
     for rel in [
         ".venv/bin/python",
         "venv/bin/python",
@@ -1767,8 +1781,8 @@ pub fn detect() -> DetectResult {
             python_path: None,
             problem: Some(
                 t(
-                    "没有自动找到 voice-input-framework 仓库(在 ~ 下的常见位置都找过了)。请手动填写仓库路径。",
-                    "Couldn't find the voice-input-framework repository automatically (checked the usual places under ~). Enter the repository path manually.",
+                    "没有自动找到 voice-input-framework 仓库(在 ~ 下的常见位置都找过了)。已经下载过就手动填写仓库路径;还没有的话可以用下面的「下载并安装」。",
+                    "Couldn't find the voice-input-framework repository automatically (checked the usual places under ~). If you already have it, enter its path manually; if not, use Download and install below.",
                 )
                 .into(),
             ),
@@ -2012,6 +2026,7 @@ mod tests {
             detail: None,
             log_path: None,
             recent_logs: Vec::new(),
+            slow_note: None,
         }
     }
 
@@ -2188,7 +2203,30 @@ mod tests {
             current_model: Some("m".into()),
             error: error.map(Into::into),
             loading: None,
+            accelerator: None,
+            accelerator_note: None,
         }
+    }
+
+    #[test]
+    fn a_model_on_the_cpu_is_called_out_and_a_gpu_one_is_not() {
+        let with = |acc: Option<&str>, note: Option<&str>| Health {
+            accelerator: acc.map(Into::into),
+            accelerator_note: note.map(Into::into),
+            ..health("ok", None)
+        };
+        // 跑在显卡上、老服务端不报这一项:什么都不说。
+        assert_eq!(with(Some("gpu"), None).slow_note(), None);
+        assert_eq!(with(None, None).slow_note(), None);
+        // 跑在 CPU 上:说出来,带上服务端给的原因。
+        assert_eq!(
+            with(Some("cpu"), Some("显存不够")).slow_note().as_deref(),
+            Some("模型跑在 CPU 上,会比较慢:显存不够")
+        );
+        assert_eq!(
+            with(Some("cpu"), Some("  ")).slow_note().as_deref(),
+            Some("模型跑在 CPU 上,会比较慢")
+        );
     }
 
     #[test]
@@ -3028,30 +3066,5 @@ mod real_servers {
             );
             assert!(!st.can_stop);
         }
-    }
-}
-
-#[cfg(test)]
-mod loading_text_tests {
-    use super::*;
-
-    #[test]
-    fn download_progress_is_shown_in_mb() {
-        let p = LoadingProgress {
-            elapsed_s: 42.0,
-            downloaded_bytes: 300 * 1024 * 1024,
-        };
-        assert_eq!(loading_text(Some(&p)), "正在下载模型… 已下载 300 MB(42 秒)");
-    }
-
-    #[test]
-    fn loading_without_download_shows_elapsed_time() {
-        let p = LoadingProgress {
-            elapsed_s: 7.4,
-            downloaded_bytes: 0,
-        };
-        assert_eq!(loading_text(Some(&p)), "正在加载模型…(7 秒)");
-        // 老服务端没有 loading 字段:保持原来的说法
-        assert_eq!(loading_text(None), "正在加载模型...");
     }
 }
