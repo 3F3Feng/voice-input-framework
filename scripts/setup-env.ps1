@@ -97,18 +97,30 @@ switch ($Backend) {
     default { Die "不认识的后端「$Backend」,可选:cpu cuda xpu" }
 }
 
+# LLM 后处理的依赖单独放:它装不上时退回「不带它再装一遍」,不能让整个环境跟着建不
+# 起来(识别本身不依赖它)。
+$llmExtras = @()
 if ($Llm) {
-    # 非 Apple 平台的 LLM 后处理走 llama.cpp
-    $extras += @("--extra", "llm-cpp")
-    # PyPI 上的 llama-cpp-python 只有源码包,要现编译。编译失败最常见的原因是没装 C++ 工具链。
-    Say "llama-cpp-python 要现编译,需要 CMake 和 Visual Studio Build Tools(C++ 桌面开发);编译失败先检查这两样。"
+    # 非 Apple 平台的 LLM 后处理走 llama.cpp。装的是预编译的 CPU 版(pyproject 里的
+    # llama-cpp-cpu 索引),不需要 Visual Studio Build Tools。以前从 PyPI 的源码包现
+    # 编译,没装 C++ 工具链的 Windows 上必失败(CMake 找不到 nmake / cl)。
+    $llmExtras = @("--extra", "llm-cpp")
 }
 if ($Dev) { $extras += @("--extra", "dev") }
 
-$shown = if ($extras.Count -gt 0) { $extras -join " " } else { "(无额外 extra)" }
+$allExtras = @($extras) + @($llmExtras)
+$shown = if ($allExtras.Count -gt 0) { $allExtras -join " " } else { "(无额外 extra)" }
 Say "uv sync $shown"
-& uv sync @extras
-if ($LASTEXITCODE -ne 0) { Die "uv sync 失败(退出码 $LASTEXITCODE),见上面的输出。" }
+& uv sync @allExtras
+$llmFailed = $false
+if ($LASTEXITCODE -ne 0) {
+    # 没要 LLM 依赖时,失败就是失败。
+    if ($llmExtras.Count -eq 0) { Die "uv sync 失败(退出码 $LASTEXITCODE),见上面的输出。" }
+    Warn "带 LLM 后处理依赖(llama-cpp-python)时没装上,先不带它把其余的装好..."
+    & uv sync @extras
+    if ($LASTEXITCODE -ne 0) { Die "uv sync 失败(退出码 $LASTEXITCODE),见上面的输出。" }
+    $llmFailed = $true
+}
 
 # ── 交代清楚装出来的是什么 ────────────────────────────────────────────────
 Say "校验..."
@@ -151,9 +163,13 @@ try {
     Remove-Item $tmp -ErrorAction SilentlyContinue
 }
 
+if ($llmFailed) {
+    Warn "LLM 后处理的依赖(llama-cpp-python)没装上,原因见上面 uv 的输出;语音识别不受影响。"
+    Warn "多半是连不上 github.com(预编译包放在那里)。可以稍后重跑本脚本,或关掉「LLM 后处理」。"
+}
 Say "完成。启动服务:"
 Write-Host "    uv run python -m services.stt_server"
-if ($Llm) { Write-Host "    uv run python -m services.llm_server" }
+if ($Llm -and -not $llmFailed) { Write-Host "    uv run python -m services.llm_server" }
 Write-Host ""
 Write-Host "    或者在客户端「设置 → 服务 → 本地管理」里点「自动探测」,"
 Write-Host "    会找到 $RepoRoot\.venv\Scripts\python.exe,再点「启动」。"

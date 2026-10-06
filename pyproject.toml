@@ -92,7 +92,9 @@ xpu = [
     "pytorch-triton-xpu; sys_platform == 'linux'",
 ]
 # 非 Apple 机器上的 LLM 后处理后端。MLX 只有 Apple Silicon 能跑,
-# 别的平台用 llama.cpp 跑 GGUF(CPU 可用,也能编译出 CUDA/ROCm/Vulkan 版)。
+# 别的平台用 llama.cpp 跑 GGUF。装的是**预编译的 CPU 版**(见下面的 llama-cpp-cpu
+# 索引):PyPI 上只有源码包,要现编译,Windows 上没装 Visual Studio Build Tools
+# 就必失败(2026-10 实测)。想要 CUDA / Vulkan 版得自己装,见 README。
 # 0.3.25 起才认 Gemma 4(默认的 GGUF 模型);更早的版本加载时报 unknown model
 # architecture(那时服务会退回 Qwen3.5-2B,它要 0.3.17 以上)。模板渲染用的 jinja2
 # 是 llama-cpp-python 自带的依赖。
@@ -144,7 +146,15 @@ name = "pytorch-xpu"
 url = "https://download.pytorch.org/whl/xpu"
 explicit = true
 
+# llama-cpp-python 官方的预编译包(CPU 版:Windows x64、Linux x86_64 / aarch64、
+# macOS arm64 都有)。PyPI 上只有源码包。
+[[tool.uv.index]]
+name = "llama-cpp-cpu"
+url = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+explicit = true
+
 [tool.uv.sources]
+llama-cpp-python = [{ index = "llama-cpp-cpu" }]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cuda", extra = "cuda" },

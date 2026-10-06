@@ -38,8 +38,9 @@
 
    脚本会探测硬件(有 NVIDIA 显卡选 CUDA,否则 CPU),用 [uv](https://docs.astral.sh/uv/) 把依赖装进
    仓库下的 `.venv`,没有 uv 会先装上。需要 Python 3.11 或 3.12,uv 会自己准备。
-3. (可选)要 LLM 后处理(自动加标点、整理格式):加参数 `-Llm`。这会现编译 `llama-cpp-python`,
-   需要 CMake 和 Visual Studio Build Tools,**第一次测试建议先不装**,等基本流程跑通再说。
+3. (可选)要 LLM 后处理(自动加标点、整理格式):加参数 `-Llm`。装的是预编译的 `llama-cpp-python`
+   (CPU 版),不需要 Visual Studio;第一次打开后处理开关时还要下载约 3.4 GB 的模型。
+   **第一次测试建议先不装**,等基本流程跑通再说。
 
 ### 3. 启动并验证
 

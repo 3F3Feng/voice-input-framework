@@ -83,20 +83,30 @@ case "$BACKEND" in
   *) die "不认识的后端「$BACKEND」,可选:cpu cuda rocm xpu mlx" ;;
 esac
 
+# LLM 后处理的依赖单独放一个数组:它装不上时退回「不带它再装一遍」,不能让整个环境
+# 跟着建不起来(识别本身不依赖它)。
+LLM_EXTRAS=()
 if [[ $WITH_LLM -eq 1 && "$BACKEND" != "mlx" ]]; then
-  # 非 Apple 平台的 LLM 后处理走 llama.cpp;Apple 上用 MLX,不需要额外装
-  EXTRAS+=(--extra llm-cpp)
-  # PyPI 上的 llama-cpp-python 只有源码包,要现编译。编译失败最常见的原因是缺工具链。
-  say "llama-cpp-python 要现编译,需要 CMake 和 C/C++ 编译器(如 build-essential);编译失败先检查这两样。"
+  # 非 Apple 平台的 LLM 后处理走 llama.cpp;Apple 上用 MLX,不需要额外装。
+  # 装的是预编译的 CPU 版(pyproject 里的 llama-cpp-cpu 索引),不用编译器。
+  LLM_EXTRAS+=(--extra llm-cpp)
 fi
 [[ $WITH_DEV -eq 1 ]] && EXTRAS+=(--extra dev)
 
-say "uv sync ${EXTRAS[*]:-(无额外 extra)}"
 # 不能直接写 "${EXTRAS[@]}":macOS 自带的 /bin/bash 是 3.2,`set -u` 下展开空数组
 # 会报「EXTRAS[@]: unbound variable」直接退出 —— Apple Silicon 的默认路径(mlx、
 # 不带 --llm / --dev)正好是空数组,一步都走不下去(「更新服务」按钮用的就是系统 bash)。
 # `${arr[@]+"${arr[@]}"}` 在 3.2 和新版 bash 上都成立。
-uv sync ${EXTRAS[@]+"${EXTRAS[@]}"}
+ALL_EXTRAS=(${EXTRAS[@]+"${EXTRAS[@]}"} ${LLM_EXTRAS[@]+"${LLM_EXTRAS[@]}"})
+say "uv sync ${ALL_EXTRAS[*]:-(无额外 extra)}"
+LLM_FAILED=0
+if ! uv sync ${ALL_EXTRAS[@]+"${ALL_EXTRAS[@]}"}; then
+  # 没要 LLM 依赖时,失败就是失败。
+  [[ ${#LLM_EXTRAS[@]} -eq 0 ]] && die "uv sync 失败,见上面的输出。"
+  warn "带 LLM 后处理依赖(llama-cpp-python)时没装上,先不带它把其余的装好..."
+  uv sync ${EXTRAS[@]+"${EXTRAS[@]}"} || die "uv sync 失败,见上面的输出。"
+  LLM_FAILED=1
+fi
 
 # ── 交代清楚装出来的是什么 ────────────────────────────────────────────────
 say "校验..."
@@ -129,7 +139,11 @@ except ImportError:
     pass
 PY
 
+if [[ $LLM_FAILED -eq 1 ]]; then
+  warn "LLM 后处理的依赖(llama-cpp-python)没装上,原因见上面 uv 的输出;语音识别不受影响。"
+  warn "多半是这个平台没有预编译包(或连不上 github.com)。可以稍后重跑本脚本,或关掉「LLM 后处理」。"
+fi
 say "完成。启动服务:"
 echo "    uv run python -m services.stt_server"
-[[ $WITH_LLM -eq 1 || "$BACKEND" == "mlx" ]] && echo "    uv run python -m services.llm_server"
+[[ ( $WITH_LLM -eq 1 && $LLM_FAILED -eq 0 ) || "$BACKEND" == "mlx" ]] && echo "    uv run python -m services.llm_server"
 exit 0

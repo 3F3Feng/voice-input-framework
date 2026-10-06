@@ -103,8 +103,11 @@ llama.cpp 后端（其它平台，4bit 量化，首次使用时下载到 Hugging
 「帮我写一首诗」等 8 类输入 × 默认提示词和三个预设共 64 例自动检查，再量延迟和内存。
 Gemma-4-E2B 的 QAT 版在 MLX 和 llama.cpp 上都只有 1 例不合格，延迟约为旧默认的一半。
 
-`llama-cpp-python` 要 0.3.25 以上（更早的版本不认 Gemma 4）。PyPI 上只有源码包，
-装的时候要现编译：需要 CMake 和 C/C++ 编译器（Windows 上是 Visual Studio Build Tools）。
+`llama-cpp-python` 要 0.3.25 以上（更早的版本不认 Gemma 4）。`setup-env --llm` 装的是官方
+预编译的 **CPU 版**（Windows x64、Linux x86_64 / aarch64），不需要编译器。想用显卡跑 LLM 后处理，
+可以在建好环境后自己换成 CUDA / Vulkan 版（`uv pip install llama-cpp-python --index-url
+https://abetlen.github.io/llama-cpp-python/whl/cu124`，或 `.../whl/vulkan`；CUDA 版要求系统里有
+CUDA 12 的运行库）——这条路还没在真机上验证过，之后「更新服务」会把它换回 CPU 版。
 
 ## 🚀 快速开始
 

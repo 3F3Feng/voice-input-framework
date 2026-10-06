@@ -544,14 +544,14 @@ fn package_item(name: &str, pkg: &PkgProbe, p: &Probe) -> CheckItem {
                 .to_string(),
                 Some(if cfg!(target_os = "windows") {
                     t(
-                        "要 LLM 后处理的话运行 scripts\\setup-env.ps1 -Llm(需要 CMake 和 C++ 编译器)",
-                        "For LLM post-processing, run scripts\\setup-env.ps1 -Llm (requires CMake and a C++ compiler)",
+                        "要 LLM 后处理的话运行 scripts\\setup-env.ps1 -Llm(装预编译包,不需要编译器)",
+                        "For LLM post-processing, run scripts\\setup-env.ps1 -Llm (installs a prebuilt package; no compiler needed)",
                     )
                     .to_string()
                 } else {
                     t(
-                        "要 LLM 后处理的话运行 scripts/setup-env.sh --llm(需要 CMake 和 C++ 编译器)",
-                        "For LLM post-processing, run scripts/setup-env.sh --llm (requires CMake and a C++ compiler)",
+                        "要 LLM 后处理的话运行 scripts/setup-env.sh --llm(装预编译包,不需要编译器)",
+                        "For LLM post-processing, run scripts/setup-env.sh --llm (installs a prebuilt package; no compiler needed)",
                     )
                     .to_string()
                 }),
