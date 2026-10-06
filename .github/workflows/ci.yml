@@ -196,6 +196,37 @@ jobs:
               print("loaded", name)
           PY
 
+      # ── 两边都要:下载进度的计数在真下载上数得准 ──
+      - name: Download meter counts a real HuggingFace download
+        shell: bash
+        env:
+          # 干净的缓存:前面的步骤可能已经下过同一个文件,那样这里一个字节都不会再下。
+          HF_HOME: ${{ runner.temp }}/hf-meter
+        run: |
+          # 界面上的下载进度接在 huggingface_hub 的进度回调上(services/model_catalog.py)。
+          # 新建的环境装到的是最新的 huggingface_hub,而它报进度的方式变过(2.x 一个文件报
+          # 两条:网络上收到的、写进文件的;加在一起就是文件大小的 1.5~1.9 倍)——开发机
+          # 上的旧环境看不出来。所以在这里对着真下载核对:数出来的要正好等于文件大小。
+          if [ -x .venv/Scripts/python.exe ]; then PY=.venv/Scripts/python.exe; else PY=.venv/bin/python; fi
+          "$PY" - <<'PY'
+          import os
+          import huggingface_hub
+          from huggingface_hub import hf_hub_download
+          from services import model_catalog as mc
+
+          print("huggingface_hub", huggingface_hub.__version__)
+          assert mc.install_download_meter(), "could not hook huggingface_hub's progress"
+          meter = mc.DOWNLOAD_METER
+          for name in ("tinyllamas/stories260K.gguf", "tinyllamas/stories15M-q4_0.gguf"):
+              start = meter.snapshot()
+              path = hf_hub_download("ggml-org/models", name)
+              written, transferred = (now - then for now, then in zip(meter.snapshot(), start))
+              counted, size = meter.since(start), os.path.getsize(path)
+              print(f"{name}: counted {counted} (written {written}, transferred {transferred}), file is {size}")
+              assert counted == size, (name, counted, size)
+              assert transferred <= size, (name, transferred, size)
+          PY
+
       # ── 两边都要:装出来的环境里 LLM 后处理的后端真的可用 ──
       - name: LLM backend is usable in the environment it built
         shell: bash

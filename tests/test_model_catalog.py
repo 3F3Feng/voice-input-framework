@@ -128,3 +128,90 @@ def test_llm_backends_have_a_download_size_for_every_model():
     # GGUF:一个仓库里有十几种量化,只下一个文件;数进度看的是仓库目录
     assert LlamaCppBackend.repo_of("org/repo-GGUF/file-Q4.gguf") == "org/repo-GGUF"
     assert MLXBackend.repo_of("mlx-community/x-4bit") == "mlx-community/x-4bit"
+
+
+def test_load_progress_uses_the_download_meter_when_file_sizes_do_not_move():
+    """新版 huggingface_hub 上缓存目录很久才动一下:看着一个字节没多,计数却在涨"""
+    p = model_catalog.load_progress("m", 0, 0.0, 0, 3350, 42.0, metered=1_200_000_000)
+    assert p["phase"] == "downloading"
+    assert p["downloaded_bytes"] == 1_200_000_000
+    assert p["cached_bytes"] == 1_200_000_000
+    assert p["total_bytes"] == 3_350_000_000
+    # 两边都有数时取大的;文件系统正常的系统上两者相等,不会翻倍
+    both = model_catalog.load_progress("m", 500, 0.0, 0, None, 1.0, metered=500)
+    assert (both["downloaded_bytes"], both["cached_bytes"]) == (500, 500)
+    ahead = model_catalog.load_progress("m", 900, 0.0, 100, None, 1.0, metered=300)
+    assert (ahead["downloaded_bytes"], ahead["cached_bytes"]) == (800, 900)
+
+
+def test_download_meter_counts_byte_bars_only():
+    """计数接在 huggingface_hub 的进度条上:按字节计的才算,显示关掉了也照样算"""
+    import pytest
+
+    pytest.importorskip("huggingface_hub")
+    from huggingface_hub.utils import tqdm as hf_tqdm
+
+    assert model_catalog.install_download_meter() is True
+    # 再装几次也不会在同一个类上包两层(包了就会数两遍)
+    model_catalog.DOWNLOAD_METER.installed = False
+    assert model_catalog.install_download_meter() is True
+    assert model_catalog.install_download_meter() is True
+
+    start = model_catalog.DOWNLOAD_METER.snapshot()
+    for disable in (False, True):
+        with hf_tqdm(total=1000, unit="B", disable=disable) as bar:
+            bar.update(300)
+            bar.update(200)
+        with hf_tqdm(total=5, unit="it", disable=disable) as files:  # 「Fetching N files」
+            files.update(1)
+    assert model_catalog.DOWNLOAD_METER.since(start) == 1000
+
+
+def test_download_meter_does_not_add_network_bytes_to_file_bytes():
+    """新版 huggingface_hub(Xet)一个文件报两条进度:网络上收到的、写进文件的。
+
+    加在一起会数出文件大小的 1.5~1.9 倍(CI 上实测:1.19 MB 的文件数出 2.24 MB)。
+    取大的那个:下载中跟着网络走,最后落在文件的真实大小上。
+    """
+    import pytest
+
+    pytest.importorskip("huggingface_hub")
+    from huggingface_hub.utils import tqdm as hf_tqdm
+
+    assert model_catalog.install_download_meter() is True
+    meter = model_catalog.DOWNLOAD_METER
+    start = meter.snapshot()
+    size = 1_185_376
+    for disable in (False, True):
+        begin = meter.snapshot()
+        written = hf_tqdm(
+            desc="tinyllamas/stories260K.gguf: reconstructing file",
+            total=size,
+            unit="B",
+            disable=disable,
+        )
+        received = hf_tqdm(
+            desc="tinyllamas/stories260K.gguf: downloading bytes",
+            total=size,
+            unit="B",
+            disable=disable,
+        )
+        # 网络先到,文件还一个字节没写:进度已经在走
+        received.update(400_000)
+        assert meter.since(begin) == 400_000
+        received.update(657_091)  # 压缩 / 去重过,比文件小
+        assert meter.since(begin) == 1_057_091
+        # 文件一次写完:落在真实大小上,不是两者之和
+        written.update(size)
+        assert meter.since(begin) == size
+        written.close()
+        received.close()
+    # 整仓库下载时那条叫「Downloading bytes」
+    begin = meter.snapshot()
+    with hf_tqdm(desc="Downloading bytes", total=0, unit="B") as received:
+        received.update(10)
+    with hf_tqdm(desc="Reconstructing (incomplete total...)", total=0, unit="B") as written:
+        written.update(25)
+    assert meter.since(begin) == 25
+    assert meter.since(start) == 2 * size + 25
+    assert meter.since(meter.snapshot()) == 0

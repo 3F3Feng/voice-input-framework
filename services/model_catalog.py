@@ -184,6 +184,104 @@ def cache_bytes(model_id: str) -> int:
     return total
 
 
+# ── 下载了多少:接到 huggingface_hub 自己的进度上 ──
+#
+# 数缓存目录里文件的大小(`cache_bytes`)在新版 huggingface_hub(2.x,Xet 存储)上不灵了:
+# 数据先从网络收下来攒着,隔很久才一大块一大块地拼进文件——实测一个 985 MB 的模型,网络上
+# 已经收了 330 MB,缓存目录里还只有 5 MB;下完之后文件还会被挪进共享的 blob 目录,模型
+# 自己的目录里只剩几个指针。新建的环境装到的就是新版,所以用户看到的是:网速跑得飞快,
+# 界面上只有秒数在动,进度到 30% 才跳一下(2.7.1 在 Windows 上实测;和操作系统无关)。
+#
+# huggingface_hub 每收到一块数据都会调一次它那个 tqdm 进度条的 `update(n)`(不管进度条
+# 显不显示;transformers、mlx-lm、mlx-audio、llama.cpp 这边的下载最后都走它)。在这个
+# 类上包一层,把字节数累加起来,就是一个不依赖文件系统的计数。一个服务进程同一时间只
+# 加载一个模型,所以加载开始时记一份读数,之后的差就是这次下载了多少。
+
+
+class _DownloadMeter:
+    """进程里 huggingface_hub 已经下载的字节数(只增不减),分两种记:
+
+    - `written`:写进文件的字节。老版本的 huggingface_hub、普通 HTTP 下载只有这一种;
+    - `transferred`:从网络收到的字节。新版本(Xet 存储)下载时**同时**报两条进度——
+      「downloading bytes」是网络上收到的(压缩、去重过,通常比文件小),「reconstructing
+      file」是已经拼好写进文件的。后者一大块一大块地跳,前者才是「网速在跑」的那个数。
+
+    两条不能加在一起(那样会数出文件大小的 1.5~1.9 倍,CI 上实测),也不能只看一条:
+    只看写入的,进度很久才跳一次;只看收到的,下完了也到不了 100%。取大的那个:
+    下载过程中跟着网络走,最后落在文件的真实大小上,而且不会超过它。
+    """
+
+    def __init__(self) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._written = 0
+        self._transferred = 0
+        self.installed = False
+
+    def add(self, n: float, transfer: bool = False) -> None:
+        with self._lock:
+            if transfer:
+                self._transferred += int(n)
+            else:
+                self._written += int(n)
+
+    def snapshot(self) -> tuple[int, int]:
+        """(写进文件的, 从网络收到的)。加载开始时记一份,之后用 `since` 算差。"""
+        return self._written, self._transferred
+
+    def since(self, start: tuple[int, int]) -> int:
+        """从 `start` 那一刻到现在下载了多少字节(两种计数各自的增量里大的那个)。"""
+        written, transferred = self.snapshot()
+        return max(0, written - start[0], transferred - start[1])
+
+
+DOWNLOAD_METER = _DownloadMeter()
+
+#: 新版 huggingface_hub 里「从网络收到的字节」那条进度条的名字(单个文件是
+#: `<文件名>: downloading bytes`,整仓库下载是 `Downloading bytes`)。
+_TRANSFER_BAR_MARK = "downloading bytes"
+
+
+def install_download_meter() -> bool:
+    """给 huggingface_hub 的进度条装上计数(只装一次)。装不上就返回 False,那时只能数文件。
+
+    只数按字节计的进度条(`unit="B"`):`snapshot_download` 还有一个「Fetching N files」
+    的按个数计的,不能算进去。`unit` 和名字要在构造时记下来——进度条被关掉显示
+    (`HF_HUB_DISABLE_PROGRESS_BARS`)时 tqdm 不保存这些属性。
+    """
+    if DOWNLOAD_METER.installed:
+        return True
+    try:
+        from huggingface_hub.utils import tqdm as hf_tqdm
+
+        # 标记打在类上:哪怕这个模块被重新加载过,也不会在同一个类上包两层(那样会数两遍)。
+        if getattr(hf_tqdm, "_vif_metered", False):
+            DOWNLOAD_METER.installed = True
+            return True
+        original_init = hf_tqdm.__init__
+        original_update = hf_tqdm.update
+
+        def __init__(self, *args, **kwargs):
+            self._vif_bytes = kwargs.get("unit") == "B"
+            self._vif_transfer = _TRANSFER_BAR_MARK in str(kwargs.get("desc") or "").lower()
+            original_init(self, *args, **kwargs)
+
+        def update(self, n=1):
+            if n and getattr(self, "_vif_bytes", False):
+                DOWNLOAD_METER.add(n, transfer=getattr(self, "_vif_transfer", False))
+            return original_update(self, n)
+
+        hf_tqdm.__init__ = __init__
+        hf_tqdm.update = update
+        hf_tqdm._vif_metered = True
+        DOWNLOAD_METER.installed = True
+        return True
+    except Exception as e:  # noqa: BLE001 - 进度只是锦上添花,装不上不该影响加载
+        logger.debug(f"download meter unavailable: {e}")
+        return False
+
+
 def load_progress(
     model: str,
     cached: int,
@@ -191,22 +289,32 @@ def load_progress(
     bytes_at_start: int,
     download_mb: float | None,
     now: float,
+    metered: int = 0,
 ) -> dict[str, Any]:
     """`/health.loading` 的内容:加载了多久、下载了多少、一共要下多少。STT / LLM 共用。
 
-    - `downloaded_bytes`:**这次加载**新落盘的字节数(老客户端只认它);
-    - `cached_bytes`:缓存里现在一共有多少(`cached`,调用方用 `cache_bytes` 量的;上次
-      下到一半、这次接着下时比上面那个大);
+    「下载了多少」有两个来源,取大的那个:
+
+    - `cached - bytes_at_start`:缓存目录比加载开始时多出来的字节(`cache_bytes` 量的)。
+      新版 huggingface_hub 上它很久才动一下(见上面 `_DownloadMeter` 前的说明);
+    - `metered`:加载开始以来 huggingface_hub 的进度回调累计的字节(`DOWNLOAD_METER.since()`)。
+      不依赖文件系统;计数没装上时是 0,退回上面那个。
+
+    返回的字段:
+
+    - `downloaded_bytes`:**这次加载**新下载的字节数(老客户端只认它);
+    - `cached_bytes`:本地现在一共有多少(上次下到一半、这次接着下时比上面那个大);
     - `total_bytes`:下完一共多大(注册表里的 `download_mb`),不知道时为 None。
       只是个估计:仓库更新过、或者引擎多拉了几个文件时会对不上,所以界面上写「约」,
       超过了就不再显示分母。
     """
-    downloaded = max(0, cached - bytes_at_start)
+    downloaded = max(0, cached - bytes_at_start, metered)
     return {
         "model": model,
         "elapsed_s": round(now - started_at, 1),
         "downloaded_bytes": downloaded,
-        "cached_bytes": cached,
+        # 缓存目录的大小跟不上时(新版 huggingface_hub)用计数顶上
+        "cached_bytes": max(cached, metered),
         # download_mb 是十进制的 MB(HuggingFace 报的字节数 / 1e6)
         "total_bytes": int(download_mb * 1_000_000) if download_mb else None,
         "phase": "downloading" if downloaded > 0 else "loading",
