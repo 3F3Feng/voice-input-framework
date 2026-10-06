@@ -1,5 +1,59 @@
 # Changelog
 
+## [2.7.0] - 未发布
+
+这一版主要是 2026-10-05 在 Windows 真机(GTX 1070 Ti)上测出来的几件事。**服务端也要更新**
+(「设置 → 服务 → 更新服务」,或在仓库里 `git pull` 后重跑 `setup-env`):下载进度、
+模型列表同步、新的识别模型都要新服务端才有。
+
+### Added
+
+- **新机器一键下载安装(桌面客户端)**:以前选了「本地管理」,第一步就得自己去 README 抄
+  `git clone`、再把建环境的命令复制到终端里跑。现在首启向导的「准备本机服务」和
+  「设置 → 服务」的环境体检下面有 **「下载并安装」/「一键建环境」**:把代码下载到
+  `~/voice-input-framework`(只往不存在或空的文件夹里下载)→ 跑 `setup-env` → 把路径写进配置 →
+  自动体检,进度就显示在按钮下面。唯一要先装的是 Git(Python 和 uv 都由脚本准备);没有 Git 时
+  给出这个系统上的安装命令和「重新检测」。「LLM 后处理」开关灰着是因为没装 llama.cpp 时,那里也多了
+  「安装 LLM 依赖」。和「更新服务」一样,Windows 上会先停本应用启动的服务、装完再拉起来。
+- **Windows / Linux 上也能用 Qwen3-ASR 了**:新模型 `qwen_asr_small`(0.6B,约 1.6 GB)和
+  `qwen_asr`(1.7B,约 4.1 GB,建议 6 GB 以上显存),在「设置 → 服务 → STT 模型」里选。
+  以前非 Apple 平台只有 Whisper,中文明显不如 Qwen3-ASR。用的是 transformers 原生支持
+  (要 transformers ≥ 5.13,`setup-env` / 「更新服务」会装上),CPU、NVIDIA、AMD、Apple 的显卡都是
+  同一段代码。本机实测同一批中文 / 中英混说录音:`whisper_base` 出繁体字和错字,`qwen_asr_small`
+  和 `whisper_turbo` 一样准、自带标点,还更快(90 秒录音 4.5 秒对 9.6 秒)。**NVIDIA 真机上还没验证
+  过**,所以暂时不会自动选它,要手动切。
+- **CI 真跑一遍建环境脚本**:在干净的 Windows / Linux runner 上执行 `setup-env -Llm`(Windows 的
+  `.ps1` 以前从来没被自动测过),并确认装出来的环境里 LLM 后处理的后端能用。
+
+### Changed
+
+- **下载模型时看得见进度**:首次用一个模型要下几百 MB 到几 GB(默认的 LLM 是 3–7 GB)。以前只有
+  「设置 → 服务」面板里那一行会说「已下载多少 MB」,没有总量;主界面头部全程只有「模型加载中…」;
+  LLM 那边连这一句都没有,看不出是在下载、卡住了还是坏了。现在:
+  - 头部显示「下载模型 28%」,麦克风下面是完整的一句「正在下载模型… 80 MB / 约 295 MB(27%,12 秒)」,
+    下完变成「下载完成,正在加载模型…」;服务器面板、向导、切换模型时的提示都是同样的说法;
+  - 打开「LLM 后处理」开关、切换 LLM 模型时,开关下面也有这一行;
+  - 模型下拉框里没下载过的写「需下载约 1.6 GB」——以前写的其实是运行时占的内存
+    (Qwen3-ASR-1.7B 写「~1 GB」,实际要下 2.5 GB);LLM 的下拉框也有了。
+- **`setup-env --llm` / `-Llm` 不再现编译**:`llama-cpp-python` 改装官方的预编译包(CPU 版),不需要
+  CMake 和编译器。带它装不上时(没有对应平台的预编译包、连不上 github.com),脚本退回不带它再装
+  一遍,最后说清楚只有 LLM 后处理没装上,不再让整个环境建不起来。想用显卡跑 LLM 后处理,README 里
+  有手动换成 CUDA / Vulkan 版的命令(未在真机上验证)。
+
+### Fixed
+
+- **Windows 上 `setup-env.ps1 -Llm` 必失败**:没装 Visual Studio Build Tools 的机器上,
+  `llama-cpp-python` 现编译时 CMake 找不到 nmake / cl,连语音识别的环境都跟着建不起来(见上)。
+- **模型下拉框停在本机跑不了的模型上**:模型还在加载(首次启动要下载,可能好几分钟)或加载失败时,
+  下拉框显示的是列表第一项——Windows / Linux 上那是只有 Apple Silicon 能跑的
+  `Qwen3-ASR-1.7B MLX`,看着像程序选错了模型。现在下拉框跟着服务端当前的模型走,正在加载的那一项
+  标「加载中…」。
+- **Windows 上下载进度会倒退**:没开开发者模式的 Windows 建不了软链,HuggingFace 下完一个文件就把它
+  从 `blobs` 挪进 `snapshots`;进度是数 `blobs` 目录算的,每下完一个文件就掉回去。现在两个目录都数。
+- **`whisper_mlx_turbo`(MLX Whisper Large V3 Turbo)选了必失败**:注册表里的仓库名
+  `mlx-community/whisper-large-v3-turbo-mlx` 根本不存在。改成 `mlx-community/whisper-large-v3-turbo`,
+  本机加载并转写通过。
+
 ## [2.6.1] - 2026-09-30
 
 ### Added

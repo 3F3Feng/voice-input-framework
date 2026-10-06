@@ -448,6 +448,7 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
 | 默认 LLM 换成 Gemma-4-E2B QAT | 64 例自动检查(`tools/llm_prompt_eval.py`)比了 9 个小模型:MLX 与 llama.cpp 上都只有 1 例不合格,延迟约为旧默认一半,内存相当;旧的 llama.cpp 默认 Qwen3.5-2B 54/64 不合格(基本原样照抄)。默认模型加载失败时退回旧默认;提示词照顾中英混说、写明英文大小写 |
 | LLM 不再翻译 | 实测中文提示词会让模型把英文口述整理成中文、把中英混说里的 deploy / rollback 译掉:包原文的说明加「保持原文的语言,不要翻译」,输出兜底加「换了语言就退回原文」 |
 | F17 长期 | LLM 服务加 llama.cpp 后端(GGUF,默认 Qwen3.5-2B-GGUF):Apple Silicon 用 MLX,其它平台装了 llama-cpp-python 就用 llama.cpp,`VIF_LLM_BACKEND` 可强制;`/llm/enabled` 的 supported 跟着走,没装时提示 `setup-env --llm` |
+| 2.7.0(Windows 真机反馈) | 新机器「下载并安装 / 一键建环境」(克隆 + setup-env,只缺 git 时给安装命令);下载进度带总量、进头部、LLM 也报;模型下拉框跟着服务端正在加载的模型;`setup-env --llm` 改装预编译的 llama-cpp-python(Windows 无 C++ 工具链时不再必失败);transformers 原生的 Qwen3-ASR 引擎(`qwen_asr` / `qwen_asr_small`,Windows / Linux 可选);`whisper_mlx_turbo` 的仓库名修正;CI 真跑 `setup-env`(Windows + Linux) |
 
 实测坐实并验证过的(本机真模型、真服务):R9 R25 R34 R35 R36 R37 R40、LLM 失败回退原文、
 转写心跳(49 秒推理收到 9 条)、个人词库(热词把「石峰」认成「石枫」,规则把「陶睿」换成 Tauri)、
@@ -474,7 +475,18 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
   Windows 的 WER / CrashDumps 定位和更新安装器退出前删标记连编译都没过过(本机交叉编译卡在 ring 的 C 代码),要等 Windows CI;
   Linux 只记日志。
 - F17 llama.cpp 后端只在本机(M3 Max,Metal 版和 `VIF_LLM_GPU_LAYERS=0` 的纯 CPU)实测过;
-  Windows（2026-10-05，GTX 1070 Ti）实测：`setup-env.ps1 -Llm` 在没装 VS Build Tools（C++ 桌面开发）时**必失败** —— `llama-cpp-python` 现编译，CMake 找不到 nmake/cl；装上 C++ 工具链后能否成功、以及 Linux、CUDA / Vulkan 版仍未验证。
+  Windows（2026-10-05，GTX 1070 Ti）实测：`setup-env.ps1 -Llm` 在没装 VS Build Tools（C++ 桌面开发）时**必失败** —— `llama-cpp-python` 现编译，CMake 找不到 nmake/cl。
+  2.7.0 改成装官方预编译的 CPU 版(不用编译器;装不上也只是 LLM 后处理用不了,不拖累整个环境),
+  CI 在干净的 Windows / Linux runner 上真跑一遍 `setup-env -Llm` 并确认 `llama_cpp` 能 import。
+  **真机上还没验证的**:预编译包在用户的 Windows 上跑默认 GGUF 模型的速度(纯 CPU);CUDA / Vulkan 版
+  (README 里给了手动换装的命令,「更新服务」会把它换回 CPU 版——要做成一等公民得有真机)。
+- 2.7.0 的几样新东西只在本机(M3 Max)和浏览器假后端里验证过:
+  - 「下载并安装 / 一键建环境」(`local_setup.rs`):克隆 + 建环境的整条链在 macOS 上用真脚本跑通;
+    Windows 上的 PowerShell 路径、没有 git 时的提示、建环境前停服务再拉起,都没在真机上走过。
+  - 下载进度:数字来自真服务(Qwen3-ASR、MLX LLM、GGUF 首次下载);Windows 上「没有软链、文件从
+    blobs 挪进 snapshots」那条路只有单测,没有真机。
+  - `qwen_asr` / `qwen_asr_small`(transformers 原生的 Qwen3-ASR):CPU fp32 和 MPS fp16 实测过,
+    **CUDA 上没有**;纯 CPU 的普通 PC 上的速度也没量过(所以没进自动推荐)。
 
 ### 5.3 后续迭代
 
@@ -483,16 +495,35 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
    (`services/segmenter.py`),松手只转最后一段;老服务端、连不上、中途断线都退回松手后整段上传。
    实测(M3 Max,Qwen3-ASR-1.7B):101 秒 / 217 秒录音松手到结果从 3.3 / 7.8 秒降到约 0.8 秒,
    字与整段转写一致,只有段边界附近少数标点不同。真麦克风 + 真应用里还没点过。
-2. NVIDIA 机器上跑 Qwen3-ASR(现在非 Apple 平台只有 Whisper,中文不如 Qwen3-ASR):PR #6 的
-   `server/models/qwen3_asr_cuda.py` 用 qwen_asr 包 + bfloat16 + Flash Attention 2,要按现在的
-   `services/stt_engine.py` 重写成一个引擎。
+2. ~~NVIDIA 机器上跑 Qwen3-ASR~~ 已做(2.7.0),但走的不是 PR #6 那条路:transformers 5.13 起原生
+   支持 Qwen3-ASR(`Qwen/Qwen3-ASR-*-hf`),不需要把 transformers 钉死在 4.57 的 `qwen-asr` 包。
+   新引擎 `qwen_asr_hf`(`services/qwen_asr_hf.py`),模型 `qwen_asr_small`(0.6B)/ `qwen_asr`(1.7B),
+   CPU / CUDA / ROCm / MPS 同一段代码。本机实测(同一批中文 / 中英混说录音):`whisper_base` 出繁体和
+   错字(「命令航救」「Floid out」),`qwen_asr_small` 和 `whisper_turbo` 一样准、自带标点,还更快
+   (90 秒录音 4.5 秒 vs 9.6 秒)。**剩下的**:在 NVIDIA 真机上验证后,把它放进
+   `services/device.py` 的自动推荐(现在要用户手动选);纯 CPU 上量一下速度再决定给不给 CPU 用户推荐。
 3. ~~CI 的 Python 3.10 矩阵与 `requires-python >=3.11` 不一致~~ —— 已改:CI 只测 3.11 / 3.12。
 
-4. 新机器引导（`setup-env.*` **之前**的那一步）：`setup-env.sh/.ps1` 已覆盖「探测硬件 → uv sync 装依赖」，但再往前——**拿代码**——仍要用户自己去 README 手抄一句 `git clone`。补：检测/提示本机是否装了 `git`、`python`（`uv` 已由 `setup-env` 自装），缺了给对应平台安装指引，并引导一键 `git clone` 到默认目录后自动接上 `setup-env.*`。
+4. ~~新机器引导~~ 已做(2.7.0):向导的「准备本机服务」和设置页的环境体检下面有「下载并安装 /
+   一键建环境」(`local_setup.rs` + `LocalSetup.vue`),克隆到 `~/voice-input-framework` 后自动接上
+   `setup-env.*`、把路径写进配置、再体检。前置条件只剩 git(Python 由 uv 准备,uv 由脚本装),
+   没有时给出这个平台的安装命令。「LLM 后处理」那一节在没装 llama.cpp 时也有「安装 LLM 依赖」。
+   **剩下的**:没有 git 时直接下载源码包(那样「更新服务」用不了,得另想办法);境内 github.com
+   慢的时候换镜像(现在只能设 `VIF_REPO_URL`)。
 
-5. 服务器下载模型时客户端看不到进度、无反馈（实测）。F4 已实现「下载进度 + hf-mirror 源」（见 5.1），需复查进度是否真的从 `/health` 透传到界面、并覆盖「首次加载 / 切换模型」两条路径。
+5. ~~服务器下载模型时客户端看不到进度~~ 已做(2.7.0)。复查的结论:进度以前只到了「设置 → 服务」
+   面板那一行和向导里,主界面头部(所有人盯着看的地方)只有「模型加载中…」,LLM 完全没有;
+   而且没有分母。现在 `/health.loading` 带总大小,心跳把它带到头部和麦克风下面,LLM 服务也报;
+   Windows 上数缓存目录的办法也修了(见 5.2)。
 
-6. 模型加载 / 切换过程中，客户端 STT 模型列表没和「正在加载的模型」同步：折叠态显示的还是本机不支持的 `qwen_asr_mlx*`（与 F5 相关）。需复查折叠态那行文字的来源，并在加载 / 切换期间同步成真实模型名。
+6. ~~模型列表没和「正在加载的模型」同步~~ 已做(2.7.0)。原因:加载期间没有任何模型 `is_loaded`,
+   下拉框就停在列表第一项(注册表里是 `qwen_asr_mlx_native`)。`/models` 现在报 `is_current` /
+   `is_loading`,下拉框跟着服务端走。
+
+7. (新)llama.cpp 用显卡:预编译包是 CPU 版。Vulkan 版(A / N / I 卡通吃,驱动自带运行库)最有希望
+   做成默认,但没有真机不敢动;CUDA 版要系统里有 CUDA 12 运行库。
+8. (新)Whisper(transformers)自动检测语言时,结果里的 `language` 一律报成 `en`(`_infer_sync`
+   里 `lang or "en"`)。目前没有地方依赖它,但历史记录 / 以后按语言挑提示词时会出错。
 
 ### 5.4 每批合并后的验证清单
 
