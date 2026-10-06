@@ -488,6 +488,8 @@ R25(静音幻觉)和 R9(推理阻塞事件循环)也在这一轮实测坐实:3 �
    `services/stt_engine.py` 重写成一个引擎。
 3. ~~CI 的 Python 3.10 矩阵与 `requires-python >=3.11` 不一致~~ —— 已改:CI 只测 3.11 / 3.12。
 
+4. 新机器引导（`setup-env.*` **之前**的那一步）：`setup-env.sh/.ps1` 已覆盖「探测硬件 → uv sync 装依赖」，但再往前——**拿代码**——仍要用户自己去 README 手抄一句 `git clone`。补：检测/提示本机是否装了 `git`、`python`（`uv` 已由 `setup-env` 自装），缺了给对应平台安装指引，并引导一键 `git clone` 到默认目录后自动接上 `setup-env.*`。
+
 ### 5.4 每批合并后的验证清单
 
 ```bash
