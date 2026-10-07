@@ -106,7 +106,7 @@ def choose_backend(
 
     if apple_silicon:
         # Apple Silicon 默认就是 MLX,哪怕在这个进程里找不到 mlx_lm 也不改口说「不支持」:
-        # 老的部署里 STT 和 LLM 跑在两个 conda 环境(见 docs/split-architecture.md),
+        # 老的部署里 STT 和 LLM 跑在两个 conda 环境(各装各的依赖,见 docs/ARCHITECTURE.md 的「为什么是两个服务」),
         # STT 这边没有 mlx_lm 是正常的。真缺的话 LLM 服务加载时会把原因报出来。
         # 唯一的例外:这边确实没有 mlx_lm、却装了 llama.cpp,那显然是想用后者。
         if not has("mlx_lm") and has("llama_cpp"):
