@@ -88,7 +88,7 @@ CI 每次构建都会把 debug APK 作为 artifact 上传(Actions → Mobile →
 ## iOS
 
 **要求**:iOS 16 及以上;一台 Mac 和 Xcode 15 以上;Apple ID(免费的个人团队也能装到自己手机上,
-但证书 7 天过期,要重新装一次)。
+但证书 7 天过期,过期前要续一次,见下面「续期」)。
 
 **构建**:
 
@@ -100,6 +100,26 @@ CI 每次构建都会把 debug APK 作为 artifact 上传(Actions → Mobile →
 想手动来也行:改 `mobile/ios/project.yml` 顶部的 `DEVELOPMENT_TEAM`(团队 ID)、
 `BUNDLE_ID_PREFIX`(别人没用过的 Bundle ID)、`APP_GROUP_ID`(`group.` 开头),
 再 `cd mobile/ios && xcodegen generate && open VoiceInput.xcodeproj`。
+
+**续期(免费 Apple ID)**:免费账号签出来的应用 7 天过期,过期后打不开、键盘也用不了;苹果不给延长,
+只能隔几天重新签名、重新装一遍。不用开 Xcode:
+
+```bash
+mobile/ios/renew.sh              # 离过期不到 4 天才续,否则什么都不做
+mobile/ios/renew.sh --force      # 现在就续
+mobile/ios/renew.sh --schedule   # 交给这台 Mac 自动做:每天 09:30 和 21:30 检查一次
+mobile/ios/renew.sh --unschedule # 取消
+```
+
+它会让苹果发一份新的描述文件(从签发那一刻起再算 7 天),重新编译、签名,装到手机上;覆盖安装,
+服务地址、令牌和已经添加的键盘都还在。手机和 Mac 在同一个 Wi‑Fi 下就行,不用插线,锁屏也能装
+(iPhone 17 Pro Max / Xcode 27 实测,整个过程十几秒到半分钟)。前提是跑过 `setup.sh`、用 Xcode 往
+这台手机上装成功过一次。
+
+`--schedule` 装的是一个用户级的 launchd 任务(`~/Library/LaunchAgents/io.github.voice-input-framework.ios-renew.plist`),
+到点时 Mac 睡着就等醒来后补跑;手机不在家、连不上时这一次跳过(退出码 75),下一次再试——离过期
+4 天就开始续,所以中间有好几次机会。每次的结果记在 `~/Library/Caches/voice-input-framework-ios/renew.log`。
+仓库挪了位置要重新 `--schedule` 一次(任务里记的是脚本的绝对路径)。
 
 **配对(不用手打地址)**:最省事的是桌面客户端:「设置 → 服务 → 配对手机」(本地管理模式)点「显示二维码」,
 手机相机扫一下。没有桌面客户端(或想在终端里做)的话,在装了 STT 服务的电脑上运行
@@ -163,7 +183,7 @@ swift mobile/tools/pair.swift
 都已经满足;提交收录申请是往它们的仓库开一个 issue,和本仓库无关。
 
 **iOS**:没有免费的公开分发渠道(TestFlight / App Store 都要付费开发者账号)。目前的方式是用户
-按上面「构建」一节自己从源码装,用自己的免费 Apple ID 签名,7 天过期后重装一次。
+按上面「构建」一节自己从源码装,用自己的免费 Apple ID 签名,7 天过期前用 `mobile/ios/renew.sh` 续一次。
 AltStore Classic(全球可用,美国、加拿大也行;AltStore PAL 只在欧盟等地区)可以让用户自己续签,
 但我们是「应用 + 键盘扩展」两个包并且靠 App Group 通信,重新签名后是否还能正常工作**还没有实测**,
 测过之前不要对外承诺支持。
