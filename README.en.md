@@ -162,14 +162,28 @@ Details are in [mobile/README.md](mobile/README.md) (Chinese).
 
 The detailed documents are currently in Chinese only.
 
+**Using it**
+
 | I want to… | Read |
 |---|---|
 | See every model and how the defaults were chosen | [docs/models.md](docs/models.md) |
 | Change ports, open the services to my network, see environment variables and the HTTP API | [docs/configuration.md](docs/configuration.md) |
 | Use it on a phone | [mobile/README.md](mobile/README.md) |
+| Understand why and when macOS asks for its three permissions | [docs/macos-permissions.md](docs/macos-permissions.md) |
 | Help test (Windows / Android, running your own services) | [docs/testing.md](docs/testing.md) |
-| Build, run the tests, change the code | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
 | See what changed in each version | [CHANGELOG.md](CHANGELOG.md) |
+
+**Developing**
+
+| I want to… | Read |
+|---|---|
+| Understand how the parts fit together and why | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Build, run the tests, change the code | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
+| Build a signed client on macOS; how releases are signed | [docs/macos-signed-build.md](docs/macos-signed-build.md) |
+| Manually verify the real app before a release | [docs/rust-client-verification.md](docs/rust-client-verification.md) |
+| Know what is planned next | [docs/ROADMAP.md](docs/ROADMAP.md) |
+| Read the UX review and what is still unverified on real hardware | [docs/UX_REVIEW.md](docs/UX_REVIEW.md) |
+| Look up the August 2026 architecture review (historical) | [docs/ARCHITECTURE_REVIEW.md](docs/ARCHITECTURE_REVIEW.md) |
 
 ## 💬 Feedback
 

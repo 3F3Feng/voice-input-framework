@@ -1,6 +1,7 @@
 # 开发
 
-怎么从源码跑起来、怎么构建、怎么测。用户向的说明在 [README](../README.md)。
+怎么从源码跑起来、怎么构建、怎么测。各部分怎么配合见 [ARCHITECTURE.md](ARCHITECTURE.md)，接下来要做什么见
+[ROADMAP.md](ROADMAP.md)，用户向的说明在 [README](../README.md)。
 
 ## 结构
 

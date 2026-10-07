@@ -145,14 +145,28 @@ uv run python -m services.llm_server   # LLM 后处理,端口 6545(可选)
 
 ## 📚 文档
 
+**使用**
+
 | 我想…… | 看这里 |
 |---|---|
 | 了解全部模型和选型依据 | [docs/models.md](docs/models.md) |
 | 改端口、开放到局域网、看环境变量和 HTTP 接口 | [docs/configuration.md](docs/configuration.md) |
 | 在手机上用 | [mobile/README.md](mobile/README.md) |
+| 弄明白 macOS 上的三项权限为什么要、什么时候要 | [docs/macos-permissions.md](docs/macos-permissions.md) |
 | 帮忙测试（Windows / Android，自己搭服务自己连） | [docs/testing.md](docs/testing.md) |
-| 自己编译、跑测试、改代码 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
 | 看每个版本改了什么 | [CHANGELOG.md](CHANGELOG.md) |
+
+**开发**
+
+| 我想…… | 看这里 |
+|---|---|
+| 了解各部分怎么配合、为什么这样分 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| 自己编译、跑测试、改代码 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
+| 在 macOS 上构建带签名的客户端，了解发版和签名 | [docs/macos-signed-build.md](docs/macos-signed-build.md) |
+| 发版前在真应用里手工验证一遍 | [docs/rust-client-verification.md](docs/rust-client-verification.md) |
+| 知道接下来要做什么 | [docs/ROADMAP.md](docs/ROADMAP.md) |
+| 看 UX 审查的结论、哪些还没在真机上验证 | [docs/UX_REVIEW.md](docs/UX_REVIEW.md) |
+| 翻 2026 年 8 月那次架构审查的记录（历史） | [docs/ARCHITECTURE_REVIEW.md](docs/ARCHITECTURE_REVIEW.md) |
 
 ## 💬 反馈
 

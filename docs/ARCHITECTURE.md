@@ -1,549 +1,113 @@
-# Voice Input Framework - 系统架构与开发文档
+# 架构
 
-## 一、项目概述
+这份文档讲各部分怎么配合、为什么这样分。代码在哪个文件、怎么构建和测试，见
+[DEVELOPMENT.md](DEVELOPMENT.md)。
 
-Voice Input Framework (VIF) 是一个基于大模型的语音识别框架，支持实时流式语音识别。
-
-**核心特性：**
-- 🎤 实时音频采集与处理
-- 🚀 流式识别（低延迟）
-- 🤖 多模型支持（Whisper、Qwen2-Audio）
-- 🔌 客户端/服务端分离架构
-- 📦 支持多平台部署
-
----
-
-## 二、系统架构
-
-### 2.1 整体架构图
+## 总览
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           客户端层 (Client Layer)                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │
-│  │   CLI       │  │   GUI       │  │   API Client│  │  Mobile     │   │
-│  │  (run_cli) │  │ (run_gui)   │  │ (stt_client)│  │  (TBD)      │   │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘   │
-│         │                │                │                 │          │
-│         └────────────────┴────────────────┴─────────────────┘          │
-│                                    │                                    │
-│                            ┌───────▼───────┐                          │
-│                            │  AudioCapture │                          │
-│                            │  音频采集模块  │                          │
-│                            └───────┬───────┘                          │
-└────────────────────────────────────┼────────────────────────────────────┘
-                                     │ PCM Audio (bytes)
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           网络层 (Network Layer)                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│     WebSocket (ws://host:6543/ws/stream)                               │
-│     ─────────────────────────────────────────                           │
-│     HTTP REST API (http://host:6543)                                   │
-│                                                                         │
-│     ┌──────────────────────────────────────────────────────────┐        │
-│     │ 支持多客户端并发连接                                      │        │
-│     │ - 每个客户端独立 WebSocket 会话                          │        │
-│     │ - 服务端维护连接状态                                      │        │
-│     │ - 支持跨平台访问（Tailscale/VPN）                        │        │
-│     └──────────────────────────────────────────────────────────┘        │
-└─────────────────────────────────────────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           服务端层 (Server Layer)                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌────────────────────────────────────────────────────────────────┐   │
-│  │                      FastAPI Application                         │   │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │   │
-│  │  │ /health      │  │ /models      │  │ /ws/stream   │         │   │
-│  │  │ GET          │  │ GET/POST     │  │ WebSocket    │         │   │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘         │   │
-│  └────────────────────────────────────────────────────────────────┘   │
-│                                    │                                    │
-│                            ┌───────▼───────┐                          │
-│                            │ STTEngineMgr  │                          │
-│                            │ 引擎管理器     │                          │
-│                            └───────┬───────┘                          │
-│                                    │                                    │
-│         ┌──────────────────────────┼──────────────────────────┐       │
-│         │                          │                          │       │
-│         ▼                          ▼                          ▼       │
-│  ┌─────────────┐          ┌─────────────┐          ┌─────────────┐   │
-│  │  Whisper   │          │ Qwen2Audio  │          │   Future    │   │
-│  │  Engine    │          │   Engine    │          │   Models    │   │
-│  └─────────────┘          └─────────────┘          └─────────────┘   │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─ 桌面客户端(Tauri 2:Rust + Vue 3)──────────┐      ┌─ 手机(Android 输入法 / iOS 键盘)─┐
+│ 录音、全局快捷键、把结果输入到光标处          │      │ 录音、把结果插进输入框            │
+│ 管本机的两个服务:安装、启停、更新            │      └───────────────┬──────────────────┘
+└───────────────┬─────────────────────────────┘                      │
+                │ WebSocket /ws/stream + HTTP                         │ 同一套协议
+                ▼                                                     ▼
+┌─ STT 服务(services/stt_server.py,端口 6544)───────────────────────────────────────┐
+│ 语音识别:Qwen3-ASR(MLX / llama.cpp)、Whisper(MLX / PyTorch / whisper.cpp)         │
+│ 边录边分段转写、词表、把 /llm/* 转发给 LLM 服务                                      │
+└───────────────┬────────────────────────────────────────────────────────────────────┘
+                │ HTTP(只在本机)
+                ▼
+┌─ LLM 服务(services/llm_server.py,端口 6545)───────────────────────────────────────┐
+│ 文字整理:Gemma 4(Apple 芯片用 MLX,其它平台用 llama.cpp 跑 GGUF)                   │
+└────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 目录结构
+三个要点：
 
-```
-voice-input-framework/
-├── client/                         # 客户端模块
-│   ├── __init__.py
-│   ├── audio_capture.py            # 音频采集（sounddevice）
-│   ├── audio_processor.py          # 音频处理（降噪、VAD）
-│   ├── stt_client.py               # STT 客户端（HTTP/WebSocket）
-│   ├── cli.py                      # CLI 界面组件
-│   └── gui.py                      # GUI 界面组件
-│
-├── server/                         # 服务端模块
-│   ├── __init__.py
-│   ├── api.py                      # FastAPI 应用（主入口）
-│   ├── config.py                   # 服务配置
-│   ├── stt_engine.py               # STT 引擎管理器
-│   └── models/                     # 模型实现
-│       ├── __init__.py
-│       ├── base.py                 # 引擎基类
-│       ├── whisper.py              # Whisper 实现
-│       └── qwen_asr.py            # Qwen2Audio 实现
-│
-├── shared/                         # 共享模块
-│   ├── __init__.py
-│   ├── protocol.py                 # 通信协议定义
-│   └── data_types.py               # 数据类型定义
-│
-├── deploy/                         # 部署配置
-│   ├── daemon.sh                   # 进程管理脚本
-│   ├── launchd.plist               # macOS 自启动
-│   └── voice-input-framework.service # systemd 服务
-│
-├── examples/                       # 示例代码
-│   ├── streaming_demo.py           # 流式识别演示
-│   └── file_transcribe.py          # 文件转写演示
-│
-├── docs/                           # 文档
-│   └── ARCHITECTURE.md             # 本文档
-│
-├── run_cli.py                      # CLI 客户端入口
-├── run_gui.py                      # GUI 客户端入口 (PySide6)
-├── run_gui_qt.py                   # GUI 客户端入口 (PyQt6)
-├── run_gui_tk.py                   # GUI 客户端入口 (Tkinter)
-│
-├── pyproject.toml                  # 项目配置
-└── requirements.txt                # 依赖列表
-```
+- **客户端只和 STT 服务说话。** LLM 的模型列表、提示词、开关都由 STT 服务转发（`/llm/*`），所以 LLM
+  服务可以一直只监听本机，开放给手机或另一台电脑时只需要开放一个端口。
+- **模型都在服务端。** 客户端和手机只负责录音和显示，没有模型，所以安装包只有几 MB。
+- **服务端可以不在本机。** 客户端有「本地管理」（它负责装和启停）和「远程连接」（只连不管）两种模式。
 
----
+## 为什么是两个服务
 
-## 三、通信协议
+最早是一个进程。拆开的直接原因是依赖冲突：当时识别和后处理各要一个互不兼容的 transformers 版本，
+只能装在两个环境里。这个冲突后来消失了（现在是同一个 `.venv`），但拆开之后的好处留了下来：
 
-### 3.1 WebSocket 流式识别 (`/ws/stream`)
+- 后处理是可选的，不用时不占内存；
+- 一个模型加载失败或崩溃，不拖垮另一个；
+- 换 LLM 模型不用重新加载识别模型。
 
-#### 客户端 → 服务端
+早期设计里还有一个 6543 端口的网关，已经去掉：STT 服务兼任了转发。
 
-| 消息类型 | 字段 | 说明 | 示例 |
-|----------|------|------|------|
-| `config` | `type`, `language` | 连接初始化配置 | `{"type": "config", "language": "auto"}` |
-| `audio` | `type`, `data` (base64) | 音频数据块 | `{"type": "audio", "data": "..."}` |
-| `end` | `type` | 结束信号 | `{"type": "end"}` |
+## 一次听写的过程
 
-#### 服务端 → 客户端
+1. 用户按下快捷键。客户端开始录音，同时建立 `/ws/stream` 连接。
+2. 服务端回 `ready`（带 `incremental: true` 表示支持边录边转写）。客户端发 `config`（语言、要不要
+   后处理、要不要分段），服务端回 `config_ack`。
+3. 客户端一边录一边发 `audio`。服务端每攒够 18–28 秒就在能量最低的地方切一刀，先把这一段识别出来
+   （`services/segmenter.py`），回一条 `segment`。
+4. 用户松手，客户端发 `end`。服务端只需要再识别最后一段，回 `stt_result`（识别的原文）。
+5. 开着后处理的话，服务端回 `llm_start`，把原文交给 LLM 服务，再回 `result`（整理后的文字）和 `done`。
+6. 客户端把文字输入到光标处（粘贴、模拟打字或只复制，看设置）。
 
-| 消息类型 | 字段 | 说明 | 示例 |
-|----------|------|------|------|
-| `ready` | `type`, `model` | 连接就绪 | `{"type": "ready", "model": "whisper"}` |
-| `result` | `type`, `text`, `confidence`, `language`, `is_final` | 识别结果 | `{"type": "result", "text": "你好", "confidence": 0.95, "language": "zh", "is_final": true}` |
-| `done` | `type` | 识别完成 | `{"type": "done"}` |
-| `error` | `type`, `error_code`, `error_message` | 错误信息 | `{"type": "error", "error_code": "E5001", "error_message": "..."}` |
+几条兜底：
 
-### 3.2 REST API
+- 服务端较旧（`ready` 里没有 `incremental`）时，客户端退回松手后一次性上传。
+- 连接中途断了，录到的音频都还在客户端，松手后换一条连接整段重发，不丢字。
+- LLM 服务没起来或出错时，直接返回识别的原文。
+- 录音中按 Esc，客户端发 `cancel`。
 
-| 端点 | 方法 | 说明 | 参数 |
-|------|------|------|------|
-| `/health` | GET | 健康检查 | - |
-| `/models` | GET | 获取可用模型列表 | - |
-| `/models/select` | POST | 切换模型 | `model_name` (form) |
-| `/transcribe` | POST | 文件转写 | `file`, `language` (form) |
+手机走的是同一条 `/ws/stream`，流程一样。
 
----
+## 模型怎么选
 
-## 四、客户端流程
+两个服务启动时各自探测硬件，按**同一张表**（`shared/hardware_plan.py`）算出一套配置：识别模型、
+后处理模型、后处理放不放显卡、默认开不开。两边探测到的是同一台机器，所以算出来的是同一套，
+不需要互相通信。表的内容见 [README](../README.md#-这台机器会用哪套模型)，细节见 [models.md](models.md)。
 
-### 4.1 CLI 客户端流程
+- 显卡看的是 llama.cpp 的设备表（`services/hardware.py`），不是 PyTorch：llama.cpp 在 N 卡上走 CUDA、
+  A 卡和 Intel 上走 Vulkan，而 PyTorch 在 Windows 的 A 卡上没有显卡版。
+- 模型的元数据（仓库、引擎、大小）只有一个来源：`shared/model_registry.py`。
+- 优先级：环境变量或用户在设置里选过的模型，高于这张表。用户的选择记在
+  `~/.config/voice-input-framework/` 下的 `stt_state.json`、`llm_state.json`，提示词在 `llm_prompt.json`。
+- 模型第一次用到时才下载到 HuggingFace 缓存，下载和加载的进度通过 `/health` 报给客户端。
 
-```
-用户启动
-    │
-    ▼
-显示菜单 ──────────────────────────────────────────────────────────┐
-    │                                                             │
-    ├─ [1] 开始录音 ───────────────────────────────────────────┐   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    1. 连接 WebSocket 服务器                             │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    2. 发送 {"type": "config", "language": "auto"}      │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    3. 等待 {"type": "ready"}                          │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    4. 显示录音面板（"🔴 正在录音... 按 Enter 停止"）     │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    5. 开始采集麦克风音频                                 │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    6. 采集完成（用户按 Enter）                          │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    7. 发送 {"type": "audio", "data": <full_audio>}     │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    8. 发送 {"type": "end"}                             │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    9. 等待 {"type": "result"}                          │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    10. 等待 {"type": "done"}                           │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    11. 显示识别结果                                     │   │
-    │    │                                                    │   │
-    │    ▼                                                    │   │
-    │    12. 复制到剪贴板（如果配置）                         │   │
-    │    │                                                    │   │
-    └────┘                                                    │   │
-    │                                                             │
-    ├─ [2] 设置 ───▶ 设置菜单 ───▶ 保存配置 ───────────────────┤   │
-    ├─ [3] 查看配置 ──▶ 显示当前配置 ──────────────────────────┤   │
-    ├─ [4] 测试连接 ──▶ WebSocket 连接测试 ────────────────────┤   │
-    ├─ [5] 选择麦克风 ─▶ 列出设备 ─▶ 选择 ─────────────────────┤   │
-    ├─ [6] 帮助 ────▶ 显示帮助信息 ────────────────────────────┤   │
-    └─ [q] 退出 ────▶ 清理并退出 ───────────────────────────────┘   │
-```
+## 客户端怎么管本机的服务
 
-### 4.2 正确的交互逻辑（关键）
+「本地管理」模式下，客户端负责服务端的整个生命周期（`gui/src-tauri/src/`）：
 
-**CLI 客户端的核心交互规则：**
-
-1. **录音开始时：**
-   - 显示录音面板（`Panel`）
-   - 启动 `sounddevice` 音频采集
-   - 等待用户按 Enter
-
-2. **用户按 Enter 时：**
-   - 停止音频采集
-   - 关闭 `sounddevice` 流
-   - 发送音频数据到服务器
-   - 发送 `end` 信号
-   - 等待识别结果
-
-3. **收到 `done` 时：**
-   - 关闭 WebSocket 连接
-   - 显示识别结果
-   - 返回菜单
-
-**错误做法（之前的实现）：**
-```python
-# ❌ 错误：在主线程中使用 input() 阻塞
-asyncio.run_coroutine_threadsafe(self.record_and_transcribe(), self._loop)
-input("\n按 Enter 停止录音...")  # 这里又调用了一次 input！
-```
-
-**正确做法：**
-```python
-# ✅ 正确：录音逻辑内部处理 Enter 按键
-async def record_and_transcribe(self):
-    # 录音面板
-    self.console.print(Panel("[bold red]🔴 正在录音...[/bold red]\n[dim]按 Enter 停止[/dim]"))
-    
-    # 启动音频采集
-    stream = sd.InputStream(...)
-    
-    # 等待用户按 Enter（不阻塞事件循环）
-    await asyncio.get_event_loop().run_in_executor(None, input, "")
-    
-    # 用户按了 Enter，停止录音
-    stream.close()
-    
-    # 发送音频到服务器
-    ...
-```
-
----
-
-## 五、服务端流程
-
-### 5.1 WebSocket 处理流程
-
-```
-WebSocket 连接请求
-        │
-        ▼
-    accept()
-        │
-        ▼
-发送 {"type": "ready", "model": "..."}
-        │
-        ▼
-接收 {"type": "config", ...}
-        │
-        ▼
-获取当前 STT 引擎
-        │
-        ▼
-┌───────────────────────────────────────┐
-│           主循环：接收音频               │
-│                                       │
-│  接收 {"type": "audio", "data": ...}  │
-│        │                              │
-│        ▼                              │
-│  累积音频到缓冲区                      │
-│        │                              │
-│        ▼                              │
-│  缓冲区 ≥ 1秒音频？                     │
-│        │                              │
-│    Yes │ No                          │
-│     │   │                            │
-│     ▼   │                            │
-│  调用 engine.transcribe()             │
-│        │                              │
-│        ▼                              │
-│  发送 {"type": "result", ...}        │
-│        │                              │
-│        └──────────────────────────────┘
-        │
-        ▼
-接收 {"type": "end"}
-        │
-        ▼
-处理剩余音频
-        │
-        ▼
-发送 {"type": "done"}
-        │
-        ▼
-关闭连接
-```
-
----
-
-## 六、多客户端支持
-
-### 6.1 架构设计
-
-服务端支持**多客户端并发连接**：
-
-```
-                    ┌─────────────────┐
-                    │   Server        │
-                    │  (Port 6543)    │
-                    └────────┬────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        │                    │                    │
-        ▼                    ▼                    ▼
-   ┌─────────┐         ┌─────────┐         ┌─────────┐
-   │ Client1 │         │ Client2 │         │ Client3 │
-   │ (Mac)   │         │ (Win)   │         │ (Mobile)│
-   │ CLI/GUI │         │ GUI     │         │ TBD     │
-   └─────────┘         └─────────┘         └─────────┘
-```
-
-**关键特性：**
-- 每个客户端独立 WebSocket 会话
-- 服务端维护连接状态
-- 支持跨网段访问（Tailscale/VPN）
-- 连接超时：30 秒（等待 config）
-
-### 6.2 并发处理
-
-```python
-# 服务端为每个连接创建独立的协程
-@app.websocket("/ws/stream")
-async def websocket_endpoint(websocket: WebSocket):
-    # 每个连接独立运行
-    await websocket.accept()
-    # ... 处理逻辑
-```
-
-### 6.3 客户端配置
-
-```python
-@dataclass
-class STTClientConfig:
-    server_url: str = "http://localhost:6543"
-    ws_url: Optional[str] = None  # 自动从 server_url 转换
-    timeout: int = 30
-    max_retries: int = 3
-    retry_delay: float = 1.0
-```
-
----
-
-## 七、数据流
-
-### 7.1 音频数据流
-
-```
-麦克风 ──[PCM 16kHz 16bit]──▶ AudioCapture ──[bytes]──▶ WebSocket Client
-                                                              │
-                                                              ▼
-                                                        base64 编码
-                                                              │
-                                                              ▼
-WebSocket Server ◀─────── JSON {"type": "audio", "data": "..."} ─────────┐
-    │                                                                   │
-    ▼                                                                   │
-base64 解码                                                                │
-    │                                                                   │
-    ▼                                                                   │
-STT Engine (Whisper/Qwen) ──[text]──▶ StreamResponse ──[JSON]─────────┘
-```
-
-### 7.2 消息时序
-
-```
-Client                              Server
-  │                                    │
-  │──── WebSocket Connect ────────────▶│
-  │                                    │
-  │◀──── {"type": "ready"} ───────────│
-  │                                    │
-  │──── {"type": "config", ...} ─────▶│
-  │                                    │
-  │──── {"type": "audio", ...} ──────▶│ (多次)
-  │                                    │
-  │◀──── {"type": "result", ...} ─────│ (多次)
-  │                                    │
-  │──── {"type": "end"} ─────────────▶│
-  │                                    │
-  │◀──── {"type": "result", ...} ─────│ (最终)
-  │◀──── {"type": "done"} ─────────────│
-  │                                    │
-  │──── WebSocket Close ──────────────▶│
-```
-
----
-
-## 八、配置
-
-### 8.1 服务端配置
-
-```python
-# server/config.py
-@dataclass
-class ServerConfig:
-    host: str = "0.0.0.0"
-    port: int = 6543
-    default_model: str = "whisper"
-    cors_origins: list = field(default_factory=lambda: ["*"])
-    log_level: str = "INFO"
-```
-
-**环境变量：**
-| 变量 | 默认值 | 说明 |
+| 环节 | 做什么 | 在哪 |
 |------|--------|------|
-| `VIF_HOST` | 0.0.0.0 | 监听地址 |
-| `VIF_PORT` | 6543 | 服务端口 |
-| `VIF_DEFAULT_MODEL` | whisper | 默认模型 |
-| `VIF_LOG_LEVEL` | INFO | 日志级别 |
+| 安装 | `git clone` 仓库，跑 `scripts/setup-env`（探测硬件、用 uv 建 `.venv`、装对应的 PyTorch 和 llama.cpp） | `local_setup.rs` |
+| 体检 | 检查 Python 版本、关键依赖能否导入、加速后端，给出修复命令 | `env_check.rs` |
+| 启停 | 用 `.venv` 里的解释器拉起两个服务，收集它们的输出到日志面板 | `server_manager.rs` |
+| 认领 | 客户端重启（包括自我更新）后，认出还在跑的服务是自己上次启动的，而不是当成外部进程 | `server_manager.rs` |
+| 健康检查 | 定时问 `/health`：模型、加载进度、跑在显卡还是 CPU 上 | `heartbeat.rs` |
+| 更新 | `git pull`、重跑 `setup-env`、重启服务；也能切到开发分支 | `service_update.rs` |
 
-### 8.2 客户端配置
+客户端和服务端分开更新：客户端的安装包走 GitHub Releases（应用内更新，带签名校验），服务端代码走
+git。两个服务在 `/health` 里报自己的版本（`shared/app_version.py`），比客户端旧时客户端会提示更新服务。
 
-```json
-// ~/.voice_input_config.json
-{
-  "server_host": "localhost",
-  "server_port": 6543,
-  "hotkey": "alt+space",
-  "language": "auto",
-  "auto_paste": true,
-  "microphone": "default",
-  "sample_rate": 16000
-}
-```
+## 安全边界
 
----
+- 两个服务默认只监听 `127.0.0.1`。
+- 开放到局域网时用 `VIF_API_TOKEN`：除 `/health` 外的请求都要带令牌（`shared/auth.py`）。客户端的
+  「手机直连」开关会自动生成令牌。
+- 没有云端后端，没有遥测。对外的请求只有下载模型和检查更新。
 
-## 九、错误处理
+配置项和接口列表见 [configuration.md](configuration.md)。
 
-### 9.1 错误码
+## 手机
 
-| 错误码 | 说明 | 处理建议 |
-|--------|------|----------|
-| `E1000` | 未知错误 | 查看日志 |
-| `E1001` | 无效请求 | 检查客户端协议 |
-| `E2001` | 音频解码错误 | 检查音频格式 |
-| `E3001` | 模型未找到 | 检查模型配置 |
-| `E3002` | 模型加载失败 | 检查模型文件 |
-| `E5001` | 服务端内部错误 | 查看服务端日志 |
+Android 是一个输入法，自己录音、自己连服务。iOS 不让第三方键盘用麦克风，所以分成键盘扩展和应用
+两半：键盘发命令，应用在前台开音频会话并录音，两边通过 App Group 的共享容器传话。详见
+[mobile/README.md](../mobile/README.md)。
 
-### 9.2 客户端重试逻辑
+## 已经不用的部分
 
-```python
-async def connect_with_retry(self, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            await self.connect()
-            return True
-        except Exception as e:
-            if attempt < max_retries - 1:
-                await asyncio.sleep(self.retry_delay * (attempt + 1))
-            else:
-                raise
-```
-
----
-
-## 十、部署
-
-### 10.1 服务端部署
-
-```bash
-# macOS
-./deploy/daemon.sh start
-
-# Linux (systemd)
-sudo cp deploy/voice-input-framework.service /etc/systemd/system/
-sudo systemctl enable voice-input-framework
-sudo systemctl start voice-input-framework
-```
-
-### 10.2 客户端使用
-
-```bash
-# CLI
-uv run run_cli.py
-
-# GUI (需要 PySide6 或 PyQt6)
-uv run run_gui_qt.py
-```
-
-### 10.3 远程访问
-
-服务端部署后，通过 Tailscale 或 VPN 实现远程访问：
-
-```python
-# 客户端配置远程地址
-server_url = "http://100.124.8.85:6543"  # Tailscale IP
-```
-
----
-
-## 十一、已知问题与限制
-
-1. **Windows 音频 DLL**：sounddevice 需要 Visual C++ Redistributable
-2. **macOS GUI**：PySide6 可能需要额外配置
-3. **Qwen 模型大小**：约 14GB，需要足够内存
-4. **WebSocket 超时**：config 消息超时 30 秒
-
----
-
-## 十二、未来扩展
-
-1. **移动端客户端**：iOS/Android 原生应用
-2. **更多模型**：支持更多 ASR 模型
-3. **认证授权**：JWT/OAuth2 认证
-4. **流量控制**：限制客户端并发数
-5. **监控指标**：Prometheus 指标导出
+- `client/`、`run_client.py`：早期的 Python 客户端，不再加新功能。
+- `server/`：拆成两个服务之前的单体服务端，只剩 `server/models/` 里的几个识别引擎还在用。
+- 2026 年 8 月做过一次完整的架构审查，当时的问题清单和修复记录在
+  [ARCHITECTURE_REVIEW.md](ARCHITECTURE_REVIEW.md)。

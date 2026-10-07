@@ -174,9 +174,8 @@ pip install --upgrade PySimpleGUI
 ## 🤝 反馈与支持
 
 如遇到问题或有建议，请：
-1. 查看 [开发进度报告](docs/V1.1_DEVELOPMENT_PROGRESS.md)
-2. 提交 Issue 到 GitHub
-3. 联系开发团队
+1. 提交 Issue 到 GitHub
+2. 联系开发团队
 
 ---
 
