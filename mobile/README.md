@@ -105,14 +105,21 @@ CI 每次构建都会把 debug APK 作为 artifact 上传(Actions → Mobile →
 只能隔几天重新签名、重新装一遍。不用开 Xcode:
 
 ```bash
-mobile/ios/renew.sh            # 离过期不到 4 天才续,否则什么都不做
-mobile/ios/renew.sh --force    # 现在就续
+mobile/ios/renew.sh              # 离过期不到 4 天才续,否则什么都不做
+mobile/ios/renew.sh --force      # 现在就续
+mobile/ios/renew.sh --schedule   # 交给这台 Mac 自动做:每天 09:30 和 21:30 检查一次
+mobile/ios/renew.sh --unschedule # 取消
 ```
 
 它会让苹果发一份新的描述文件(从签发那一刻起再算 7 天),重新编译、签名,装到手机上;覆盖安装,
 服务地址、令牌和已经添加的键盘都还在。手机和 Mac 在同一个 Wi‑Fi 下就行,不用插线,锁屏也能装
-(iPhone 17 Pro Max / Xcode 27 实测,整个过程十几秒)。手机连不上时退出码是 75,过会儿再跑就行,
-所以适合交给定时任务每天跑一两次。前提是跑过 `setup.sh`、用 Xcode 往这台手机上装成功过一次。
+(iPhone 17 Pro Max / Xcode 27 实测,整个过程十几秒到半分钟)。前提是跑过 `setup.sh`、用 Xcode 往
+这台手机上装成功过一次。
+
+`--schedule` 装的是一个用户级的 launchd 任务(`~/Library/LaunchAgents/io.github.voice-input-framework.ios-renew.plist`),
+到点时 Mac 睡着就等醒来后补跑;手机不在家、连不上时这一次跳过(退出码 75),下一次再试——离过期
+4 天就开始续,所以中间有好几次机会。每次的结果记在 `~/Library/Caches/voice-input-framework-ios/renew.log`。
+仓库挪了位置要重新 `--schedule` 一次(任务里记的是脚本的绝对路径)。
 
 **配对(不用手打地址)**:最省事的是桌面客户端:「设置 → 服务 → 配对手机」(本地管理模式)点「显示二维码」,
 手机相机扫一下。没有桌面客户端(或想在终端里做)的话,在装了 STT 服务的电脑上运行

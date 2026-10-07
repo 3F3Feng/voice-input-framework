@@ -6,12 +6,16 @@
 # 离过期还远就什么都不做;手机不在线就退出,等下一次。
 #
 # 用法(先跑过一次 setup.sh,并且用 Xcode 往手机上装成功过):
-#   mobile/ios/renew.sh            # 离过期不到 RENEW_BEFORE_DAYS 天才续
-#   mobile/ios/renew.sh --force    # 现在就续
+#   mobile/ios/renew.sh              # 离过期不到 RENEW_BEFORE_DAYS 天才续
+#   mobile/ios/renew.sh --force      # 现在就续
+#   mobile/ios/renew.sh --schedule   # 让这台 Mac 每天自动跑两次(09:30 / 21:30,睡着了就醒来后补)
+#   mobile/ios/renew.sh --unschedule # 取消
 #
 # 可调的环境变量:
-#   VIF_IOS_DEVICE     手机的 UDID(默认:第一台配对过的 iPhone / iPad)
+#   VIF_IOS_DEVICE     手机的 UDID(默认:第一台配对过、现在连得上的 iPhone / iPad)
 #   RENEW_BEFORE_DAYS  离过期不到几天就续(默认 4)
+#
+# 定时任务的输出记在 ~/Library/Caches/voice-input-framework-ios/renew.log。
 #
 # 手机和 Mac 在同一个 Wi‑Fi 下就行,不用插线,锁屏也能装(实测过)。
 #
@@ -19,18 +23,65 @@
 set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 cd "$(dirname "$0")"
+SELF="$(pwd)/$(basename "$0")"
 
 say() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 die() { say "$*" >&2; exit 1; }
 
-FORCE=0
-[ "${1:-}" = "--force" ] && FORCE=1
 RENEW_BEFORE_DAYS="${RENEW_BEFORE_DAYS:-4}"
-
 WORK="$HOME/Library/Caches/voice-input-framework-ios"
 STAMP="$WORK/expires-at"
 PROFILES="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+# 定时任务(launchd 的用户级任务):只有 --schedule 才会装,--unschedule 删掉。
+LABEL="io.github.voice-input-framework.ios-renew"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 mkdir -p "$WORK"
+
+xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+FORCE=0
+case "${1:-}" in
+"") ;;
+--force) FORCE=1 ;;
+--schedule)
+    # 每天两次:离过期还远时脚本一秒就退出,多跑几次只是给「手机不在家、Mac 睡着」留余量。
+    mkdir -p "$(dirname "$PLIST")"
+    cat >"$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>$LABEL</string>
+    <key>ProgramArguments</key>
+    <array><string>/bin/bash</string><string>$(xml "$SELF")</string></array>
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
+    </array>
+    <key>StandardOutPath</key><string>$(xml "$WORK/renew.log")</string>
+    <key>StandardErrorPath</key><string>$(xml "$WORK/renew.log")</string>
+    <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>
+PLIST_EOF
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" || die "launchctl 没接受这个任务:$PLIST"
+    say "已安排:每天 09:30 和 21:30 检查一次,记录在 $WORK/renew.log。取消:$SELF --unschedule"
+    exit 0
+    ;;
+--unschedule)
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    rm -f "$PLIST"
+    say "已取消定时续期。"
+    exit 0
+    ;;
+*)
+    # 不认识的参数:把文件头的说明打出来
+    sed -n '2,/^set -euo/p' "$SELF" | sed -e '$d' -e 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac
 
 # ── 1. 还用不用续 ──
 now=$(date +%s)
