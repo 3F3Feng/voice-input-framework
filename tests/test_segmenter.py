@@ -170,6 +170,16 @@ class TestSegmentedTranscriber:
         assert len(engine.calls) == 1
 
     @pytest.mark.asyncio
+    async def test_time_spent_in_the_model_is_added_up(self, short_segments):
+        engine = FakeEngine(delay=0.02)
+        seg = segmenter.SegmentedTranscriber(engine)
+        await feed_realtime(seg, speech(20))
+        await seg.finish()
+        assert len(engine.calls) > 1
+        # 每一段(包括 finish 里最后那段)都算进去了
+        assert seg.compute_s >= 0.02 * len(engine.calls) * 0.9
+
+    @pytest.mark.asyncio
     async def test_cancel_stops_scheduling(self, short_segments):
         engine = FakeEngine(delay=0.05)
         seg = segmenter.SegmentedTranscriber(engine)
@@ -313,6 +323,32 @@ class TestWebSocketIncremental:
                 pass  # 服务端直接关连接
         assert not any(m["type"] in ("result", "stt_result", "done") for m in msgs)
 
+    def test_each_dictation_logs_its_timings_without_the_text(self, ws_server, caplog):
+        """服务日志里每次听写有一行耗时(校准硬件配置表用),但不能把说的话写进去。"""
+        import logging
+
+        import services.stt_server as srv
+
+        client, _ = ws_server
+        pcm = speech(20)
+        with caplog.at_level(logging.INFO, logger=srv.logger.name):
+            with client.websocket_connect("/ws/stream") as ws:
+                json.loads(ws.receive_text())
+                ws.send_text(json.dumps({"type": "config", "language": "zh", "incremental": True}))
+                json.loads(ws.receive_text())
+                send_audio(ws, pcm)
+                ws.send_text(json.dumps({"type": "end"}))
+                collect_until_final(ws)
+                json.loads(ws.receive_text())  # done:到这里服务端那一行已经写完了
+        lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Dictation:")]
+        assert len(lines) == 1, [r.getMessage() for r in caplog.records]
+        (line,) = lines
+        assert f"{len(pcm) / 2 / SR:.1f}s audio" in line
+        assert "s compute (x" in line and "ms after end" in line
+        assert f"{len(expected(20))} chars" in line
+        assert line.endswith("| LLM off")
+        assert expected(20) not in line and expected(1) not in line
+
     def test_old_client_is_unchanged(self, ws_server):
         """老客户端:config 不带 incremental、松手后一次性上传 —— 照旧整段转一次。"""
         client, calls = ws_server
@@ -340,3 +376,40 @@ class TestWebSocketIncremental:
 
         time.sleep(0.2)
         assert calls == []
+
+
+class TestDictationSummary:
+    """`Dictation: ...` 那一行日志的格式(测试者发来的日志靠它读耗时)。"""
+
+    def summary(self, **over):
+        from services.stt_server import dictation_summary
+
+        args = dict(
+            audio_s=17.6,
+            stt_compute_s=0.38,
+            stt_wait_ms=120,
+            stt_model="qwen_asr",
+            stt_device="gpu",
+            stt_chars=266,
+        )
+        return dictation_summary(**{**args, **over})
+
+    def test_without_post_processing(self):
+        assert self.summary() == (
+            "Dictation: 17.6s audio | STT qwen_asr on gpu: 0.38s compute (x0.022 realtime), "
+            "120ms after end, 266 chars | LLM off"
+        )
+
+    def test_with_post_processing(self):
+        line = self.summary(llm_ms=421.4, llm_model="Gemma-4-E4B-GGUF", llm_chars=119)
+        assert line.endswith("| LLM Gemma-4-E4B-GGUF: 421ms, 119 chars")
+
+    def test_failed_post_processing_keeps_the_reason(self):
+        line = self.summary(
+            llm_ms=30000, llm_model="Gemma-4-E4B-GGUF", llm_chars=266, llm_error="timed out"
+        )
+        assert line.endswith("| LLM Gemma-4-E4B-GGUF failed after 30000ms: timed out")
+
+    def test_no_audio_and_unknown_device_do_not_break_it(self):
+        line = self.summary(audio_s=0, stt_compute_s=0, stt_device=None, stt_chars=0)
+        assert "0.0s audio | STT qwen_asr on ?: 0.00s compute, " in line

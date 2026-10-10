@@ -48,7 +48,7 @@ from services.stt_engine import (
     TranscriptionRequest,
     TranscriptionResult,
 )
-from shared import auth, i18n, llm_backend
+from shared import auth, i18n, llm_backend, quiet_logs
 from shared.app_version import APP_VERSION
 from shared.constants import (
     DEFAULT_BIND_HOST,
@@ -446,10 +446,12 @@ async def request_id_middleware(request: Request, call_next):
         response.headers["X-Request-ID"] = request_id
         # 记录请求指标
         duration = (time.time() - start_time) * 1000
-        logger.info(
-            f"{request.method} {request.url.path} - {response.status_code} - {duration:.2f}ms",
-            extra={"request_id": request_id, "duration_ms": duration},
-        )
+        # 成功的健康检查不记:客户端每一两秒问一次,会把有用的日志挤出去(见 shared/quiet_logs.py)。
+        if not quiet_logs.is_routine_health_check(request.url.path, response.status_code):
+            logger.info(
+                f"{request.method} {request.url.path} - {response.status_code} - {duration:.2f}ms",
+                extra={"request_id": request_id, "duration_ms": duration},
+            )
         return response
     except Exception as e:
         logger.error(f"Request failed: {e}", extra={"request_id": request_id})
@@ -915,6 +917,37 @@ async def _with_keepalive(coro, stage: str, send):
             task.cancel()
 
 
+def dictation_summary(
+    *,
+    audio_s: float,
+    stt_compute_s: float,
+    stt_wait_ms: float,
+    stt_model: str | None,
+    stt_device: str | None,
+    stt_chars: int,
+    llm_ms: float = 0,
+    llm_model: str | None = None,
+    llm_chars: int | None = None,
+    llm_error: str | None = None,
+) -> str:
+    """一次听写的耗时,一行日志。**不含识别出的文字**,只有长度。
+
+    校准硬件配置表(shared/hardware_plan.py 的显存 / 线程数门槛)要的就是这几个数:
+    音频多长、模型算了多久、松手后等了多久、后处理多久。测试者把服务日志发来就能读到,
+    不用再上他们的机器量。`llm_chars` 为 None 表示这次没做后处理。
+    """
+    ratio = f" (x{stt_compute_s / audio_s:.3f} realtime)" if audio_s > 0 else ""
+    line = (
+        f"Dictation: {audio_s:.1f}s audio | STT {stt_model} on {stt_device or '?'}: "
+        f"{stt_compute_s:.2f}s compute{ratio}, {stt_wait_ms:.0f}ms after end, {stt_chars} chars"
+    )
+    if llm_chars is None:
+        return f"{line} | LLM off"
+    if llm_error:
+        return f"{line} | LLM {llm_model} failed after {llm_ms:.0f}ms: {llm_error}"
+    return f"{line} | LLM {llm_model}: {llm_ms:.0f}ms, {llm_chars} chars"
+
+
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
     """WebSocket 流式识别"""
@@ -1129,6 +1162,7 @@ async def websocket_stream(websocket: WebSocket):
                     stt_latency_ms=(time.time() - stt_started) * 1000,
                     model=engine.current_model_name,
                 )
+                stt_compute_s = segments.compute_s
                 logger.info(
                     f"Segmented transcription: {segments.segmented_s:.1f}s done while "
                     f"recording, {received_bytes / 32000 - segments.segmented_s:.1f}s after end, "
@@ -1147,6 +1181,7 @@ async def websocket_stream(websocket: WebSocket):
                     ),
                     timeout=600.0,
                 )
+                stt_compute_s = result.stt_latency_ms / 1000
             # 个人词库的替换规则:识别完就换,LLM 拿到的已经是改好的写法。
             result.text = vocabulary.apply_rules(result.text, VOCABULARY)
 
@@ -1163,7 +1198,8 @@ async def websocket_stream(websocket: WebSocket):
             )
 
             # LLM 后处理
-            if result.text.strip() and llm_active():
+            used_llm = bool(result.text.strip()) and llm_active()
+            if used_llm:
                 await _safe_send(
                     {
                         "type": "llm_start",
@@ -1196,6 +1232,20 @@ async def websocket_stream(websocket: WebSocket):
                     "llm_error": llm_error,
                     "model": result.model,
                 }
+            )
+            logger.info(
+                dictation_summary(
+                    audio_s=received_bytes / 32000,
+                    stt_compute_s=stt_compute_s,
+                    stt_wait_ms=result.stt_latency_ms,
+                    stt_model=result.model,
+                    stt_device=(engine.backend_info("en") or {}).get("device"),
+                    stt_chars=len(result.text),
+                    llm_ms=llm_latency,
+                    llm_model=_cached_llm_model() if used_llm else None,
+                    llm_chars=len(processed_text) if used_llm else None,
+                    llm_error=llm_error,
+                )
             )
 
         except TimeoutError:
@@ -1328,6 +1378,7 @@ def main():
 
     check_python_version()
     logger.info(f"Starting STT Service on {STT_HOST}:{STT_PORT}")
+    quiet_logs.install()
     uvicorn.run(
         app,
         host=STT_HOST,

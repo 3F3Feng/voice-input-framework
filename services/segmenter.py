@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 
 import numpy as np
@@ -118,6 +119,8 @@ class SegmentedTranscriber:
         self.cancelled = False
         #: 已经切出去交给模型的秒数(日志用)。
         self.segmented_s = 0.0
+        #: 模型花在转写上的总时间(各段相加;日志用,和音频长度一比就是相对实时的倍数)。
+        self.compute_s = 0.0
 
     @property
     def pending_s(self) -> float:
@@ -145,10 +148,18 @@ class SegmentedTranscriber:
         previous = next((t for t in reversed(self._texts) if t.strip()), "")
         return segment_context(self._hotwords, previous)
 
+    async def _timed(self, pcm: bytes) -> str:
+        started = time.perf_counter()
+        try:
+            return await self._transcribe(pcm, self._context())
+        finally:
+            self.compute_s += time.perf_counter() - started
+
     async def _run(self, segment: bytes) -> None:
         audio_s = len(segment) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+        before = self.compute_s
         try:
-            text = await self._transcribe(segment, self._context())
+            text = await self._timed(segment)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - 留到 finish 时再抛,客户端照常收到 error
@@ -160,8 +171,8 @@ class SegmentedTranscriber:
         self._texts.append(text)
         self.segmented_s += audio_s
         logger.info(
-            f"Segment {len(self._texts)} done: {audio_s:.1f}s audio, "
-            f"{self.pending_s:.1f}s still pending"
+            f"Segment {len(self._texts)} done: {audio_s:.1f}s audio in "
+            f"{self.compute_s - before:.2f}s, {self.pending_s:.1f}s still pending"
         )
         if self._on_segment is not None:
             try:
@@ -184,7 +195,7 @@ class SegmentedTranscriber:
         if self._pending:
             rest = bytes(self._pending)
             self._pending.clear()
-            text = await self._transcribe(rest, self._context())
+            text = await self._timed(rest)
             self._texts.append(text)
         return join_segments(self._texts)
 
