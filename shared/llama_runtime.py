@@ -17,8 +17,8 @@ llama.cpp 按名字找时用的就是已经加载的那份)。找不到也不报
 
 只查目录、按路径加载库,不 `import torch`(那要好几秒,还会占显存)。
 
-Windows 上还有一样东西得是系统里的:Visual C++ 运行库(`msvcp140.dll`),预编译包不带。
-它太旧时 llama.cpp 装得上、也 import 得了,一调用就崩——见 :func:`msvc_runtime`。
+Windows 上还有一样东西预编译包不带:Visual C++ 运行库(`msvcp140.dll`)。进程加载到的
+那一份太旧时,llama.cpp 装得上、也 import 得了,一调用就崩——见 :func:`msvc_runtime`。
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,11 @@ LINUX_LIBRARIES = ("libcudart.so.12", "libcublasLt.so.12", "libcublas.so.12")
 #: 工具链编的(0.3.36 是 14.44),那以后 `std::mutex` 的构造不再初始化内部指针,靠新版
 #: 运行库在加锁时认;旧运行库照着空指针去读,第一次加锁就是
 #: `OSError: exception: access violation reading 0x0000000000000000`。
-#: CUDA / Vulkan / CPU 三种包都一样,所以换一种装也没用,只能更新运行库。
+#: CUDA / Vulkan / CPU 三种包都一样,换一种装也没用。
+#:
+#: 「旧运行库」不一定是系统里那份:Windows 找 DLL 时 python.exe 所在的目录排在 System32
+#: 前面,而 Anaconda 的 Python 目录里自带一份(实测遇到的是 14.27,系统里明明是 14.50)。
+#: 所以建环境脚本在 Windows 上用 uv 自己管理的 Python——它的目录里没有这个文件。
 MIN_MSVC_RUNTIME = (14, 40)
 
 _prepared: list[str] | None = None
@@ -59,6 +63,12 @@ class MsvcRuntime:
     @property
     def too_old(self) -> bool:
         return self.version[:2] < MIN_MSVC_RUNTIME
+
+    @property
+    def from_system(self) -> bool:
+        """是不是 System32 里那份(否则就是 Python 安装自带、抢在系统前面的)。"""
+        root = os.environ.get("SystemRoot") or r"C:\Windows"
+        return PureWindowsPath(self.path).parent == PureWindowsPath(root) / "System32"
 
 
 def _package_dir(name: str) -> Path | None:
@@ -180,7 +190,7 @@ def msvc_runtime() -> MsvcRuntime | None:
     """这个进程用的是哪一份 `msvcp140.dll`。不是 Windows、或者查不出来时返回 None。
 
     在 `import llama_cpp` **之后**调最准:那时库已经加载,问到的就是 llama.cpp 实际用的
-    那一份(通常是 System32 里的)。还没加载时按名字加载一次再问。
+    那一份(System32 里的,或者 Python 安装自带的)。还没加载时按名字加载一次再问。
     """
     if sys.platform != "win32":
         return None

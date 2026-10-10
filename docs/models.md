@@ -95,10 +95,12 @@ Gemma-4-E2B 的 QAT 版在 MLX 和 llama.cpp 上都只有 1 例不合格，延�
   CUDA → Vulkan → CPU，并在最后说清楚落在了哪一个。
 - `--llm-backend cuda|vulkan|cpu`（PowerShell 是 `-LlmBackend`）可以手动指定，「更新服务」会记住手动的
   选择；自动选的每次更新都重新探测，装了新驱动之后能自己升到显卡版。
-- Windows 上预编译包还要系统里的 **Visual C++ 运行库不早于 14.40**（`msvcp140.dll`，包里不带）。太旧时
-  三种版本都装得上，但一调用就崩（`access violation reading 0x0000000000000000`）。脚本会检查并
-  说明；更新它用 `winget install --id Microsoft.VCRedist.2015+.x64 -e`，或者下载
-  <https://aka.ms/vs/17/release/vc_redist.x64.exe>，装完重跑脚本。
+- Windows 上预编译包要 **Visual C++ 运行库（`msvcp140.dll`）不早于 14.40**，包里不带。进程加载到旧的
+  那份时三种版本都装得上，但一调用就崩（`access violation reading 0x0000000000000000`）。最常见的
+  来源不是系统，而是 Python 自己：Anaconda 的 Python 目录里自带一份旧的，排在系统那份前面。所以
+  `setup-env.ps1` 用 uv 自己管理的 Python 建环境（没装过会自动下载，约 20 MB；以前建在别的 Python 上的
+  `.venv` 会重建一次）。系统那份真的太旧时脚本会说明，更新用
+  `winget install --id Microsoft.VCRedist.2015+.x64 -e`。
 - `--no-llm`（PowerShell 是 `-NoLlm`）不装 llama.cpp，那样只剩 Whisper 系的识别模型，也没有后处理。
   更早建的环境里没有 llama.cpp 时，界面上的后处理开关会置灰，旁边有「安装 llama.cpp」。
 - 运行时如果模型在显卡上放不下（显存不够），服务会退回 CPU，并在「设置 → 服务」和 LLM 开关下面提示。

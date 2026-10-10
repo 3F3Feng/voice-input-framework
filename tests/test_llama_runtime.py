@@ -143,3 +143,12 @@ def test_the_real_runtime_is_found_and_its_version_read():
     assert runtime is not None, "no msvcp140.dll could be loaded on this machine"
     assert Path(runtime.path).name.lower() == "msvcp140.dll"
     assert len(runtime.version) == 4 and runtime.version[0] == 14, runtime
+
+
+def test_a_runtime_next_to_python_is_not_the_system_one(monkeypatch):
+    # 实测:Anaconda 的 Python 目录里自带 14.27,排在 System32 的 14.50 前面
+    monkeypatch.setenv("SystemRoot", r"C:\WINDOWS")
+    bundled = llama_runtime.MsvcRuntime(r"E:\anaconda3\MSVCP140.dll", (14, 27, 29016, 0))
+    assert bundled.too_old and not bundled.from_system
+    system = llama_runtime.MsvcRuntime(r"C:\Windows\SYSTEM32\MSVCP140.dll", (14, 50, 35719, 0))
+    assert system.from_system and not system.too_old

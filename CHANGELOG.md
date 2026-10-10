@@ -6,11 +6,14 @@
 
 ### Fixed
 
-- **Windows 上 Visual C++ 运行库太旧时,llama.cpp 三种版本都装不上,还说不出原因**:预编译包是用
-  MSVC 14.44 编的,系统里的 `msvcp140.dll` 早于 14.40 时库加载得了,一调用就是
+- **Windows 上环境建在 Anaconda 的 Python 上时,llama.cpp 三种版本都装不上,还说不出原因**:预编译包是用
+  MSVC 14.44 编的,要 `msvcp140.dll` 不早于 14.40。Anaconda 的 Python 目录里自带一份旧的(实测 14.27),
+  Windows 找 DLL 时它排在 System32 前面——系统里的运行库再新也没用,库加载得了,一调用就是
   `access violation reading 0x0000000000000000`。建环境脚本以前把 CUDA、Vulkan、CPU 版挨个装一遍、
-  各崩一次,最后提示「多半是连不上 github.com」。现在装完先看运行库的版本,太旧就直接说明是哪个
-  文件、什么版本,并给出更新它的命令。
+  各崩一次,最后提示「多半是连不上 github.com」,RTX 4090 的机器上落得没有 llama.cpp。
+  现在 `setup-env.ps1` 用 uv 自己管理的 Python 建环境(没装过会自动下载,约 20 MB;建在别的 Python 上的
+  `.venv` 会重建一次)。装完还会看进程实际加载的是哪一份运行库,太旧就说明是哪个文件、什么版本、
+  怎么办,不再接着试另外两种。
 
 ## [2.7.2] - 2026-10-06
 
