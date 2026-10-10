@@ -30,7 +30,7 @@ if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
 
 from services import model_catalog  # noqa: E402
-from shared import auth, i18n, llama_runtime, llm_backend  # noqa: E402
+from shared import auth, i18n, llama_runtime, llm_backend, quiet_logs  # noqa: E402
 from shared.app_version import APP_VERSION  # noqa: E402
 from shared.i18n import bi, en_of  # noqa: E402
 from shared.constants import (  # noqa: E402
@@ -1389,6 +1389,12 @@ async def process_text(request: ProcessRequest, http_request: Request):
         result = await engine.process_async(
             request.text, hint if isinstance(hint, str) and hint.strip() else None, lang
         )
+        # 耗时进日志(不含文字):校准硬件配置表时要看的就是这个数。
+        outcome = "ok" if result.success else f"failed: {result.error}"
+        logger.info(
+            f"Processed {len(request.text)} -> {len(result.text)} chars in "
+            f"{result.llm_latency_ms:.0f}ms ({result.model} on {engine.backend.accelerator or '?'}, {outcome})"
+        )
         return result
     except HTTPException:
         raise
@@ -1440,6 +1446,7 @@ def main():
 
     check_python_version()
     logger.info(f"Starting LLM Service on {LLM_HOST}:{LLM_PORT}")
+    quiet_logs.install()
     uvicorn.run(
         app,
         host=LLM_HOST,
