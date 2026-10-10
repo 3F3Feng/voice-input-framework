@@ -70,6 +70,29 @@ if (-not (Test-Uv)) { Die "uv 装好了但不在 PATH 里,把 $HOME\.local\bin �
 $uvVersion = (& uv --version) -replace '^uv\s+', ''
 Say "uv $uvVersion"
 
+# ── Python:用 uv 自己管理的那一份 ─────────────────────────────────────────
+#
+# uv 默认会用机器上已有的 Python。Windows 上这会出事:Anaconda 的 Python 目录里自带一份
+# 旧的 Visual C++ 运行库(msvcp140.dll),DLL 的查找顺序里它排在 System32 前面,llama.cpp
+# 的预编译包加载到它就崩(access violation reading 0x0,见 shared\llama_runtime.py)。
+# uv 管理的 Python 目录里没有这个文件,用的是系统那份。没装过时 uv 会自己下载(约 20 MB)。
+# 想用别的 Python 可以自己设 UV_PYTHON_PREFERENCE / UV_PYTHON。
+if (-not $env:UV_PYTHON_PREFERENCE -and -not $env:UV_PYTHON) {
+    $env:UV_PYTHON_PREFERENCE = "only-managed"
+    $venvCfg = Join-Path $RepoRoot ".venv\pyvenv.cfg"
+    if (Test-Path $venvCfg) {
+        $pyHome = ""
+        foreach ($line in (Get-Content $venvCfg)) {
+            if ($line -match '^\s*home\s*=\s*(.+?)\s*$') { $pyHome = $Matches[1] }
+        }
+        $managedDir = ""
+        try { $managedDir = "$(& uv python dir 2>$null)".Trim() } catch { }
+        if ($pyHome -and $managedDir -and -not $pyHome.StartsWith($managedDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Say "现有的 .venv 建在 $pyHome 的 Python 上,这次会换成 uv 自己管理的 Python 重建(装过的包从 uv 的缓存里装)。"
+        }
+    }
+}
+
 # ── 探测硬件 ──────────────────────────────────────────────────────────────
 function Get-DetectedBackend {
     # NVIDIA:nvidia-smi 随驱动一起装。光有命令不够,-L 能列出显卡才算数
@@ -152,21 +175,40 @@ try:
 except Exception as e:  # 缺驱动 / 缺 Vulkan 运行库时在这里就失败
     print(f"    llama.cpp 加载失败:{type(e).__name__}: {e}")
     sys.exit(3)
-gpu = bool(llama_cpp.llama_supports_gpu_offload())
+# 进程加载到的 Visual C++ 运行库太旧时,库加载得了,一调用就崩(读空指针)。三种版本都
+# 一样,所以单独报出来(退出码 5),脚本不再挨个试下去。
+runtime = llama_runtime.msvc_runtime()
+if runtime is not None and runtime.too_old:
+    need = ".".join(str(n) for n in llama_runtime.MIN_MSVC_RUNTIME)
+    print(f"    Visual C++ 运行库太旧:{runtime.path} 是 {runtime.version_text},llama.cpp 要 {need} 以上。")
+    if runtime.from_system:
+        print("    更新它(微软官方,安装时会要管理员权限),再重跑本脚本:")
+        print("        winget install --id Microsoft.VCRedist.2015+.x64 -e")
+        print("        或者下载安装 https://aka.ms/vs/17/release/vc_redist.x64.exe")
+    else:
+        print("    这一份是 Python 安装自带的(Anaconda 之类的发行版会带),排在系统那份前面。")
+        print("    本脚本默认用 uv 自己管理的 Python 来避开它;去掉 UV_PYTHON / UV_PYTHON_PREFERENCE 后重跑。")
+    sys.exit(5)
+try:
+    gpu = bool(llama_cpp.llama_supports_gpu_offload())
+except OSError as e:  # ctypes 把库里的崩溃转成 OSError
+    print(f"    llama.cpp 加载了,但一调用就出错:{e}")
+    sys.exit(6)
 print(f"    llama.cpp {llama_cpp.__version__}:{'认出了显卡' if gpu else '没有可用的显卡,只能用 CPU'}")
 sys.exit(0 if (gpu or want == "cpu") else 4)
 '@
 
-# 装上之后验证:能 import,而且(显卡版)llama.cpp 真的认出了一块显卡。
+# 装上之后验证:能 import,而且(显卡版)llama.cpp 真的认出了一块显卡。返回校验脚本的
+# 退出码:0 可用,5 是系统的 Visual C++ 运行库太旧,别的都是「这一种用不了」。
 # 脚本写成临时文件再跑(原因见下面校验那一段)。
 function Test-Llm([string]$name) {
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "vif-setup-llm-$PID.py"
     [System.IO.File]::WriteAllText($tmp, $verifyLlm, (New-Object System.Text.UTF8Encoding($false)))
     try {
         # | Out-Host 不能省:函数里原生命令的输出会并进函数的返回值,那样返回的就是
-        # 「几行字 + $true」的数组,怎么判断都是真。
+        # 「几行字 + 退出码」的数组,拿它做判断就错了。
         & uv run --no-sync python $tmp $name $RepoRoot | Out-Host
-        return ($LASTEXITCODE -eq 0)
+        return $LASTEXITCODE
     } finally {
         Remove-Item $tmp -ErrorAction SilentlyContinue
     }
@@ -194,15 +236,24 @@ if ($wantLlm) {
 }
 
 $llmInstalled = ""
+$vcRuntimeTooOld = $false
 foreach ($candidate in $llmCandidates) {
     # --reinstall-package 不能省:三种版本是同一个包名、同一个版本号,只是来自不同的索引。
     # 不强制重装的话,uv 看到已经装着这个版本就什么都不做,换版本等于没换。
     $syncArgs = @($extras) + @("--extra", (Get-LlmExtra $candidate), "--reinstall-package", "llama-cpp-python")
     Say "uv sync $($syncArgs -join ' ')"
     & uv sync @syncArgs
-    if ($LASTEXITCODE -eq 0 -and (Test-Llm $candidate)) {
-        $llmInstalled = $candidate
-        break
+    if ($LASTEXITCODE -eq 0) {
+        $verified = Test-Llm $candidate
+        if ($verified -eq 0) {
+            $llmInstalled = $candidate
+            break
+        }
+        if ($verified -eq 5) {
+            # 哪一种版本都要同一个运行库,再试下去只是把同一个错再报两遍
+            $vcRuntimeTooOld = $true
+            break
+        }
     }
     Warn "llama.cpp 的 $candidate 版在这台机器上用不了(原因见上)。"
 }
@@ -262,7 +313,10 @@ try {
 }
 
 if ($wantLlm) {
-    if (-not $llmInstalled) {
+    if ($vcRuntimeTooOld) {
+        Warn "llama.cpp(llama-cpp-python)没装上:它加载到的 Visual C++ 运行库太旧,怎么解决见上面的输出。"
+        Warn "Whisper 系的识别模型不受影响;量化版 Qwen3-ASR 和 LLM 后处理用不了。"
+    } elseif (-not $llmInstalled) {
         Warn "llama.cpp(llama-cpp-python)没装上,原因见上面的输出。Whisper 系的识别模型不受影响;"
         Warn "量化版 Qwen3-ASR 和 LLM 后处理用不了。多半是连不上 github.com(预编译包放在那里),稍后重跑本脚本即可。"
     } elseif ($llmInstalled -eq "cpu") {

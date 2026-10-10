@@ -197,6 +197,31 @@ jobs:
               print("loaded", name)
           PY
 
+      - name: Visual C++ runtime check reads the msvcp140.dll llama.cpp really uses
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # 运行库太旧的机器上 llama.cpp 一调用就崩(见 shared/llama_runtime.py 的
+          # MIN_MSVC_RUNTIME),建环境脚本靠这个检查把它认出来。runner 上的运行库是新的,
+          # 这里验证的是「问得到、读得出版本」——问不到时检查会悄悄放行。
+          .venv/Scripts/python.exe - <<'PY'
+          from shared import llama_runtime
+
+          llama_runtime.prepare()
+          import llama_cpp
+
+          runtime = llama_runtime.msvc_runtime()
+          print("runtime:", runtime)
+          assert runtime is not None, "could not find the loaded msvcp140.dll"
+          assert not runtime.too_old, runtime
+          # 脚本用 uv 自己管理的 Python 建环境:它的目录里没有 msvcp140.dll,所以加载到的
+          # 必须是系统那份(Anaconda 的 Python 自带一份旧的,会抢在前面)。
+          assert runtime.from_system, runtime
+          import sys
+          print("python :", sys.base_prefix)
+          assert "uv" in sys.base_prefix.lower().split("\\"), sys.base_prefix
+          PY
+
       # ── 两边都要:下载进度的计数在真下载上数得准 ──
       - name: Download meter counts a real HuggingFace download
         shell: bash

@@ -113,3 +113,42 @@ def test_a_library_that_will_not_load_is_skipped_not_fatal(tmp_path, monkeypatch
     monkeypatch.setattr(llama_runtime, "library_dirs", lambda: [lib])
     monkeypatch.setattr(ctypes, "CDLL", refuse)
     assert llama_runtime.prepare() == []
+
+
+# ── Windows 的 Visual C++ 运行库 ──────────────────────────────────────────
+#
+# 实际遇到的:一台 RTX 4090 的机器上 CUDA / Vulkan / CPU 三种 llama.cpp 都在第一次调用时
+# 报 `access violation reading 0x0000000000000000`。预编译包是 MSVC 14.44 编的,要系统里的
+# msvcp140.dll 不早于 14.40。
+
+
+def test_a_runtime_older_than_the_toolchain_is_too_old():
+    system32 = r"C:\Windows\System32\msvcp140.dll"
+    assert llama_runtime.MsvcRuntime(system32, (14, 36, 32532, 0)).too_old
+    assert llama_runtime.MsvcRuntime(system32, (14, 29, 30133, 0)).too_old
+    assert not llama_runtime.MsvcRuntime(system32, (14, 40, 33810, 0)).too_old
+    assert not llama_runtime.MsvcRuntime(system32, (14, 44, 35211, 0)).too_old
+    assert not llama_runtime.MsvcRuntime(system32, (15, 0, 0, 0)).too_old
+    assert llama_runtime.MsvcRuntime(system32, (14, 36, 32532, 0)).version_text == "14.36.32532.0"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="other platforms have no msvcp140.dll")
+def test_there_is_no_msvc_runtime_to_check_off_windows():
+    assert llama_runtime.msvc_runtime() is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="reads the real msvcp140.dll")
+def test_the_real_runtime_is_found_and_its_version_read():
+    runtime = llama_runtime.msvc_runtime()
+    assert runtime is not None, "no msvcp140.dll could be loaded on this machine"
+    assert Path(runtime.path).name.lower() == "msvcp140.dll"
+    assert len(runtime.version) == 4 and runtime.version[0] == 14, runtime
+
+
+def test_a_runtime_next_to_python_is_not_the_system_one(monkeypatch):
+    # 实测:Anaconda 的 Python 目录里自带 14.27,排在 System32 的 14.50 前面
+    monkeypatch.setenv("SystemRoot", r"C:\WINDOWS")
+    bundled = llama_runtime.MsvcRuntime(r"E:\anaconda3\MSVCP140.dll", (14, 27, 29016, 0))
+    assert bundled.too_old and not bundled.from_system
+    system = llama_runtime.MsvcRuntime(r"C:\Windows\SYSTEM32\MSVCP140.dll", (14, 50, 35719, 0))
+    assert system.from_system and not system.too_old
