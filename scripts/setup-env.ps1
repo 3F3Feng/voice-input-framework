@@ -152,21 +152,33 @@ try:
 except Exception as e:  # 缺驱动 / 缺 Vulkan 运行库时在这里就失败
     print(f"    llama.cpp 加载失败:{type(e).__name__}: {e}")
     sys.exit(3)
-gpu = bool(llama_cpp.llama_supports_gpu_offload())
+# 系统的 Visual C++ 运行库太旧时,库加载得了,一调用就崩(读空指针)。三种版本都一样,
+# 所以单独报出来(退出码 5),脚本不再挨个试下去。
+runtime = llama_runtime.msvc_runtime()
+if runtime is not None and runtime.too_old:
+    need = ".".join(str(n) for n in llama_runtime.MIN_MSVC_RUNTIME)
+    print(f"    Visual C++ 运行库太旧:{runtime.path} 是 {runtime.version_text},llama.cpp 要 {need} 以上。")
+    sys.exit(5)
+try:
+    gpu = bool(llama_cpp.llama_supports_gpu_offload())
+except OSError as e:  # ctypes 把库里的崩溃转成 OSError
+    print(f"    llama.cpp 加载了,但一调用就出错:{e}")
+    sys.exit(6)
 print(f"    llama.cpp {llama_cpp.__version__}:{'认出了显卡' if gpu else '没有可用的显卡,只能用 CPU'}")
 sys.exit(0 if (gpu or want == "cpu") else 4)
 '@
 
-# 装上之后验证:能 import,而且(显卡版)llama.cpp 真的认出了一块显卡。
+# 装上之后验证:能 import,而且(显卡版)llama.cpp 真的认出了一块显卡。返回校验脚本的
+# 退出码:0 可用,5 是系统的 Visual C++ 运行库太旧,别的都是「这一种用不了」。
 # 脚本写成临时文件再跑(原因见下面校验那一段)。
 function Test-Llm([string]$name) {
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "vif-setup-llm-$PID.py"
     [System.IO.File]::WriteAllText($tmp, $verifyLlm, (New-Object System.Text.UTF8Encoding($false)))
     try {
         # | Out-Host 不能省:函数里原生命令的输出会并进函数的返回值,那样返回的就是
-        # 「几行字 + $true」的数组,怎么判断都是真。
+        # 「几行字 + 退出码」的数组,拿它做判断就错了。
         & uv run --no-sync python $tmp $name $RepoRoot | Out-Host
-        return ($LASTEXITCODE -eq 0)
+        return $LASTEXITCODE
     } finally {
         Remove-Item $tmp -ErrorAction SilentlyContinue
     }
@@ -194,15 +206,24 @@ if ($wantLlm) {
 }
 
 $llmInstalled = ""
+$vcRuntimeTooOld = $false
 foreach ($candidate in $llmCandidates) {
     # --reinstall-package 不能省:三种版本是同一个包名、同一个版本号,只是来自不同的索引。
     # 不强制重装的话,uv 看到已经装着这个版本就什么都不做,换版本等于没换。
     $syncArgs = @($extras) + @("--extra", (Get-LlmExtra $candidate), "--reinstall-package", "llama-cpp-python")
     Say "uv sync $($syncArgs -join ' ')"
     & uv sync @syncArgs
-    if ($LASTEXITCODE -eq 0 -and (Test-Llm $candidate)) {
-        $llmInstalled = $candidate
-        break
+    if ($LASTEXITCODE -eq 0) {
+        $verified = Test-Llm $candidate
+        if ($verified -eq 0) {
+            $llmInstalled = $candidate
+            break
+        }
+        if ($verified -eq 5) {
+            # 哪一种版本都要同一个运行库,再试下去只是把同一个错再报两遍
+            $vcRuntimeTooOld = $true
+            break
+        }
     }
     Warn "llama.cpp 的 $candidate 版在这台机器上用不了(原因见上)。"
 }
@@ -262,7 +283,13 @@ try {
 }
 
 if ($wantLlm) {
-    if (-not $llmInstalled) {
+    if ($vcRuntimeTooOld) {
+        Warn "llama.cpp(llama-cpp-python)没装上:这台机器的 Visual C++ 运行库太旧(见上面的输出)。"
+        Warn "Whisper 系的识别模型不受影响;量化版 Qwen3-ASR 和 LLM 后处理用不了。"
+        Warn "装上最新的运行库(微软官方,装的时候会要管理员权限),再重跑本脚本:"
+        Warn "    winget install --id Microsoft.VCRedist.2015+.x64 -e"
+        Warn "    或者下载安装 https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    } elseif (-not $llmInstalled) {
         Warn "llama.cpp(llama-cpp-python)没装上,原因见上面的输出。Whisper 系的识别模型不受影响;"
         Warn "量化版 Qwen3-ASR 和 LLM 后处理用不了。多半是连不上 github.com(预编译包放在那里),稍后重跑本脚本即可。"
     } elseif ($llmInstalled -eq "cpu") {
