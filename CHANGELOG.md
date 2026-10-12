@@ -4,6 +4,20 @@
 
 只动了服务端和建环境脚本,客户端不用更新。
 
+### Added
+
+- **服务日志里每次听写记一行耗时**:`Dictation: 17.6s audio | STT qwen_asr on gpu: 0.38s compute
+  (x0.022 realtime), 120ms after end, 266 chars | LLM Gemma-4-E4B-GGUF: 421ms, 119 chars`。
+  以前听写(WebSocket)不往日志里写耗时,想知道一台机器上到底多快,只能上那台机器去量。
+  **不含识别出的文字**,只有字数。LLM 服务对应的一行是 `Processed ...`。
+- `docs/models.md` 记下了最高一档在 RTX 4090 上实测的速度和显存占用。
+
+### Changed
+
+- **成功的健康检查不再写进服务日志**:客户端每一两秒问一次 `/health`,每次一两行,而客户端只留
+  日志的最后几百行——模型加载到哪了、听写耗时这些有用的行一分钟不到就被挤出去。失败的健康检查
+  (非 200)照常记。
+
 ### Fixed
 
 - **Windows 上环境建在 Anaconda 的 Python 上时,llama.cpp 三种版本都装不上,还说不出原因**:预编译包是用
