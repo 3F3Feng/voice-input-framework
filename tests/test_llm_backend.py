@@ -275,7 +275,11 @@ class FakeLlama:
         self.finish = finish
         self.kwargs = kwargs
         self.calls = []
+        self.resets = 0
         self.metadata = {"tokenizer.chat_template": template} if template else {}
+
+    def reset(self):
+        self.resets += 1
 
     def tokenize(self, data: bytes, add_bos=True, special=False):
         return list(data.decode("utf-8"))
@@ -476,6 +480,52 @@ class TestLlamaCppOutputGuards:
         monkeypatch.setattr(srv.LlamaCppBackend, "N_CTX", prompt_len + 50)
         engine.process("嗯那个明天开会")
         assert fake.calls[1]["max_tokens"] == 50
+
+    def test_template_that_renders_bos_does_not_get_a_second_one(self):
+        """Gemma 的模板自己渲染 <bos>;交字符串给 llama.cpp 它会再加一个(并警告会降低质量)"""
+
+        class BosLlama(FakeLlama):
+            def tokenize(self, data: bytes, add_bos=True, special=False):
+                text = data.decode("utf-8")
+                if special and text.startswith("<bos>"):
+                    return [self.token_bos(), *text[len("<bos>") :]]
+                return list(text)
+
+        class BosChat(FakeChat):
+            def render(self, messages):
+                return "<bos>" + super().render(messages)
+
+        fake = BosLlama(reply="明天开会。")
+        result = loaded_llamacpp_engine(fake, BosChat()).process("嗯那个明天开会")
+        assert result.success and result.text == "明天开会。"
+        prompt = fake.calls[0]["prompt"]
+        # 交的是 token:llama.cpp 对 token 列表原样用,不再往前加 BOS
+        assert isinstance(prompt, list)
+        assert prompt[0] == fake.token_bos() and fake.token_bos() not in prompt[1:]
+
+        # 模板不渲染 BOS 的(Qwen 的 ChatML)照旧交字符串,加不加由 llama.cpp 按模型的设置定
+        plain = FakeLlama(reply="明天开会。")
+        loaded_llamacpp_engine(plain).process("嗯那个明天开会")
+        assert isinstance(plain.calls[0]["prompt"], str)
+
+    def test_context_is_reset_when_the_system_prompt_changes(self, monkeypatch):
+        """换了提示词要从头算:接着旧前缀算出来的缓存有出入,而且之后每次请求都在复用"""
+        import services.llm_server as srv
+
+        fake = FakeLlama(reply="明天开会。")
+        engine = loaded_llamacpp_engine(fake)
+        engine.process("嗯那个明天开会")
+        engine.process("嗯那个后天开会")
+        assert fake.resets == 1  # 提示词没变:只有第一次清,之后复用前缀(省掉重算提示词)
+
+        monkeypatch.setattr(srv, "load_prompt", lambda lang="zh": "只删填充词")
+        engine.process("嗯那个明天开会")
+        engine.process("嗯那个后天开会")
+        assert fake.resets == 2
+
+        # 词库提示是拼在系统提示后面的,变了也算换了
+        engine.process("嗯那个明天开会", vocabulary_hint="专有名词:石峰")
+        assert fake.resets == 3
 
     def test_prompt_larger_than_context_returns_original_with_reason(self, monkeypatch):
         import services.llm_server as srv

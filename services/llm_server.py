@@ -731,6 +731,8 @@ class LlamaCppBackend:
         #: 最近一次加载把模型放在了哪(见 `load`);还没加载过时为空。
         self.accelerator: str | None = None
         self.accelerator_note: str | None = None
+        #: 上一次请求用的系统提示;换了就清掉 llama.cpp 的上下文(见 `generate`)。
+        self._last_system: str | None = None
 
     def default_model(self, ram_gb: float | None = None) -> str:
         """按这台机器的那一套配置来(shared/hardware_plan.py):显存放得下两个大模型时用
@@ -849,8 +851,8 @@ class LlamaCppBackend:
         budget = output_token_budget(len(model.tokenize(text.encode("utf-8"), add_bos=False)))
         # 提示词 + 输出不能超出上下文窗口,超了 llama.cpp 会直接报错。收紧之后
         # 真不够用,会以 finish_reason == "length" 结束,由 reject_reason 退回原文。
-        prompt_tokens = len(model.tokenize(prompt.encode("utf-8"), add_bos=False, special=True))
-        max_tokens = min(budget, self.N_CTX - prompt_tokens)
+        tokens = model.tokenize(prompt.encode("utf-8"), add_bos=False, special=True)
+        max_tokens = min(budget, self.N_CTX - len(tokens))
         if max_tokens <= 0:
             raise ValueError(
                 bi(
@@ -858,8 +860,20 @@ class LlamaCppBackend:
                     f"The text is too long for the LLM context window ({self.N_CTX} tokens)",
                 )
             )
+        system = messages[0]["content"] if messages else None
+        if system != self._last_system:
+            # 系统提示换了(改提示词、换预设、词库变了)就清掉上下文,整段从头算。
+            # llama.cpp 会接着上一次请求里相同的前缀往下算。换了提示词以后相同的只剩开头
+            # 几个 token,从那儿接着算出来的缓存和从头算的有细微出入,而这份缓存之后每次
+            # 请求都在复用,直到服务重启。实测 Gemma-4-E4B、英文提示词、25 例改口:刚启动
+            # 时错 2 例;中间处理过一条别的提示词的请求之后稳定错 5 例;reset 后回到 2 例。
+            # 评测工具正是一份份换着提示词跑的,不清的话量到的不是用户平时用的那个状态。
+            model.reset()
+            self._last_system = system
         out = model.create_completion(
-            prompt=prompt,
+            # 模板自己渲染了 BOS(Gemma)时交 token 而不是字符串:交字符串 llama.cpp 会再加
+            # 一个,开头两个 BOS —— 它自己都警告「会降低回答质量」。交 token 就原样用。
+            prompt=tokens if tokens[:1] == [model.token_bos()] else prompt,
             max_tokens=max_tokens,
             # 和 mlx_lm.generate 的默认一致:贪心解码,不加重复惩罚。
             # 整理文字要的是确定、忠实;llama.cpp 默认的 1.1 重复惩罚会逼模型
