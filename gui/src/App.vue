@@ -41,11 +41,18 @@
                本地模式下一直显示(能随时检查、随时更新);远程模式只在版本对不上时出现。 -->
           <div v-if="showVersionSection" class="s-section">
             <div class="s-title">{{ t('服务版本', 'Service version') }}</div>
-            <!-- 服务代码和上游比:版本号只在发版时变,两次发版之间的修复只能靠这里看出来。 -->
+            <!-- 服务代码和上游比。服务端有自己的版本号,每个改动都涨、都在 CHANGELOG-server.md 里
+                 记一节:落后时先说这次会从哪一版到哪一版、这几版换了什么(后端读的是上游那一份,
+                 见 service_update.rs 的 check_code),再列提交。 -->
             <template v-if="serverMode === 'local'">
               <div class="s-row" style="margin-top:0">
                 <span class="s-tip" style="margin:0;flex:1">{{ codeStatusText }}</span>
                 <button class="s-btn" @click="checkServiceCode(true)" :disabled="codeChecking || svcUpdating">{{ codeChecking ? t('检查中…', 'Checking…') : t('检查服务更新', 'Check for service updates') }}</button>
+              </div>
+              <div v-if="serverVersionChangeText" class="s-tip svc-version-change">{{ serverVersionChangeText }}</div>
+              <div v-for="n in serverNotes" :key="n.version" class="s-tip svc-note">
+                <div class="svc-note-head">v{{ n.version }} · {{ n.date }}</div>
+                <div class="svc-note-body">{{ n.body }}</div>
               </div>
               <div v-if="codeStatus?.new_commits?.length" class="s-tip svc-commits">
                 <div v-for="c in codeStatus.new_commits" :key="c">· {{ c }}</div>
@@ -53,14 +60,10 @@
               </div>
             </template>
             <template v-if="versionReport?.services_older">
-              <div class="s-tip srv-problem" style="margin-top:0">⚠ {{ t(`服务是 ${olderServicesText},应用是 v${clientVersion}。`, `The services are ${olderServicesText}; the app is v${clientVersion}.`) }}</div>
+              <div class="s-tip srv-problem" style="margin-top:0">⚠ {{ t(`服务端是 ${olderServicesText},这个应用(v${clientVersion})需要服务端不低于 v${minServerVersion}。`, `The services are ${olderServicesText}; this app (v${clientVersion}) needs the server to be at least v${minServerVersion}.`) }}</div>
               <div v-if="serverMode === 'local'" class="s-tip">{{ t('应用内更新只更新客户端;STT / LLM 服务跑的是本机仓库里的代码,要单独更新。不更新的话,新版客户端用到的功能会对着旧服务失效,新版要求的依赖(比如新默认 LLM 需要的 mlx-lm 0.31.2)也不会装上。', "In-app updates only update the client; the STT / LLM services run the code in your local repository and must be updated separately. Otherwise features the new client relies on fail against the old services, and dependencies the new release needs (e.g. mlx-lm 0.31.2 for the new default LLM) are never installed.") }}</div>
-              <div v-else class="s-tip">{{ t('远程服务器上的服务比应用旧,新版客户端用到的部分功能可能用不了。请在那台机器的仓库里运行 git pull --ff-only 和 scripts/setup-env.sh(Windows 用 setup-env.ps1),再重启服务。', 'The services on the remote server are older than the app, so some features of the new client may not work. On that machine, run git pull --ff-only and scripts/setup-env.sh (setup-env.ps1 on Windows) in the repository, then restart the services.') }}</div>
+              <div v-else class="s-tip">{{ t('远程服务器上的服务端版本太低,这个客户端用到的部分功能可能用不了。请在那台机器的仓库里运行 git pull --ff-only 和 scripts/setup-env.sh(Windows 用 setup-env.ps1),再重启服务。', 'The server on the remote machine is older than this app needs, so some of its features may not work. On that machine, run git pull --ff-only and scripts/setup-env.sh (setup-env.ps1 on Windows) in the repository, then restart the services.') }}</div>
             </template>
-            <div v-else-if="versionReport?.services_newer" class="s-row" style="margin-top:0">
-              <span class="s-tip" style="margin:0;flex:1">{{ t(`服务(${newerServicesText})比应用 v${clientVersion} 新,建议检查一下应用更新。`, `The services (${newerServicesText}) are newer than the app (v${clientVersion}); consider checking for an app update.`) }}</span>
-              <button class="s-btn" @click="tab = 'about'">{{ t('检查更新', 'Check for updates') }}</button>
-            </div>
             <template v-if="serverMode === 'local'">
               <div class="s-row" style="margin-top:6px">
                 <span class="s-tip" style="margin:0;flex:1">{{ t('一键更新:在仓库里 git pull --ff-only、重跑建环境脚本,再重启本应用启动的服务。仓库有未提交的改动、分支分叉,或者有不是本应用启动的服务在跑时,会停下来并告诉你怎么手动做。', "One-click update: git pull --ff-only in the repository, rerun the setup script, then restart the services this app started. If the repository has uncommitted changes, the branch has diverged, or a service not started by this app is running, it stops and tells you how to do it by hand.") }}</span>
@@ -667,9 +670,9 @@
         <button class="banner-close" @click.stop="dismissVersionBanner" :title="t('这次不再提示', 'Dismiss for this session')">✕</button>
       </div>
 
-      <!-- 服务代码有新提交(版本号没变时也会有):和上面的版本提示二选一,别叠两条。 -->
+      <!-- 服务代码有新提交:和上面的版本提示二选一,别叠两条。 -->
       <div v-if="showCodeBanner" class="perm-banner version-banner" @click="openVersionSection">
-        <span>⬆️ {{ t(`本机服务有 ${codeStatus?.behind} 个新提交可以更新 · 点击查看`, `${codeStatus?.behind} new commit(s) are available for the local services · Click to review`) }}</span>
+        <span>⬆️ {{ codeBannerText }}</span>
         <button class="banner-close" @click.stop="dismissCodeBanner" :title="t('这次不再提示', 'Dismiss for this session')">✕</button>
       </div>
 
@@ -1872,16 +1875,17 @@ async function openPermSettings(key: PermissionKey) {
 
 // ── 服务版本对账 ──
 // 应用内更新只换客户端;STT / LLM 服务跑的是本机仓库里的代码,可能还是旧的,新功能
-// 就对着旧服务悄无声息地失效(见 src-tauri/src/service_update.rs)。服务在 /health 里
-// 报 app_version,后端拿它和客户端比;老服务端没有这个字段,按「旧」算。
-type VersionRelation = "same" | "older" | "newer" | "unknown";
-interface ServiceVersion { kind: ServerKind; reachable: boolean; app_version: string | null; relation: VersionRelation | null; }
+// 就对着旧服务悄无声息地失效(见 src-tauri/src/service_update.rs)。客户端和服务端各有
+// 自己的版本号:服务在 /health 里报服务端的版本号,后端拿它和这个客户端要求的最低服务端
+// 版本比,低于它才算「旧」;更老的服务端没有版本号字段,也按「旧」算。
+type VersionRelation = "enough" | "older" | "unknown";
+interface ServiceVersion { kind: ServerKind; reachable: boolean; server_version: string | null; relation: VersionRelation | null; }
 interface VersionReport {
   client_version: string;
+  min_server_version: string;
   mode: ServerMode;
   services: ServiceVersion[];
   services_older: boolean;
-  services_newer: boolean;
   can_update: boolean;
   update_running: boolean;
 }
@@ -1895,6 +1899,7 @@ const svcUpdateLine = ref("");
 const svcUpdateResult = ref<{ ok: boolean; msg: string } | null>(null);
 let versionTimer: ReturnType<typeof setInterval> | null = null;
 const clientVersion = computed(() => versionReport.value?.client_version || build.value.version);
+const minServerVersion = computed(() => versionReport.value?.min_server_version ?? "");
 
 async function refreshVersions() {
   try {
@@ -1907,18 +1912,13 @@ async function refreshVersions() {
       return prev.services.find(p => p.kind === s.kind && p.reachable) ?? s;
     });
     const older = services.some(s => s.relation === "older" || s.relation === "unknown");
-    versionReport.value = {
-      ...r,
-      services,
-      services_older: older,
-      services_newer: !older && services.some(s => s.relation === "newer"),
-    };
+    versionReport.value = { ...r, services, services_older: older };
     if (r.update_running) svcUpdating.value = true;
   } catch (e) { console.error("get_service_versions failed:", e); }
 }
 
 function svcVersionText(s: ServiceVersion): string {
-  return s.app_version ? `v${s.app_version}` : t("没报版本号的旧版", "an old release without a version");
+  return s.server_version ? `v${s.server_version}` : t("没报版本号的旧版", "an old release without a version");
 }
 /** 「STT / LLM v2.3.2」:版本相同的服务并在一起说,不同的分开说。 */
 function servicesText(pick: (r: VersionRelation | null) => boolean): string {
@@ -1931,25 +1931,27 @@ function servicesText(pick: (r: VersionRelation | null) => boolean): string {
   return [...groups].map(([v, kinds]) => `${kinds.join(" / ")} ${v}`).join(t("、", ", "));
 }
 const olderServicesText = computed(() => servicesText(r => r === "older" || r === "unknown"));
-const newerServicesText = computed(() => servicesText(r => r === "newer"));
 const versionKey = computed(() => {
   const r = versionReport.value;
   if (!r) return "";
-  return [r.client_version, ...r.services.filter(s => s.reachable).map(s => `${s.kind}:${s.app_version ?? "none"}`)].join("|");
+  return [r.client_version, ...r.services.filter(s => s.reachable).map(s => `${s.kind}:${s.server_version ?? "none"}`)].join("|");
 });
 const showVersionBanner = computed(() =>
   !!versionReport.value?.services_older && !svcUpdating.value && !dismissedVersionKeys.value.includes(versionKey.value));
 const showVersionSection = computed(() =>
   serverMode.value === "local" ||
-  !!versionReport.value?.services_older || !!versionReport.value?.services_newer || svcUpdating.value || !!svcUpdateResult.value);
+  !!versionReport.value?.services_older || svcUpdating.value || !!svcUpdateResult.value);
 
 // ── 服务代码有没有更新 ──
-// 版本号只在发版时变:两次发版之间合进 main 的服务端修复(建环境脚本、默认提示词……)
-// 只比版本号是看不出来的,以前版本一样时连「更新服务」按钮都没有,用户没法主动检查。
-// 这里让后端 git fetch 一下,看本地分支落后上游几个提交(只读,不 pull)。
+// 让后端 git fetch 一下,看本地分支落后上游几个提交(只读,不 pull)。服务端每个改动都涨
+// 版本号、在 CHANGELOG-server.md 里记一节,后端把本机和上游的版本号、两者之间的更新记录
+// 一起带回来:更新之前就看得到这次会换什么。
+interface ReleaseNote { version: string; date: string; body: string; }
 interface CodeStatus {
   checked: boolean; branch: string | null; upstream: string | null; head: string | null;
-  ahead: number; behind: number; new_commits: string[]; error: string | null;
+  ahead: number; behind: number; new_commits: string[];
+  local_version: string | null; upstream_version: string | null; notes: ReleaseNote[];
+  error: string | null;
 }
 const codeStatus = ref<CodeStatus | null>(null);
 const codeChecking = ref(false);
@@ -1980,11 +1982,39 @@ const codeStatusText = computed(() => {
   const st = codeStatus.value;
   if (codeChecking.value && !st) return t("正在检查服务代码…", "Checking the service code…");
   if (!st) return t("还没检查过服务代码有没有更新。", "The service code hasn't been checked for updates yet.");
-  const where = st.branch ? `${st.branch}${st.head ? ` @ ${st.head}` : ""}` : (st.head ?? "");
+  const at = st.branch ? `${st.branch}${st.head ? ` @ ${st.head}` : ""}` : (st.head ?? "");
+  const where = st.local_version ? `v${st.local_version}(${at})` : at;
   if (st.error) return t(`服务代码 ${where}:没法检查(${st.error})`, `Service code ${where}: can't check (${st.error})`);
   if (st.behind > 0) return t(`服务代码 ${where}:落后 ${st.upstream} ${st.behind} 个提交,可以更新。`, `Service code ${where}: ${st.behind} commit(s) behind ${st.upstream}; an update is available.`);
   if (st.ahead > 0) return t(`服务代码 ${where}:比 ${st.upstream} 多 ${st.ahead} 个本地提交,没有可拉取的更新。`, `Service code ${where}: ${st.ahead} local commit(s) ahead of ${st.upstream}; nothing to pull.`);
   return t(`服务代码 ${where}:已是最新。`, `Service code ${where}: up to date.`);
+});
+/** 落后时这次更新带来的那几版更新记录(新的在前)。 */
+const serverNotes = computed<ReleaseNote[]>(() => {
+  const st = codeStatus.value;
+  return st && st.behind > 0 ? (st.notes ?? []) : [];
+});
+/** 上游的服务端版本号和本机的不一样(落后时)才有:更新之后会到哪一版。 */
+const serverVersionTarget = computed(() => {
+  const st = codeStatus.value;
+  if (!st || st.behind <= 0 || !st.upstream_version || st.upstream_version === st.local_version) return "";
+  return st.upstream_version;
+});
+const serverVersionChangeText = computed(() => {
+  const to = serverVersionTarget.value;
+  if (!to) return "";
+  const from = codeStatus.value?.local_version;
+  const change = from ? `v${from} → v${to}` : `→ v${to}`;
+  return serverNotes.value.length
+    ? t(`更新之后服务端 ${change}。这几版换了什么:`, `Updating takes the server ${change}. What changed:`)
+    : t(`更新之后服务端 ${change}。`, `Updating takes the server ${change}.`);
+});
+const codeBannerText = computed(() => {
+  const n = codeStatus.value?.behind ?? 0;
+  const to = serverVersionTarget.value;
+  return to
+    ? t(`本机服务可以更新到 v${to}(${n} 个新提交)· 点击查看`, `The local services can be updated to v${to} (${n} new commit(s)) · Click to review`)
+    : t(`本机服务有 ${n} 个新提交可以更新 · 点击查看`, `${n} new commit(s) are available for the local services · Click to review`);
 });
 const codeKey = computed(() => `${codeStatus.value?.head ?? ""}|${codeStatus.value?.behind ?? 0}`);
 const showCodeBanner = computed(() =>
@@ -3829,6 +3859,11 @@ html, body, #app { height: 100%; }
 .banner-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.75rem; padding: 0 2px; opacity: 0.7; line-height: 1.4; }
 .banner-close:hover { opacity: 1; }
 .svc-commits { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5; }
+.svc-version-change { color: var(--text); }
+.svc-note { margin-top: 4px; }
+.svc-note-head { color: var(--text); font-weight: 600; }
+/* 更新记录是 Markdown 原文,照原样显示(保留换行和缩进),可以选中复制;太长就在框里滚。 */
+.svc-note-body { white-space: pre-wrap; word-break: break-word; line-height: 1.5; max-height: 220px; overflow-y: auto; user-select: text; -webkit-user-select: text; }
 .branch-box { margin-top: 6px; }
 .branch-box > summary { cursor: pointer; margin-top: 0; user-select: none; }
 .branch-box[open] > summary { color: var(--text); }

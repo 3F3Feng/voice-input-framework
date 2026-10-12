@@ -83,6 +83,30 @@ jobs:
           # F 类真实错误严格(无 || true);风格规则为既有债务
           ruff check client/ server/ shared/ tests/ services/ --select F
 
+  server-version:
+    # 服务端有自己的版本号(pyproject.toml),每个改了服务端的 PR 都要涨,并在
+    # CHANGELOG-server.md 最上面加一节 —— 用户点「更新服务」随时会拉到 main 上的改动,
+    # 版本号跟着每次改动走,更新时才看得出这次换了什么(见 shared/app_version.py)。
+    # 靠自觉一定会漏,所以在这里拦:PR 动了 services/、shared/、建环境脚本这些而版本号
+    # 没比 base 上的大,就报错。只在 PR 上跑:推到 main 的那一次没有可比的 base。
+    name: Server version bumped
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 要和 base 分支比,浅克隆里没有它。
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check server version and changelog
+        run: python scripts/check_server_version.py "origin/${{ github.base_ref }}"
+
   setup-env:
     # 建环境脚本本身没人测过:Windows 的 .ps1 在开发机(macOS)上根本跑不了,
     # `-Llm` 在没有 C++ 工具链的 Windows 上必失败这件事,是用户实测才发现的。

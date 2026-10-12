@@ -8,9 +8,12 @@
 //!
 //! 这里做两件事:
 //!
-//! 1. **对账**:两个服务在 `/health` 里报 `app_version`(和客户端同一个版本号,见
-//!    `shared/app_version.py`),这里拿它和客户端自己的版本比。老服务端压根没有这个
-//!    字段——那恰恰说明它早于这次改动,按「旧」处理。
+//! 1. **对账**:两个服务在 `/health` 里报服务端的版本号(`server_version`,见
+//!    `shared/app_version.py`),这里拿它和这个客户端要求的最低版本
+//!    ([`MIN_SERVER_VERSION`])比。客户端和服务端各有自己的版本号,不要求相等。更老的
+//!    服务端压根没有版本字段——那恰恰说明它早于报版本号的那一版,按「旧」处理。
+//!    另外(只在本地模式)读本机仓库和上游的服务端版本号、`CHANGELOG-server.md`,
+//!    更新之前就告诉用户这次会从哪一版到哪一版、换了什么(见 [`check_code`])。
 //! 2. **一键更新**(只在本地模式):在仓库里 `git pull --ff-only`、重跑建环境脚本、
 //!    重启本应用管理的服务。这一步动的是用户的仓库和进程,所以先把能想到的「不该
 //!    动」的情况全部拦下来(见 [`Blocker`]),拦下时给出原因和手动命令。绝不
@@ -40,6 +43,18 @@ use crate::tr;
 
 /// 客户端自己的版本,唯一来源是 `gui/src-tauri/Cargo.toml`。
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// 这个客户端要求服务端不低于哪个版本。
+///
+/// 客户端和服务端各有自己的版本号、各涨各的(见 `shared/app_version.py`):服务端每个改动
+/// 都涨,客户端只在发版时涨,所以不能再拿两个号比大小。两边还得对得上的只有这一条。
+///
+/// 客户端用了服务端新加的东西(新的接口、消息里的新字段、建环境脚本的新参数)时,把这里
+/// 调到加它的那一版;没用到就不用动——服务端自己往前走,不该让老客户端提示「服务太旧」。
+/// `tests/test_app_version.py` 核对它不比服务端当前的版本号高。
+///
+/// 2.7.2 是两边共用一个版本号的最后一版,这个客户端用到的东西那时都已经有了。
+pub const MIN_SERVER_VERSION: &str = "2.7.2";
 
 /// `git fetch` / `git pull` 的时限。走的是用户的网络和凭据,卡住(比如在等一个
 /// 永远不会出现的密码输入)时不能让按钮一直转下去。
@@ -84,35 +99,34 @@ pub fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
     }))
 }
 
-/// 服务相对客户端的版本关系。
+/// 服务端的版本够不够这个客户端用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VersionRelation {
-    Same,
-    /// 服务比客户端旧:该更新服务了。
+    /// 不低于客户端要求的最低版本。比它高多少都算:服务端的版本号本来就自己往前走。
+    Enough,
+    /// 低于客户端要求的最低版本:该更新服务了。
     Older,
-    /// 服务比客户端新:该更新应用了(不催,只提一句)。
-    Newer,
     /// 服务没报版本号(早于报版本号的那一版),或者报的认不出来。按「旧」处理。
     Unknown,
 }
 
 impl VersionRelation {
-    /// 要不要提示「服务比应用旧」。没报版本号的一律算:能走到这一步的服务
+    /// 要不要提示「服务太旧」。没报版本号的一律算:能走到这一步的服务
     /// 只可能来自报版本号之前的代码。
     pub fn needs_update(self) -> bool {
         matches!(self, VersionRelation::Older | VersionRelation::Unknown)
     }
 }
 
-pub fn relation(client: &str, service: Option<&str>) -> VersionRelation {
+/// `minimum`:客户端要求的最低服务端版本;`service`:服务报的版本号。
+pub fn relation(minimum: &str, service: Option<&str>) -> VersionRelation {
     let Some(v) = service.map(str::trim).filter(|s| !s.is_empty()) else {
         return VersionRelation::Unknown;
     };
-    match compare_versions(v, client) {
+    match compare_versions(v, minimum) {
         Some(Ordering::Less) => VersionRelation::Older,
-        Some(Ordering::Equal) => VersionRelation::Same,
-        Some(Ordering::Greater) => VersionRelation::Newer,
+        Some(Ordering::Equal | Ordering::Greater) => VersionRelation::Enough,
         None => VersionRelation::Unknown,
     }
 }
@@ -124,32 +138,40 @@ pub struct ServiceVersion {
     pub kind: ServerKind,
     /// `/health` 答没答话。没答话的不参与判断(可能只是没启动、或正忙)。
     pub reachable: bool,
-    /// 服务报的项目版本号;老服务端没有。
-    pub app_version: Option<String>,
+    /// 服务报的服务端版本号;更老的服务端没有。
+    pub server_version: Option<String>,
     /// 答话了才有。
     pub relation: Option<VersionRelation>,
+}
+
+/// `/health` 里的服务端版本号。新服务端报 `server_version`;2.7.2 及更早只有
+/// `app_version`——那时两边共用一个版本号,它就是服务端的版本。
+fn reported_version(health: &serde_json::Value) -> Option<String> {
+    ["server_version", "app_version"].into_iter().find_map(|key| {
+        health[key]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    })
 }
 
 impl ServiceVersion {
     fn from_probe(kind: ServerKind, probe: Result<serde_json::Value, String>) -> Self {
         match probe {
             Ok(v) => {
-                let app_version = v["app_version"]
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string);
+                let server_version = reported_version(&v);
                 Self {
                     kind,
                     reachable: true,
-                    relation: Some(relation(CLIENT_VERSION, app_version.as_deref())),
-                    app_version,
+                    relation: Some(relation(MIN_SERVER_VERSION, server_version.as_deref())),
+                    server_version,
                 }
             }
             Err(_) => Self {
                 kind,
                 reachable: false,
-                app_version: None,
+                server_version: None,
                 relation: None,
             },
         }
@@ -159,12 +181,12 @@ impl ServiceVersion {
 #[derive(Debug, Clone, Serialize)]
 pub struct VersionReport {
     pub client_version: String,
+    /// 这个客户端要求的最低服务端版本(提示「服务太旧」时告诉用户要到哪一版)。
+    pub min_server_version: String,
     pub mode: ServerMode,
     pub services: Vec<ServiceVersion>,
-    /// 至少一个答话的服务比客户端旧(或没报版本号)。
+    /// 至少一个答话的服务低于最低版本(或没报版本号)。
     pub services_older: bool,
-    /// 没有旧的,但有比客户端新的。
-    pub services_newer: bool,
     /// 能不能一键更新(本地模式才有仓库可更新)。按钮点下去还会再做一遍全部检查。
     pub can_update: bool,
     /// 更新正在进行中(比如设置窗口重开了,按钮得接着显示「更新中」)。
@@ -175,16 +197,12 @@ fn summarize(mode: ServerMode, services: Vec<ServiceVersion>) -> VersionReport {
     let older = services
         .iter()
         .any(|s| s.relation.is_some_and(VersionRelation::needs_update));
-    let newer = !older
-        && services
-            .iter()
-            .any(|s| s.relation == Some(VersionRelation::Newer));
     VersionReport {
         client_version: CLIENT_VERSION.to_string(),
+        min_server_version: MIN_SERVER_VERSION.to_string(),
         mode,
         services,
         services_older: older,
-        services_newer: newer,
         can_update: mode == ServerMode::Local,
         update_running: RUNNING.load(AtomicOrdering::SeqCst),
     }
@@ -801,13 +819,128 @@ pub fn ahead_behind(git: &Path, repo: &Path) -> Option<(u32, u32)> {
     Some((it.next()??, it.next()??))
 }
 
+// ── 服务端的版本号和更新记录 ──
+//
+// 服务端每个改动都涨版本号,并在 `CHANGELOG-server.md` 最上面加一节(规矩见
+// `shared/app_version.py`,CI 里 `scripts/check_server_version.py` 拦着漏掉的)。
+// 这里把两样都读出来:更新之前告诉用户「2.7.2 → 2.8.0,这几版换了什么」。
+
+/// 服务端的更新记录文件(仓库根目录)。
+const SERVER_CHANGELOG: &str = "CHANGELOG-server.md";
+/// 一次最多给用户看几版的更新记录。落后太多时只看最新的几版,其余的去文件里翻。
+const MAX_NOTES: usize = 5;
+
+/// `pyproject.toml` 里 `[project]` 表的 `version`。只认 `version = "2.8.0"` 这一种写法
+/// (仓库里就是这么写的),不为读一个字段引入 TOML 解析库。
+pub fn pyproject_version(text: &str) -> Option<String> {
+    let mut in_project = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_project = line == "[project]";
+            continue;
+        }
+        if !in_project {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "version" {
+            continue;
+        }
+        let quoted = value.trim().strip_prefix('"')?;
+        let version = quoted.split('"').next().unwrap_or_default().trim();
+        return (!version.is_empty()).then(|| version.to_string());
+    }
+    None
+}
+
+/// 更新记录里的一节。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReleaseNote {
+    pub version: String,
+    pub date: String,
+    /// 这一节的正文(Markdown 原文)。
+    pub body: String,
+}
+
+/// `## [2.8.0] - 2026-10-12` → (版本号, 日期)。别的标题(`### Fixed`、没按格式写的)不算。
+fn section_heading(line: &str) -> Option<(String, String)> {
+    let rest = line.trim_end().strip_prefix("## [")?;
+    let (version, date) = rest.split_once("] - ")?;
+    let (version, date) = (version.trim(), date.trim());
+    parse_version(version)?;
+    (!date.is_empty()).then(|| (version.to_string(), date.to_string()))
+}
+
+/// 把更新记录拆成一节一节的,按文件里的先后(新的在前)。第一节之前的说明文字不要。
+pub fn changelog_sections(text: &str) -> Vec<ReleaseNote> {
+    let mut out: Vec<ReleaseNote> = Vec::new();
+    for line in text.lines() {
+        if let Some((version, date)) = section_heading(line) {
+            out.push(ReleaseNote {
+                version,
+                date,
+                body: String::new(),
+            });
+        } else if let Some(current) = out.last_mut() {
+            current.body.push_str(line);
+            current.body.push('\n');
+        }
+    }
+    for note in &mut out {
+        note.body = note.body.trim().to_string();
+    }
+    out
+}
+
+/// 从 `from`(不含)到 `to`(含)的那几节,新的在前,最多 [`MAX_NOTES`] 节。
+///
+/// `from` 是本机现在的版本;读不出来(很老的仓库)时不设下限。上游比本机旧
+/// (`to` 不比 `from` 新)时一节也没有。
+pub fn notes_between(sections: &[ReleaseNote], from: Option<&str>, to: &str) -> Vec<ReleaseNote> {
+    sections
+        .iter()
+        .filter(|s| {
+            let after_from = match from {
+                Some(f) => compare_versions(&s.version, f) == Some(Ordering::Greater),
+                None => true,
+            };
+            let up_to = matches!(
+                compare_versions(&s.version, to),
+                Some(Ordering::Less | Ordering::Equal)
+            );
+            after_from && up_to
+        })
+        .take(MAX_NOTES)
+        .cloned()
+        .collect()
+}
+
+/// 「服务端 2.7.2 → 2.8.0」。两头有一头读不出来、或者没变,就没有这句话。
+pub fn version_change(before: Option<&str>, after: Option<&str>) -> Option<String> {
+    let (before, after) = (before?.trim(), after?.trim());
+    if before.is_empty() || after.is_empty() || before == after {
+        return None;
+    }
+    Some(tr!("服务端 {} → {}", "Server {} → {}", before, after))
+}
+
+/// 本机仓库工作区里的服务端版本号(`pyproject.toml`)。
+fn local_server_version(repo: &Path) -> Option<String> {
+    std::fs::read_to_string(repo.join("pyproject.toml"))
+        .ok()
+        .and_then(|text| pyproject_version(&text))
+}
+
 // ── 检查服务代码有没有更新 ──
 
-/// 本机服务的代码和上游比,落后多少。
+/// 本机服务的代码和上游比,落后多少,以及更新之后会从哪一版到哪一版、换了什么。
 ///
-/// 版本号只在发版时才变,可两次发版之间 main 上照样会合进服务端的修复(比如建环境脚本、
-/// 默认提示词)。只比版本号的话,版本一样时界面上连「更新服务」都看不到,用户没法主动
-/// 检查。这里直接问 git:fetch 一下,看本地分支落后上游几个提交。
+/// 直接问 git:fetch 一下,看本地分支落后上游几个提交。服务报的版本号说的是「正在跑的
+/// 那份代码」,这里要的是「仓库里的」和「上游的」,所以读文件:本机的读工作区,上游的用
+/// `git show @{u}:文件`(不动工作区)。
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct CodeStatus {
     /// fetch 成功、比较出了结果。
@@ -820,6 +953,12 @@ pub struct CodeStatus {
     pub behind: u32,
     /// 上游比本地多出来的提交(最多 5 条,「短哈希 标题」)。
     pub new_commits: Vec<String>,
+    /// 本机仓库里的服务端版本号。
+    pub local_version: Option<String>,
+    /// 上游的服务端版本号(更新之后会到的那一版)。
+    pub upstream_version: Option<String>,
+    /// 本机版本和上游版本之间的更新记录,新的在前。没有落后时是空的。
+    pub notes: Vec<ReleaseNote>,
     /// 没法检查的原因(不是本地模式、没有仓库、没有 git、fetch 失败……)。
     pub error: Option<String>,
 }
@@ -875,7 +1014,8 @@ pub async fn check_code(cfg: &ServerConfig) -> CodeStatus {
         return status;
     }
     let (git2, repo2) = (git.clone(), repo.clone());
-    let (head, counts, log) = tokio::task::spawn_blocking(move || {
+    let (head, counts, log, versions) = tokio::task::spawn_blocking(move || {
+        let upstream_changelog = format!("@{{u}}:{SERVER_CHANGELOG}");
         (
             git_query(&git2, &repo2, &["rev-parse", "--short", "HEAD"]),
             ahead_behind(&git2, &repo2),
@@ -891,11 +1031,20 @@ pub async fn check_code(cfg: &ServerConfig) -> CodeStatus {
                     "HEAD..@{u}",
                 ],
             ),
+            (
+                local_server_version(&repo2),
+                // 上游那份文件的内容。老分支上没有这两个文件时 git 报错,这里就是 None。
+                git_query(&git2, &repo2, &["show", "@{u}:pyproject.toml"]),
+                git_query(&git2, &repo2, &["show", upstream_changelog.as_str()]),
+            ),
         )
     })
     .await
-    .unwrap_or((None, None, None));
+    .unwrap_or((None, None, None, (None, None, None)));
     status.head = head;
+    let (local_version, upstream_pyproject, upstream_changelog) = versions;
+    status.local_version = local_version;
+    status.upstream_version = upstream_pyproject.as_deref().and_then(pyproject_version);
     match counts {
         Some((ahead, behind)) => {
             status.checked = true;
@@ -907,6 +1056,19 @@ pub async fn check_code(cfg: &ServerConfig) -> CodeStatus {
                 .filter(|l| !l.trim().is_empty())
                 .map(str::to_string)
                 .collect();
+            // 落后时才有「这次会换什么」可说。
+            if behind > 0 {
+                if let (Some(to), Some(text)) = (
+                    status.upstream_version.as_deref(),
+                    upstream_changelog.as_deref(),
+                ) {
+                    status.notes = notes_between(
+                        &changelog_sections(text),
+                        status.local_version.as_deref(),
+                        to,
+                    );
+                }
+            }
         }
         None => {
             status.error =
@@ -1392,6 +1554,8 @@ async fn run_update(
         emit("progress", Some(line.to_string()));
     };
 
+    // 动仓库之前的服务端版本号,最后和更新完的比。
+    let version_before = local_server_version(&repo);
     let mut switch_note = None;
     if let Some(target) = switch_to {
         let from = facts
@@ -1483,6 +1647,12 @@ async fn run_update(
     // 换过分支的话,总结里先说这一句。
     let code_note = match switch_note {
         Some(note) => tr!("{},{}", "{}; {}", note, code_note),
+        None => code_note,
+    };
+    // 版本号变了就先说版本:「代码 abc → def」看不出这是从哪一版到了哪一版。
+    let version_after = local_server_version(&repo);
+    let code_note = match version_change(version_before.as_deref(), version_after.as_deref()) {
+        Some(change) => tr!("{},{}", "{}; {}", change, code_note),
         None => code_note,
     };
 
@@ -1649,11 +1819,22 @@ mod tests {
         assert_eq!(relation("2.3.3", Some("dev")), VersionRelation::Unknown);
         assert!(VersionRelation::Unknown.needs_update());
         assert!(VersionRelation::Older.needs_update());
-        assert!(!VersionRelation::Same.needs_update());
-        assert!(!VersionRelation::Newer.needs_update());
+        assert!(!VersionRelation::Enough.needs_update());
+    }
+
+    /// 第一个参数是客户端要求的最低服务端版本。服务端的版本号自己往前走,比最低版本高
+    /// 多少都算够——不再有「服务比客户端新」这回事。
+    #[test]
+    fn a_service_is_old_only_below_the_clients_minimum() {
         assert_eq!(relation("2.3.10", Some("2.3.9")), VersionRelation::Older);
-        assert_eq!(relation("2.3.9", Some("2.3.10")), VersionRelation::Newer);
-        assert_eq!(relation("2.3.3", Some("2.3.3")), VersionRelation::Same);
+        assert_eq!(relation("2.3.3", Some("2.3.3")), VersionRelation::Enough);
+        assert_eq!(relation("2.3.9", Some("2.3.10")), VersionRelation::Enough);
+        assert_eq!(relation("2.7.2", Some("3.0.0")), VersionRelation::Enough);
+        // 这个客户端自己的最低要求,版本号写得出来、比得了。
+        assert_eq!(
+            relation(MIN_SERVER_VERSION, Some(MIN_SERVER_VERSION)),
+            VersionRelation::Enough
+        );
     }
 
     fn probe_ok(v: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1666,45 +1847,219 @@ mod tests {
             ServerKind::Stt,
             probe_ok(serde_json::json!({"status": "ok", "version": "1.1.0"})),
         );
-        // 老服务端:有 `version`(接口版本)却没有 `app_version`,照样算旧。
+        // 很老的服务端:有 `version`(接口版本)却没有任何版本号字段,照样算旧。
         assert_eq!(old.relation, Some(VersionRelation::Unknown));
-        assert!(old.app_version.is_none());
+        assert!(old.server_version.is_none());
         let down = ServiceVersion::from_probe(ServerKind::Llm, Err("连不上".into()));
         assert!(!down.reachable);
         assert_eq!(down.relation, None);
 
         let r = summarize(ServerMode::Local, vec![old, down.clone()]);
         assert!(r.services_older);
-        assert!(!r.services_newer);
         assert!(r.can_update);
+        assert_eq!(r.min_server_version, MIN_SERVER_VERSION);
 
-        let same = ServiceVersion::from_probe(
+        let enough = ServiceVersion::from_probe(
             ServerKind::Stt,
-            probe_ok(serde_json::json!({"app_version": CLIENT_VERSION})),
+            probe_ok(serde_json::json!({"server_version": MIN_SERVER_VERSION})),
         );
-        let r = summarize(ServerMode::Remote, vec![same, down.clone()]);
-        assert!(!r.services_older && !r.services_newer);
+        let r = summarize(ServerMode::Remote, vec![enough, down.clone()]);
+        assert!(!r.services_older);
         assert!(!r.can_update, "远程模式没有仓库可更新");
 
         // 连不上的服务不产生提示。
         let r = summarize(ServerMode::Local, vec![down]);
-        assert!(!r.services_older && !r.services_newer);
+        assert!(!r.services_older);
     }
 
     #[test]
-    fn newer_services_only_count_when_nothing_is_older() {
+    fn a_newer_service_is_fine_and_one_old_service_is_enough_to_flag() {
         let newer = ServiceVersion::from_probe(
             ServerKind::Stt,
-            probe_ok(serde_json::json!({"app_version": "999.0.0"})),
+            probe_ok(serde_json::json!({"server_version": "999.0.0"})),
         );
         let old = ServiceVersion::from_probe(
             ServerKind::Llm,
-            probe_ok(serde_json::json!({"app_version": "0.0.1"})),
+            probe_ok(serde_json::json!({"server_version": "0.0.1"})),
         );
+        assert_eq!(newer.relation, Some(VersionRelation::Enough));
         let r = summarize(ServerMode::Local, vec![newer.clone()]);
-        assert!(r.services_newer && !r.services_older);
+        assert!(!r.services_older);
         let r = summarize(ServerMode::Local, vec![newer, old]);
-        assert!(r.services_older && !r.services_newer);
+        assert!(r.services_older);
+    }
+
+    /// 2.7.2 及更早的服务端只报 `app_version`(那时两边共用一个版本号);新的两个都报,
+    /// 以 `server_version` 为准。
+    #[test]
+    fn the_server_version_falls_back_to_the_legacy_field() {
+        let legacy = ServiceVersion::from_probe(
+            ServerKind::Stt,
+            probe_ok(serde_json::json!({"app_version": "2.7.2"})),
+        );
+        assert_eq!(legacy.server_version.as_deref(), Some("2.7.2"));
+        assert_eq!(
+            legacy.relation,
+            Some(relation(MIN_SERVER_VERSION, Some("2.7.2")))
+        );
+
+        let too_old = ServiceVersion::from_probe(
+            ServerKind::Stt,
+            probe_ok(serde_json::json!({"app_version": "0.9.0"})),
+        );
+        assert_eq!(too_old.relation, Some(VersionRelation::Older));
+
+        let both = ServiceVersion::from_probe(
+            ServerKind::Llm,
+            probe_ok(serde_json::json!({"server_version": " 2.9.1 ", "app_version": "2.7.2"})),
+        );
+        assert_eq!(both.server_version.as_deref(), Some("2.9.1"));
+
+        // 新字段是空的(读不出 pyproject 的服务端会报 null)就看老字段。
+        let blank = ServiceVersion::from_probe(
+            ServerKind::Llm,
+            probe_ok(serde_json::json!({"server_version": null, "app_version": "2.8.0"})),
+        );
+        assert_eq!(blank.server_version.as_deref(), Some("2.8.0"));
+    }
+
+    // ── 服务端的版本号和更新记录 ──
+
+    #[test]
+    fn pyproject_version_is_read_from_the_project_table_only() {
+        let text = concat!(
+            "[build-system]\n",
+            "requires = [\"setuptools>=61.0\"]\n\n",
+            "[project]\n",
+            "name = \"voice-input-framework\"\n",
+            "version = \"2.8.0\"\n",
+            "description = \"x\"\n\n",
+            "[tool.black]\n",
+            "line-length = 100\n",
+        );
+        assert_eq!(pyproject_version(text).as_deref(), Some("2.8.0"));
+        // 别的表里的 version 不算
+        let other = "[tool.something]\nversion = \"9.9.9\"\n\n[project]\nname = \"x\"\n";
+        assert_eq!(pyproject_version(other), None);
+        // 空白、行尾注释
+        let spaced = "[project]\n  version   =   \" 2.10.3 \"   # 服务端版本号\n";
+        assert_eq!(pyproject_version(spaced).as_deref(), Some("2.10.3"));
+        assert_eq!(pyproject_version("[project]\nversion = \"\"\n"), None);
+        assert_eq!(pyproject_version(""), None);
+        assert_eq!(pyproject_version("不是 toml"), None);
+    }
+
+    const CHANGELOG: &str = concat!(
+        "# 服务端更新记录\n\n",
+        "说明文字,里面提到 `## [版本号] - 日期` 这个格式。\n\n",
+        "## [2.8.2] - 2026-10-20\n\n",
+        "### Fixed\n\n",
+        "- 修了第二处\n\n",
+        "## [2.8.1] - 2026-10-15\n\n",
+        "- 修了第一处\n\n",
+        "## [2.8.0] - 2026-10-12\n\n",
+        "### Changed\n\n",
+        "- 默认提示词重调\n",
+        "- 另一条\n\n",
+        "## 没按格式写的标题\n\n",
+        "这一段算在 2.8.0 里。\n",
+    );
+
+    #[test]
+    fn changelog_is_split_into_sections() {
+        let sections = changelog_sections(CHANGELOG);
+        let versions: Vec<&str> = sections.iter().map(|s| s.version.as_str()).collect();
+        assert_eq!(versions, ["2.8.2", "2.8.1", "2.8.0"]);
+        assert_eq!(sections[0].date, "2026-10-20");
+        assert_eq!(sections[0].body, "### Fixed\n\n- 修了第二处");
+        assert_eq!(sections[1].body, "- 修了第一处");
+        // 没按格式写的二级标题不另起一节,留在上一节的正文里
+        assert!(sections[2]
+            .body
+            .starts_with("### Changed\n\n- 默认提示词重调\n- 另一条"));
+        assert!(sections[2].body.ends_with("这一段算在 2.8.0 里。"));
+        // 第一节之前的说明文字不属于任何一节
+        assert!(sections.iter().all(|s| !s.body.contains("说明文字")));
+
+        assert!(changelog_sections("").is_empty());
+        assert!(changelog_sections("# 标题\n\n没有任何一节\n").is_empty());
+        // Windows 换行
+        let crlf = changelog_sections("## [1.0.0] - 2026-01-01\r\n\r\n- a\r\n");
+        assert_eq!(crlf.len(), 1);
+        assert_eq!(crlf[0].date, "2026-01-01");
+        assert_eq!(crlf[0].body, "- a");
+    }
+
+    #[test]
+    fn notes_cover_the_versions_this_update_brings() {
+        let sections = changelog_sections(CHANGELOG);
+        let versions = |from: Option<&str>, to: &str| -> Vec<String> {
+            notes_between(&sections, from, to)
+                .into_iter()
+                .map(|n| n.version)
+                .collect()
+        };
+        // 本机 2.8.0,上游 2.8.2:给 2.8.2 和 2.8.1,新的在前;自己那一版不给
+        assert_eq!(versions(Some("2.8.0"), "2.8.2"), ["2.8.2", "2.8.1"]);
+        // 本机还是分开版本号之前的 2.7.2
+        assert_eq!(versions(Some("2.7.2"), "2.8.0"), ["2.8.0"]);
+        // 上游只到 2.8.1:更新的 2.8.2 不该出现
+        assert_eq!(versions(Some("2.8.0"), "2.8.1"), ["2.8.1"]);
+        // 已经是最新、或者上游反而旧(换到了老分支):没有可说的
+        assert!(versions(Some("2.8.2"), "2.8.2").is_empty());
+        assert!(versions(Some("2.8.2"), "2.8.0").is_empty());
+        // 本机的版本号读不出来:不设下限
+        assert_eq!(versions(None, "2.8.1"), ["2.8.1", "2.8.0"]);
+    }
+
+    #[test]
+    fn notes_are_capped() {
+        let mut text = String::new();
+        for patch in (0..20).rev() {
+            text.push_str(&format!(
+                "## [3.0.{patch}] - 2026-11-01\n\n- 第 {patch} 版\n\n"
+            ));
+        }
+        let sections = changelog_sections(&text);
+        assert_eq!(sections.len(), 20);
+        let notes = notes_between(&sections, Some("3.0.0"), "3.0.19");
+        assert_eq!(notes.len(), MAX_NOTES);
+        assert_eq!(notes[0].version, "3.0.19", "给的是最新的几版");
+    }
+
+    #[test]
+    fn version_change_is_mentioned_only_when_it_changed() {
+        let change = version_change(Some("2.7.2"), Some("2.8.0")).unwrap();
+        assert!(change.contains("2.7.2") && change.contains("2.8.0"));
+        assert_eq!(version_change(Some("2.8.0"), Some("2.8.0")), None);
+        assert_eq!(version_change(None, Some("2.8.0")), None);
+        assert_eq!(version_change(Some("2.8.0"), None), None);
+        assert_eq!(version_change(Some(" "), Some("2.8.0")), None);
+    }
+
+    /// 仓库里真的那两个文件:客户端读得出版本号,更新记录的第一节就是它。
+    /// (格式由 `scripts/check_server_version.py` 和 `tests/test_app_version.py` 管着,
+    /// 这里核对的是 Rust 这边的读法和它们对得上。)
+    #[test]
+    fn the_real_pyproject_and_changelog_are_readable() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let pyproject = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+        let version = pyproject_version(&pyproject).expect("pyproject.toml 里读不出 version");
+        assert!(parse_version(&version).is_some(), "{version}");
+        assert_ne!(
+            relation(MIN_SERVER_VERSION, Some(version.as_str())),
+            VersionRelation::Older,
+            "客户端要求的最低服务端版本比仓库里的服务端还高"
+        );
+
+        let changelog = std::fs::read_to_string(root.join(SERVER_CHANGELOG)).unwrap();
+        let sections = changelog_sections(&changelog);
+        assert_eq!(
+            sections.first().map(|s| s.version.as_str()),
+            Some(version.as_str()),
+            "CHANGELOG-server.md 的第一节应该是 pyproject.toml 里的版本"
+        );
+        assert!(sections.iter().all(|s| !s.body.is_empty()));
     }
 
     // ── 纯判断 ──

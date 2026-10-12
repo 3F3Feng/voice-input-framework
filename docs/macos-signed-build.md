@@ -188,7 +188,8 @@ Apple Development 证书一年一续。续期后把新导出的 .p12 重新存�
 
 ## 发版怎么走
 
-版本号**只有一个来源**:`gui/src-tauri/Cargo.toml` 的 `package.version`。
+客户端的版本号**只有一个来源**:`gui/src-tauri/Cargo.toml` 的 `package.version`
+(服务端有自己的版本号,不跟着发版走,见 [DEVELOPMENT.md](DEVELOPMENT.md) 的「版本号」一节)。
 `tauri.conf.json` 不写 `version`(tauri 缺省回落到 Cargo.toml)。
 
 ```bash

@@ -65,9 +65,31 @@ npm install
 npm run tauri build
 ```
 
-**版本号**唯一的来源是 `gui/src-tauri/Cargo.toml`（`tauri.conf.json` 不写 `version`，Tauri 缺省回落到它）；
-发版时 `client/__init__.py` 和 `pyproject.toml` 跟着改。「设置 → 关于」里的构建 ID 是每次构建现生成的
-UUID，用来分辨本地反复构建出来的产物。
+「设置 → 关于」里的构建 ID 是每次构建现生成的 UUID，用来分辨本地反复构建出来的产物。
+
+## 版本号
+
+客户端和服务端各有自己的版本号，各涨各的（2.7.2 及更早两边共用一个）：
+
+| | 客户端 | 服务端（STT / LLM 服务、建环境脚本） |
+| --- | --- | --- |
+| 版本号写在哪 | `gui/src-tauri/Cargo.toml`（`tauri.conf.json` 不写 `version`，Tauri 缺省回落到它）；`client/__init__.py` 跟着改 | `pyproject.toml` 的 `version` |
+| 什么时候涨 | 发版（打 `v*` tag）时。发版流水线核对 tag 和这两处一致 | **每个改了服务端的 PR**。修 bug 涨第三位，加功能或改了行为涨第二位 |
+| 更新记录 | [CHANGELOG.md](../CHANGELOG.md)，平时写在 Unreleased 里 | [CHANGELOG-server.md](../CHANGELOG-server.md)，每次在最上面加一节 `## [版本号] - 日期` |
+| 用户怎么拿到 | 应用内更新（GitHub Releases） | 客户端里点「更新服务」（`git pull` + 重建环境），随时能拉到 main 上的改动 |
+
+服务端每个改动都涨，是因为它不等发版：用户点「更新服务」拉到的就是 main。版本号跟着每次改动走，
+客户端才能在更新之前告诉用户「2.8.0 → 2.8.2，这两版换了什么」（它读上游的 `pyproject.toml` 和
+`CHANGELOG-server.md`，所以那一节的标题格式不能改）。
+
+- CI 的 `Server version bumped`（`scripts/check_server_version.py`）拦着漏涨的：PR 动了 `services/`、
+  `shared/`、`server/`、建环境脚本、`requirements*.txt`、`pyproject.toml` 而版本号没比 base 上的大，
+  就报错。测试、文档、`tools/` 不算。
+- 两边还要对得上的只有一条：客户端要求服务端不低于某个版本（`gui/src-tauri/src/service_update.rs` 的
+  `MIN_SERVER_VERSION`），低于它才提示「服务太旧」。**客户端用了服务端新加的东西时，把它调到加那个
+  东西的服务端版本**；没用到就不动。
+- 服务在 `/health` 里报 `server_version`；同一个值还以老名字 `app_version` 报一份，给 2.7.2 及更早的
+  客户端和手机端。来龙去脉见 `shared/app_version.py`。
 
 ## 测试
 
