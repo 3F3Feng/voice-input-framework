@@ -1242,7 +1242,7 @@ def main() -> int:
             sys.path.insert(0, str(REPO / "tools"))
             import llm_prompt_eval
 
-            prompt = llm_prompt_eval.load_prompts()[args.prompt]
+            prompt = llm_prompt_eval.load_prompts(health.get("current_model"))[args.prompt]
         req("PUT", "/prompt", {"prompt": prompt})
 
     groups = []

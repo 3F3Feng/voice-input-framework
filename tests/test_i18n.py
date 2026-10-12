@@ -241,7 +241,7 @@ class TestLLMServer:
 
         engine = srv.LLMEngine(backend=srv.MLXBackend())
         engine._model, engine._tokenizer, engine._is_loaded = object(), object(), True
-        monkeypatch.setattr(srv, "load_prompt", lambda lang="zh": "prompt")
+        monkeypatch.setattr(srv, "load_prompt", lambda lang="zh", model=None: "prompt")
         monkeypatch.setattr(engine.backend, "generate", lambda *a: ("", False))
         assert engine.process("嗯那个明天开会").error == "LLM 返回了空结果"
         assert engine.process("嗯那个明天开会", lang="en").error == "LLM returned an empty result"
@@ -270,6 +270,72 @@ class TestDefaultPrompt:
         # 恢复默认:删掉用户那份,回的是当前界面语言的默认提示词。
         assert client.delete("/prompt", headers=EN).json()["prompt"] == srv.DEFAULT_PROMPT_EN
         assert client.get("/prompt").json()["prompt"] == srv.DEFAULT_PROMPT
+
+
+class TestPromptPerModel:
+    """默认提示词可以按模型另写一份(MODEL_PROMPTS);没有的用通用的,用户存过的照旧优先。"""
+
+    def test_model_without_its_own_prompt_gets_the_generic_one(self):
+        import services.llm_server as srv
+
+        for model in (None, "", "Gemma-4-E4B-GGUF", "没有这个模型"):
+            assert srv.default_prompt("zh", model) == srv.DEFAULT_PROMPT
+            assert srv.default_prompt("en", model) == srv.DEFAULT_PROMPT_EN
+
+    def test_model_with_its_own_prompt(self, monkeypatch):
+        import services.llm_server as srv
+
+        monkeypatch.setattr(srv, "MODEL_PROMPTS", {"Gemma-4-E2B-GGUF": {"zh": "小模型专用"}})
+        assert srv.default_prompt("zh", "Gemma-4-E2B-GGUF") == "小模型专用"
+        # 只写了中文那份:英文界面仍用通用的英文提示词
+        assert srv.default_prompt("en", "Gemma-4-E2B-GGUF") == srv.DEFAULT_PROMPT_EN
+        # 名字要完全一样:MLX 版是另一个名字,没量过就不该跟着变
+        assert srv.default_prompt("zh", "Gemma-4-E2B") == srv.DEFAULT_PROMPT
+        assert srv.default_prompt("zh", "Gemma-4-E4B-GGUF") == srv.DEFAULT_PROMPT
+
+    def test_endpoints_and_generation_use_the_current_models_prompt(self, monkeypatch, tmp_path):
+        import services.llm_server as srv
+
+        monkeypatch.setattr(srv, "PROMPT_FILE", tmp_path / "llm_prompt.json")
+        engine = srv.LLMEngine(default_model="Gemma-4-E2B", backend=srv.MLXBackend())
+        engine._model, engine._tokenizer, engine._is_loaded = object(), object(), True
+        seen = []
+
+        def generate(model, tokenizer, messages, text):
+            seen.append(messages[0]["content"])  # 系统提示
+            return "好。", False
+
+        monkeypatch.setattr(engine.backend, "generate", generate)
+        monkeypatch.setattr(srv, "engine", engine)
+        monkeypatch.setattr(srv, "MODEL_PROMPTS", {"Gemma-4-E2B": {"zh": "小模型专用"}})
+        client = TestClient(srv.app)
+
+        assert client.get("/prompt").json()["prompt"] == "小模型专用"
+        engine.process("嗯好")
+        assert seen[-1] == "小模型专用"
+
+        # 换了模型,默认提示词跟着换
+        engine.current_model_name = "Gemma-4-E4B"
+        assert client.get("/prompt").json()["prompt"] == srv.DEFAULT_PROMPT
+        engine.process("嗯好")
+        assert seen[-1] == srv.DEFAULT_PROMPT
+
+        # 用户存过的那份不看模型;恢复默认回的是当前模型的那份
+        engine.current_model_name = "Gemma-4-E2B"
+        assert client.put("/prompt", json={"prompt": "我自己的"}).status_code == 200
+        engine.process("嗯好")
+        assert seen[-1] == "我自己的"
+        assert client.delete("/prompt").json()["prompt"] == "小模型专用"
+
+    def test_every_entry_names_a_real_model_and_language(self):
+        """名字写错的话那一份永远匹配不上,悄悄用着通用的 —— 在这里拦住。"""
+        import services.llm_server as srv
+
+        known = {name for cls in srv.BACKENDS.values() for name in cls.MODEL_IDS}
+        for model, by_lang in srv.MODEL_PROMPTS.items():
+            assert model in known, model
+            assert by_lang and set(by_lang) <= {"zh", "en"}, model
+            assert all(isinstance(p, str) and p.strip() for p in by_lang.values()), model
 
 
 class TestPromptFileEncoding:

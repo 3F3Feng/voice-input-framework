@@ -518,7 +518,7 @@ class TestLlamaCppOutputGuards:
         engine.process("嗯那个后天开会")
         assert fake.resets == 1  # 提示词没变:只有第一次清,之后复用前缀(省掉重算提示词)
 
-        monkeypatch.setattr(srv, "load_prompt", lambda lang="zh": "只删填充词")
+        monkeypatch.setattr(srv, "load_prompt", lambda lang="zh", model=None: "只删填充词")
         engine.process("嗯那个明天开会")
         engine.process("嗯那个后天开会")
         assert fake.resets == 2

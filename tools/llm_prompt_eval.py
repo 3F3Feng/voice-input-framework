@@ -93,11 +93,18 @@ CHAT_CASES = [
 MID_PUNCT = re.compile(r"[，,？?！!；;：:、]")
 
 
-def load_prompts() -> dict[str, str]:
+def load_prompts(model: str | None = None) -> dict[str, str]:
+    """各份提示词。`model` 是服务当前加载的模型:默认提示词可以按模型另写一份
+
+    (services/llm_server.py 的 MODEL_PROMPTS),default_zh / default_en 给的是那个模型的。
+    """
     sys.path.insert(0, str(REPO))
     import services.llm_server as srv
 
-    prompts = {"default_zh": srv.DEFAULT_PROMPT, "default_en": srv.DEFAULT_PROMPT_EN}
+    prompts = {
+        "default_zh": srv.default_prompt("zh", model),
+        "default_en": srv.default_prompt("en", model),
+    }
     src = (REPO / "gui" / "src" / "App.vue").read_text(encoding="utf-8")
 
     def unescape(x: str) -> str:
@@ -134,7 +141,7 @@ def main() -> int:
 
     health = req("GET", "/health")
     print(f"model: {health.get('current_model')} ({health.get('backend')})")
-    prompts = load_prompts()
+    prompts = load_prompts(health.get("current_model"))
     names = args.only or list(prompts)
     bad_total, latencies = 0, []
     try:
