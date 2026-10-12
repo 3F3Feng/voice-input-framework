@@ -184,20 +184,29 @@ def read_prompt_file(path: Path) -> str:
     以前读写都没指定编码,用的是系统默认编码:英文版 Windows 是 cp1252,存中文提示词
     直接失败(PUT /prompt 回 500);中文版 Windows 是 GBK,存得进去但文件是 GBK 的 ——
     升级后这些老文件还得读得出来。
+
+    换行一律还原成 `\\n`:以前在 Windows 上存的文件里是 `\\r\\n`(见 `save_prompt`),不还原
+    的话模型看到的提示词每行末尾都多一个 `\\r`。
     """
     raw = path.read_bytes()
     try:
-        return raw.decode("utf-8")
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
         import locale
 
-        return raw.decode(locale.getpreferredencoding(False))
+        text = raw.decode(locale.getpreferredencoding(False))
+    return text.replace("\r\n", "\n")
 
 
 def save_prompt(prompt: str) -> bool:
     """保存提示词"""
     try:
-        PROMPT_FILE.write_text(prompt, encoding="utf-8")
+        # newline="\n":不指定的话 Windows 上会把每个换行写成 \r\n,读回来原样交给模型。
+        # 同一份提示词,存过一遍再用就比直接用差:实测 Gemma-4-E4B 跑
+        # tools/llm_dictation_eval.py 的 200 例,英文默认提示词不合格的从 6 例变成 11 例
+        # (多出来的都是没删干净的改口和填充词),中文的 5 例变 6 例。在界面里选一个预设
+        # 就是存一遍。
+        PROMPT_FILE.write_text(prompt.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
         return True
     except Exception as e:
         logger.error(f"Failed to save prompt file: {e}")

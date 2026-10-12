@@ -292,3 +292,20 @@ class TestPromptFileEncoding:
         path = tmp_path / "llm_prompt.json"
         path.write_bytes("去掉填充词".encode("gbk"))
         assert srv.read_prompt_file(path) == "去掉填充词"
+
+    def test_line_endings_stay_lf(self, monkeypatch, tmp_path):
+        """Windows 上文本模式会把换行写成 \\r\\n,读回来模型看到的提示词每行多一个 \\r。"""
+        import services.llm_server as srv
+
+        monkeypatch.setattr(srv, "PROMPT_FILE", tmp_path / "llm_prompt.json")
+        prompt = "规则:\n1. 删掉填充词\n2. 不要翻译"
+        assert srv.save_prompt(prompt)
+        assert b"\r" not in srv.PROMPT_FILE.read_bytes()
+        assert srv.load_prompt() == prompt
+
+        # 老版本在 Windows 上存下的文件,读的时候还原
+        srv.PROMPT_FILE.write_bytes(prompt.replace("\n", "\r\n").encode("utf-8"))
+        assert srv.load_prompt() == prompt
+        # 客户端发来的就带 \r\n 的,存的时候也还原
+        assert srv.save_prompt(prompt.replace("\n", "\r\n"))
+        assert b"\r" not in srv.PROMPT_FILE.read_bytes()
