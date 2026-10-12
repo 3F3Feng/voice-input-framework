@@ -170,14 +170,28 @@ class TestSegmentedTranscriber:
         assert len(engine.calls) == 1
 
     @pytest.mark.asyncio
-    async def test_time_spent_in_the_model_is_added_up(self, short_segments):
-        engine = FakeEngine(delay=0.02)
+    async def test_time_spent_in_the_model_is_added_up(self, short_segments, monkeypatch):
+        # 假时钟,只在「模型」算的时候走。不能真的 sleep 再去量:Windows 的定时器默认
+        # 15.6ms 一跳,asyncio.sleep(0.02) 实际只睡 16ms 左右,量出来的比要求的少。
+        from types import SimpleNamespace
+
+        now = 0.0
+        monkeypatch.setattr(segmenter, "time", SimpleNamespace(perf_counter=lambda: now))
+        calls = []
+
+        async def engine(pcm: bytes, context: str | None) -> str:
+            nonlocal now
+            calls.append(pcm)
+            await asyncio.sleep(0)
+            now += 1.5
+            return text_of(pcm)
+
         seg = segmenter.SegmentedTranscriber(engine)
         await feed_realtime(seg, speech(20))
         await seg.finish()
-        assert len(engine.calls) > 1
+        assert len(calls) > 1
         # 每一段(包括 finish 里最后那段)都算进去了
-        assert seg.compute_s >= 0.02 * len(engine.calls) * 0.9
+        assert seg.compute_s == pytest.approx(1.5 * len(calls))
 
     @pytest.mark.asyncio
     async def test_cancel_stops_scheduling(self, short_segments):
