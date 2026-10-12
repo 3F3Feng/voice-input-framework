@@ -86,8 +86,11 @@ uvx black --check services shared tests && uvx ruff check services shared tests 
 - `tests/test_contract.py` 用 TestClient 断言 HTTP / WebSocket 端点的契约，不需要模型。
 - 真实模型的集成测试（要模型和显卡环境）：`bash scripts/run_integration.sh`，它启动 STT 和 LLM 服务，
   跑 `tests/test_e2e.py` 和 `tests/test_api_endpoints.py`。
-- 改了 LLM 的提示词或默认模型：用 `tools/llm_prompt_eval.py` 和 `tools/llm_format_eval.py` 对着一个测试用的
-  LLM 服务跑一遍。
+- 改了 LLM 的提示词或默认模型：用 `tools/llm_dictation_eval.py`、`tools/llm_prompt_eval.py` 和
+  `tools/llm_format_eval.py` 对着一个测试用的 LLM 服务跑一遍。第一个的输入长得和语音识别真正吐出来的
+  一样（自带标点、中英之间没空格、数字是汉字），后两个是不带标点的一串字——只在后两个上满分不算数。
+  调的时候只看 `--set tune` 那一组，调完再跑 `--set held`。某个模型需要不一样的写法时，不要去改通用的
+  那份迁就它，在 `services/llm_server.py` 的 `MODEL_PROMPTS` 里给它单独加一份（规矩写在那张表上面）。
 - `scripts/pre-commit.sh` 是提交钩子（rustfmt + clippy），装到 `.git/hooks/pre-commit` 用。
 
 手动验证的清单：桌面客户端见 [rust-client-verification.md](rust-client-verification.md)，
