@@ -70,24 +70,28 @@ sentence under each —
 Things to know:
 
 - **It makes mistakes; double-check numbers and corrections.** The post-processing model is small enough to
-  run on your own computer. In English, an enumeration inside one sentence comes back unchanged
-  ("We need milk, eggs, and a bag of rice."; "First unplug the router, wait ten seconds, then plug it back in, and finally check whether the light is green.")
+  run on your own computer. In English, an enumeration inside one sentence is not turned into a list
+  ("We need milk, eggs, and a bag of rice." comes back unchanged; in "First unplug the router, wait ten seconds, then plug it back in, and finally check whether the light is green." only "ten" becomes "10")
   and a change of topic does not start a new paragraph; the Chinese examples in [README.md](README.md) show
-  both working for Chinese speech. A filler is occasionally left in, and a number can come out wrong: in
-  Chinese, 两万三千件 (23,000 pieces) was written as "23500 件". The same sentence can also differ by a
-  character or two depending on what the service handled just before ("35000" / "35,000"). The result box in
-  the main window can switch to "Original" to compare.
+  both working for Chinese speech. A filler is occasionally left in, and a correction can be applied only
+  halfway: "Book a table for four, sorry, five people at seven thirty." came back as
+  "Book a table for four, five people at 7:30." The same sentence can also come out differently depending
+  on what the service handled just before; [README.md](README.md) has a Chinese example where a number is
+  only half converted in the first sentence after the service starts. The result box in the main window can
+  switch to "Original" to compare.
 - **The smaller model does less.** Smaller machines default to Gemma-4-E2B (see the table below). On the
-  same sentences it leaves numbers spelled out ("twenty three thousand units") and leaves
-  "Sarah, sorry, I mean Sam" as it is.
+  same sentences it leaves numbers spelled out ("twenty three thousand units") and turns
+  "Sarah, sorry, I mean Sam" into "Sam, sorry, I mean Sam".
 - **What was measured.** On an automated check of 200 cases written like real recognition output
   (`tools/llm_dictation_eval.py`; Chinese, English and mixed speech), the default prompt for the English /
-  Chinese interface passes 194 / 195 on E4B (173 / 174 before the retune) and 175 / 174 on E2B; the three
-  presets pass 183–195 on E4B. All of this was measured with the llama.cpp builds on Windows; the MLX builds
-  on Mac use the same prompts and have not been measured separately.
+  Chinese interface passes 194 / 196 on E4B (173 / 174 before the retune) and 173 / 173 on E2B; the three
+  presets pass 185–196 on E4B. A further 33 cases check that numbers keep their value (两万三千件, 23,000
+  pieces, must not come out as "23500 件"); the default prompt and all three presets pass all 33 on E4B.
+  All of this was measured with the llama.cpp builds on Windows; the MLX builds on Mac use the same prompts
+  and have not been measured separately.
 - **Which version has it.** The default prompt lives in the services: one "Update services" gets you this
-  version (services 2.8.0 and later). The presets ship inside the client; the results above are from the
-  presets in clients after 2.7.2. What changed in each version is in
+  version (services 2.8.2 and later). The presets ship inside the client; the results above are from the
+  presets in client 2.8.0 and later. What changed in each version is in
   [CHANGELOG-server.md](CHANGELOG-server.md) and [CHANGELOG.md](CHANGELOG.md) (both Chinese).
 
 ## 🚀 Quick start
