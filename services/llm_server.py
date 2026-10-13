@@ -31,7 +31,7 @@ if str(project_dir) not in sys.path:
 
 from services import model_catalog  # noqa: E402
 from shared import auth, i18n, llama_runtime, llm_backend, quiet_logs  # noqa: E402
-from shared.app_version import APP_VERSION  # noqa: E402
+from shared.app_version import SERVER_VERSION  # noqa: E402
 from shared.i18n import bi, en_of  # noqa: E402
 from shared.constants import (  # noqa: E402
     DEFAULT_BIND_HOST,
@@ -370,8 +370,10 @@ class HealthStatus(BaseModel):
     #: 加载进度(正在加载时有值),和 STT 那边 `/health.loading` 同一个格式。默认的
     #: LLM 要下 3–7 GB,以前打开后处理开关后全程只有一句「正在启动 LLM 服务…」。
     loading: dict[str, Any] | None = None
-    #: 项目版本号(pyproject.toml,和客户端同一个版本号),见 shared/app_version.py。
-    #: 上面的 `version` 是接口版本,留着给老客户端。
+    #: 服务端版本号(pyproject.toml),见 shared/app_version.py。上面的 `version` 是接口
+    #: 版本,留着给老客户端。
+    server_version: str | None = None
+    #: 同一个值的老名字:2.7.2 及更早的客户端只认它。
     app_version: str | None = None
 
 
@@ -1397,7 +1399,8 @@ async def health_check(request: Request):
             else None
         ),
         loading=engine.loading_progress(),
-        app_version=APP_VERSION,
+        server_version=SERVER_VERSION,
+        app_version=SERVER_VERSION,
     )
 
 

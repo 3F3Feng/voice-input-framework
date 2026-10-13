@@ -171,7 +171,7 @@ The detailed documents are currently in Chinese only.
 | Use it on a phone | [mobile/README.md](mobile/README.md) |
 | Understand why and when macOS asks for its three permissions | [docs/macos-permissions.md](docs/macos-permissions.md) |
 | Help test (Windows / Android, running your own services) | [docs/testing.md](docs/testing.md) |
-| See what changed in each version | [CHANGELOG.md](CHANGELOG.md) |
+| See what changed in each version | Client: [CHANGELOG.md](CHANGELOG.md) · Server: [CHANGELOG-server.md](CHANGELOG-server.md) |
 
 **Developing**
 

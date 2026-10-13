@@ -49,7 +49,7 @@ from services.stt_engine import (
     TranscriptionResult,
 )
 from shared import auth, i18n, llm_backend, quiet_logs
-from shared.app_version import APP_VERSION
+from shared.app_version import SERVER_VERSION
 from shared.constants import (
     DEFAULT_BIND_HOST,
     DEFAULT_CORS_ORIGINS,
@@ -499,7 +499,8 @@ async def health_check(request: Request):
         hardware=_hardware_info(lang),
         error=load_error,
         loading=engine.loading_progress(),
-        app_version=APP_VERSION,
+        server_version=SERVER_VERSION,
+        app_version=SERVER_VERSION,
     )
 
 
@@ -986,8 +987,10 @@ async def websocket_stream(websocket: WebSocket):
             # `incremental: true`、按下就开始传;老服务端没有这个字段,新客户端就照旧
             # 松手后一次性上传。老客户端不认它,忽略即可。
             "incremental": True,
-            # 项目版本号,和 /health 的 app_version 一样(见 shared/app_version.py)。
-            "app_version": APP_VERSION,
+            # 服务端版本号,和 /health 里的一样;app_version 是给老客户端的老名字
+            # (见 shared/app_version.py)。
+            "server_version": SERVER_VERSION,
+            "app_version": SERVER_VERSION,
         }
     )
 

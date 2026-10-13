@@ -154,7 +154,7 @@ uv run python -m services.llm_server   # LLM 后处理,端口 6545(可选)
 | 在手机上用 | [mobile/README.md](mobile/README.md) |
 | 弄明白 macOS 上的三项权限为什么要、什么时候要 | [docs/macos-permissions.md](docs/macos-permissions.md) |
 | 帮忙测试（Windows / Android，自己搭服务自己连） | [docs/testing.md](docs/testing.md) |
-| 看每个版本改了什么 | [CHANGELOG.md](CHANGELOG.md) |
+| 看每个版本改了什么 | 客户端 [CHANGELOG.md](CHANGELOG.md) · 服务端 [CHANGELOG-server.md](CHANGELOG-server.md) |
 
 **开发**
 

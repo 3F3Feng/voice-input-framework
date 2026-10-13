@@ -92,9 +92,11 @@ class HealthStatus(BaseModel):
     #: 加载进度(status == "loading" 时有值):加载了多久、这次下载了多少字节。
     #: 首次使用一个模型要下几百 MB 到几 GB,以前界面只有一句「正在加载模型」。
     loading: dict[str, Any] | None = None
-    #: 项目版本号(pyproject.toml,和客户端同一个版本号)。上面的 `version` 是这个
-    #: 接口自己的版本,从来没变过,留着给老客户端。客户端拿 `app_version` 和自己比,
-    #: 看出「应用更新了、仓库还没拉新代码」;老服务端没有这个字段。
+    #: 服务端版本号(pyproject.toml),见 shared/app_version.py。上面的 `version` 是这个
+    #: 接口自己的版本,从来没变过,留着给老客户端。客户端拿它和自己要求的最低服务端
+    #: 版本比,看出「仓库还没拉新代码」。
+    server_version: str | None = None
+    #: 同一个值的老名字:2.7.2 及更早的客户端只认它(更早的服务端连它也没有)。
     app_version: str | None = None
 
 

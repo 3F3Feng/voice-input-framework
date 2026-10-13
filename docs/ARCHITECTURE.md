@@ -88,7 +88,9 @@
 | 更新 | `git pull`、重跑 `setup-env`、重启服务；也能切到开发分支 | `service_update.rs` |
 
 客户端和服务端分开更新：客户端的安装包走 GitHub Releases（应用内更新，带签名校验），服务端代码走
-git。两个服务在 `/health` 里报自己的版本（`shared/app_version.py`），比客户端旧时客户端会提示更新服务。
+git。两边各有自己的版本号：客户端只在发版时涨，服务端每个改动都涨（`shared/app_version.py`）。两个服务在
+`/health` 里报服务端的版本，低于客户端要求的最低版本时客户端会提示更新服务；本地模式下客户端还会读
+上游的版本号和 `CHANGELOG-server.md`，更新之前就告诉用户这次会从哪一版到哪一版、换了什么。
 
 ## 安全边界
 
