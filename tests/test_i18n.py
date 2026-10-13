@@ -260,6 +260,9 @@ class TestDefaultPrompt:
         import services.llm_server as srv
 
         monkeypatch.setattr(srv, "PROMPT_FILE", tmp_path / "llm_prompt.json")
+        # 这里查的是通用的那份跟不跟界面语言;这台机器的默认模型有没有自己的一份
+        # (没有显卡的机器默认是 Gemma-4-E2B-GGUF,它有)由 TestPromptPerModel 查。
+        monkeypatch.setattr(srv, "MODEL_PROMPTS", {})
         client = TestClient(srv.app)
         assert client.get("/prompt").json()["prompt"] == srv.DEFAULT_PROMPT
         assert client.get("/prompt", headers=EN).json()["prompt"] == srv.DEFAULT_PROMPT_EN
@@ -292,6 +295,19 @@ class TestPromptPerModel:
         # 名字要完全一样:MLX 版是另一个名字,没量过就不该跟着变
         assert srv.default_prompt("zh", "Gemma-4-E2B") == srv.DEFAULT_PROMPT
         assert srv.default_prompt("zh", "Gemma-4-E4B-GGUF") == srv.DEFAULT_PROMPT
+
+    def test_gemma_e2b_gguf_has_its_own_english_prompt(self):
+        """表里现在有的那一份:只量过 llama.cpp 上的 E2B,只有英文界面的需要另写。"""
+        import services.llm_server as srv
+
+        own = srv.default_prompt("en", "Gemma-4-E2B-GGUF")
+        assert own != srv.DEFAULT_PROMPT_EN
+        # 通用那份的第 4 条,E2B 会把它当成「什么都别动」
+        assert "keep every remaining word" in srv.DEFAULT_PROMPT_EN
+        assert "keep every remaining word" not in own
+        assert srv.default_prompt("zh", "Gemma-4-E2B-GGUF") == srv.DEFAULT_PROMPT
+        # MLX 上的 E2B 没量过,用的还是通用的
+        assert srv.default_prompt("en", "Gemma-4-E2B") == srv.DEFAULT_PROMPT_EN
 
     def test_endpoints_and_generation_use_the_current_models_prompt(self, monkeypatch, tmp_path):
         import services.llm_server as srv
