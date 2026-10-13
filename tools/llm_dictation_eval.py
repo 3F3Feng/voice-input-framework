@@ -18,10 +18,18 @@ Qwen3-ASR 的输出**自带全角标点**、中英文之间没有空格、数字
   「对对对」这类应答留着,本来就干净的句子别动;
 - **d 长口述**:几百字的内容不丢、不概括;
 - **e 列表**:该排成列表的排,不该排的别排;
-- **f 数字和念出来的符号**、**g 中英混说**、**h 片段**。
+- **f 数字和念出来的符号**、**g 中英混说**、**h 片段**;
+- **n 数字的值**:金额、百分比、电话号码、小数、带单位的数量写成阿拉伯数字之后,值一位都
+  不能变。里面有一批数是照着提示词自己的示例数字挑的(开头相同、后面不同),见下面。
 
 判定除了「该留的词还在、该删的没了」,还数两个数:输出里**原文没有的字**有多少(换词、
-补内容、调语序都会让它变大),原文**被删掉的比例**(丢内容)。
+补内容、调语序都会让它变大),原文**被删掉的比例**(丢内容)。n 组另外按**值**比数字
+(`Case.nums`):「23000」「23,000」「2.3 万」「两万三千」算同一个数,「23500」不算。
+
+提示词里举的示例数字会串进输出:规则里写着「两万三千五百块 → 23500 元」的时候,「这批货
+一共两万三千件」被写成了「23500 件」(2026-10,Gemma-4-E4B,默认提示词和三个预设都是)——
+输入的数和示例开头相同,模型照着示例把它补全了。所以:**改提示词里的示例数字时,n 组里
+跟着加几个和新数字开头相同的数**;只留着和旧数字相近的例子,新的撞车查不出来。
 
 用例分两组:`CASES` 是调提示词时看的;`HELD_OUT` 是留出来的,调的时候不看、调完跑一遍,
 防止只是把提示词凑到了前一组上。往提示词的示例里加东西时,别照抄这里的句子。
@@ -57,6 +65,7 @@ import sys
 import unicodedata
 import urllib.request
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -80,6 +89,12 @@ class Case:
     novel_max: int | None = None
     #: 原文被删掉的比例上限(查丢内容);None 不查
     del_max: float | None = None
+    #: 输出里要有的数,按值比:「23000」「23,000」「2.3 万」「两万三千」「twenty three thousand」
+    #: 是同一个数,「a|b」写成哪个都算对;输出里写成阿拉伯数字的数还必须都在这里面。
+    #: 查的是数字的值变没变。keep 按子串找,查不了:「23000」在「230000」里也找得到
+    nums: list[str] = field(default_factory=list)
+    #: nums 里的数要写成阿拉伯数字(金额、百分比、电话号码 —— 提示词明说要转的那几类)
+    digits: bool = False
 
 
 def norm(s: str) -> str:
@@ -113,6 +128,161 @@ def has(token: str, out: str, out_n: str) -> bool:
         pat = r"(?<![a-z])" + r"[\s,.;:!?，。、]*".join(map(re.escape, t.split())) + r"(?![a-z])"
         return re.search(pat, out.lower()) is not None
     return t in out.lower() or norm(t) in out_n
+
+
+# ── 数字的值 ──
+
+CN_DIGITS = dict(zip("零〇一二两三四五六七八九", (0, 0, 1, 2, 2, 3, 4, 5, 6, 7, 8, 9), strict=True))
+CN_UNITS = {"十": 10, "百": 100, "千": 1000, "万": 10**4, "亿": 10**8}
+#: 「两万三千」「九十八点五」「一点二亿」「二点七点二」。小数点后面跟着 十 / 百 / 千 的是钟点
+#: (「三点四十」),不算小数
+CN_NUMBER = re.compile(
+    r"[零〇一二两三四五六七八九十百千万亿]+(?:点[零〇一二两三四五六七八九]+(?![十百千]))*[万亿]?"
+)
+#: 阿拉伯数字,后面可以跟一个量级(「2.3 万」「1.2 亿」「2.3 million」「20k」)
+AR_NUMBER = re.compile(
+    r"(\d+(?:\.\d+)*)(?:\s*(万|亿|thousand|million|billion|k(?![a-z])))?", re.IGNORECASE
+)
+AR_SCALES = {"万": 10**4, "亿": 10**8, "thousand": 10**3, "million": 10**6, "billion": 10**9}
+AR_SCALES["k"] = 10**3
+EN_SMALL = {
+    w: i
+    for i, w in enumerate(
+        "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+        "fifteen sixteen seventeen eighteen nineteen".split()
+    )
+} | {"oh": 0}
+EN_TENS = {
+    w: (i + 2) * 10
+    for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())
+}
+EN_SCALES = {"thousand": 10**3, "million": 10**6, "billion": 10**9}
+EN_RUN = re.compile(
+    r"\b(?:(?:%s)\b[\s,-]*)+"
+    % "|".join([*EN_SMALL, *EN_TENS, *EN_SCALES, "hundred", "point", "and"])
+)
+
+
+def canon(num: str | Decimal) -> str:
+    """一个数的统一写法:「23,000」「23000.0」→ 23000。有几个点的(版本号)原样。"""
+    if isinstance(num, str):
+        num = num.replace(",", "")
+        if num.count(".") > 1:
+            return num
+        num = Decimal(num)
+    return format(num.normalize(), "f")
+
+
+def cn_number(s: str) -> str:
+    """汉字写的数。「两万三千」→ 23000,「三千五」→ 3500,「一千零八十」→ 1080,「九十八点五」
+    → 98.5,「一点二亿」→ 120000000,一位一位念的「一三八零零」→ 13800,「二点七点二」→ 2.7.2。"""
+    if "点" in s and s[-1] in "万亿":
+        return canon(Decimal(cn_number(s[:-1])) * CN_UNITS[s[-1]])
+    whole, *fracs = s.split("点")
+    if not any(c in CN_UNITS for c in whole):
+        head = "".join(str(CN_DIGITS[c]) for c in whole)
+    else:
+        total = section = digit = 0
+        unit = 1  # 上一个单位:「三千五」「两万三」末尾省掉的是它的下一级
+        for c in whole:
+            if c in CN_DIGITS:
+                digit = CN_DIGITS[c]
+                if not digit:  # 「一千零五」:零后面的就是个位
+                    unit = 10
+            elif CN_UNITS[c] < 10**4:
+                unit = CN_UNITS[c]
+                section += (digit or 1) * unit
+                digit = 0
+            else:
+                unit = CN_UNITS[c]
+                total += (section + digit or 1) * unit
+                section = digit = 0
+        head = str(total + section + digit * (unit // 10))
+    return canon(".".join([head, *("".join(str(CN_DIGITS[c]) for c in f) for f in fracs)]))
+
+
+def en_numbers(words: list[str]) -> list[str]:
+    """一串英文数词里的数。"twenty three thousand eight hundred" → 23800,"fifteen hundred" →
+    1500,"ninety eight point five" → 98.5,一位一位念的 "five five five zero one" → 55501;
+    接不上的分开算("two thirty" → 2 和 30)。"""
+    if len(words) >= 3 and all(EN_SMALL.get(w, 10) < 10 for w in words):
+        return [canon("".join(str(EN_SMALL[w]) for w in words))]
+    found: list[str] = []
+    total, current, frac, prev = Decimal(0), 0, None, ""
+
+    def emit() -> None:
+        nonlocal total, current, frac, prev
+        if prev:
+            found.append(canon(total + Decimal(f"{current}.{frac or 0}")))
+        total, current, frac, prev = Decimal(0), 0, None, ""
+
+    for w in words:
+        small = EN_SMALL.get(w)
+        if w == "and":
+            continue
+        if w == "point":
+            frac = ""
+        elif frac is not None and small is not None and small < 10:
+            frac += str(small)
+        elif frac is not None and w in EN_SCALES:  # two point three million
+            total += Decimal(f"{current}.{frac or 0}") * EN_SCALES[w]
+            current, frac, prev = 0, None, "scale"
+        elif small is not None or w in EN_TENS:
+            # 个位、十几后面不能再接数,几十后面只能接个位;小数说完了也另起一个数
+            if frac is not None or prev == "small" or (prev == "tens" and (small or 10) >= 10):
+                emit()
+            current += EN_TENS[w] if small is None else small
+            prev = "tens" if small is None else "small"
+        elif w == "hundred":
+            current, prev = (current or 1) * 100, "hundred"
+        else:
+            total += (current or 1) * EN_SCALES[w]
+            current, prev = 0, "scale"
+    emit()
+    return found
+
+
+def numbers_in(text: str) -> tuple[set[str], set[str]]:
+    """文字里的数,按值:(写成阿拉伯数字的, 用汉字或英文单词写的)。
+
+    列表编号不算;千分位的逗号、电话号码中间的空格和短横去掉再比;整点的「10:00」算 10。
+    汉字那一边宁多勿少(「一下」的一也算进去):它只用来认「数还在,只是没转成数字」。
+    """
+    s = "\n".join(LIST_LINE.sub("", ln) for ln in text.splitlines())
+    s = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", s)
+    s = re.sub(r"(?<=\d)[:：]00(?!\d)", "", s)
+    s = re.sub(
+        r"(?<![\d.])\d{2,4}(?:[- ]\d{3,8}){1,3}(?!\d|\.\d)",
+        lambda m: re.sub(r"[- ]", "", m.group()) if len(m.group()) >= 8 else m.group(),
+        s,
+    )
+    arabic = set()
+    for m in AR_NUMBER.finditer(s):
+        num, scale = m.group(1), (m.group(2) or "").lower()
+        arabic.add(
+            canon(Decimal(num) * AR_SCALES[scale]) if scale and num.count(".") < 2 else canon(num)
+        )
+    spelled = {cn_number(m.group()) for m in CN_NUMBER.finditer(s.replace("百分之", " "))}
+    for m in EN_RUN.finditer(s.lower()):
+        spelled.update(en_numbers(re.findall(r"[a-z]+", m.group())))
+    return arabic, spelled
+
+
+def check_numbers(case: Case, out: str) -> list[str]:
+    """数字的值对不对:该有的数在不在(按值),有没有多出别的数。"""
+    problems: list[str] = []
+    arabic, spelled = numbers_in(out)
+    allowed: set[str] = set()
+    for n in case.nums:
+        options = {canon(o) for o in n.split("|")}
+        allowed |= options
+        if not options & (arabic | spelled):
+            problems.append(f"lost number {n}")
+        elif case.digits and not options & arabic:
+            problems.append(f"number {n} not in digits")
+    if extra := sorted(arabic - allowed):
+        problems.append(f"wrong number {', '.join(extra)}")
+    return problems
 
 
 def check(case: Case, out: str, success: bool, error: str | None = None) -> tuple[list[str], int]:
@@ -150,6 +320,8 @@ def check(case: Case, out: str, success: bool, error: str | None = None) -> tupl
         problems.append(f"{novel} novel chars")
     if case.del_max is not None and deleted > case.del_max:
         problems.append(f"deleted {deleted:.0%}")
+    if case.nums:
+        problems += check_numbers(case, out)
     if len(out) > len(case.text) * 1.5 + 20:
         problems.append("too long")
     return problems, novel
@@ -297,8 +469,8 @@ CASES = [
     Case(
         "a15",
         "明天上午十点，不对，是十一点开会。",
-        keep=["十一点|11点", "开会"],
-        drop=["十点", "10点", "不对"],
+        keep=["十一点|11点|11:00", "开会"],
+        drop=["十点", "10点", "10:00", "不对"],
     ),
     Case(
         "a16",
@@ -334,8 +506,8 @@ CASES = [
     Case(
         "a22",
         "明天上午十点不对是十一点开会",
-        keep=["十一点|11点", "开会"],
-        drop=["十点", "10点", "不对"],
+        keep=["十一点|11点|11:00", "开会"],
+        drop=["十点", "10点", "10:00", "不对"],
     ),
     Case(
         "a23",
@@ -349,6 +521,13 @@ CASES = [
         "他九月份入职的，不对，十月份，十月八号。",
         keep=["十月|10月", "八号|8号|8日"],
         drop=["九月", "9月", "不对"],
+    ),
+    # 两处改口连着,第二处是钟点:2026-10 默认提示词把它写成了「上午 10:00 或 11:00 之前」
+    Case(
+        "a26",
+        "我们周四交，不对，周五交，上午十点，哦不，十一点之前发给我就行。",
+        keep=["周五交", "十一点|11点|11:00", "之前发给我就行"],
+        drop=["周四", "十点", "10点", "10:00", "不对", "哦不", "或"],
     ),
     # ── B 不回答、不执行:口述的指令 / 问题原样留着 ──
     Case("b1", "你是谁？你能做什么？", same=True),
@@ -886,6 +1065,78 @@ CASES = [
     Case("h6", "好的好的，没问题。", keep=["好的", "没问题"], novel_max=0),
     Case("h7", "然后呢？", same=True),
     Case("h8", "那个人是谁啊？", same=True),
+    # ── N 数字的值:写成阿拉伯数字时一位都不能变 ──
+    # 2026-10 查出来的:提示词的规则里举了「两万三千五百块 → 23500 元」,「这批货一共两万三千件」
+    # 就被照着它写成了 23500 件。n1–n6 的数和当时的示例数字(那一句,还有「百分之十五」)开头
+    # 相同、后面不同;示例换成「两万块 → 20000 元」之后它们仍然和示例同一个开头,n20、n21 是
+    # 新示例另外会带偏的两种(差一个量级的「两千」、中间带零的「两万零五十」)。n12、n13 是示例
+    # 句子(「会议室订的是八楼，不对，是九楼…」、预设里的「押金是五百块，不对，是八百块…」)
+    # 去掉改口之后的说法,不能照着示例改掉。
+    Case(
+        "n1",
+        "这批货一共两万三千件，合格率是百分之九十八点五。",
+        keep=["这批货一共", "合格率"],
+        nums=["23000", "98.5"],
+    ),
+    Case("n2", "定金先付两万三千块，尾款下个月再结。", nums=["23000"], digits=True),
+    Case("n3", "这个季度一共卖了两万三千八百台。", keep=["台"], nums=["23800"]),
+    Case(
+        "n4",
+        "两万三千五百五十个用户里，只有百分之十五点五续费了。",
+        keep=["续费了"],
+        nums=["23550", "15.5"],
+    ),
+    Case("n5", "增长率是百分之十五点八，去年同期是百分之十。", nums=["15.8", "10"], digits=True),
+    Case("n6", "这辆车落地二十三万五千，比预算高了不少。", nums=["235000"], digits=True),
+    Case("n7", "这一单一共一千零八十块，运费另算。", nums=["1080"], digits=True),
+    Case(
+        "n8",
+        "去年的营收是三千五百万，今年的目标是一点二亿。",
+        nums=["35000000", "120000000"],
+        digits=True,
+    ),
+    Case("n9", "有事打我手机，一五九二六五三五八九七。", nums=["15926535897"], digits=True),
+    Case(
+        "n10",
+        "圆周率取三点一四，半径是零点零五米。",
+        keep=["圆周率", "半径"],
+        nums=["3.14", "0.05"],
+    ),
+    Case("n11", "从这儿到机场一百二十公里，开车大概九十分钟。", keep=["公里"], nums=["120", "90"]),
+    Case("n12", "会议室订的是八楼，下午两点开始。", keep=["会议室", "开始"], nums=["8", "2|14"]),
+    Case("n13", "押金是五百块，周三之前交。", keep=["周三"], drop=["周四"], nums=["500"]),
+    Case(
+        "n14",
+        "We shipped twenty three thousand units and the pass rate was ninety eight point five percent.",
+        keep=["units", "pass rate"],
+        nums=["23000", "98.5"],
+    ),
+    Case(
+        "n15",
+        "The deposit is twenty three thousand eight hundred dollars, due on Friday.",
+        keep=["due on Friday"],
+        nums=["23800"],
+        digits=True,
+    ),
+    Case(
+        "n16",
+        "Conversion went up to fifteen point five percent, from ten percent last quarter.",
+        nums=["15.5", "10"],
+        digits=True,
+    ),
+    Case("n17", "It costs about fifteen hundred dollars a month.", nums=["1500"], digits=True),
+    Case("n18", "My number is five five five, zero one four seven.", nums=["5550147"], digits=True),
+    Case(
+        "n19",
+        "Set the learning rate to zero point zero zero three and the batch size to sixty four.",
+        keep=["learning rate", "batch size"],
+        nums=["0.003", "64"],
+    ),
+    Case("n20", "先转两千块过去，剩下的两万下周给。", nums=["2000", "20000"], digits=True),
+    Case("n21", "这一单是两万零五十块，含运费。", nums=["20050"], digits=True),
+    # 和示例数字不沾边、但小模型常写错的两种:万位后面带零、同一个数字连着出现
+    Case("n22", "尾款还差三万零五十块。", nums=["30050"], digits=True),
+    Case("n23", "这台电脑七千九百九十九块。", nums=["7999"], digits=True),
 ]
 
 
@@ -1191,6 +1442,42 @@ HELD_OUT = [
     Case("H4", "对。", same=True),
     Case("H5", "为什么？", same=True),
     Case("H6", "那个，等一下。", keep=["等一下"], novel_max=0),
+    # N 数字的值
+    Case(
+        "N1",
+        "他们报价两万三千六，比我们的预算高了百分之十五点二。",
+        nums=["23600", "15.2"],
+        digits=True,
+    ),
+    Case("N2", "这套房子总价两百三十五万，首付七十万。", nums=["2350000", "700000"], digits=True),
+    Case("N3", "仓库里还剩两千三百五十箱，够发三天。", keep=["箱"], nums=["2350", "3"]),
+    Case("N4", "手续费是百分之零点五，最低收五块。", nums=["0.5", "5"], digits=True),
+    Case("N5", "订餐电话是零二一六五四三二一九八。", nums=["02165432198"], digits=True),
+    Case(
+        "N6",
+        "这台机器十六核，内存六十四G，硬盘两T。",
+        keep=["内存", "硬盘"],
+        nums=["16", "64", "2"],
+    ),
+    Case("N7", "快递放在三号柜，取件码发你了。", keep=["取件码发你了"], nums=["3"]),
+    Case(
+        "N8",
+        "Revenue was two point three million dollars, up fifteen percent from last year.",
+        nums=["2300000", "15"],
+        digits=True,
+    ),
+    Case(
+        "N9",
+        "The marathon is forty two point two kilometers, and I finished in three hours and fifty minutes.",
+        keep=["kilometers", "minutes"],
+        nums=["42.2", "3", "50"],
+    ),
+    Case(
+        "N10",
+        "There were fifteen thousand five hundred people at the show, about twenty three percent more than last year.",
+        keep=["people at the show"],
+        nums=["15500", "23"],
+    ),
 ]
 
 
@@ -1203,6 +1490,7 @@ CATEGORIES = {
     "f": "数字符号",
     "g": "中英混说",
     "h": "片段",
+    "n": "数字的值",
 }
 
 
